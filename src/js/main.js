@@ -1,6 +1,6 @@
 // Boot + loop wiring + test hooks. Wiring only — no balance or game logic here.
 
-import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS } from './constants.js';
+import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED } from './constants.js';
 import {
   createNewGame,
   systemById,
@@ -15,9 +15,13 @@ import { buildOutpost, canBuildOutpost, incomePerSecond, resetStructureIds } fro
 import {
   buildShipyard,
   queueScout,
+  queueHull,
   canBuildShipyard,
   canQueueScout,
+  canQueueHull,
   shipyardBuildProgress,
+  BUILDABLE_HULLS,
+  hullLabel,
 } from './production.js';
 import { setFlagshipInput, orderTravel, transitStatus, transitEtaMs } from './flagship.js';
 import {
@@ -35,7 +39,13 @@ import {
   captureProgressMs,
   canHoldCapture,
   enemyCombatPresence,
+  garrisonIntelText,
 } from './capture.js';
+import { fleetSummary, shipSummaries, resetShipIds, spawnShip, findShip, idleShips } from './ships.js';
+import { orderShipTravel } from './fleet.js';
+import { garrisonSummary } from './garrison.js';
+import { startBattle, combatObservability, tryEngageOnArrival } from './combat.js';
+import { autoResolvePreview } from './autoResolve.js';
 import { activeShuttleCount } from './shuttles.js';
 import {
   drawSystem,
@@ -54,6 +64,8 @@ let view = 'system';
 let viewedSystemId = state.stronghold;
 let lastFlagshipSystemId = state.flagship.systemId;
 let selectedScoutId = null;
+let selectedShipId = null;
+let activeTab = 'system';
 
 const canvas = document.getElementById('game-canvas');
 const ctx2d = canvas.getContext('2d');
@@ -71,6 +83,12 @@ function ensureSelectedScout() {
   if (selectedScoutId && findScout(state, selectedScoutId)) return;
   const idle = idleScouts(state);
   selectedScoutId = idle.length ? idle[idle.length - 1].id : null;
+}
+
+function ensureSelectedShip() {
+  if (selectedShipId && findShip(state, selectedShipId)?.hp > 0) return;
+  const idle = idleShips(state);
+  selectedShipId = idle.length ? idle[idle.length - 1].id : null;
 }
 
 function doSelectScout(scoutId) {
@@ -159,14 +177,39 @@ function doBuildShipyard(planetId) {
   return res;
 }
 
-function doQueueScout(shipyardId) {
-  const res = queueScout(state, shipyardId, viewedSystemId);
+function doSelectShip(shipId) {
+  if (shipId && !findShip(state, shipId)) return;
+  selectedShipId = shipId;
+}
+
+function doOrderShipTravel(targetId) {
+  ensureSelectedShip();
+  if (!selectedShipId) {
+    toast('Build a combat ship at your shipyard first', 'error');
+    return { ok: false, reason: 'No ship selected' };
+  }
+  const res = orderShipTravel(state, selectedShipId, targetId);
   if (res.ok) {
-    toast(`Scout queued (${SCOUT_BUILD_MS / 1000}s)`, 'ok');
+    const dest = systemById(state, targetId);
+    toast(`Ship dispatched to ${dest.name} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
   } else {
     toast(res.reason, 'error');
   }
   return res;
+}
+
+function doQueueHull(shipyardId, hull) {
+  const res = queueHull(state, shipyardId, viewedSystemId, hull);
+  if (res.ok) {
+    toast(`${hullLabel(hull)} queued`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+  return res;
+}
+
+function doQueueScout(shipyardId) {
+  return doQueueHull(shipyardId, 'scout');
 }
 
 async function doSaveSlot(slot) {
@@ -194,7 +237,9 @@ function doImportState(newState) {
   follow.enabled = true;
   resetStructureIds(state);
   resetScoutIds(state);
+  resetShipIds(state);
   ensureSelectedScout();
+  ensureSelectedShip();
   const f = state.flagship;
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
 }
@@ -211,6 +256,7 @@ function checkFlagshipArrival() {
     } else {
       toast(`Flagship arrived at ${name}`, 'ok');
     }
+    tryEngageOnArrival(state, current);
   }
   lastFlagshipSystemId = current;
 }
@@ -224,10 +270,18 @@ const updateUi = initUi({
   getView: () => view,
   getViewedSystemId: () => viewedSystemId,
   getSelectedScoutId: () => selectedScoutId,
+  getSelectedShipId: () => selectedShipId,
+  getActiveTab: () => activeTab,
+  setActiveTab: (t) => { activeTab = t; },
   doSelectScout,
+  doSelectShip,
   doBuildOutpost,
   doBuildShipyard,
   doQueueScout,
+  doQueueHull,
+  canQueueHull,
+  hullLabel,
+  BUILDABLE_HULLS,
   doTogglePause,
   doToggleView,
   doSaveSlot,
@@ -240,6 +294,10 @@ const updateUi = initUi({
   captureProgressMs,
   canHoldCapture,
   enemyCombatPresence,
+  garrisonIntelText,
+  garrisonSummary,
+  combatObservability,
+  fleetSummary,
 });
 
 attachInput(canvas, {
@@ -247,14 +305,17 @@ attachInput(canvas, {
   getView: () => view,
   getViewedSystemId: () => viewedSystemId,
   getSelectedScoutId: () => selectedScoutId,
+  getSelectedShipId: () => selectedShipId,
   onSelect: (id) => { selection = id; },
   onTogglePause: doTogglePause,
   onToggleView: doToggleView,
   onFlagshipInput: doFlagshipInput,
   onStarTravel: doOrderTravel,
   onScoutTravel: doOrderScoutTravel,
+  onShipTravel: doOrderShipTravel,
   onStarView: doViewSystem,
   onScoutSelect: doSelectScout,
+  onShipSelect: doSelectShip,
   onFollowRequest: () => { follow.enabled = true; },
 });
 
@@ -280,10 +341,15 @@ function frame(now) {
   const tickEvents = step(state, accumulator + dt);
   accumulator = tickEvents.remainingMs ?? 0;
 
-  for (const ready of tickEvents.scoutReady ?? []) {
+  for (const ready of tickEvents.productionReady ?? tickEvents.scoutReady ?? []) {
     const name = systemById(state, ready.systemId)?.name ?? ready.systemId;
-    toast(`Scout ready at ${name}`, 'ok');
-    selectedScoutId = ready.scoutId;
+    if (ready.scoutId) {
+      toast(`Scout ready at ${name}`, 'ok');
+      selectedScoutId = ready.scoutId;
+    } else if (ready.shipId) {
+      toast(`${ready.hull ?? 'Ship'} ready at ${name}`, 'ok');
+      selectedShipId = ready.shipId;
+    }
   }
   for (const arrival of tickEvents.scoutArrivals ?? []) {
     const name = systemById(state, arrival.systemId)?.name ?? arrival.systemId;
@@ -296,6 +362,7 @@ function frame(now) {
 
   checkFlagshipArrival();
   ensureSelectedScout();
+  ensureSelectedShip();
 
   if (!state.paused && now - lastAutosave >= AUTOSAVE_INTERVAL_MS) {
     lastAutosave = now;
@@ -303,7 +370,7 @@ function frame(now) {
   }
 
   if (view === 'galaxy') {
-    drawGalaxy(ctx2d, state, selectedScoutId);
+    drawGalaxy(ctx2d, state, selectedScoutId, selectedShipId);
   } else {
     updateFollowCamera(state, viewedSystemId, dt);
     drawSystem(ctx2d, state, viewedSystemId, selection);
@@ -319,8 +386,10 @@ window.advanceTime = (ms) => {
   const events = advance(state, ms);
   checkFlagshipArrival();
   ensureSelectedScout();
-  for (const ready of events.scoutReady) {
-    selectedScoutId = ready.scoutId;
+  ensureSelectedShip();
+  for (const ready of events.productionReady ?? []) {
+    if (ready.scoutId) selectedScoutId = ready.scoutId;
+    if (ready.shipId) selectedShipId = ready.shipId;
   }
   return events;
 };
@@ -345,17 +414,23 @@ window.render_game_to_text = () => {
     .slice(0, 3)
     .map((star) => ({ id: star.id, hasIntel: hasIntel(state, star.id) }));
 
+  const fleet = fleetSummary(state);
+  const combat = combatObservability(state, viewedSystemId);
+  const garrison = garrisonSummary(state, viewedSystemId);
+
   return JSON.stringify({
     time: state.time,
     paused: state.paused,
     credits: state.credits,
     view,
+    activeTab,
     currentSystem: viewedSystemId,
     systemName: viewedSystem?.name ?? null,
     strongholdSystem: state.stronghold,
     systemOwner: viewedSystem?.owner ?? null,
     selection,
     selectedScoutId,
+    selectedShipId,
     incomePerSec: incomePerSecond(state),
     flagship: {
       systemId: f.systemId,
@@ -364,6 +439,8 @@ window.render_game_to_text = () => {
       vx: Math.round(f.vx * 100) / 100,
       vy: Math.round(f.vy * 100) / 100,
       heading: Math.round(f.heading * 1000) / 1000,
+      hp: f.hp ?? null,
+      maxHp: f.maxHp ?? null,
       inTransit: !!f.transit,
       destination: transit?.destId ?? null,
       transitProgress: transit ? Math.round(transit.progress * 1000) / 1000 : null,
@@ -371,11 +448,19 @@ window.render_game_to_text = () => {
     },
     scouts: scoutSummaries,
     scoutCount: state.scouts.length,
+    ships: shipSummaries(state),
+    shipCount: (state.ships ?? []).filter((s) => s.hp > 0).length,
+    fleet,
+    garrison,
+    combat,
     intel: {
       scoutedCount: scoutedCount(state),
       viewedSystemHasIntel: hasIntel(state, viewedSystemId),
       captureRequirement: hasIntel(state, viewedSystemId)
         ? captureRequirement(state, viewedSystemId)
+        : null,
+      garrisonEstimate: hasIntel(state, viewedSystemId)
+        ? garrisonIntelText(state, viewedSystemId)
         : null,
       neighborFog,
     },
@@ -393,10 +478,11 @@ window.render_game_to_text = () => {
         (n, sys) => n + sys.structures.filter((s) => s.type === 'shipyard').length,
         0,
       ),
-      buildingScout: Object.values(state.systems).some(
+      buildingHull: Object.values(state.systems).some(
         (sys) => sys.structures.some((s) => s.type === 'shipyard' && s.build),
       ),
       scoutCount: state.scouts.length,
+      shipCount: (state.ships ?? []).filter((s) => s.hp > 0).length,
     },
     galaxy: {
       starCount: state.galaxy.stars.length,
@@ -418,12 +504,22 @@ window.render_game_to_text = () => {
         const sy = findShipyardOnPlanet(state, viewedSystemId, b.id);
         return sy ? canQueueScout(state, sy.id, viewedSystemId).ok : false;
       })(),
+      canQueueHull: (() => {
+        const sy = findShipyardOnPlanet(state, viewedSystemId, b.id);
+        if (!sy) return {};
+        const out = {};
+        for (const hull of BUILDABLE_HULLS) {
+          out[hull] = canQueueHull(state, sy.id, viewedSystemId, hull).ok;
+        }
+        return out;
+      })(),
     })),
     structures: (viewedSystem?.structures ?? []).map((s) => ({
       id: s.id,
       type: s.type,
       bodyId: s.bodyId,
       building: s.type === 'shipyard' && !!s.build,
+      buildHull: s.type === 'shipyard' ? s.build?.hull ?? null : null,
       buildProgress: s.type === 'shipyard' ? shipyardBuildProgress(s, state.time) : null,
     })),
     shuttles: {
@@ -440,6 +536,7 @@ window.__selectPlanet = (id) => { selection = id; };
 window.__buildOutpost = (id) => doBuildOutpost(id);
 window.__buildShipyard = (id) => doBuildShipyard(id);
 window.__queueScout = (shipyardId) => doQueueScout(shipyardId);
+window.__queueHull = (shipyardId, hull) => doQueueHull(shipyardId, hull);
 window.__saveSlot = (slot) => doSaveSlot(slot);
 window.__loadSlot = (slot) => doLoadSlot(slot);
 window.__setFlagshipInput = (x, y) => setFlagshipInput(x, y);
@@ -459,3 +556,12 @@ window.__setEnemyPresence = (systemId, count) => {
 window.__clearEnemyPresence = (systemId) => {
   if (state._testEnemyPresence) delete state._testEnemyPresence[systemId];
 };
+window.__spawnShip = (systemId, hull) => spawnShip(state, systemId, hull);
+window.__orderShipTravel = (shipId, starId) => {
+  if (shipId) selectedShipId = shipId;
+  return doOrderShipTravel(starId);
+};
+window.__selectShip = (shipId) => doSelectShip(shipId);
+window.__startBattle = (systemId) => startBattle(state, systemId, { force: true });
+window.__autoResolvePreview = (systemId) => autoResolvePreview(state, systemId);
+window.__getGarrison = (systemId) => garrisonSummary(state, systemId);

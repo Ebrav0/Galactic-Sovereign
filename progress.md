@@ -102,3 +102,37 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 2: hybrid combat and fleet-based capture force
+
+---
+
+## Session 2026-07-02 — Phase 2 combat hybrid complete
+
+**Task claimed:** Phase 2 tasks 2.1–2.30 (combat hybrid slice)
+**Status:** complete
+
+### Done
+- save-v3: `ships[]`, `garrisons{}`, `combat{}`, flagship `hp`/`maxHp`; `migrateV2toV3`; `docs/schemas/save-v3.json`
+- New modules: `hulls.js`, `ships.js`, `garrison.js`, `fleet.js`, `combat.js`, `autoResolve.js`
+- 10 ship classes (scout + 9 new); shipyard queues all buildable hulls; Fleet tab + combat HUD
+- Hybrid combat: tactical when flagship in-system; auto-resolve otherwise; healers + carrier wings
+- Fleet-based capture force; live garrison contest; garrison-weighted capture requirement
+- Test hooks: `__spawnShip`, `__orderShipTravel`, `__startBattle`, `__autoResolvePreview`, `__getGarrison`
+- `output/verify_phase2.mjs` — 29/29 pass; determinism spot check documented below
+- `docs/IMPLEMENTATION_PLAN.md` §8 Phase 2 numbered task table + §5 save-v3 excerpt
+
+### Decisions
+- Scouts remain in `scouts[]`; combat hulls in `ships[]` (unify in Phase 5 empire layer)
+- Alt+click galaxy dispatch for combat ships (Shift+click stays scouts)
+- `__setEnemyPresence` kept as test override; default presence from garrison/combat units
+- Auto-resolve replay: brief post-battle banner (4s) in system view
+
+### Known issues
+- verify scripts import Playwright from project `node_modules` after local install
+- Phase 1 `verify_phase1.mjs` section 14 still uses `__setEnemyPresence` for contest tests (compatible)
+
+### Determinism spot check
+Same seed + `advanceTime(5000)` → spawn 2 corvettes → `advanceTime(3000)` yields identical
+`render_game_to_text()` strings across two fresh page loads (verify_phase2.mjs §9.1).
+
+### Suggested next
+- Phase 3: Dyson loop (foundry, sail shuttles, launchers, Solarii)

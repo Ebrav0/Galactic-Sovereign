@@ -5,13 +5,17 @@ import {
   CAPTURE_PER_PLANET,
   CAPTURE_PER_MOON,
   CAPTURE_STRUCTURE_WEIGHT,
-  CAPTURE_FLAGSHIP_FORCE,
   CAPTURE_HOLD_MS,
+  CAPTURE_GARRISON_WEIGHT,
   TICK_MS,
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
 import { systemById } from './state.js';
 import { hasIntel } from './intel.js';
+import { captureForceFor, flagshipCaptureForce } from './hulls.js';
+import { shipsInSystem } from './ships.js';
+import { garrisonCaptureWeight, garrisonUnitCount } from './garrison.js';
+import { liveEnemyCount } from './combat.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -24,17 +28,28 @@ export function captureRequirement(state, systemId) {
   for (const s of system.structures) {
     req += CAPTURE_STRUCTURE_WEIGHT[s.type] ?? 1;
   }
+  if (hasIntel(state, systemId)) {
+    req += garrisonCaptureWeight(state, systemId) * CAPTURE_GARRISON_WEIGHT;
+  }
   return Math.ceil(req);
 }
 
 export function captureForceInSystem(state, systemId) {
+  let force = 0;
+  for (const ship of shipsInSystem(state, systemId)) {
+    force += captureForceFor(ship.hull);
+  }
   const f = state.flagship;
-  if (f.systemId === systemId && !f.transit) return CAPTURE_FLAGSHIP_FORCE;
-  return 0;
+  if (f.systemId === systemId && !f.transit && f.hp > 0) {
+    force += flagshipCaptureForce(f);
+  }
+  return force;
 }
 
 export function enemyCombatPresence(state, systemId) {
-  return state._testEnemyPresence?.[systemId] ?? 0;
+  const override = state._testEnemyPresence?.[systemId];
+  if (override !== undefined && override > 0) return override;
+  return liveEnemyCount(state, systemId);
 }
 
 export function isCapturableSystem(state, systemId) {
@@ -69,6 +84,7 @@ export function tickCapture(state) {
 
       if (entry.progressMs >= CAPTURE_HOLD_MS) {
         systemById(state, systemId).owner = 'player';
+        delete state.garrisons?.[systemId];
         delete state.capture[systemId];
         return { captured: systemId };
       }
@@ -77,4 +93,10 @@ export function tickCapture(state) {
     }
   }
   return null;
+}
+
+export function garrisonIntelText(state, systemId) {
+  const count = garrisonUnitCount(state, systemId);
+  if (count === 0) return 'No garrison detected';
+  return `Estimated garrison: ${count} combat unit${count === 1 ? '' : 's'}`;
 }

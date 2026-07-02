@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 3",
+  "description": "Adds combat ships, garrisons, active combat state, and flagship HP.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 3 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "galaxy", "systems",
+        "flagship", "scouts", "ships", "garrisons", "combat", "intel", "capture"
+      ],
+      "properties": {
+        "meta": { "$ref": "save-v2.json#/properties/state/properties/meta" },
+        "time": { "type": "number" },
+        "credits": { "type": "number" },
+        "paused": { "type": "boolean" },
+        "stronghold": { "type": "string" },
+        "galaxy": { "$ref": "save-v1.json#/properties/state/properties/galaxy" },
+        "systems": { "$ref": "save-v2.json#/properties/state/properties/systems" },
+        "flagship": {
+          "allOf": [
+            { "$ref": "save-v1.json#/properties/state/properties/flagship" },
+            {
+              "type": "object",
+              "properties": {
+                "hp": { "type": "number" },
+                "maxHp": { "type": "number" }
+              }
+            }
+          ]
+        },
+        "scouts": { "$ref": "save-v2.json#/properties/state/properties/scouts" },
+        "ships": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "hull", "systemId", "transit", "hp", "maxHp"],
+            "properties": {
+              "id": { "type": "string" },
+              "hull": { "type": "string" },
+              "systemId": { "type": ["string", "null"] },
+              "transit": { "$ref": "save-v1.json#/properties/state/properties/flagship/properties/transit" },
+              "hp": { "type": "number" },
+              "maxHp": { "type": "number" },
+              "wings": {
+                "type": ["object", "null"],
+                "properties": {
+                  "interceptor": { "type": "number" },
+                  "bomber": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "garrisons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["hull", "count"],
+              "properties": {
+                "hull": { "type": "string" },
+                "count": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        },
+        "combat": {
+          "type": "object",
+          "additionalProperties": { "type": "object" }
+        },
+        "intel": { "$ref": "save-v2.json#/properties/state/properties/intel" },
+        "capture": { "$ref": "save-v2.json#/properties/state/properties/capture" }
+      }
+    }
+  }
+}

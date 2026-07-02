@@ -12,6 +12,7 @@ import {
   hitTestPlanet,
   hitTestStar,
   hitTestScout,
+  hitTestShip,
 } from './render.js';
 
 const DRAG_THRESHOLD_PX = 5;
@@ -35,8 +36,10 @@ export function attachInput(canvas, ctx) {
     onFlagshipInput,
     onStarTravel,
     onScoutTravel,
+    onShipTravel,
     onStarView,
     onScoutSelect,
+    onShipSelect,
     onFollowRequest,
   } = ctx;
 
@@ -94,12 +97,15 @@ export function attachInput(canvas, ctx) {
   let lastY = 0;
   let pendingStarClick = null;
   let shiftHeld = false;
+  let altHeld = false;
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = true;
+    if (e.code === 'AltLeft' || e.code === 'AltRight') altHeld = true;
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = false;
+    if (e.code === 'AltLeft' || e.code === 'AltRight') altHeld = false;
   });
 
   canvas.addEventListener('mousedown', (e) => {
@@ -108,6 +114,7 @@ export function attachInput(canvas, ctx) {
     lastX = e.clientX;
     lastY = e.clientY;
     shiftHeld = e.shiftKey;
+    altHeld = e.altKey;
   });
 
   window.addEventListener('mousemove', (e) => {
@@ -127,7 +134,9 @@ export function attachInput(canvas, ctx) {
     } else {
       const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
       const hit = getView() === 'galaxy'
-        ? hitTestStar(getState(), w.x, w.y) ?? hitTestScout(getState(), w.x, w.y)
+        ? hitTestStar(getState(), w.x, w.y)
+          ?? hitTestShip(getState(), w.x, w.y)
+          ?? hitTestScout(getState(), w.x, w.y)
         : hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
       canvas.classList.toggle('hover-body', hit !== null);
     }
@@ -147,15 +156,26 @@ export function attachInput(canvas, ctx) {
       return;
     }
 
-    // Galaxy: scout click takes priority over star click.
+    // Galaxy: ship/scout click takes priority over star click.
+    const shipHit = hitTestShip(getState(), w.x, w.y);
+    if (shipHit && !e.shiftKey && !e.altKey) {
+      onShipSelect(shipHit);
+      return;
+    }
+
     const scoutHit = hitTestScout(getState(), w.x, w.y);
-    if (scoutHit && !e.shiftKey) {
+    if (scoutHit && !e.shiftKey && !e.altKey) {
       onScoutSelect(scoutHit);
       return;
     }
 
     const starId = hitTestStar(getState(), w.x, w.y);
     if (!starId) return;
+
+    if (e.altKey || altHeld) {
+      onShipTravel(starId);
+      return;
+    }
 
     if (e.shiftKey || shiftHeld) {
       onScoutTravel(starId);

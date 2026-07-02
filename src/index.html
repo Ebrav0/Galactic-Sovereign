@@ -33,6 +33,10 @@
           <span class="chip__value chip__value--truncate" id="flagship-loc">—</span>
         </div>
         <div class="chip">
+          <span class="chip__label">Fleet</span>
+          <span class="chip__value" id="fleet-summary">0</span>
+        </div>
+        <div class="chip">
           <span class="chip__label">Scouts</span>
           <span class="chip__value" id="scout-summary">0</span>
         </div>
@@ -55,6 +59,24 @@
     </header>
 
     <aside id="left-rail" class="hud-rail hud-rail--left">
+      <div id="combat-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Combat Status</span>
+        </div>
+        <div class="panel__body">
+          <div id="combat-panel-body"></div>
+        </div>
+      </div>
+
+      <div id="fleet-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Fleet Roster</span>
+        </div>
+        <div class="panel__body">
+          <div id="fleet-roster" class="list"></div>
+        </div>
+        <div id="selected-ship-line" class="panel__footer panel-note"></div>
+      </div>
       <div id="scout-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__title">Scout Fleet</span>
@@ -96,6 +118,7 @@
           <button id="build-outpost-btn" type="button" class="btn btn--primary btn--block">Build Outpost</button>
           <button id="build-shipyard-btn" type="button" class="btn btn--primary btn--block hidden">Build Shipyard</button>
           <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Build Scout</button>
+          <div id="hull-queue-buttons" class="hull-queue-grid hidden"></div>
           <div id="build-panel-note" class="panel-note"></div>
         </div>
       </div>
@@ -116,7 +139,7 @@
       <nav id="tab-bar" class="tab-bar" aria-label="View navigation">
         <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
-        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Fleet</button>
+        <button type="button" class="tab" data-tab="fleet" id="tab-fleet">Fleet</button>
         <button type="button" class="tab tab--disabled" disabled title="Coming soon">Tech</button>
         <button type="button" class="tab tab--disabled" disabled title="Coming soon">Dyson</button>
       </nav>

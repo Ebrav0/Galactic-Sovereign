@@ -20,7 +20,9 @@ import {
   OTHER_PLANET_COUNT_RANGE,
   FLAGSHIP_SPAWN_ORBIT,
 } from './constants.js';
+import { FLAGSHIP_MAX_HP } from './constants.js';
 import { generateGalaxy, BLACK_HOLE_ID } from './galaxy.js';
+import { seedGarrisonsForGalaxy } from './garrison.js';
 
 // Mulberry32 — small deterministic PRNG so the same seed always
 // generates the same galaxy (GDD §15 determinism requirement).
@@ -184,7 +186,7 @@ export function createNewGame(seed) {
   }
   systems[galaxy.blackHole.id] = createBlackHoleSystem(galaxy.blackHole);
 
-  return {
+  const game = {
     meta: {
       seed,
       createdAt: Date.now(),
@@ -204,11 +206,19 @@ export function createNewGame(seed) {
       vy: 0,
       heading: 0,
       transit: null,
+      hp: FLAGSHIP_MAX_HP,
+      maxHp: FLAGSHIP_MAX_HP,
     },
     scouts: [],
+    ships: [],
+    garrisons: {},
+    combat: {},
     intel: { [strongholdId]: { gatheredAt: 0 } },
     capture: {},
   };
+
+  seedGarrisonsForGalaxy(game);
+  return game;
 }
 
 // --- Derived-position helpers (determinism: pure functions of state.time) ---

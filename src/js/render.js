@@ -10,7 +10,7 @@ import {
   GALAXY_CAMERA_MAX_ZOOM,
   SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
-  CAPTURE_HOLD_MS,
+  COMBAT_UNIT_RADIUS,
 } from './constants.js';
 import {
   createRng,
@@ -27,6 +27,8 @@ import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
 import { shipyardBuildProgress } from './production.js';
+import { activeBattle } from './combat.js';
+import { shipTransitPositions, shipsStationedAtSystem } from './fleet.js';
 import {
   THEME,
   hexToRgba,
@@ -289,6 +291,61 @@ export function drawSystem(ctx, state, systemId, selection) {
     const inp = getFlagshipInput();
     const thrusting = !state.paused && (inp.x !== 0 || inp.y !== 0);
     drawFlagshipSprite(ctx, fs.x, fs.y, f.heading, FLAGSHIP_RADIUS * z, thrusting);
+    if (f.maxHp) drawUnitHpBar(ctx, fs.x, fs.y - FLAGSHIP_RADIUS * z * 2, f.hp, f.maxHp, z);
+  }
+
+  drawCombatOverlay(ctx, state, systemId, z);
+}
+
+function drawUnitHpBar(ctx, x, y, hp, maxHp, z) {
+  const w = 36 * z;
+  const h = 4 * z;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(x - w / 2, y, w, h);
+  ctx.fillStyle = hp / maxHp > 0.35 ? THEME.accentGreen : '#ff6b6b';
+  ctx.fillRect(x - w / 2, y, w * (hp / maxHp), h);
+}
+
+function drawCombatOverlay(ctx, state, systemId, z) {
+  const battle = activeBattle(state, systemId) ?? state.combat?.[systemId];
+  if (!battle) return;
+
+  const canvas = ctx.canvas;
+
+  if (battle.phase === 'resolved' && battle.replayUntil && state.time < battle.replayUntil) {
+    labelText(ctx, `Battle replay — ${battle.winner ?? '?'} wins`, canvas.width / 2, 28 * z,
+      Math.max(12, 14 * z), THEME.accentGreen);
+    return;
+  }
+
+  const banner = battle.mode === 'tactical' ? 'TACTICAL COMBAT' : 'AUTO-RESOLVING';
+  labelText(ctx, banner, canvas.width / 2, 28 * z, Math.max(12, 14 * z), THEME.accentGold);
+
+  if (battle.mode !== 'tactical' || !battle.units) return;
+
+  for (const unit of battle.units) {
+    if (unit.hp <= 0) continue;
+    const sp = worldToScreen(camera, unit.x, unit.y, canvas);
+    const r = COMBAT_UNIT_RADIUS * z;
+    const color = unit.side === 'player' ? THEME.accentCyan : '#ff7a7a';
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    drawUnitHpBar(ctx, sp.x, sp.y - r * 1.8, unit.hp, unit.maxHp, z);
+
+    if (unit.hull === 'healer' && battle.healerActive) {
+      const target = battle.units.find((u) => u.side === unit.side && u.id === unit.targetId);
+      if (target) {
+        const tp = worldToScreen(camera, target.x, target.y, canvas);
+        ctx.strokeStyle = hexToRgba(THEME.accentGreen, 0.6);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(sp.x, sp.y);
+        ctx.lineTo(tp.x, tp.y);
+        ctx.stroke();
+      }
+    }
   }
 }
 
@@ -336,6 +393,24 @@ function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
   ctx.restore();
 }
 
+function drawShipSprite(ctx, x, y, angle, r, selected) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(r * 1.5, 0);
+  ctx.lineTo(-r * 0.9, r * 0.85);
+  ctx.lineTo(-r * 0.4, 0);
+  ctx.lineTo(-r * 0.9, -r * 0.85);
+  ctx.closePath();
+  ctx.fillStyle = selected ? '#9fd4ff' : '#6a9fd4';
+  ctx.fill();
+  ctx.strokeStyle = selected ? THEME.accentGreen : THEME.accentCyan;
+  ctx.lineWidth = Math.max(1, r * 0.12);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawScoutSprite(ctx, x, y, angle, r, selected) {
   ctx.save();
   ctx.translate(x, y);
@@ -363,7 +438,7 @@ function starNodeRadius(state, starId) {
 
 const BLACK_HOLE_NODE_RADIUS = 26;
 
-export function drawGalaxy(ctx, state, selectedScoutId = null) {
+export function drawGalaxy(ctx, state, selectedScoutId = null, selectedShipId = null) {
   const canvas = ctx.canvas;
   ctx.fillStyle = THEME.bgGalaxy;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -539,6 +614,18 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
         scout.id === selectedScoutId,
       );
     });
+
+    const ships = shipsStationedAtSystem(state, star.id);
+    ships.forEach((ship, idx) => {
+      drawShipSprite(
+        ctx,
+        s.x + nodeR + 14 * z + idx * 10 * z,
+        s.y + nodeR + 8 * z,
+        -Math.PI / 4,
+        Math.max(2.5, 4.5 * z),
+        ship.id === selectedShipId,
+      );
+    });
   }
 
   if (transit) {
@@ -568,6 +655,18 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       entry.angle,
       Math.max(2.5, 4.5 * z),
       entry.scout.id === selectedScoutId,
+    );
+  }
+
+  for (const entry of shipTransitPositions(state)) {
+    const s = worldToScreen(galaxyCamera, entry.x, entry.y, canvas);
+    drawShipSprite(
+      ctx,
+      s.x,
+      s.y,
+      entry.angle,
+      Math.max(2.5, 4.5 * z),
+      entry.ship.id === selectedShipId,
     );
   }
 }
@@ -644,6 +743,27 @@ export function hitTestStar(state, wx, wy) {
   const bh = state.galaxy.blackHole;
   const bhR = BLACK_HOLE_NODE_RADIUS + halo;
   if ((wx - bh.x) ** 2 + (wy - bh.y) ** 2 <= bhR * bhR) return bh.id;
+  return null;
+}
+
+export function hitTestShip(state, wx, wy) {
+  const halo = 12 / galaxyCamera.zoom;
+  for (const entry of shipTransitPositions(state)) {
+    const dx = wx - entry.x;
+    const dy = wy - entry.y;
+    if (dx * dx + dy * dy <= halo * halo) return entry.ship.id;
+  }
+  for (const star of state.galaxy.stars) {
+    const stationed = shipsStationedAtSystem(state, star.id);
+    const nodeR = starNodeRadius(state, star.id);
+    for (let idx = 0; idx < stationed.length; idx++) {
+      const sx = star.x + nodeR + 14 + idx * 10;
+      const sy = star.y + nodeR + 8;
+      const dx = wx - sx;
+      const dy = wy - sy;
+      if (dx * dx + dy * dy <= halo * halo) return stationed[idx].id;
+    }
+  }
   return null;
 }
 

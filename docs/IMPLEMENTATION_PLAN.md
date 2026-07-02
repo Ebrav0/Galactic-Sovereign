@@ -208,6 +208,38 @@ migration — it always covers the file as written.
 Adds `owner` per system, `scouts[]`, `intel`, `capture`, shipyard `build` queues,
 and re-seeds neutral outposts/shipyards deterministically from `meta.seed`.
 
+### Migration 2 → 3
+
+Adds `ships[]`, `garrisons{}`, `combat{}`, flagship `hp`/`maxHp`. Seeds neutral
+garrisons deterministically from `meta.seed`. Existing scouts/intel/capture preserved.
+
+### save-v3 state additions (Phase 2)
+
+```json
+{
+  "ships": [
+    { "id": "ship-1", "hull": "corvette", "systemId": "sys-19", "transit": null,
+      "hp": 80, "maxHp": 80, "wings": null }
+  ],
+  "garrisons": {
+    "sys-3": [ { "hull": "corvette", "count": 2 }, { "hull": "frigate", "count": 1 } ]
+  },
+  "combat": {
+    "sys-3": {
+      "mode": "tactical",
+      "startedAt": 12000,
+      "entryVector": { "x": 0.87, "y": -0.48 },
+      "phase": "active",
+      "units": [ { "id": "u1", "side": "player", "refId": "ship-1", "hull": "corvette",
+        "x": 200, "y": -50, "hp": 72, "maxHp": 80, "targetId": "u3" } ],
+      "resolveAt": null,
+      "resolveInputs": null
+    }
+  },
+  "flagship": { "hp": 500, "maxHp": 500, "...": "existing fields" }
+}
+```
+
 ### Schema evolution rules
 
 Any change to the state shape requires, in the same change:
@@ -317,7 +349,42 @@ at the galactic core is a **dormant landmark** until Phase 4 (a single galaxy
 gives an unanchored exit nowhere to go).
 
 ### Phase 2 — Combat hybrid
-Tactical mode when player flagship in system; auto-resolve elsewhere; healer logic; 8–10 ship classes; combat observability in `render_game_to_text()`.
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 2.1 | Document Phase 2 task table + save-v3 excerpt | §8 table and §5 migration notes match the Phase 2 plan |
+| 2.2 | Hull constants & metadata (`constants.js`, `hulls.js`) | All 10 classes have stats; helpers `isCombatHull`, `contestsCapture`, `captureForceFor` |
+| 2.3 | save-v3 schema + migration | v2 loads → v3; `docs/schemas/save-v3.json`; round-trip preserves v2 data |
+| 2.4 | Ship entity model (`ships.js`, `state.js`) | `spawnShip`, flagship hp; observable in `render_game_to_text()` |
+| 2.5 | Garrison seeding (`garrison.js`) | Deterministic neutral defenders; stronghold has none |
+| 2.6 | Shipyard: combat hull production | `queueHull` / corvette first; spawns into `ships[]` |
+| 2.7 | Shipyard build panel: all hulls | UI buttons for all buildable hull types |
+| 2.8 | Combat ship lane transit (`fleet.js`) | BFS travel; pause-safe; galaxy sprites |
+| 2.9 | Fleet tab (read-only roster) | Tab enabled; `{ totalShips, bySystem, inTransit }` in hooks |
+| 2.10 | Fleet dispatch orders | `__orderShipTravel`, galaxy click dispatch |
+| 2.11 | Combat mode + battle records (`combat.js`) | `startBattle`/`endBattle`; mode tactical vs auto |
+| 2.12 | Engagement triggers | Auto-start on contested arrival; `__startBattle`; entry vector |
+| 2.13 | Tactical tick | Movement, targeting, damage at 20 Hz |
+| 2.14 | Flagship combat unit | High HP/DPS; position follows flagship |
+| 2.15 | Healer tactical drones | Repair in range; observable repair rate |
+| 2.16 | Carrier + fighter wings | Interceptor/bomber sub-units with RPS targeting |
+| 2.17 | Tactical visuals | Units, HP bars, battle banner in system view |
+| 2.18 | Auto-resolve formula (`autoResolve.js`) | RPS matrix; `__autoResolvePreview` hook |
+| 2.19 | Healer term in auto-resolve | Healers shift outcome in preview |
+| 2.20 | Auto-resolve execution | `resolveAt` battles; casualties applied |
+| 2.21 | Auto-resolve observability | `resolveInputs`, `predictedOutcome` in hooks + UI stub |
+| 2.22 | Fleet-based capture force | Ships + flagship count; scouts/transports excluded |
+| 2.23 | Live enemy combat presence | Garrison counts; `__setEnemyPresence` override documented |
+| 2.24 | Garrison-weighted capture requirement | Intel shows defender estimate |
+| 2.25 | E2E combat → capture | Full flow without test-hook enemies |
+| 2.26 | Combat HUD panel | Battle status, flagship HP, fleet force display |
+| 2.27 | Test hooks completion | `__spawnShip`, `__orderShipTravel`, etc. |
+| 2.28 | Auto-resolve replay stub (stretch) | Post-battle animation or deferred note |
+| 2.29 | `verify_phase2.mjs` | Playwright script covering save-v3 through E2E |
+| 2.30 | Phase 2 exit verification | Full script green; determinism; `progress.md` entry |
+
+**Phase 2 exit criteria:** tactical + auto-resolve combat; 10 ship classes; fleet capture force;
+save-v3; `verify_phase2.mjs` passes; all combat observable via `render_game_to_text()`.
 
 ### Phase 3 — Dyson loop
 Sail foundry (1/system), auto sail shuttles, launchers (≤3/body), 8 shell tiers with Solarii scaling and visuals; dual currency.

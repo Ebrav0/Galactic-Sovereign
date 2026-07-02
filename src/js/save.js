@@ -1,8 +1,9 @@
 // Save/load: envelope + CRC-32 checksum + slots (IMPLEMENTATION_PLAN §5-6).
 // Pure serialize/deserialize plus I/O calls; holds no live state references.
 
-import { SAVE_VERSION } from './constants.js';
+import { SAVE_VERSION, FLAGSHIP_MAX_HP } from './constants.js';
 import { createNewGame, seedNeutralStructuresForGalaxy } from './state.js';
+import { seedGarrisonsForGalaxy } from './garrison.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -46,6 +47,7 @@ function migrateSave(envelope) {
   let e = envelope;
   if (e.saveVersion === 0) e = migrateV0toV1(e);
   if (e.saveVersion === 1) e = migrateV1toV2(e);
+  if (e.saveVersion === 2) e = migrateV2toV3(e);
   return e;
 }
 
@@ -106,6 +108,28 @@ function migrateV1toV2(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 2,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+function migrateV2toV3(envelope) {
+  const state = envelope.state;
+
+  state.ships = state.ships ?? [];
+  state.garrisons = state.garrisons ?? {};
+  state.combat = state.combat ?? {};
+
+  const f = state.flagship;
+  if (f.hp === undefined) f.hp = FLAGSHIP_MAX_HP;
+  if (f.maxHp === undefined) f.maxHp = FLAGSHIP_MAX_HP;
+
+  seedGarrisonsForGalaxy(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 3,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,

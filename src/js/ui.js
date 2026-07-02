@@ -5,6 +5,7 @@ import {
   SHIPYARD_COST,
   SCOUT_HULL_COST,
   CAPTURE_HOLD_MS,
+  HULL_STATS,
 } from './constants.js';
 import {
   systemById,
@@ -15,16 +16,19 @@ import {
   isPlayerOwned,
 } from './state.js';
 import { canBuildOutpost, incomePerSecond } from './economy.js';
-import { canBuildShipyard, canQueueScout } from './production.js';
+import { canBuildShipyard, canQueueScout, canQueueHull } from './production.js';
 import { transitStatus } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
+import { findShip } from './ships.js';
+import { shipEtaMs } from './fleet.js';
 import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
 
 const el = (id) => document.getElementById(id);
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Shift+click: send scout · double-click: view system · M: system view',
+  galaxy: 'Click star: travel · Shift+click: scout · Alt+click: ship · double-click: view · M: system view',
+  fleet: 'Select a ship · Alt+click star on galaxy map to dispatch',
 };
 
 const PLANET_DOT = {
@@ -48,7 +52,7 @@ function setProgressBar(containerId, fillId, pctId, progress, visible) {
   pct.textContent = `${pctVal}%`;
 }
 
-function renderIntelBody(container, sys, captureReq) {
+function renderIntelBody(container, sys, captureReq, garrisonText) {
   clearChildren(container);
 
   const header = document.createElement('div');
@@ -123,6 +127,18 @@ function renderIntelBody(container, sys, captureReq) {
   reqVal.className = 'capture-block__force';
   reqVal.innerHTML = `<strong>${captureReq}</strong> force required`;
   container.appendChild(reqVal);
+
+  if (garrisonText) {
+    const garTitle = document.createElement('div');
+    garTitle.className = 'intel-section-title';
+    garTitle.style.marginTop = '8px';
+    garTitle.textContent = 'Defenders';
+    container.appendChild(garTitle);
+    const garVal = document.createElement('div');
+    garVal.className = 'panel-note panel-note--muted';
+    garVal.textContent = garrisonText;
+    container.appendChild(garVal);
+  }
 }
 
 function renderCaptureBody(container, state, systemId, req, ctx) {
@@ -232,9 +248,54 @@ function renderBuildBody(container, planet, state, systemId) {
   }
 }
 
-function updateTabBar(view) {
+function updateTabBar(view, activeTab) {
   el('tab-galaxy').classList.toggle('tab--active', view === 'galaxy');
   el('tab-system').classList.toggle('tab--active', view === 'system');
+  el('tab-fleet').classList.toggle('tab--active', activeTab === 'fleet');
+}
+
+function renderCombatBody(container, combat, flagship) {
+  clearChildren(container);
+  if (!combat.active && combat.phase !== 'resolved') {
+    const msg = document.createElement('p');
+    msg.className = 'panel-note panel-note--muted';
+    msg.textContent = 'No active battle in this system.';
+    container.appendChild(msg);
+    return;
+  }
+
+  const banner = document.createElement('div');
+  banner.className = 'combat-banner';
+  banner.textContent = combat.mode === 'tactical' ? 'Tactical Combat' : 'Auto-resolving';
+  container.appendChild(banner);
+
+  const rows = [
+    ['Mode', combat.mode ?? '—'],
+    ['Friendly', String(combat.friendlyCount ?? 0)],
+    ['Enemy', String(combat.enemyCount ?? 0)],
+    ['Flagship HP', flagship?.hp != null ? `${flagship.hp}/${flagship.maxHp}` : '—'],
+  ];
+  if (combat.mode === 'auto' && combat.predictedOutcome) {
+    rows.push(['Predicted', combat.predictedOutcome]);
+  }
+  if (combat.healerActive) {
+    rows.push(['Healer repair/tick', String(combat.repairPerTick ?? 0)]);
+  }
+
+  for (const [label, value] of rows) {
+    const row = document.createElement('div');
+    row.className = 'status-row';
+    row.innerHTML = `<span class="status-row__label">${label}</span><span class="status-indicator status-indicator--built">${value}</span>`;
+    container.appendChild(row);
+  }
+
+  if (combat.resolveInputs?.factors?.length) {
+    const tip = document.createElement('div');
+    tip.className = 'panel-note panel-note--muted';
+    tip.style.marginTop = '8px';
+    tip.textContent = `Factors: ${combat.resolveInputs.factors.join(', ')}`;
+    container.appendChild(tip);
+  }
 }
 
 export function toast(message, kind = '') {
@@ -253,10 +314,18 @@ export function initUi(ctx) {
     getView,
     getViewedSystemId,
     getSelectedScoutId,
+    getSelectedShipId,
+    getActiveTab,
+    setActiveTab,
     doSelectScout,
+    doSelectShip,
     doBuildOutpost,
     doBuildShipyard,
     doQueueScout,
+    doQueueHull,
+    canQueueHull,
+    hullLabel,
+    BUILDABLE_HULLS,
     doTogglePause,
     doToggleView,
     doSaveSlot,
@@ -269,6 +338,9 @@ export function initUi(ctx) {
     captureProgressMs,
     canHoldCapture,
     enemyCombatPresence,
+    garrisonIntelText,
+    combatObservability,
+    fleetSummary,
   } = ctx;
 
   el('pause-btn').addEventListener('click', doTogglePause);
@@ -277,7 +349,11 @@ export function initUi(ctx) {
     if (getView() !== 'galaxy') doToggleView();
   });
   el('tab-system').addEventListener('click', () => {
+    setActiveTab('system');
     if (getView() !== 'system') doToggleView();
+  });
+  el('tab-fleet').addEventListener('click', () => {
+    setActiveTab('fleet');
   });
 
   el('build-outpost-btn').addEventListener('click', () => {
@@ -396,9 +472,11 @@ export function initUi(ctx) {
     const state = getState();
     const selection = getSelection();
     const view = getView();
+    const activeTab = getActiveTab();
     const viewedSystemId = getViewedSystemId();
     const viewedSystem = systemById(state, viewedSystemId);
     const selectedScoutId = getSelectedScoutId();
+    const selectedShipId = getSelectedShipId();
 
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
     el('income-value').textContent = incomePerSecond(state).toFixed(1);
@@ -406,8 +484,11 @@ export function initUi(ctx) {
     el('pause-overlay').classList.toggle('hidden', !state.paused);
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
-    el('view-hint').textContent = HINTS[view];
-    updateTabBar(view);
+    el('view-hint').textContent = HINTS[activeTab === 'fleet' ? 'fleet' : view] ?? HINTS.system;
+    updateTabBar(view, activeTab);
+
+    const fleet = fleetSummary(state);
+    el('fleet-summary').textContent = String(fleet.totalShips);
 
     el('system-name').textContent = view === 'galaxy' ? 'Galaxy Map' : (viewedSystem?.name ?? '—');
     el('stronghold-badge').classList.toggle(
@@ -431,8 +512,55 @@ export function initUi(ctx) {
         ? '—'
         : `${readyScouts}${transitScouts ? `+${transitScouts}` : ''}`;
 
+    const fleetPanel = el('fleet-panel');
+    const combatPanel = el('combat-panel');
+    fleetPanel.classList.toggle('hidden', activeTab !== 'fleet');
+    combatPanel.classList.toggle('hidden', view !== 'system' || activeTab === 'fleet');
+
+    if (activeTab === 'fleet') {
+      const roster = el('fleet-roster');
+      roster.innerHTML = '';
+      const allUnits = [
+        ...(state.ships ?? []).filter((s) => s.hp > 0).map((s) => ({ kind: 'ship', unit: s })),
+        ...state.scouts.map((s) => ({ kind: 'scout', unit: s })),
+      ];
+      for (const { kind, unit } of allUnits) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const selected = kind === 'ship' ? unit.id === selectedShipId : unit.id === selectedScoutId;
+        btn.className = `list-row${selected ? ' list-row--selected' : ''}`;
+        const title = document.createElement('div');
+        title.className = 'list-row__title';
+        title.textContent = kind === 'ship' ? `${unit.id} (${unit.hull})` : unit.id;
+        const sub = document.createElement('div');
+        sub.className = 'list-row__sub';
+        if (unit.transit) {
+          const eta = kind === 'ship' ? shipEtaMs(state, unit) : scoutEtaMs(state, unit);
+          sub.textContent = `in transit · ${Math.ceil(eta / 1000)}s`;
+        } else {
+          sub.textContent = `@ ${systemById(state, unit.systemId)?.name ?? unit.systemId}${kind === 'ship' ? ` · ${unit.hp}/${unit.maxHp} HP` : ''}`;
+        }
+        btn.appendChild(title);
+        btn.appendChild(sub);
+        btn.addEventListener('click', () => {
+          if (kind === 'ship') doSelectShip(unit.id);
+          else doSelectScout(unit.id);
+        });
+        roster.appendChild(btn);
+      }
+      const shipLine = el('selected-ship-line');
+      const selShip = selectedShipId ? findShip(state, selectedShipId) : null;
+      shipLine.textContent = selShip
+        ? `Selected: ${selShip.id} — Alt+click star to dispatch`
+        : 'Select a combat ship for Alt+click dispatch';
+    }
+
+    if (view === 'system' && activeTab !== 'fleet') {
+      renderCombatBody(el('combat-panel-body'), combatObservability(state, viewedSystemId), state.flagship);
+    }
+
     const scoutPanel = el('scout-panel');
-    if (state.scouts.length > 0) {
+    if (state.scouts.length > 0 && activeTab !== 'fleet') {
       scoutPanel.classList.remove('hidden');
       const roster = el('scout-roster');
       roster.innerHTML = '';
@@ -498,7 +626,7 @@ export function initUi(ctx) {
       intelPanel.classList.remove('hidden');
       const sys = viewedSystem;
       const req = captureRequirement(state, viewedSystemId);
-      renderIntelBody(intelBody, sys, req);
+      renderIntelBody(intelBody, sys, req, garrisonIntelText(state, viewedSystemId));
       renderCaptureBody(captureBody, state, viewedSystemId, req, captureCtx);
     } else if (view === 'system' && viewedSystem) {
       intelPanel.classList.remove('hidden');
@@ -552,8 +680,30 @@ export function initUi(ctx) {
     scoutBtn.disabled = !scoutCheck.ok;
     scoutBtn.textContent = `Build Scout (${SCOUT_HULL_COST} cr)`;
 
+    const hullGrid = el('hull-queue-buttons');
+    hullGrid.innerHTML = '';
+    if (shipyard && !shipyard.build) {
+      hullGrid.classList.remove('hidden');
+      for (const hull of BUILDABLE_HULLS) {
+        if (hull === 'scout') continue;
+        const stats = HULL_STATS[hull];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn--ghost btn--sm hull-queue-btn';
+        btn.disabled = !canQueueHull(state, shipyard.id, viewedSystemId, hull).ok;
+        btn.textContent = `${hullLabel(hull)} (${stats.cost}cr)`;
+        btn.title = `${hull} · ${stats.buildMs / 1000}s`;
+        btn.addEventListener('click', () => doQueueHull(shipyard.id, hull));
+        hullGrid.appendChild(btn);
+      }
+    } else {
+      hullGrid.classList.add('hidden');
+    }
+
     if (shipyard?.build) {
       const prog = shipyardBuildProgress(shipyard, state.time);
+      el('build-progress').querySelector('.progress-block__label').textContent =
+        `Building ${shipyard.build.hull.replace(/_/g, ' ')}`;
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', prog, true);
     } else {
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', 0, false);
