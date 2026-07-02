@@ -853,8 +853,32 @@ button {
 }
 
 .hull-queue-btn {
-  font-size: 0.72rem;
-  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: var(--text-xs);
+  padding: var(--space-2) var(--space-2);
+  border-width: 1px;
+  border-style: solid;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.hull-queue-btn:hover:not(:disabled) {
+  background: rgba(16, 24, 48, 0.85);
+  box-shadow: 0 0 12px rgba(120, 160, 255, 0.12);
+}
+
+.hull-queue-btn__name {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.hull-queue-btn__meta {
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
 }
 
 .combat-banner {
@@ -865,4 +889,370 @@ button {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   font-size: 0.85rem;
+}
+
+/* ===================== PHASE 2 — COMBAT & FLEET UI ===================== */
+
+.chip--hp {
+  border-color: rgba(255, 210, 122, 0.35);
+  background: rgba(255, 210, 122, 0.06);
+}
+
+.chip--hp .chip__value {
+  color: var(--accent-gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.combat-idle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.combat-idle__icon {
+  color: var(--accent-cyan);
+  font-size: var(--text-lg);
+  opacity: 0.7;
+}
+
+.combat-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border-subtle);
+}
+
+.combat-mode--tactical {
+  background: linear-gradient(135deg, rgba(122, 208, 255, 0.12), rgba(8, 12, 24, 0.6));
+  border-color: rgba(122, 208, 255, 0.35);
+  box-shadow: 0 0 16px rgba(122, 208, 255, 0.08);
+}
+
+.combat-mode--auto {
+  background: linear-gradient(135deg, rgba(255, 210, 122, 0.1), rgba(8, 12, 24, 0.6));
+  border-color: rgba(255, 210, 122, 0.35);
+  box-shadow: 0 0 16px rgba(255, 210, 122, 0.08);
+}
+
+.combat-mode__label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.combat-mode--tactical .combat-mode__label { color: var(--accent-cyan); }
+.combat-mode--auto .combat-mode__label { color: var(--accent-gold); }
+
+.combat-mode__phase {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(16, 24, 48, 0.6);
+}
+
+.combat-counts {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2);
+  background: rgba(8, 12, 24, 0.5);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.combat-count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 64px;
+}
+
+.combat-count__num {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.combat-count__lbl {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.combat-count--friendly .combat-count__num { color: var(--accent-cyan); }
+.combat-count--enemy .combat-count__num { color: var(--danger); }
+
+.combat-count__vs {
+  font-family: var(--font-display);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+
+.combat-flagship-hp {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(255, 210, 122, 0.06);
+  border: 1px solid rgba(255, 210, 122, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.combat-flagship-hp__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-gold);
+}
+
+.combat-flagship-hp__val {
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.combat-flagship-hp .mini-hp {
+  grid-column: 1 / -1;
+}
+
+.combat-auto-progress {
+  margin-bottom: var(--space-3);
+}
+
+.combat-auto-progress__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-gold);
+  margin-bottom: var(--space-1);
+}
+
+.combat-auto-progress__pred {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+  font-style: italic;
+}
+
+.combat-healer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--accent-green);
+  background: rgba(122, 255, 158, 0.1);
+  border: 1px solid rgba(122, 255, 158, 0.35);
+  border-radius: 999px;
+}
+
+.combat-healer-pill::before {
+  content: '+';
+  font-weight: 800;
+}
+
+.combat-factors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: var(--space-2);
+}
+
+.combat-factor-chip {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(120, 160, 255, 0.1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.combat-result {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--text-lg);
+  text-align: center;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-2);
+}
+
+.combat-result--win {
+  color: var(--accent-green);
+  background: rgba(122, 255, 158, 0.1);
+  border: 1px solid rgba(122, 255, 158, 0.4);
+  box-shadow: 0 0 20px rgba(122, 255, 158, 0.15);
+}
+
+.combat-result--loss {
+  color: var(--danger);
+  background: rgba(255, 122, 122, 0.1);
+  border: 1px solid rgba(255, 122, 122, 0.4);
+  box-shadow: 0 0 20px rgba(255, 122, 122, 0.12);
+}
+
+.capture-block__title {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.progress--capture .progress__fill {
+  background: linear-gradient(90deg, rgba(122, 255, 158, 0.5), var(--accent-green));
+  box-shadow: 0 0 8px rgba(122, 255, 158, 0.35);
+}
+
+.progress--hold {
+  margin-top: var(--space-1);
+}
+
+.progress__fill--gold {
+  background: linear-gradient(90deg, rgba(255, 210, 122, 0.5), var(--accent-gold));
+  box-shadow: 0 0 8px rgba(255, 210, 122, 0.35);
+}
+
+.progress__fill--green {
+  background: linear-gradient(90deg, rgba(122, 255, 158, 0.5), var(--accent-green));
+  box-shadow: 0 0 8px rgba(122, 255, 158, 0.35);
+}
+
+.capture-hold-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--accent-green);
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-1);
+  letter-spacing: 0.04em;
+}
+
+.capture-status {
+  margin-top: var(--space-2);
+}
+
+.capture-status--muted {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.garrison-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.garrison-row__summary {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  width: 100%;
+  margin-bottom: 2px;
+}
+
+.hull-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: rgba(16, 24, 48, 0.6);
+  text-transform: uppercase;
+}
+
+.hull-badge--escort { border-color: rgba(122, 208, 255, 0.4); color: #7ad0ff; }
+.hull-badge--line { border-color: rgba(91, 140, 255, 0.4); color: #5b8cff; }
+.hull-badge--capital { border-color: rgba(139, 122, 255, 0.4); color: #8b7aff; }
+.hull-badge--carrier { border-color: rgba(176, 122, 219, 0.4); color: #b07adb; }
+.hull-badge--support { border-color: rgba(122, 255, 158, 0.4); color: #7aff9e; }
+.hull-badge--transport { border-color: rgba(200, 180, 138, 0.4); color: #c8b48a; }
+.hull-badge--wing { border-color: rgba(168, 230, 255, 0.4); color: #a8e6ff; }
+.hull-badge--flagship { border-color: rgba(255, 210, 122, 0.5); color: #ffd27a; }
+.hull-badge--special { border-color: rgba(159, 199, 255, 0.4); color: #9fc7ff; }
+
+.mini-hp {
+  height: 4px;
+  min-width: 48px;
+  background: rgba(8, 12, 24, 0.8);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mini-hp__fill {
+  height: 100%;
+  border-radius: 1px;
+  transition: width 0.15s ease-out;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.fleet-row {
+  cursor: pointer;
+}
+
+.fleet-row__badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
+  flex-shrink: 0;
+  font-size: 8px;
+  font-weight: 800;
+  border-radius: var(--radius-sm);
+}
+
+.fleet-row__hp {
+  width: 52px;
+  flex-shrink: 0;
+}
+
+#combat-panel:not(.hidden) .panel__header {
+  border-bottom-color: rgba(255, 122, 122, 0.25);
+}
+
+#combat-panel .panel__title::before {
+  content: '⚔ ';
+  opacity: 0.7;
+}
+
+#fleet-panel .panel__title::before {
+  content: '⛭ ';
+  opacity: 0.7;
 }

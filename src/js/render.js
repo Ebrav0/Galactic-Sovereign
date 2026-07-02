@@ -11,6 +11,10 @@ import {
   SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
   COMBAT_UNIT_RADIUS,
+  COMBAT_WEAPON_RANGE,
+  AUTO_RESOLVE_MS,
+  REPLAY_DURATION_MS,
+  CAPTURE_HOLD_MS,
 } from './constants.js';
 import {
   createRng,
@@ -25,10 +29,12 @@ import { shuttlePositions } from './shuttles.js';
 import { getFlagshipInput, transitStatus } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
-import { captureProgressMs, canHoldCapture } from './capture.js';
+import { captureProgressMs, canHoldCapture, enemyCombatPresence } from './capture.js';
 import { shipyardBuildProgress } from './production.js';
 import { activeBattle } from './combat.js';
 import { shipTransitPositions, shipsStationedAtSystem } from './fleet.js';
+import { garrisonUnitCount } from './garrison.js';
+import { hullVisual } from './combatVisuals.js';
 import {
   THEME,
   hexToRgba,
@@ -291,19 +297,183 @@ export function drawSystem(ctx, state, systemId, selection) {
     const inp = getFlagshipInput();
     const thrusting = !state.paused && (inp.x !== 0 || inp.y !== 0);
     drawFlagshipSprite(ctx, fs.x, fs.y, f.heading, FLAGSHIP_RADIUS * z, thrusting);
-    if (f.maxHp) drawUnitHpBar(ctx, fs.x, fs.y - FLAGSHIP_RADIUS * z * 2, f.hp, f.maxHp, z);
+    if (f.maxHp) drawUnitHpBar(ctx, fs.x, fs.y - FLAGSHIP_RADIUS * z * 2.2, f.hp, f.maxHp, z, THEME.accentGold);
   }
 
   drawCombatOverlay(ctx, state, systemId, z);
 }
 
-function drawUnitHpBar(ctx, x, y, hp, maxHp, z) {
-  const w = 36 * z;
-  const h = 4 * z;
+function drawUnitHpBar(ctx, x, y, hp, maxHp, z, accent = null) {
+  const w = 42 * z;
+  const h = 5 * z;
+  const pct = Math.max(0, Math.min(1, hp / maxHp));
+  const color = accent ?? (pct > 0.35 ? THEME.accentGreen : THEME.danger);
+
+  ctx.fillStyle = 'rgba(0, 8, 20, 0.75)';
+  ctx.strokeStyle = 'rgba(120, 160, 255, 0.35)';
+  ctx.lineWidth = Math.max(0.5, 1 * z);
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, y, w, h, 2 * z);
+  ctx.fill();
+  ctx.stroke();
+
+  if (pct > 0) {
+    const grad = ctx.createLinearGradient(x - w / 2, y, x + w / 2, y);
+    grad.addColorStop(0, hexToRgba(color, 0.9));
+    grad.addColorStop(1, hexToRgba(color, 0.55));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, y, w * pct, h, 2 * z);
+    ctx.fill();
+  }
+}
+
+function drawBattleBanner(ctx, canvas, text, color, subtext = null) {
+  const padX = 18;
+  const padY = 8;
+  ctx.font = `700 13px ${THEME.fontDisplay}`;
+  const tw = ctx.measureText(text).width;
+  const sw = subtext ? ctx.measureText(subtext).width : 0;
+  const w = Math.max(tw, sw) + padX * 2;
+  const h = subtext ? 38 : 28;
+  const x = canvas.width / 2 - w / 2;
+  const y = 12;
+
+  ctx.fillStyle = 'rgba(5, 10, 24, 0.82)';
+  ctx.strokeStyle = hexToRgba(color, 0.65);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(5, 7, 15, 0.8)';
+  ctx.fillText(text, canvas.width / 2 + 1, y + (subtext ? 18 : 20));
+  ctx.fillStyle = color;
+  ctx.fillText(text, canvas.width / 2, y + (subtext ? 17 : 19));
+
+  if (subtext) {
+    ctx.font = `500 10px ${THEME.fontUi}`;
+    ctx.fillStyle = THEME.textMuted;
+    ctx.fillText(subtext, canvas.width / 2, y + 32);
+  }
+}
+
+function drawCombatBeam(ctx, x1, y1, x2, y2, color, time, thick = 2) {
+  const pulse = 0.4 + 0.6 * Math.abs(Math.sin(time / 80));
+  ctx.strokeStyle = hexToRgba(color, 0.15 + pulse * 0.35);
+  ctx.lineWidth = thick * 2.5;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  ctx.strokeStyle = hexToRgba(color, 0.55 + pulse * 0.35);
+  ctx.lineWidth = thick;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+
+function drawHealerStream(ctx, x1, y1, x2, y2, time) {
+  drawCombatBeam(ctx, x1, y1, x2, y2, THEME.combat.heal, time, 1.5);
+  const steps = 4;
+  for (let i = 0; i < steps; i++) {
+    const t = ((time / 400) + i / steps) % 1;
+    const px = x1 + (x2 - x1) * t;
+    const py = y1 + (y2 - y1) * t;
+    ctx.fillStyle = hexToRgba(THEME.combat.heal, 0.5 + 0.5 * Math.sin(time / 100 + i));
+    ctx.beginPath();
+    ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawCombatUnitSprite(ctx, x, y, unit, z, time) {
+  const vis = hullVisual(unit.hull);
+  const r = COMBAT_UNIT_RADIUS * z * (unit.hull === 'cruiser' ? 1.35 : unit.hull.includes('wing') ? 0.65 : 1);
+  const color = unit.side === 'player' ? vis.color : THEME.combat.enemy;
+  const angle = unit.targetId ? Math.atan2(0, 1) : 0;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  if (unit.hull === 'healer') {
+    ctx.strokeStyle = hexToRgba(color, 0.9);
+    ctx.lineWidth = Math.max(1, 2 * z);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.5, 0);
+    ctx.lineTo(r * 0.5, 0);
+    ctx.moveTo(0, -r * 0.5);
+    ctx.lineTo(0, r * 0.5);
+    ctx.stroke();
+  } else if (unit.hull.includes('wing')) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (unit.hull === 'cruiser' || unit.hull === 'destroyer') {
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(r * 1.4, 0);
+    ctx.lineTo(-r, r);
+    ctx.lineTo(-r * 0.5, 0);
+    ctx.lineTo(-r, -r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba('#fff', 0.25);
+    ctx.lineWidth = Math.max(0.5, r * 0.12);
+    ctx.stroke();
+  } else {
+    ctx.rotate(angle);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(r * 1.3, 0);
+    ctx.lineTo(-r * 0.85, r * 0.75);
+    ctx.lineTo(-r * 0.45, 0);
+    ctx.lineTo(-r * 0.85, -r * 0.75);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(color, 0.5);
+    ctx.lineWidth = Math.max(0.5, r * 0.1);
+    ctx.stroke();
+  }
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur = r * 0.6;
+  ctx.restore();
+}
+
+function drawAutoResolveEffect(ctx, state, battle, z) {
+  const canvas = ctx.canvas;
+  const center = worldToScreen(camera, 0, 0, canvas);
+  const elapsed = state.time - battle.startedAt;
+  const progress = Math.min(1, elapsed / AUTO_RESOLVE_MS);
+  const pulse = 0.5 + 0.5 * Math.sin(state.time / 120);
+
+  for (let i = 0; i < 3; i++) {
+    const rr = (80 + i * 55 + progress * 40) * z * (1 + pulse * 0.08);
+    ctx.strokeStyle = hexToRgba(THEME.accentGold, (0.35 - i * 0.08) * (1 - progress * 0.3));
+    ctx.lineWidth = Math.max(1, (2.5 - i * 0.5) * z);
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, rr, 0, Math.PI * 2 * progress);
+    ctx.stroke();
+  }
+
+  const barW = 120 * z;
+  const barH = 6 * z;
+  const bx = center.x - barW / 2;
+  const by = center.y + 90 * z;
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(x - w / 2, y, w, h);
-  ctx.fillStyle = hp / maxHp > 0.35 ? THEME.accentGreen : '#ff6b6b';
-  ctx.fillRect(x - w / 2, y, w * (hp / maxHp), h);
+  ctx.fillRect(bx, by, barW, barH);
+  ctx.fillStyle = THEME.accentGold;
+  ctx.fillRect(bx, by, barW * progress, barH);
 }
 
 function drawCombatOverlay(ctx, state, systemId, z) {
@@ -313,39 +483,79 @@ function drawCombatOverlay(ctx, state, systemId, z) {
   const canvas = ctx.canvas;
 
   if (battle.phase === 'resolved' && battle.replayUntil && state.time < battle.replayUntil) {
-    labelText(ctx, `Battle replay — ${battle.winner ?? '?'} wins`, canvas.width / 2, 28 * z,
-      Math.max(12, 14 * z), THEME.accentGreen);
+    const t = 1 - (battle.replayUntil - state.time) / REPLAY_DURATION_MS;
+    const ripple = (60 + t * 120) * z;
+    const center = worldToScreen(camera, 0, 0, canvas);
+    ctx.strokeStyle = hexToRgba(battle.winner === 'player' ? THEME.accentGreen : THEME.danger, 0.4 * (1 - t));
+    ctx.lineWidth = 2 * z;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, ripple, 0, Math.PI * 2);
+    ctx.stroke();
+    drawBattleBanner(
+      ctx,
+      canvas,
+      battle.winner === 'player' ? 'VICTORY' : 'DEFEAT',
+      battle.winner === 'player' ? THEME.accentGreen : THEME.danger,
+      'Battle replay',
+    );
     return;
   }
 
-  const banner = battle.mode === 'tactical' ? 'TACTICAL COMBAT' : 'AUTO-RESOLVING';
-  labelText(ctx, banner, canvas.width / 2, 28 * z, Math.max(12, 14 * z), THEME.accentGold);
+  if (battle.phase !== 'active') return;
 
-  if (battle.mode !== 'tactical' || !battle.units) return;
+  ctx.fillStyle = battle.mode === 'tactical'
+    ? hexToRgba(THEME.danger, 0.04)
+    : hexToRgba(THEME.accentGold, 0.03);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (battle.mode === 'auto') {
+    drawAutoResolveEffect(ctx, state, battle, z);
+    const eta = Math.max(0, Math.ceil((battle.resolveAt - state.time) / 1000));
+    drawBattleBanner(
+      ctx,
+      canvas,
+      'AUTO-RESOLVING',
+      THEME.accentGold,
+      `Resolving in ${eta}s · predicted: ${battle.predictedOutcome ?? '?'}`,
+    );
+    return;
+  }
+
+  drawBattleBanner(
+    ctx,
+    canvas,
+    'TACTICAL COMBAT',
+    THEME.combat.player,
+    `${battle.units?.filter((u) => u.side === 'player' && u.hp > 0).length ?? 0} vs ${battle.units?.filter((u) => u.side === 'enemy' && u.hp > 0).length ?? 0}`,
+  );
+
+  if (!battle.units) return;
 
   for (const unit of battle.units) {
-    if (unit.hp <= 0) continue;
+    if (unit.hp <= 0 || unit.refId === 'flagship') continue;
+    const target = battle.units.find((u) => u.id === unit.targetId && u.hp > 0);
+    if (!target) continue;
+    const sp = worldToScreen(camera, unit.x, unit.y, canvas);
+    const tp = worldToScreen(camera, target.x, target.y, canvas);
+    const dx = target.x - unit.x;
+    const dy = target.y - unit.y;
+    const inRange = dx * dx + dy * dy <= COMBAT_WEAPON_RANGE * COMBAT_WEAPON_RANGE;
+
+    if (unit.hull === 'healer' && battle.healerActive && inRange) {
+      drawHealerStream(ctx, sp.x, sp.y, tp.x, tp.y, state.time);
+    } else if (inRange && unit.hull !== 'healer') {
+      const beamColor = unit.side === 'player' ? THEME.combat.beamPlayer : THEME.combat.beamEnemy;
+      drawCombatBeam(ctx, sp.x, sp.y, tp.x, tp.y, beamColor, state.time);
+    }
+  }
+
+  for (const unit of battle.units) {
+    if (unit.hp <= 0 || unit.refId === 'flagship') continue;
     const sp = worldToScreen(camera, unit.x, unit.y, canvas);
     const r = COMBAT_UNIT_RADIUS * z;
-    const color = unit.side === 'player' ? THEME.accentCyan : '#ff7a7a';
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    drawUnitHpBar(ctx, sp.x, sp.y - r * 1.8, unit.hp, unit.maxHp, z);
-
-    if (unit.hull === 'healer' && battle.healerActive) {
-      const target = battle.units.find((u) => u.side === unit.side && u.id === unit.targetId);
-      if (target) {
-        const tp = worldToScreen(camera, target.x, target.y, canvas);
-        ctx.strokeStyle = hexToRgba(THEME.accentGreen, 0.6);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(sp.x, sp.y);
-        ctx.lineTo(tp.x, tp.y);
-        ctx.stroke();
-      }
-    }
+    drawCombatUnitSprite(ctx, sp.x, sp.y, unit, z, state.time);
+    const vis = hullVisual(unit.hull);
+    drawUnitHpBar(ctx, sp.x, sp.y - r * 2.2, unit.hp, unit.maxHp, z, vis.color);
   }
 }
 
@@ -393,21 +603,48 @@ function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
   ctx.restore();
 }
 
-function drawShipSprite(ctx, x, y, angle, r, selected) {
+function drawShipSprite(ctx, x, y, angle, r, selected, hull = 'corvette', inTransit = false) {
+  const vis = hullVisual(hull);
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
+
+  if (inTransit) {
+    const trail = ctx.createLinearGradient(-r * 2, 0, r, 0);
+    trail.addColorStop(0, hexToRgba(vis.color, 0));
+    trail.addColorStop(1, hexToRgba(vis.color, 0.45));
+    ctx.fillStyle = trail;
+    ctx.beginPath();
+    ctx.moveTo(-r * 2.2, r * 0.35);
+    ctx.lineTo(-r * 0.3, 0);
+    ctx.lineTo(-r * 2.2, -r * 0.35);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   ctx.beginPath();
   ctx.moveTo(r * 1.5, 0);
   ctx.lineTo(-r * 0.9, r * 0.85);
   ctx.lineTo(-r * 0.4, 0);
   ctx.lineTo(-r * 0.9, -r * 0.85);
   ctx.closePath();
-  ctx.fillStyle = selected ? '#9fd4ff' : '#6a9fd4';
+  ctx.fillStyle = selected ? hexToRgba(vis.color, 1) : hexToRgba(vis.color, 0.85);
   ctx.fill();
-  ctx.strokeStyle = selected ? THEME.accentGreen : THEME.accentCyan;
-  ctx.lineWidth = Math.max(1, r * 0.12);
+  ctx.strokeStyle = selected ? THEME.accentGreen : hexToRgba(vis.color, 0.9);
+  ctx.lineWidth = Math.max(1, r * 0.14);
+  ctx.shadowColor = vis.color;
+  ctx.shadowBlur = selected ? 8 : 4;
   ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  if (selected) {
+    ctx.strokeStyle = hexToRgba(THEME.accentGreen, 0.5);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.8, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -471,6 +708,17 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedShipId = 
     }
   }
 
+  const shipRoutes = new Set();
+  for (const ship of state.ships ?? []) {
+    if (!ship.transit || ship.hp <= 0) continue;
+    const t = ship.transit;
+    for (let i = t.legIndex; i < t.path.length - 1; i++) {
+      const a = t.path[i];
+      const b = t.path[i + 1];
+      shipRoutes.add(a < b ? `${a}|${b}` : `${b}|${a}`);
+    }
+  }
+
   for (let i = 0; i < galaxy.lanes.length; i++) {
     const [aId, bId] = galaxy.lanes[i];
     const a = nodePos(galaxy, aId);
@@ -481,8 +729,13 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedShipId = 
     const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
     const onFlagshipRoute = routeLanes?.has(key);
     const onScoutRoute = scoutRoutes.has(key);
+    const onShipRoute = shipRoutes.has(key);
 
-    if (onScoutRoute) {
+    if (onShipRoute) {
+      ctx.setLineDash([8 * z, 5 * z]);
+      ctx.strokeStyle = THEME.laneShip;
+      ctx.lineWidth = Math.max(1, 2 * z);
+    } else if (onScoutRoute) {
       ctx.setLineDash([6 * z, 4 * z]);
       ctx.strokeStyle = THEME.laneScout;
       ctx.lineWidth = Math.max(1, 1.8 * z);
@@ -565,6 +818,25 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedShipId = 
       drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.65);
     }
 
+    const garrison = intel ? garrisonUnitCount(state, star.id) : 0;
+    if (garrison > 0 && !owned) {
+      drawGlowRing(ctx, s.x, s.y, nodeR + 12 * z, THEME.garrison, Math.max(1, 1.8 * z), 0.55);
+      labelText(
+        ctx,
+        `⚔ ${garrison}`,
+        s.x + nodeR + 16 * z,
+        s.y + nodeR + 4 * z,
+        Math.max(8, 9 * z),
+        THEME.garrison,
+        'left',
+      );
+    }
+
+    if (enemyCombatPresence(state, star.id) > 0 && intel) {
+      const flicker = 0.6 + 0.4 * Math.sin(state.time / 200);
+      drawGlowRing(ctx, s.x, s.y, nodeR + 16 * z, THEME.danger, Math.max(1, 2 * z), 0.35 * flicker);
+    }
+
     const progress = captureProgressMs(state, star.id);
     if (progress > 0 && canHoldCapture(state, star.id)) {
       const frac = progress / CAPTURE_HOLD_MS;
@@ -624,6 +896,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedShipId = 
         -Math.PI / 4,
         Math.max(2.5, 4.5 * z),
         ship.id === selectedShipId,
+        ship.hull,
+        false,
       );
     });
   }
@@ -667,6 +941,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedShipId = 
       entry.angle,
       Math.max(2.5, 4.5 * z),
       entry.ship.id === selectedShipId,
+      entry.ship.hull,
+      true,
     );
   }
 }

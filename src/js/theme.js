@@ -42,8 +42,23 @@ export const THEME = {
   laneScout: 'rgba(122, 255, 158, 0.45)',
 
   scout: { normal: '#9fc7ff', selected: '#b8ffb8' },
+  ship: { normal: '#6a9fd4', selected: '#7ad0ff', transit: '#b07adb' },
+
+  laneShip: 'rgba(176, 122, 219, 0.5)',
+  combat: {
+    player: '#7ad0ff',
+    enemy: '#ff7a7a',
+    heal: '#7aff9e',
+    beamPlayer: 'rgba(122, 208, 255, 0.85)',
+    beamEnemy: 'rgba(255, 122, 122, 0.75)',
+    vignette: 'rgba(255, 60, 60, 0.08)',
+    autoPulse: 'rgba(255, 210, 122, 0.35)',
+  },
+
+  garrison: '#ff6b6b',
 
   fontUi: '"IBM Plex Sans", sans-serif',
+  fontDisplay: '"Exo 2", sans-serif',
 };
 
 /** @param {string} hex @param {number} alpha */

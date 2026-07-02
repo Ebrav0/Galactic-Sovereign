@@ -21,6 +21,9 @@ import { transitStatus } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
 import { findShip } from './ships.js';
 import { shipEtaMs } from './fleet.js';
+import { hullVisual, hullCssClass, formatHullName } from './combatVisuals.js';
+import { hexToRgba } from './theme.js';
+import { AUTO_RESOLVE_MS } from './constants.js';
 import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
 
 const el = (id) => document.getElementById(id);
@@ -52,7 +55,7 @@ function setProgressBar(containerId, fillId, pctId, progress, visible) {
   pct.textContent = `${pctVal}%`;
 }
 
-function renderIntelBody(container, sys, captureReq, garrisonText) {
+function renderIntelBody(container, sys, captureReq, garrisonText, garrisonComp = []) {
   clearChildren(container);
 
   const header = document.createElement('div');
@@ -134,10 +137,125 @@ function renderIntelBody(container, sys, captureReq, garrisonText) {
     garTitle.style.marginTop = '8px';
     garTitle.textContent = 'Defenders';
     container.appendChild(garTitle);
-    const garVal = document.createElement('div');
-    garVal.className = 'panel-note panel-note--muted';
+
+    const garRow = document.createElement('div');
+    garRow.className = 'garrison-row';
+    const garVal = document.createElement('span');
+    garVal.className = 'garrison-row__summary';
     garVal.textContent = garrisonText;
-    container.appendChild(garVal);
+    garRow.appendChild(garVal);
+    for (const entry of garrisonComp) {
+      const chip = document.createElement('span');
+      const vis = hullVisual(entry.hull);
+      chip.className = `hull-badge ${hullCssClass(entry.hull)}`;
+      chip.textContent = `${formatHullName(entry.hull)} ×${entry.count}`;
+      chip.style.borderColor = vis.color;
+      chip.style.color = vis.color;
+      garRow.appendChild(chip);
+    }
+    container.appendChild(garRow);
+  }
+}
+
+function renderMiniHpBar(container, hp, maxHp, accent) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mini-hp';
+  const fill = document.createElement('div');
+  fill.className = 'mini-hp__fill';
+  fill.style.width = `${Math.round((hp / maxHp) * 100)}%`;
+  fill.style.background = accent;
+  wrap.appendChild(fill);
+  container.appendChild(wrap);
+}
+
+function renderCombatBody(container, combat, flagship) {
+  clearChildren(container);
+
+  if (!combat.active && combat.phase !== 'resolved') {
+    const idle = document.createElement('div');
+    idle.className = 'combat-idle';
+    idle.innerHTML = '<span class="combat-idle__icon">◇</span><span>All quiet — no battle in this system</span>';
+    container.appendChild(idle);
+    return;
+  }
+
+  const modeClass = combat.mode === 'tactical' ? 'combat-mode--tactical' : 'combat-mode--auto';
+  const header = document.createElement('div');
+  header.className = `combat-mode ${modeClass}`;
+  header.innerHTML = `
+    <span class="combat-mode__label">${combat.mode === 'tactical' ? 'Tactical' : 'Auto-Resolve'}</span>
+    <span class="combat-mode__phase">${combat.phase === 'resolved' ? 'Resolved' : 'Active'}</span>
+  `;
+  container.appendChild(header);
+
+  const counts = document.createElement('div');
+  counts.className = 'combat-counts';
+  counts.innerHTML = `
+    <div class="combat-count combat-count--friendly">
+      <span class="combat-count__num">${combat.friendlyCount ?? 0}</span>
+      <span class="combat-count__lbl">Friendly</span>
+    </div>
+    <div class="combat-count__vs">vs</div>
+    <div class="combat-count combat-count--enemy">
+      <span class="combat-count__num">${combat.enemyCount ?? 0}</span>
+      <span class="combat-count__lbl">Hostile</span>
+    </div>
+  `;
+  container.appendChild(counts);
+
+  if (flagship?.maxHp) {
+    const fh = document.createElement('div');
+    fh.className = 'combat-flagship-hp';
+    fh.innerHTML = `<span class="combat-flagship-hp__label">Flagship</span><span class="combat-flagship-hp__val">${flagship.hp}/${flagship.maxHp}</span>`;
+    renderMiniHpBar(fh, flagship.hp, flagship.maxHp, 'var(--accent-gold)');
+    container.appendChild(fh);
+  }
+
+  if (combat.mode === 'auto' && combat.resolveEtaMs != null && combat.phase === 'active') {
+    const prog = document.createElement('div');
+    prog.className = 'combat-auto-progress';
+    const pct = 1 - combat.resolveEtaMs / AUTO_RESOLVE_MS;
+    prog.innerHTML = `<div class="combat-auto-progress__label">Resolving… ${Math.ceil(combat.resolveEtaMs / 1000)}s</div>`;
+    const bar = document.createElement('div');
+    bar.className = 'progress';
+    const fill = document.createElement('div');
+    fill.className = 'progress__fill progress__fill--gold';
+    fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
+    bar.appendChild(fill);
+    prog.appendChild(bar);
+    if (combat.predictedOutcome) {
+      const pred = document.createElement('div');
+      pred.className = 'combat-auto-progress__pred';
+      pred.textContent = `Predicted: ${combat.predictedOutcome}`;
+      prog.appendChild(pred);
+    }
+    container.appendChild(prog);
+  }
+
+  if (combat.healerActive) {
+    const heal = document.createElement('div');
+    heal.className = 'combat-healer-pill';
+    heal.textContent = `Healers active · +${combat.repairPerTick ?? 0} HP/tick`;
+    container.appendChild(heal);
+  }
+
+  if (combat.resolveInputs?.factors?.length) {
+    const factors = document.createElement('div');
+    factors.className = 'combat-factors';
+    for (const f of combat.resolveInputs.factors) {
+      const chip = document.createElement('span');
+      chip.className = 'combat-factor-chip';
+      chip.textContent = f;
+      factors.appendChild(chip);
+    }
+    container.appendChild(factors);
+  }
+
+  if (combat.phase === 'resolved') {
+    const win = document.createElement('div');
+    win.className = `combat-result combat-result--${combat.winner === 'player' ? 'win' : 'loss'}`;
+    win.textContent = combat.winner === 'player' ? 'Victory' : 'Defeat';
+    container.appendChild(win);
   }
 }
 
@@ -153,47 +271,54 @@ function renderCaptureBody(container, state, systemId, req, ctx) {
 
   const force = captureForceInSystem(state, systemId);
   const progress = captureProgressMs(state, systemId);
+  const contested = enemyCombatPresence(state, systemId) > 0;
 
   const block = document.createElement('div');
   block.className = 'capture-block';
 
   const header = document.createElement('div');
   header.className = 'capture-block__header';
-  header.innerHTML = `<span class="capture-block__force">Force: <strong>${force}</strong> / ${req}</span>`;
+  header.innerHTML = `
+    <span class="capture-block__title">Capture Force</span>
+    <span class="capture-block__force"><strong>${force}</strong> / ${req}</span>
+  `;
   block.appendChild(header);
 
-  const barWrap = document.createElement('div');
-  barWrap.className = 'progress';
-  const barFill = document.createElement('div');
-  barFill.className = 'progress__fill';
-  const forcePct = Math.min(1, force / Math.max(req, 1));
-  barFill.style.width = `${Math.round(forcePct * 100)}%`;
-  barWrap.appendChild(barFill);
-  block.appendChild(barWrap);
-
-  const status = document.createElement('div');
-  status.className = 'panel-note panel-note--muted';
-  status.style.marginTop = '8px';
+  const forceBar = document.createElement('div');
+  forceBar.className = 'progress progress--capture';
+  const forceFill = document.createElement('div');
+  forceFill.className = 'progress__fill';
+  forceFill.style.width = `${Math.round(Math.min(1, force / Math.max(req, 1)) * 100)}%`;
+  forceBar.appendChild(forceFill);
+  block.appendChild(forceBar);
 
   if (canHoldCapture(state, systemId) && progress > 0) {
-    const holdPct = progress / CAPTURE_HOLD_MS;
+    const holdLabel = document.createElement('div');
+    holdLabel.className = 'capture-hold-label';
+    holdLabel.textContent = `Securing system… ${Math.ceil((CAPTURE_HOLD_MS - progress) / 1000)}s`;
+    block.appendChild(holdLabel);
+
     const holdBar = document.createElement('div');
-    holdBar.className = 'progress';
-    holdBar.style.marginTop = '8px';
+    holdBar.className = 'progress progress--hold';
     const holdFill = document.createElement('div');
-    holdFill.className = 'progress__fill';
-    holdFill.style.width = `${Math.round(holdPct * 100)}%`;
-    holdFill.style.background = `linear-gradient(90deg, rgba(122, 255, 158, 0.5), var(--accent-green))`;
+    holdFill.className = 'progress__fill progress__fill--green';
+    holdFill.style.width = `${Math.round((progress / CAPTURE_HOLD_MS) * 100)}%`;
     holdBar.appendChild(holdFill);
     block.appendChild(holdBar);
-    status.textContent = `Holding… ${Math.ceil((CAPTURE_HOLD_MS - progress) / 1000)}s / ${CAPTURE_HOLD_MS / 1000}s`;
-  } else if (enemyCombatPresence(state, systemId) > 0) {
-    status.innerHTML = '<span class="badge badge--contested">Contested!</span>';
-    status.classList.remove('panel-note--muted');
-  } else if (!isPlayerOwned(state, systemId) && force >= req) {
-    status.textContent = 'Hold starting…';
+  }
+
+  const status = document.createElement('div');
+  status.className = 'capture-status';
+
+  if (contested) {
+    status.innerHTML = '<span class="badge badge--contested">Contested — clear hostiles</span>';
+  } else if (canHoldCapture(state, systemId) && progress > 0) {
+    status.innerHTML = '<span class="badge badge--gold">Hold in progress</span>';
+  } else if (force >= req) {
+    status.innerHTML = '<span class="badge badge--owner">Ready to hold</span>';
   } else {
-    status.textContent = force >= req ? 'Ready to hold' : 'Insufficient capture force';
+    status.textContent = `Need ${req - force} more capture force`;
+    status.className = 'capture-status capture-status--muted';
   }
 
   block.appendChild(status);
@@ -254,50 +379,6 @@ function updateTabBar(view, activeTab) {
   el('tab-fleet').classList.toggle('tab--active', activeTab === 'fleet');
 }
 
-function renderCombatBody(container, combat, flagship) {
-  clearChildren(container);
-  if (!combat.active && combat.phase !== 'resolved') {
-    const msg = document.createElement('p');
-    msg.className = 'panel-note panel-note--muted';
-    msg.textContent = 'No active battle in this system.';
-    container.appendChild(msg);
-    return;
-  }
-
-  const banner = document.createElement('div');
-  banner.className = 'combat-banner';
-  banner.textContent = combat.mode === 'tactical' ? 'Tactical Combat' : 'Auto-resolving';
-  container.appendChild(banner);
-
-  const rows = [
-    ['Mode', combat.mode ?? '—'],
-    ['Friendly', String(combat.friendlyCount ?? 0)],
-    ['Enemy', String(combat.enemyCount ?? 0)],
-    ['Flagship HP', flagship?.hp != null ? `${flagship.hp}/${flagship.maxHp}` : '—'],
-  ];
-  if (combat.mode === 'auto' && combat.predictedOutcome) {
-    rows.push(['Predicted', combat.predictedOutcome]);
-  }
-  if (combat.healerActive) {
-    rows.push(['Healer repair/tick', String(combat.repairPerTick ?? 0)]);
-  }
-
-  for (const [label, value] of rows) {
-    const row = document.createElement('div');
-    row.className = 'status-row';
-    row.innerHTML = `<span class="status-row__label">${label}</span><span class="status-indicator status-indicator--built">${value}</span>`;
-    container.appendChild(row);
-  }
-
-  if (combat.resolveInputs?.factors?.length) {
-    const tip = document.createElement('div');
-    tip.className = 'panel-note panel-note--muted';
-    tip.style.marginTop = '8px';
-    tip.textContent = `Factors: ${combat.resolveInputs.factors.join(', ')}`;
-    container.appendChild(tip);
-  }
-}
-
 export function toast(message, kind = '') {
   const t = document.createElement('div');
   t.className = `toast ${kind}`;
@@ -339,6 +420,7 @@ export function initUi(ctx) {
     canHoldCapture,
     enemyCombatPresence,
     garrisonIntelText,
+    garrisonSummary,
     combatObservability,
     fleetSummary,
   } = ctx;
@@ -488,7 +570,18 @@ export function initUi(ctx) {
     updateTabBar(view, activeTab);
 
     const fleet = fleetSummary(state);
-    el('fleet-summary').textContent = String(fleet.totalShips);
+    el('fleet-summary').textContent =
+      fleet.totalShips === 0 ? '—' : `${fleet.totalShips}${fleet.inTransit ? `+${fleet.inTransit}` : ''}`;
+
+    const fhp = state.flagship;
+    const hpChip = el('flagship-hp-line');
+    const hpVal = el('flagship-hp-value');
+    if (fhp.maxHp && !fhp.transit) {
+      hpVal.textContent = `${Math.round(fhp.hp)}/${fhp.maxHp}`;
+      hpChip.classList.remove('hidden');
+    } else {
+      hpChip.classList.add('hidden');
+    }
 
     el('system-name').textContent = view === 'galaxy' ? 'Galaxy Map' : (viewedSystem?.name ?? '—');
     el('stronghold-badge').classList.toggle(
@@ -524,24 +617,47 @@ export function initUi(ctx) {
         ...(state.ships ?? []).filter((s) => s.hp > 0).map((s) => ({ kind: 'ship', unit: s })),
         ...state.scouts.map((s) => ({ kind: 'scout', unit: s })),
       ];
+      if (allUnits.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'empty-state';
+        empty.textContent = 'No ships — build at a shipyard';
+        roster.appendChild(empty);
+      }
       for (const { kind, unit } of allUnits) {
         const btn = document.createElement('button');
         btn.type = 'button';
         const selected = kind === 'ship' ? unit.id === selectedShipId : unit.id === selectedScoutId;
-        btn.className = `list-row${selected ? ' list-row--selected' : ''}`;
+        btn.className = `list-row fleet-row${selected ? ' list-row--selected' : ''}`;
+
+        const icon = document.createElement('span');
+        icon.className = `fleet-row__badge ${kind === 'ship' ? hullCssClass(unit.hull) : 'hull-badge--special'}`;
+        icon.textContent = kind === 'ship' ? hullVisual(unit.hull).short : 'SC';
+
+        const main = document.createElement('div');
+        main.className = 'list-row__main';
         const title = document.createElement('div');
         title.className = 'list-row__title';
-        title.textContent = kind === 'ship' ? `${unit.id} (${unit.hull})` : unit.id;
+        title.textContent = kind === 'ship' ? formatHullName(unit.hull) : unit.id;
         const sub = document.createElement('div');
         sub.className = 'list-row__sub';
         if (unit.transit) {
           const eta = kind === 'ship' ? shipEtaMs(state, unit) : scoutEtaMs(state, unit);
-          sub.textContent = `in transit · ${Math.ceil(eta / 1000)}s`;
+          sub.textContent = `In transit · ${Math.ceil(eta / 1000)}s remaining`;
         } else {
-          sub.textContent = `@ ${systemById(state, unit.systemId)?.name ?? unit.systemId}${kind === 'ship' ? ` · ${unit.hp}/${unit.maxHp} HP` : ''}`;
+          sub.textContent = `@ ${systemById(state, unit.systemId)?.name ?? unit.systemId}`;
         }
-        btn.appendChild(title);
-        btn.appendChild(sub);
+        main.appendChild(title);
+        main.appendChild(sub);
+        btn.appendChild(icon);
+        btn.appendChild(main);
+
+        if (kind === 'ship') {
+          const hpWrap = document.createElement('div');
+          hpWrap.className = 'fleet-row__hp';
+          renderMiniHpBar(hpWrap, unit.hp, unit.maxHp, hullVisual(unit.hull).color);
+          btn.appendChild(hpWrap);
+        }
+
         btn.addEventListener('click', () => {
           if (kind === 'ship') doSelectShip(unit.id);
           else doSelectScout(unit.id);
@@ -626,7 +742,13 @@ export function initUi(ctx) {
       intelPanel.classList.remove('hidden');
       const sys = viewedSystem;
       const req = captureRequirement(state, viewedSystemId);
-      renderIntelBody(intelBody, sys, req, garrisonIntelText(state, viewedSystemId));
+      renderIntelBody(
+        intelBody,
+        sys,
+        req,
+        garrisonIntelText(state, viewedSystemId),
+        garrisonSummary(state, viewedSystemId).composition,
+      );
       renderCaptureBody(captureBody, state, viewedSystemId, req, captureCtx);
     } else if (view === 'system' && viewedSystem) {
       intelPanel.classList.remove('hidden');
@@ -687,12 +809,14 @@ export function initUi(ctx) {
       for (const hull of BUILDABLE_HULLS) {
         if (hull === 'scout') continue;
         const stats = HULL_STATS[hull];
+        const vis = hullVisual(hull);
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'btn btn--ghost btn--sm hull-queue-btn';
+        btn.className = `btn btn--ghost btn--sm hull-queue-btn ${hullCssClass(hull)}`;
         btn.disabled = !canQueueHull(state, shipyard.id, viewedSystemId, hull).ok;
-        btn.textContent = `${hullLabel(hull)} (${stats.cost}cr)`;
-        btn.title = `${hull} · ${stats.buildMs / 1000}s`;
+        btn.innerHTML = `<span class="hull-queue-btn__name">${formatHullName(hull)}</span><span class="hull-queue-btn__meta">${stats.cost}cr · ${vis.role}</span>`;
+        btn.title = `${hull} · ${stats.buildMs / 1000}s build`;
+        btn.style.borderColor = hexToRgba(vis.color, 0.45);
         btn.addEventListener('click', () => doQueueHull(shipyard.id, hull));
         hullGrid.appendChild(btn);
       }
