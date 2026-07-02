@@ -1,6 +1,6 @@
 // Boot + loop wiring + test hooks. Wiring only — no balance or game logic here.
 
-import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS } from './constants.js';
+import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS, CAMERA_DEFAULT_ZOOM } from './constants.js';
 import {
   createNewGame,
   systemById,
@@ -43,6 +43,7 @@ import {
   follow,
   updateFollowCamera,
   snapCameraTo,
+  camera,
 } from './render.js';
 import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
@@ -65,6 +66,7 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
+camera.zoom = CAMERA_DEFAULT_ZOOM;
 snapCameraTo(state.flagship.x, state.flagship.y);
 
 function ensureSelectedScout() {
