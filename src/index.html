@@ -54,8 +54,7 @@
       </div>
     </header>
 
-    <aside id="left-rail" class="hud-rail hud-rail--left">
-      <div id="scout-panel" class="panel hidden">
+    <div id="scout-panel" class="panel panel--dock-left-top hidden">
         <div class="panel__header">
           <span class="panel__title">Scout Fleet</span>
         </div>
@@ -63,9 +62,9 @@
           <div id="scout-roster" class="list"></div>
         </div>
         <div id="selected-scout-line" class="panel__footer panel-note"></div>
-      </div>
+    </div>
 
-      <div id="intel-panel" class="panel hidden">
+    <div id="intel-panel" class="panel panel--dock-left-bottom hidden">
         <div class="panel__header">
           <span class="panel__title">System Intel</span>
         </div>
@@ -74,11 +73,9 @@
           <div class="divider"></div>
           <div id="capture-panel-body"></div>
         </div>
-      </div>
-    </aside>
+    </div>
 
-    <aside id="right-rail" class="hud-rail hud-rail--right">
-      <div id="build-panel" class="panel hidden">
+    <div id="build-panel" class="panel panel--dock-right-top hidden">
         <div class="panel__header">
           <span class="panel__title" id="build-panel-title">Planet</span>
         </div>
@@ -98,9 +95,9 @@
           <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Build Scout</button>
           <div id="build-panel-note" class="panel-note"></div>
         </div>
-      </div>
+    </div>
 
-      <div id="notification-log" class="panel panel--compact">
+    <div id="notification-log" class="panel panel--dock-right-bottom panel--compact">
         <div class="panel__header panel__header--toggle">
           <span class="panel__title">Notifications</span>
           <button type="button" id="notification-toggle" class="btn btn--ghost btn--xs" aria-label="Toggle notifications">−</button>
@@ -108,8 +105,7 @@
         <div id="notification-log-body" class="panel__body notification-log__body">
           <p class="empty-state">No events yet — toasts appear above.</p>
         </div>
-      </div>
-    </aside>
+    </div>
 
     <footer id="hud-footer" class="hud-footer">
       <div id="view-hint" class="view-hint"></div>
