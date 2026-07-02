@@ -141,6 +141,44 @@ export function laneLength(galaxy, idA, idB) {
   return dist(nodeById(galaxy, idA), nodeById(galaxy, idB));
 }
 
+// --- Lane curve geometry (world space, shared by transit + render) ---
+
+export function laneIndex(galaxy, idA, idB) {
+  const key = laneKey(idA, idB);
+  return galaxy.lanes.findIndex(([a, b]) => laneKey(a, b) === key);
+}
+
+export function laneBulge(galaxy, idA, idB) {
+  const i = laneIndex(galaxy, idA, idB);
+  return i >= 0 ? 0.08 + (i % 3) * 0.03 : 0.08;
+}
+
+export function laneControlPoint(from, to, bulge) {
+  const mx = (from.x + to.x) / 2;
+  const my = (from.y + to.y) / 2;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return {
+    x: mx - (dy / len) * len * bulge,
+    y: my + (dx / len) * len * bulge,
+  };
+}
+
+export function laneBezierPoint(from, ctrl, to, t) {
+  const u = 1 - t;
+  return {
+    x: u * u * from.x + 2 * u * t * ctrl.x + t * t * to.x,
+    y: u * u * from.y + 2 * u * t * ctrl.y + t * t * to.y,
+  };
+}
+
+export function laneBezierAngle(from, ctrl, to, t) {
+  const dx = 2 * (1 - t) * (ctrl.x - from.x) + 2 * t * (to.x - ctrl.x);
+  const dy = 2 * (1 - t) * (ctrl.y - from.y) + 2 * t * (to.y - ctrl.y);
+  return Math.atan2(dy, dx);
+}
+
 // BFS shortest hop path, inclusive of both endpoints. Returns null if unreachable.
 export function findPath(galaxy, fromId, toId) {
   if (fromId === toId) return [fromId];

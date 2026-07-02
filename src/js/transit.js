@@ -1,7 +1,13 @@
 // Shared lane transit math (flagship + scouts).
 // Positions are pure functions of state.time + transit record.
 
-import { laneLength } from './galaxy.js';
+import {
+  laneLength,
+  laneBulge,
+  laneControlPoint,
+  laneBezierPoint,
+  laneBezierAngle,
+} from './galaxy.js';
 
 export function legDurationMs(galaxy, idA, idB, speed, minLegMs) {
   return Math.max(minLegMs, Math.round((laneLength(galaxy, idA, idB) / speed) * 1000));
@@ -23,13 +29,16 @@ export function transitStatus(transit, galaxy, time, speed, minLegMs) {
   const from = nodePos(galaxy, fromId);
   const to = nodePos(galaxy, toId);
   const progress = Math.min(1, Math.max(0, (time - transit.legStartTime) / transit.legDurationMs));
+  const bulge = laneBulge(galaxy, fromId, toId);
+  const ctrl = laneControlPoint(from, to, bulge);
+  const pos = laneBezierPoint(from, ctrl, to, progress);
   return {
     fromId,
     toId,
     destId: transit.path[transit.path.length - 1],
-    x: from.x + (to.x - from.x) * progress,
-    y: from.y + (to.y - from.y) * progress,
-    angle: Math.atan2(to.y - from.y, to.x - from.x),
+    x: pos.x,
+    y: pos.y,
+    angle: laneBezierAngle(from, ctrl, to, progress),
     progress,
     etaMs: transitEtaMs(transit, galaxy, time, speed, minLegMs),
   };
