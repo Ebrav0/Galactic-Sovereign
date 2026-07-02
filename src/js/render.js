@@ -14,6 +14,7 @@ import {
   CAPTURE_HOLD_MS,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole } from './celestial-render.js';
+import { typeSizeBonus } from './star-types.js';
 import {
   createRng,
   systemById,
@@ -79,22 +80,27 @@ let starfield = null;
 function getStarfield() {
   if (!starfield) {
     const rng = createRng(0xbeef);
+    const tints = ['#c8d4e8', '#e8dcc8', '#b8c8f0', '#f0d8b8', '#d0e0ff'];
     starfield = Array.from({ length: STARFIELD_COUNT }, () => ({
       x: (rng() - 0.5) * STARFIELD_SPREAD,
       y: (rng() - 0.5) * STARFIELD_SPREAD,
       r: 0.4 + rng() * 1.1,
       a: 0.25 + rng() * 0.6,
+      tint: tints[Math.floor(rng() * tints.length)],
+      twinkle: rng() * Math.PI * 2,
+      twinkleSpeed: 0.0008 + rng() * 0.0015,
     }));
   }
   return starfield;
 }
 
-function drawStarfield(ctx, cam, canvas) {
+function drawStarfield(ctx, cam, canvas, time = 0) {
   for (const s of getStarfield()) {
     const p = worldToScreen(cam, s.x, s.y, canvas);
     if (p.x < -5 || p.x > canvas.width + 5 || p.y < -5 || p.y > canvas.height + 5) continue;
-    ctx.globalAlpha = s.a;
-    ctx.fillStyle = THEME.starfield;
+    const twinkle = 0.55 + 0.45 * Math.sin(time * s.twinkleSpeed + s.twinkle);
+    ctx.globalAlpha = s.a * twinkle;
+    ctx.fillStyle = s.tint;
     ctx.beginPath();
     ctx.arc(p.x, p.y, s.r, 0, Math.PI * 2);
     ctx.fill();
@@ -149,7 +155,7 @@ export function drawSystem(ctx, state, systemId, selection) {
 
   const intel = hasIntel(state, systemId);
 
-  drawStarfield(ctx, camera, canvas);
+  drawStarfield(ctx, camera, canvas, state.time);
 
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
@@ -351,7 +357,8 @@ function drawScoutSprite(ctx, x, y, angle, r, selected) {
 
 function starNodeRadius(state, starId) {
   const system = systemById(state, starId);
-  return 9 + (system ? system.bodies.length : 0) * 1.6;
+  const bonus = typeSizeBonus(system?.star);
+  return 9 + (system ? system.bodies.length : 0) * 1.6 + bonus;
 }
 
 const BLACK_HOLE_NODE_RADIUS = 26;
@@ -361,7 +368,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   ctx.fillStyle = THEME.bgGalaxy;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  drawStarfield(ctx, galaxyCamera, canvas);
+  drawStarfield(ctx, galaxyCamera, canvas, state.time);
 
   const z = galaxyCamera.zoom;
   const galaxy = state.galaxy;
@@ -438,7 +445,6 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
     const nodeR = starNodeRadius(state, star.id) * z;
-    const color = system?.star.color ?? THEME.accentGold;
     const intel = hasIntel(state, star.id);
     const owned = isPlayerOwned(state, star.id);
 
@@ -449,30 +455,32 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       ctx.fill();
     }
 
-    const glow = ctx.createRadialGradient(s.x, s.y, nodeR * 0.3, s.x, s.y, nodeR * 3);
-    glow.addColorStop(0, hexToRgba(color, intel ? 0.55 : 0.15));
-    glow.addColorStop(1, hexToRgba(color, 0));
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, nodeR * 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    const nodeGrad = ctx.createRadialGradient(
-      s.x - nodeR * 0.25, s.y - nodeR * 0.25, nodeR * 0.1,
-      s.x, s.y, nodeR,
-    );
-    if (intel) {
-      nodeGrad.addColorStop(0, hexToRgba(color, 1));
-      nodeGrad.addColorStop(0.7, color);
-      nodeGrad.addColorStop(1, hexToRgba(color, 0.6));
+    if (system?.star) {
+      drawStar(ctx, {
+        star: system.star,
+        x: s.x,
+        y: s.y,
+        screenR: nodeR,
+        time: state.time,
+        intel,
+        state,
+        systemId: star.id,
+        mode: 'galaxy',
+      });
     } else {
-      nodeGrad.addColorStop(0, THEME.fog.star);
-      nodeGrad.addColorStop(1, THEME.fog.star);
+      const color = THEME.accentGold;
+      const glow = ctx.createRadialGradient(s.x, s.y, nodeR * 0.3, s.x, s.y, nodeR * 3);
+      glow.addColorStop(0, hexToRgba(color, intel ? 0.55 : 0.15));
+      glow.addColorStop(1, hexToRgba(color, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, nodeR * 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = intel ? color : THEME.fog.star;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, nodeR, 0, Math.PI * 2);
+      ctx.fill();
     }
-    ctx.fillStyle = nodeGrad;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, nodeR, 0, Math.PI * 2);
-    ctx.fill();
 
     if (state.stronghold === star.id) {
       drawGlowRing(ctx, s.x, s.y, nodeR + 6 * z, THEME.accentGold, Math.max(1, 2 * z), 0.9);
