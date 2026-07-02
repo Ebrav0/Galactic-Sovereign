@@ -43,7 +43,11 @@ html, body {
   z-index: 0;
 }
 
-#hud > * { position: relative; z-index: 1; }
+#hud > .hud-header,
+#hud > .hud-footer {
+  position: relative;
+  z-index: 1;
+}
 #hud .hud-rail,
 #hud .hud-header,
 #hud .hud-footer { pointer-events: auto; }
@@ -217,52 +221,34 @@ button {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  overflow-y: auto;
+  overflow: visible;
   pointer-events: none;
 }
 
-.hud-rail > .panel { pointer-events: auto; }
+.hud-rail > .panel {
+  pointer-events: auto;
+  flex-shrink: 0;
+}
 
 .hud-rail--left { left: var(--space-4); }
+.hud-rail--left #intel-panel { margin-top: auto; }
+
 .hud-rail--right {
   right: var(--space-4);
+  left: auto;
   width: 300px;
 }
+.hud-rail--right #notification-log { margin-top: auto; }
 
 .panel {
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(var(--panel-blur));
   box-shadow: var(--panel-shadow);
   min-width: 240px;
   position: relative;
-}
-
-.panel::before,
-.panel::after {
-  content: '';
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  border-color: var(--accent-cyan);
-  border-style: solid;
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.panel::before {
-  top: -1px;
-  left: -1px;
-  border-width: 2px 0 0 2px;
-  border-radius: var(--radius-lg) 0 0 0;
-}
-
-.panel::after {
-  bottom: -1px;
-  right: -1px;
-  border-width: 0 2px 2px 0;
-  border-radius: 0 0 var(--radius-lg) 0;
+  overflow: hidden;
+  transform: none;
 }
 
 .panel--compact { min-width: unset; }
@@ -276,6 +262,7 @@ button {
   min-width: unset;
   max-width: 92vw;
   z-index: 200;
+  overflow: hidden;
 }
 
 .panel__header {
