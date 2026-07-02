@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second

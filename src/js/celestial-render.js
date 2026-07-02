@@ -3,6 +3,7 @@
 
 import { CELESTIAL_VISUAL_SCALE } from './constants.js';
 import { hashSeed } from './state.js';
+import { getStarVisualProfile } from './star-types.js';
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -35,10 +36,133 @@ export function resolveVisualSeed(state, systemId, entityId, stored) {
   return hashSeed(state.meta.seed, `${systemId}:${entityId}`);
 }
 
-function starTemperatureClass(star) {
-  if (star.radius < 55) return 'dwarf';
-  if (star.radius > 75) return 'giant';
-  return 'main';
+
+function hasFeature(profile, feature) {
+  return profile?.features?.includes(feature) ?? false;
+}
+
+function pulseAlpha(time, speed, base, amplitude) {
+  return base + amplitude * (0.5 + 0.5 * Math.sin(time * speed));
+}
+
+function drawLensSpikes(ctx, x, y, r, color, count, rot) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < count; i++) {
+    const angle = rot + (i * Math.PI * 2) / count;
+    const len = r * (2.2 + (i % 2) * 0.6);
+    const gx = ctx.createLinearGradient(
+      x, y,
+      x + Math.cos(angle) * len,
+      y + Math.sin(angle) * len,
+    );
+    gx.addColorStop(0, hexToRgba(color, 0.55));
+    gx.addColorStop(0.35, hexToRgba(color, 0.18));
+    gx.addColorStop(1, hexToRgba(color, 0));
+    ctx.strokeStyle = gx;
+    ctx.lineWidth = Math.max(0.5, r * 0.04);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawGranulation(ctx, x, y, r, seed, time, color, rotSpeed) {
+  const rng = seededRng(seed ^ 0x9a7b3c1d);
+  const count = 24 + Math.floor(rng() * 18);
+  const drift = (time * rotSpeed) % (Math.PI * 2);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.92, 0, Math.PI * 2);
+  ctx.clip();
+  for (let i = 0; i < count; i++) {
+    const angle = drift + rng() * Math.PI * 2;
+    const dist = r * (0.08 + rng() * 0.72);
+    const gx = x + Math.cos(angle) * dist;
+    const gy = y + Math.sin(angle) * dist;
+    const gr = r * (0.025 + rng() * 0.045);
+    ctx.fillStyle = hexToRgba(shiftHex(color, rng() > 0.5 ? 25 : -15), 0.12 + rng() * 0.12);
+    ctx.beginPath();
+    ctx.ellipse(gx, gy, gr, gr * (0.6 + rng() * 0.5), angle, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawSunspots(ctx, x, y, r, rng, time, rotSpeed, countScale) {
+  const spotCount = Math.max(1, Math.floor((3 + rng() * 3) * countScale));
+  const rot = (time * rotSpeed) % (Math.PI * 2);
+  for (let i = 0; i < spotCount; i++) {
+    const angle = rot + rng() * Math.PI * 2;
+    const dist = r * (0.15 + rng() * 0.55);
+    const sx = x + Math.cos(angle) * dist;
+    const sy = y + Math.sin(angle) * dist;
+    const spotR = r * (0.06 + rng() * 0.1);
+    ctx.fillStyle = `rgba(20, 15, 10, ${0.25 + rng() * 0.2})`;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, spotR, spotR * (0.6 + rng() * 0.4), angle, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawProminences(ctx, x, y, r, rng, time, color, rotSpeed) {
+  const count = 2 + Math.floor(rng() * 3);
+  const base = (time * rotSpeed * 0.6) % (Math.PI * 2);
+  for (let i = 0; i < count; i++) {
+    const startAngle = base + rng() * Math.PI * 2;
+    const loopR = r * (1.05 + rng() * 0.15);
+    const cpAngle = startAngle + 0.4 + rng() * 0.5;
+    const cpR = r * (1.35 + rng() * 0.35);
+    const endAngle = startAngle + 0.6 + rng() * 0.8;
+    const sx = x + Math.cos(startAngle) * loopR;
+    const sy = y + Math.sin(startAngle) * loopR;
+    const cpx = x + Math.cos(cpAngle) * cpR;
+    const cpy = y + Math.sin(cpAngle) * cpR;
+    const ex = x + Math.cos(endAngle) * loopR;
+    const ey = y + Math.sin(endAngle) * loopR;
+    ctx.strokeStyle = hexToRgba(shiftHex(color, 20), 0.35 + rng() * 0.2);
+    ctx.lineWidth = Math.max(1, r * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(cpx, cpy, ex, ey);
+    ctx.stroke();
+  }
+}
+
+function drawCoronaArcs(ctx, x, y, r, color, time, rng, count, speed) {
+  const base = (time / speed) * Math.PI * 2;
+  for (let i = 0; i < count; i++) {
+    const start = base + i * 1.4 + rng() * 0.5;
+    ctx.strokeStyle = hexToRgba(shiftHex(color, 30), 0.35 + i * 0.08);
+    ctx.lineWidth = Math.max(1, r * 0.06);
+    ctx.beginPath();
+    ctx.arc(x, y, r * (1.15 + i * 0.12), start, start + Math.PI * (0.5 + rng() * 0.35));
+    ctx.stroke();
+  }
+}
+
+function drawFlareBurst(ctx, x, y, r, time, seed, color) {
+  const phase = ((time * 0.0012 + seed * 0.00001) % 1);
+  if (phase > 0.12) return;
+  const intensity = 1 - phase / 0.12;
+  const flare = ctx.createRadialGradient(x, y, r * 0.1, x, y, r * 2.5);
+  flare.addColorStop(0, hexToRgba('#ffffff', 0.7 * intensity));
+  flare.addColorStop(0.2, hexToRgba(color, 0.45 * intensity));
+  flare.addColorStop(1, hexToRgba(color, 0));
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = flare;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Future Dyson shell ring overlays attach here. */
+export function drawStarOverlays(_ctx, _opts) {
+  // no-op — megastructure visuals in a later phase
 }
 
 export function drawBlackHole(ctx, x, y, r, time, large) {
@@ -53,9 +177,10 @@ export function drawBlackHole(ctx, x, y, r, time, large) {
   ctx.arc(x, y, r * (diskScale + 1.6), 0, Math.PI * 2);
   ctx.fill();
 
+  const shimmerPhase = (time / 3200) * Math.PI * 2;
   const disk = ctx.createRadialGradient(x, y, r * 1.02, x, y, r * diskScale);
-  disk.addColorStop(0, 'rgba(255, 170, 90, 0.75)');
-  disk.addColorStop(0.35, 'rgba(255, 120, 150, 0.35)');
+  disk.addColorStop(0, `rgba(255, 170, 90, ${0.72 + 0.08 * Math.sin(shimmerPhase)})`);
+  disk.addColorStop(0.35, `rgba(255, 120, 150, ${0.32 + 0.06 * Math.sin(shimmerPhase + 1.2)})`);
   disk.addColorStop(1, 'rgba(150, 90, 255, 0)');
   ctx.fillStyle = disk;
   ctx.beginPath();
@@ -73,6 +198,16 @@ export function drawBlackHole(ctx, x, y, r, time, large) {
     ctx.stroke();
   }
 
+  const baseReverse = -(time / 6800) * Math.PI * 2;
+  for (let i = 0; i < 2; i++) {
+    const start = baseReverse + i * 2.1;
+    ctx.strokeStyle = 'rgba(200, 160, 255, 0.35)';
+    ctx.lineWidth = Math.max(0.5, r * 0.05);
+    ctx.beginPath();
+    ctx.arc(x, y, r * (1.55 + i * 0.22), start, start + Math.PI * 0.65);
+    ctx.stroke();
+  }
+
   ctx.fillStyle = '#02030a';
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -82,72 +217,124 @@ export function drawBlackHole(ctx, x, y, r, time, large) {
   ctx.stroke();
 }
 
-export function drawStar(ctx, { star, x, y, screenR, time, intel, state, systemId }) {
-  if (star.kind === 'blackhole') {
-    drawBlackHole(ctx, x, y, screenR, time, true);
-    return;
+function drawStarBloom(ctx, x, y, r, profile, color, time, intel, compact) {
+  if (!intel) return;
+
+  const glowScale = profile.glowScale * (compact ? 0.85 : 1);
+  const pulse = pulseAlpha(time, profile.pulseSpeed, 0.5, hasFeature(profile, 'diffuseHalo') ? 0.2 : 0.1);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  const outerAlpha = hasFeature(profile, 'diffuseHalo') ? 0.22 * pulse : 0.15 * pulse;
+  const outerGlow = ctx.createRadialGradient(x, y, r * 0.15, x, y, r * glowScale);
+  outerGlow.addColorStop(0, hexToRgba(profile.coronaColor, outerAlpha + 0.25));
+  outerGlow.addColorStop(0.45, hexToRgba(profile.secondaryColor, outerAlpha));
+  outerGlow.addColorStop(1, hexToRgba(color, 0));
+  ctx.fillStyle = outerGlow;
+  if (compact) {
+    ctx.shadowColor = profile.coronaColor;
+    ctx.shadowBlur = r * 0.8;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, r * glowScale, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  const midGlow = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * (compact ? 1.4 : 1.7));
+  midGlow.addColorStop(0, hexToRgba(shiftHex(color, 40), compact ? 0.35 : 0.55));
+  midGlow.addColorStop(1, hexToRgba(color, 0));
+  ctx.fillStyle = midGlow;
+  ctx.beginPath();
+  ctx.arc(x, y, r * (compact ? 1.4 : 1.7), 0, Math.PI * 2);
+  ctx.fill();
+
+  if (!compact && hasFeature(profile, 'diffuseHalo')) {
+    const wide = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * (glowScale + 0.8));
+    wide.addColorStop(0, hexToRgba(profile.secondaryColor, 0.08 * pulse));
+    wide.addColorStop(1, hexToRgba(color, 0));
+    ctx.fillStyle = wide;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (glowScale + 0.8), 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  const r = screenR * CELESTIAL_VISUAL_SCALE;
-  const seed = resolveVisualSeed(state, systemId, 'star', star.visualSeed);
-  const rng = seededRng(seed);
-  const tempClass = starTemperatureClass(star);
-  const color = intel ? star.color : '#505868';
-  const glowScale = tempClass === 'giant' ? 3.4 : tempClass === 'dwarf' ? 2.2 : 2.8;
-  const coreAlpha = intel ? (tempClass === 'dwarf' ? 0.95 : 0.88) : 0.45;
+  ctx.restore();
+}
 
-  if (intel) {
-    const outerGlow = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * glowScale);
-    outerGlow.addColorStop(0, hexToRgba(color, tempClass === 'giant' ? 0.65 : 0.5));
-    outerGlow.addColorStop(0.45, hexToRgba(shiftHex(color, tempClass === 'giant' ? -30 : 10), 0.18));
-    outerGlow.addColorStop(1, hexToRgba(color, 0));
-    ctx.fillStyle = outerGlow;
-    ctx.beginPath();
-    ctx.arc(x, y, r * glowScale, 0, Math.PI * 2);
-    ctx.fill();
-
-    const midGlow = ctx.createRadialGradient(x, y, r * 0.35, x, y, r * 1.6);
-    midGlow.addColorStop(0, hexToRgba(shiftHex(color, 40), 0.55));
-    midGlow.addColorStop(1, hexToRgba(color, 0));
-    ctx.fillStyle = midGlow;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 1.6, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
+function drawStarCore(ctx, x, y, r, profile, color, intel) {
+  const coreAlpha = intel ? (hasFeature(profile, 'compactCore') ? 0.98 : 0.88) : 0.45;
+  const highlight = hasFeature(profile, 'compactCore') ? 80 : 60;
   const core = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.05, x, y, r);
-  core.addColorStop(0, hexToRgba(shiftHex(color, 60), coreAlpha));
+  core.addColorStop(0, hexToRgba(shiftHex(color, highlight), coreAlpha));
   core.addColorStop(0.55, hexToRgba(color, coreAlpha));
   core.addColorStop(1, hexToRgba(shiftHex(color, -40), intel ? 0.75 : 0.35));
   ctx.fillStyle = core;
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng) {
+  drawStarBloom(ctx, x, y, r, profile, color, time, intel, true);
+
+  drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
 
   if (intel) {
-    const spotCount = 3 + Math.floor(rng() * 3);
-    const rot = (time / 80000) * Math.PI * 2;
-    for (let i = 0; i < spotCount; i++) {
-      const angle = rot + rng() * Math.PI * 2;
-      const dist = r * (0.15 + rng() * 0.55);
-      const sx = x + Math.cos(angle) * dist;
-      const sy = y + Math.sin(angle) * dist;
-      const spotR = r * (0.06 + rng() * 0.1);
-      ctx.fillStyle = `rgba(20, 15, 10, ${0.25 + rng() * 0.2})`;
-      ctx.beginPath();
-      ctx.ellipse(sx, sy, spotR, spotR * (0.6 + rng() * 0.4), angle, 0, Math.PI * 2);
-      ctx.fill();
+    drawCoronaArcs(ctx, x, y, r, profile.coronaColor, time, rng, 2, 5200);
+  }
+}
+
+function drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed) {
+  drawStarBloom(ctx, x, y, r, profile, color, time, intel, false);
+
+  if (intel && hasFeature(profile, 'lensSpikes')) {
+    const rot = (time * profile.rotationSpeed * 40) % (Math.PI * 2);
+    drawLensSpikes(ctx, x, y, r, profile.coronaColor, 8, rot);
+  }
+
+  if (intel && hasFeature(profile, 'granulation')) {
+    drawGranulation(ctx, x, y, r, seed, time, color, profile.rotationSpeed * 50);
+  }
+
+  drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
+
+  if (intel) {
+    const spotScale = hasFeature(profile, 'compactCore') ? 0.5 : 1;
+    if (hasFeature(profile, 'sunspots')) {
+      drawSunspots(ctx, x, y, r, rng, time, profile.rotationSpeed * 60, spotScale);
     }
 
-    const base = (time / 4200) * Math.PI * 2;
-    for (let i = 0; i < 3; i++) {
-      const start = base + i * 1.4 + rng() * 0.5;
-      ctx.strokeStyle = hexToRgba(shiftHex(color, 30), 0.35 + i * 0.08);
-      ctx.lineWidth = Math.max(1, r * 0.06);
-      ctx.beginPath();
-      ctx.arc(x, y, r * (1.15 + i * 0.12), start, start + Math.PI * (0.5 + rng() * 0.35));
-      ctx.stroke();
+    drawCoronaArcs(ctx, x, y, r, profile.coronaColor, time, rng, 3, 4200);
+
+    if (hasFeature(profile, 'prominences')) {
+      drawProminences(ctx, x, y, r, rng, time, profile.secondaryColor, profile.rotationSpeed * 45);
     }
+
+    if (hasFeature(profile, 'flareBursts')) {
+      drawFlareBurst(ctx, x, y, r, time, seed, color);
+    }
+  }
+
+  drawStarOverlays(ctx, { x, y, r, profile, time, intel });
+}
+
+export function drawStar(ctx, { star, x, y, screenR, time, intel, state, systemId, mode = 'system' }) {
+  if (star.kind === 'blackhole') {
+    drawBlackHole(ctx, x, y, screenR, time, mode === 'system');
+    return;
+  }
+
+  const r = screenR * CELESTIAL_VISUAL_SCALE;
+  const seed = resolveVisualSeed(state, systemId, 'star', star.visualSeed);
+  const rng = seededRng(seed);
+  const profile = getStarVisualProfile(star);
+  const color = intel ? (star.color ?? profile.color) : '#505868';
+
+  if (mode === 'galaxy') {
+    drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng);
+  } else {
+    drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed);
   }
 }
 

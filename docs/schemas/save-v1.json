@@ -79,6 +79,21 @@
                 "properties": {
                   "radius": { "type": "number" },
                   "color": { "type": "string" },
+                  "type": {
+                    "enum": [
+                      "yellow_dwarf",
+                      "orange_dwarf",
+                      "red_dwarf",
+                      "white_main",
+                      "blue_white",
+                      "blue_giant",
+                      "red_giant",
+                      "subgiant",
+                      "white_dwarf",
+                      "flare_star"
+                    ],
+                    "description": "optional stellar type for procedural visuals"
+                  },
                   "visualSeed": { "type": "integer", "description": "optional deterministic visual variation seed" },
                   "kind": { "enum": ["blackhole"], "description": "present only on the core system" }
                 }

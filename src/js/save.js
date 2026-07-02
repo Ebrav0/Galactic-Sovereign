@@ -3,6 +3,7 @@
 
 import { SAVE_VERSION } from './constants.js';
 import { createNewGame, seedNeutralStructuresForGalaxy } from './state.js';
+import { backfillStarTypes } from './star-types.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -46,6 +47,7 @@ function migrateSave(envelope) {
   let e = envelope;
   if (e.saveVersion === 0) e = migrateV0toV1(e);
   if (e.saveVersion === 1) e = migrateV1toV2(e);
+  if (e.saveVersion === 2) e = migrateV2toV3(e);
   return e;
 }
 
@@ -106,6 +108,20 @@ function migrateV1toV2(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 2,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v2 -> v3 (star.type backfill for cinematic multi-type stars).
+function migrateV2toV3(envelope) {
+  const state = envelope.state;
+  backfillStarTypes(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 3,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,

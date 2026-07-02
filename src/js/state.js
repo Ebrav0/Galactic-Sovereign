@@ -5,7 +5,6 @@
 import {
   STARTING_CREDITS,
   HOME_SYSTEM_NAME,
-  STAR_RADIUS,
   PLANET_COUNT_RANGE,
   PLANET_ORBIT_BASE,
   PLANET_ORBIT_SPACING,
@@ -21,6 +20,7 @@ import {
   FLAGSHIP_SPAWN_ORBIT,
 } from './constants.js';
 import { generateGalaxy, BLACK_HOLE_ID } from './galaxy.js';
+import { pickStarType, starFieldsFromType } from './star-types.js';
 
 // Mulberry32 — small deterministic PRNG so the same seed always
 // generates the same galaxy (GDD §15 determinism requirement).
@@ -56,7 +56,6 @@ export function hashSeed(baseSeed, key) {
 const PLANET_NAMES = ['Aurelia', 'Boreas', 'Cinder', 'Dagon', 'Erebus', 'Ferrum'];
 const MOON_SUFFIXES = ['I', 'II', 'III', 'IV'];
 const PLANET_TYPES = ['habitable', 'barren', 'gas'];
-const STAR_COLORS = ['#ffd27a', '#ffb46b', '#ffe9a8', '#9fc7ff', '#ff9d7a', '#cfe3ff'];
 
 // Seed neutral outposts/shipyards on non-home stars for varied capture targets.
 function seedNeutralStructures(rng, system, { isHome }) {
@@ -136,13 +135,16 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
     });
   }
 
+  const isDead = planetCount === 0;
+  const typeProfile = pickStarType(rng, { isHome, isDead });
+  const starFields = starFieldsFromType(typeProfile, rng, { isHome });
+
   const system = {
     id: star.id,
     name: star.name,
     owner: isHome ? 'player' : 'neutral',
     star: {
-      radius: isHome ? STAR_RADIUS : Math.round(range(rng, [50, 90])),
-      color: isHome ? '#ffd27a' : STAR_COLORS[Math.floor(rng() * STAR_COLORS.length)],
+      ...starFields,
       visualSeed: hashSeed(gameSeed, `${star.id}:star`),
     },
     bodies,
