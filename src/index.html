@@ -4,67 +4,144 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic Sovereign</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
   <canvas id="game-canvas"></canvas>
 
   <div id="hud">
-    <div id="top-bar">
-      <div class="hud-group">
-        <span id="system-name">—</span>
-        <span id="stronghold-badge" class="badge hidden">STRONGHOLD</span>
+    <header id="top-bar" class="hud-header">
+      <div class="hud-header__brand hud-group">
+        <span id="system-name" class="system-name">—</span>
+        <span id="stronghold-badge" class="badge badge--gold hidden">STRONGHOLD</span>
       </div>
-      <div class="hud-group">
-        <span class="stat"><span class="stat-label">Credits</span> <span id="credits-value">0</span></span>
-        <span class="stat"><span class="stat-label">Income</span> <span id="income-value">0</span>/s</span>
-        <span class="stat"><span class="stat-label">Flagship</span> <span id="flagship-loc">—</span></span>
-        <span class="stat"><span class="stat-label">Scouts</span> <span id="scout-summary">0</span></span>
+
+      <div class="hud-header__resources hud-group">
+        <div class="chip">
+          <span class="chip__label">Credits</span>
+          <span class="chip__value" id="credits-value">0</span>
+        </div>
+        <div class="chip">
+          <span class="chip__label">Income</span>
+          <span class="chip__value"><span id="income-value">0</span>/s</span>
+        </div>
+        <div class="chip chip--wide">
+          <span class="chip__label">Flagship</span>
+          <span class="chip__value chip__value--truncate" id="flagship-loc">—</span>
+        </div>
+        <div class="chip">
+          <span class="chip__label">Scouts</span>
+          <span class="chip__value" id="scout-summary">0</span>
+        </div>
       </div>
-      <div class="hud-group">
-        <button id="view-toggle-btn" type="button">Galaxy Map (M)</button>
-        <button id="pause-btn" type="button">Pause</button>
-        <button id="save-menu-btn" type="button">Saves</button>
+
+      <div class="hud-header__actions hud-group">
+        <button id="view-toggle-btn" type="button" class="btn btn--ghost btn--sm">
+          <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z"/></svg>
+          <span class="btn-label">Galaxy Map (M)</span>
+        </button>
+        <button id="pause-btn" type="button" class="btn btn--ghost btn--sm">
+          <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 3h3v10H4V3zm5 0h3v10H9V3z"/></svg>
+          <span class="btn-label">Pause</span>
+        </button>
+        <button id="save-menu-btn" type="button" class="btn btn--primary btn--sm">
+          <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h8l2 2v10H3V2zm1 1v10h8V4h-2V3H4zm2 0h4v2H6V3zm0 4h4v4H6V7z"/></svg>
+          Saves
+        </button>
       </div>
-    </div>
+    </header>
 
-    <div id="scout-panel" class="panel hidden">
-      <div class="panel-title">Scout Fleet</div>
-      <div id="scout-roster" class="panel-body"></div>
-      <div id="selected-scout-line" class="panel-note"></div>
-    </div>
-
-    <div id="intel-panel" class="panel hidden">
-      <div class="panel-title">System Intel</div>
-      <div id="intel-panel-body" class="panel-body"></div>
-      <div id="capture-panel-body" class="panel-body"></div>
-    </div>
-
-    <div id="build-panel" class="panel hidden">
-      <div class="panel-title" id="build-panel-title">Planet</div>
-      <div class="panel-body" id="build-panel-body"></div>
-      <button id="build-outpost-btn" type="button">Build Outpost</button>
-      <button id="build-shipyard-btn" type="button" class="hidden">Build Shipyard</button>
-      <button id="queue-scout-btn" type="button" class="hidden">Build Scout</button>
-      <div id="build-progress" class="panel-note hidden"></div>
-      <div id="build-panel-note" class="panel-note"></div>
-    </div>
-
-    <div id="save-menu" class="panel hidden">
-      <div class="panel-title">Save / Load</div>
-      <div id="save-slots"></div>
-      <div class="save-menu-actions">
-        <button id="export-save-btn" type="button">Export</button>
-        <button id="import-save-btn" type="button">Import</button>
-        <button id="close-save-menu-btn" type="button">Close</button>
+    <aside id="left-rail" class="hud-rail hud-rail--left">
+      <div id="scout-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Scout Fleet</span>
+        </div>
+        <div class="panel__body">
+          <div id="scout-roster" class="list"></div>
+        </div>
+        <div id="selected-scout-line" class="panel__footer panel-note"></div>
       </div>
-      <input type="file" id="import-file-input" accept=".json" class="hidden" />
+
+      <div id="intel-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">System Intel</span>
+        </div>
+        <div class="panel__body">
+          <div id="intel-panel-body"></div>
+          <div class="divider"></div>
+          <div id="capture-panel-body"></div>
+        </div>
+      </div>
+    </aside>
+
+    <aside id="right-rail" class="hud-rail hud-rail--right">
+      <div id="build-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title" id="build-panel-title">Planet</span>
+        </div>
+        <div class="panel__body">
+          <div id="build-panel-body"></div>
+          <div id="build-progress" class="progress-block hidden">
+            <div class="progress-block__label">Building scout</div>
+            <div class="progress">
+              <div class="progress__fill" id="build-progress-fill"></div>
+            </div>
+            <div class="progress-block__pct" id="build-progress-pct"></div>
+          </div>
+        </div>
+        <div class="panel__footer panel__actions">
+          <button id="build-outpost-btn" type="button" class="btn btn--primary btn--block">Build Outpost</button>
+          <button id="build-shipyard-btn" type="button" class="btn btn--primary btn--block hidden">Build Shipyard</button>
+          <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Build Scout</button>
+          <div id="build-panel-note" class="panel-note"></div>
+        </div>
+      </div>
+
+      <div id="notification-log" class="panel panel--compact">
+        <div class="panel__header panel__header--toggle">
+          <span class="panel__title">Notifications</span>
+          <button type="button" id="notification-toggle" class="btn btn--ghost btn--xs" aria-label="Toggle notifications">−</button>
+        </div>
+        <div id="notification-log-body" class="panel__body notification-log__body">
+          <p class="empty-state">No events yet — toasts appear above.</p>
+        </div>
+      </div>
+    </aside>
+
+    <footer id="hud-footer" class="hud-footer">
+      <div id="view-hint" class="view-hint"></div>
+      <nav id="tab-bar" class="tab-bar" aria-label="View navigation">
+        <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
+        <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
+        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Fleet</button>
+        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Tech</button>
+        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Dyson</button>
+      </nav>
+    </footer>
+
+    <div id="hud-overlays">
+      <div id="save-menu-backdrop" class="modal-backdrop hidden"></div>
+      <div id="save-menu" class="panel panel--modal hidden">
+        <div class="panel__header">
+          <span class="panel__title">Save / Load</span>
+        </div>
+        <div class="panel__body">
+          <div id="save-slots" class="save-slots"></div>
+        </div>
+        <div class="panel__footer save-menu-actions">
+          <button id="export-save-btn" type="button" class="btn btn--ghost btn--sm">Export</button>
+          <button id="import-save-btn" type="button" class="btn btn--ghost btn--sm">Import</button>
+          <button id="close-save-menu-btn" type="button" class="btn btn--primary btn--sm">Close</button>
+        </div>
+        <input type="file" id="import-file-input" accept=".json" class="hidden" />
+      </div>
+
+      <div id="pause-overlay" class="pause-overlay hidden"><span>PAUSED</span></div>
+      <div id="toast-container"></div>
     </div>
-
-    <div id="view-hint"></div>
-
-    <div id="pause-overlay" class="hidden"><span>PAUSED</span></div>
-    <div id="toast-container"></div>
   </div>
 
   <script type="module" src="./js/main.js"></script>
