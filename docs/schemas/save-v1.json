@@ -79,6 +79,7 @@
                 "properties": {
                   "radius": { "type": "number" },
                   "color": { "type": "string" },
+                  "visualSeed": { "type": "integer", "description": "optional deterministic visual variation seed" },
                   "kind": { "enum": ["blackhole"], "description": "present only on the core system" }
                 }
               },
@@ -96,6 +97,7 @@
                     "orbitPeriodMs": { "type": "number" },
                     "orbitPhase": { "type": "number", "minimum": 0, "maximum": 1 },
                     "radius": { "type": "number" },
+                    "visualSeed": { "type": "integer", "description": "optional deterministic visual variation seed" },
                     "moons": {
                       "type": "array",
                       "items": {
@@ -108,7 +110,9 @@
                           "orbitRadius": { "type": "number" },
                           "orbitPeriodMs": { "type": "number" },
                           "orbitPhase": { "type": "number", "minimum": 0, "maximum": 1 },
-                          "radius": { "type": "number" }
+                          "radius": { "type": "number" },
+                          "surface": { "enum": ["rocky", "ice"], "description": "optional moon surface type" },
+                          "visualSeed": { "type": "integer", "description": "optional deterministic visual variation seed" }
                         }
                       }
                     }

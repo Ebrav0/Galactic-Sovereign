@@ -14,7 +14,7 @@ import {
   MOON_COUNT_RANGE,
   MOON_ORBIT_BASE,
   MOON_ORBIT_SPACING,
-  MOON_RADIUS,
+  MOON_RADIUS_RANGE,
   MOON_ORBIT_PERIOD_RANGE,
   DEAD_STAR_CHANCE,
   OTHER_PLANET_COUNT_RANGE,
@@ -41,6 +41,16 @@ function rangeInt(rng, [min, max]) {
 
 function range(rng, [min, max]) {
   return min + rng() * (max - min);
+}
+
+// FNV-1a style hash for deterministic visual seeds (save-compatible fallback).
+export function hashSeed(baseSeed, key) {
+  let h = (baseSeed >>> 0) ^ 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
 const PLANET_NAMES = ['Aurelia', 'Boreas', 'Cinder', 'Dagon', 'Erebus', 'Ferrum'];
@@ -77,7 +87,7 @@ function seedNeutralStructures(rng, system, { isHome }) {
 // One star system's bodies. The home system guarantees a habitable planet
 // with moons so a new game is always playable; other stars roll freely and
 // may be dead (0 planets — forward-base material, GDD §4).
-function generateSystem(rng, star, { isHome }) {
+function generateSystem(rng, star, { isHome, gameSeed }) {
   let planetCount;
   if (isHome) {
     planetCount = rangeInt(rng, PLANET_COUNT_RANGE);
@@ -106,7 +116,9 @@ function generateSystem(rng, star, { isHome }) {
         orbitRadius: MOON_ORBIT_BASE + m * MOON_ORBIT_SPACING,
         orbitPeriodMs: Math.round(range(rng, MOON_ORBIT_PERIOD_RANGE)),
         orbitPhase: rng(),
-        radius: MOON_RADIUS,
+        radius: range(rng, MOON_RADIUS_RANGE),
+        surface: rng() < 0.5 ? 'rocky' : 'ice',
+        visualSeed: hashSeed(gameSeed, `${star.id}:p${i + 1}m${m + 1}`),
       });
     }
 
@@ -119,6 +131,7 @@ function generateSystem(rng, star, { isHome }) {
       orbitPeriodMs: Math.round(range(rng, PLANET_ORBIT_PERIOD_RANGE)),
       orbitPhase: rng(),
       radius: range(rng, PLANET_RADIUS_RANGE),
+      visualSeed: hashSeed(gameSeed, `${star.id}:p${i + 1}`),
       moons,
     });
   }
@@ -128,8 +141,9 @@ function generateSystem(rng, star, { isHome }) {
     name: star.name,
     owner: isHome ? 'player' : 'neutral',
     star: {
-      radius: isHome ? STAR_RADIUS : Math.round(range(rng, [28, 52])),
+      radius: isHome ? STAR_RADIUS : Math.round(range(rng, [50, 90])),
       color: isHome ? '#ffd27a' : STAR_COLORS[Math.floor(rng() * STAR_COLORS.length)],
+      visualSeed: hashSeed(gameSeed, `${star.id}:star`),
     },
     bodies,
     structures: [],
@@ -180,7 +194,7 @@ export function createNewGame(seed) {
     const star = galaxy.stars[i];
     // Per-star derived seed keeps each system independent of generation order.
     const sysRng = createRng((seed + (i + 1) * 0x9e3779b9) >>> 0);
-    systems[star.id] = generateSystem(sysRng, star, { isHome: star.id === strongholdId });
+    systems[star.id] = generateSystem(sysRng, star, { isHome: star.id === strongholdId, gameSeed: seed });
   }
   systems[galaxy.blackHole.id] = createBlackHoleSystem(galaxy.blackHole);
 

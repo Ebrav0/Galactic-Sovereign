@@ -2,6 +2,7 @@
 
 import {
   STARFIELD_COUNT,
+  STARFIELD_SPREAD,
   SELECTION_PULSE_MS,
   CAMERA_MIN_ZOOM,
   CAMERA_MAX_ZOOM,
@@ -12,6 +13,7 @@ import {
   FLAGSHIP_RADIUS,
   CAPTURE_HOLD_MS,
 } from './constants.js';
+import { drawStar, drawPlanet, drawMoon, drawBlackHole } from './celestial-render.js';
 import {
   createRng,
   systemById,
@@ -30,7 +32,6 @@ import { shipyardBuildProgress } from './production.js';
 import {
   THEME,
   hexToRgba,
-  fillPlanetSphere,
   drawCurvedLane,
   bezierPoint,
 } from './theme.js';
@@ -79,8 +80,8 @@ function getStarfield() {
   if (!starfield) {
     const rng = createRng(0xbeef);
     starfield = Array.from({ length: STARFIELD_COUNT }, () => ({
-      x: (rng() - 0.5) * 4600,
-      y: (rng() - 0.5) * 4600,
+      x: (rng() - 0.5) * STARFIELD_SPREAD,
+      y: (rng() - 0.5) * STARFIELD_SPREAD,
       r: 0.4 + rng() * 1.1,
       a: 0.25 + rng() * 0.6,
     }));
@@ -99,6 +100,10 @@ function drawStarfield(ctx, cam, canvas) {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+}
+
+function lightAngleFromOrigin(wx, wy) {
+  return Math.atan2(wy, wx);
 }
 
 function drawOrbitRing(ctx, cx, cy, r, alpha = 0.14) {
@@ -120,24 +125,6 @@ function drawGlowRing(ctx, x, y, r, color, lineWidth, alpha = 1) {
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
-}
-
-function drawMoon(ctx, x, y, r, intel) {
-  if (!intel) {
-    ctx.fillStyle = THEME.fog.moon;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
-  const grad = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.05, x, y, r);
-  grad.addColorStop(0, '#c8d4e8');
-  grad.addColorStop(0.6, THEME.moon);
-  grad.addColorStop(1, hexToRgba(THEME.moon, 0.5));
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
 }
 
 function labelText(ctx, text, x, y, size, color, align = 'center') {
@@ -167,63 +154,69 @@ export function drawSystem(ctx, state, systemId, selection) {
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
 
-  ctx.lineWidth = 1;
   for (const planet of system.bodies) {
     drawOrbitRing(ctx, starScreen.x, starScreen.y, planet.orbitRadius * z, 0.14);
   }
 
-  if (system.star.kind === 'blackhole') {
-    drawBlackHole(ctx, starScreen.x, starScreen.y, system.star.radius * z, state.time, true);
-  } else {
-    const starR = system.star.radius * z;
-    const flicker = 0.92 + 0.08 * Math.sin(state.time / 1200);
-    const glow = ctx.createRadialGradient(
-      starScreen.x, starScreen.y, starR * 0.3,
-      starScreen.x, starScreen.y, starR * 2.8 * flicker,
-    );
-    glow.addColorStop(0, hexToRgba(THEME.accentGold, 0.65));
-    glow.addColorStop(0.45, hexToRgba(THEME.accentGold, 0.2));
-    glow.addColorStop(1, hexToRgba(THEME.accentGold, 0));
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(starScreen.x, starScreen.y, starR * 2.8, 0, Math.PI * 2);
-    ctx.fill();
+  drawStar(ctx, {
+    star: system.star,
+    x: starScreen.x,
+    y: starScreen.y,
+    screenR: system.star.radius * z,
+    time: state.time,
+    intel,
+    state,
+    systemId,
+  });
 
-    const core = ctx.createRadialGradient(
-      starScreen.x - starR * 0.2, starScreen.y - starR * 0.2, starR * 0.1,
-      starScreen.x, starScreen.y, starR,
-    );
-    core.addColorStop(0, '#fff8e8');
-    core.addColorStop(0.5, system.star.color);
-    core.addColorStop(1, hexToRgba(system.star.color, 0.85));
-    ctx.fillStyle = core;
-    ctx.beginPath();
-    ctx.arc(starScreen.x, starScreen.y, starR, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
 
-  for (const planet of system.bodies) {
+  for (const planet of sortedPlanets) {
     const wp = planetPosition(planet, state.time);
     const sp = worldToScreen(camera, wp.x, wp.y, canvas);
     const pr = planet.radius * z;
+    const lightAngle = lightAngleFromOrigin(wp.x, wp.y);
 
     for (const moon of planet.moons) {
       drawOrbitRing(ctx, sp.x, sp.y, moon.orbitRadius * z, 0.1);
-
-      const wm = moonPosition(planet, moon, state.time);
-      const sm = worldToScreen(camera, wm.x, wm.y, canvas);
-      drawMoon(ctx, sm.x, sm.y, moon.radius * z, intel);
     }
 
-    const planetColor = THEME.planet[planet.type] ?? '#888';
-    fillPlanetSphere(ctx, sp.x, sp.y, pr, planetColor, intel);
+    for (const moon of planet.moons) {
+      const wm = moonPosition(planet, moon, state.time);
+      const sm = worldToScreen(camera, wm.x, wm.y, canvas);
+      drawMoon(ctx, {
+        moon,
+        x: sm.x,
+        y: sm.y,
+        screenR: moon.radius * z,
+        intel,
+        lightAngle: lightAngleFromOrigin(wm.x, wm.y),
+        planetX: sp.x,
+        planetY: sp.y,
+        planetScreenR: pr,
+        state,
+        systemId,
+      });
+    }
+
+    drawPlanet(ctx, {
+      planet,
+      x: sp.x,
+      y: sp.y,
+      screenR: pr,
+      time: state.time,
+      intel,
+      lightAngle,
+      state,
+      systemId,
+    });
 
     if (intel && hasOutpost(state, systemId, planet.id)) {
-      drawGlowRing(ctx, sp.x, sp.y, pr + 4 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.85);
+      drawGlowRing(ctx, sp.x, sp.y, pr + 6 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.85);
     }
 
     if (intel && hasShipyard(state, systemId, planet.id)) {
-      drawGlowRing(ctx, sp.x, sp.y, pr + 8 * z, THEME.accentCyan, Math.max(1, 2 * z), 0.9);
+      drawGlowRing(ctx, sp.x, sp.y, pr + 12 * z, THEME.accentCyan, Math.max(1, 2 * z), 0.9);
 
       const shipyard = system.structures.find(
         (s) => s.type === 'shipyard' && s.bodyId === planet.id,
@@ -233,7 +226,7 @@ export function drawSystem(ctx, state, systemId, selection) {
         ctx.strokeStyle = hexToRgba(THEME.accentCyan, 0.4 + 0.5 * prog);
         ctx.lineWidth = Math.max(1, 2.5 * z);
         ctx.beginPath();
-        ctx.arc(sp.x, sp.y, pr + 12 * z, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
+        ctx.arc(sp.x, sp.y, pr + 18 * z, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
         ctx.stroke();
         ctx.lineWidth = 1;
       }
@@ -246,7 +239,7 @@ export function drawSystem(ctx, state, systemId, selection) {
       ctx.shadowColor = THEME.accentGreen;
       ctx.shadowBlur = 8;
       ctx.beginPath();
-      ctx.arc(sp.x, sp.y, pr + (8 + 3 * pulse) * z, 0, Math.PI * 2);
+      ctx.arc(sp.x, sp.y, pr + (12 + 4 * pulse) * z, 0, Math.PI * 2);
       ctx.stroke();
       ctx.shadowBlur = 0;
       ctx.lineWidth = 1;
@@ -256,7 +249,7 @@ export function drawSystem(ctx, state, systemId, selection) {
       ctx,
       intel ? planet.name : 'Unknown',
       sp.x,
-      sp.y - pr - 8 * z,
+      sp.y - pr - 12 * z,
       Math.max(10, 11 * z),
       intel ? THEME.textSecondary : THEME.fog.label,
     );
@@ -265,7 +258,7 @@ export function drawSystem(ctx, state, systemId, selection) {
         ctx,
         planet.type,
         sp.x,
-        sp.y + pr + 14 * z,
+        sp.y + pr + 18 * z,
         Math.max(8, 9 * z),
         THEME.textMuted,
       );
@@ -577,46 +570,6 @@ function nodePos(galaxy, id) {
   return galaxy.stars.find((s) => s.id === id);
 }
 
-function drawBlackHole(ctx, x, y, r, time, large) {
-  const diskScale = large ? 2.6 : 1.9;
-
-  const glow = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * (diskScale + 1.6));
-  glow.addColorStop(0, 'rgba(150, 90, 255, 0.30)');
-  glow.addColorStop(0.6, 'rgba(90, 60, 200, 0.12)');
-  glow.addColorStop(1, 'rgba(90, 60, 200, 0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(x, y, r * (diskScale + 1.6), 0, Math.PI * 2);
-  ctx.fill();
-
-  const disk = ctx.createRadialGradient(x, y, r * 1.02, x, y, r * diskScale);
-  disk.addColorStop(0, 'rgba(255, 170, 90, 0.75)');
-  disk.addColorStop(0.35, 'rgba(255, 120, 150, 0.35)');
-  disk.addColorStop(1, 'rgba(150, 90, 255, 0)');
-  ctx.fillStyle = disk;
-  ctx.beginPath();
-  ctx.arc(x, y, r * diskScale, 0, Math.PI * 2);
-  ctx.arc(x, y, r, 0, Math.PI * 2, true);
-  ctx.fill();
-
-  const base = (time / 5000) * Math.PI * 2;
-  for (let i = 0; i < 3; i++) {
-    const start = base * (1 + i * 0.35) + (i * Math.PI * 2) / 3;
-    ctx.strokeStyle = i % 2 === 0 ? 'rgba(180, 130, 255, 0.55)' : hexToRgba(THEME.accentCyan, 0.45);
-    ctx.lineWidth = Math.max(1, r * 0.08);
-    ctx.beginPath();
-    ctx.arc(x, y, r * (1.25 + i * 0.28), start, start + Math.PI * 0.9);
-    ctx.stroke();
-  }
-
-  ctx.fillStyle = THEME.bgBlackHole;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(180, 130, 255, 0.6)';
-  ctx.lineWidth = Math.max(1, r * 0.06);
-  ctx.stroke();
-}
 
 // ============================= HIT TESTS =============================
 
@@ -627,7 +580,7 @@ export function hitTestPlanet(state, systemId, wx, wy) {
     const p = planetPosition(planet, state.time);
     const dx = wx - p.x;
     const dy = wy - p.y;
-    const hitR = planet.radius + 6 / camera.zoom;
+    const hitR = planet.radius + 10 / camera.zoom;
     if (dx * dx + dy * dy <= hitR * hitR) return planet.id;
   }
   return null;
