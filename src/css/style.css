@@ -88,6 +88,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 
 #build-panel { right: 16px; top: 64px; }
+#scout-panel { left: 16px; top: 64px; max-width: 280px; }
+#intel-panel { left: 16px; bottom: 52px; max-width: 320px; }
 #save-menu { left: 50%; top: 50%; transform: translate(-50%, -50%); min-width: 320px; }
 
 .panel-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; letter-spacing: 0.5px; }
@@ -171,3 +173,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 @keyframes toast-out { to { opacity: 0; transform: translateY(8px); } }
 
 .hidden { display: none !important; }
+
+.scout-select-btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+  text-align: left;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+.scout-select-btn.selected {
+  border-color: var(--ok);
+  background: rgba(122, 255, 158, 0.12);
+}
+.contested { color: var(--danger); font-weight: 600; }

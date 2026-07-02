@@ -1,20 +1,40 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
 export const AUTOSAVE_INTERVAL_MS = 120000; // 2 minutes
 
 // --- Starting conditions ---
-export const STARTING_CREDITS = 500;
+export const STARTING_CREDITS = 900;
 export const DEFAULT_SEED = 1;
 
 // --- Economy (GDD §6) ---
 export const OUTPOST_COST = 300;             // credits
 export const OUTPOST_BASE_INCOME = 2;        // credits per second, before moon bonus
 export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the same planet
+
+// --- Structures ---
+export const SHIPYARD_COST = 400;
+export const SCOUT_HULL_COST = 120;
+
+// --- Production ---
+export const SCOUT_BUILD_MS = 18000;
+export const SHIPYARD_SLOTS = 1;
+
+// --- Scout transit ---
+export const SCOUT_LANE_SPEED = 140;
+export const SCOUT_LANE_MIN_LEG_MS = 1800;
+
+// --- Capture (GDD §9) ---
+export const CAPTURE_BASE = 1;
+export const CAPTURE_PER_PLANET = 1;
+export const CAPTURE_PER_MOON = 0.5;
+export const CAPTURE_STRUCTURE_WEIGHT = { outpost: 2, shipyard: 4 };
+export const CAPTURE_FLAGSHIP_FORCE = 1;
+export const CAPTURE_HOLD_MS = 20000;
 
 // --- Galaxy generation (GDD §4–5) ---
 export const GALAXY_STAR_COUNT = 20;

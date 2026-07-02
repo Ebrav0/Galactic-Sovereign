@@ -19,6 +19,7 @@
         <span class="stat"><span class="stat-label">Credits</span> <span id="credits-value">0</span></span>
         <span class="stat"><span class="stat-label">Income</span> <span id="income-value">0</span>/s</span>
         <span class="stat"><span class="stat-label">Flagship</span> <span id="flagship-loc">—</span></span>
+        <span class="stat"><span class="stat-label">Scouts</span> <span id="scout-summary">0</span></span>
       </div>
       <div class="hud-group">
         <button id="view-toggle-btn" type="button">Galaxy Map (M)</button>
@@ -27,10 +28,25 @@
       </div>
     </div>
 
+    <div id="scout-panel" class="panel hidden">
+      <div class="panel-title">Scout Fleet</div>
+      <div id="scout-roster" class="panel-body"></div>
+      <div id="selected-scout-line" class="panel-note"></div>
+    </div>
+
+    <div id="intel-panel" class="panel hidden">
+      <div class="panel-title">System Intel</div>
+      <div id="intel-panel-body" class="panel-body"></div>
+      <div id="capture-panel-body" class="panel-body"></div>
+    </div>
+
     <div id="build-panel" class="panel hidden">
       <div class="panel-title" id="build-panel-title">Planet</div>
       <div class="panel-body" id="build-panel-body"></div>
       <button id="build-outpost-btn" type="button">Build Outpost</button>
+      <button id="build-shipyard-btn" type="button" class="hidden">Build Shipyard</button>
+      <button id="queue-scout-btn" type="button" class="hidden">Build Scout</button>
+      <div id="build-progress" class="panel-note hidden"></div>
       <div id="build-panel-note" class="panel-note"></div>
     </div>
 

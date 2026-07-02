@@ -114,7 +114,7 @@ Enforcement is by convention + review; there is no runtime guard. When a change 
 
 ---
 
-## §5 State & Save Schema (save-v1, current)
+## §5 State & Save Schema (save-v2, current)
 
 ### Live state shape (authoritative, in `state.js`)
 
@@ -126,7 +126,7 @@ Enforcement is by convention + review; there is no runtime guard. When a change 
     playTimeMs: 0             // accumulated real play time (informational)
   },
   time: 0,                    // simulated ms; the determinism clock
-  credits: 500,               // starting credits from constants
+  credits: 900,               // starting credits from constants
   paused: false,              // serialized so a save reopens paused
   stronghold: "sys-19",       // star id of the Stronghold
   galaxy: {                   // 20-star lane graph, all from the seed
@@ -138,6 +138,7 @@ Enforcement is by convention + review; there is no runtime guard. When a change 
     "sys-0": {
       id: "sys-0",
       name: "...",
+      owner: "player" | "neutral",
       star: { radius: 40, color: "#ffd27a" },   // core adds kind: "blackhole"
       bodies: [               // planets; moons nested under their planet
         {
@@ -156,10 +157,17 @@ Enforcement is by convention + review; there is no runtime guard. When a change 
         }
       ],
       structures: [           // flat list; body linkage by bodyId
-        { id: "st1", type: "outpost", bodyId: "p1", builtAtTime: 12345 }
+        { id: "st1", type: "outpost", bodyId: "p1", builtAtTime: 12345 },
+        { id: "st2", type: "shipyard", bodyId: "p1", builtAtTime: 5000,
+          build: null | { hull: "scout", startedAt: 12000, durationMs: 18000 } }
       ]
     }
   },
+  scouts: [
+    { id: "scout-1", systemId: "sys-19", transit: null }
+  ],
+  intel: { "sys-19": { gatheredAt: 0 } },   // Stronghold pre-populated
+  capture: { "sys-3": { progressMs: 4000 } },
   flagship: {
     systemId: "sys-19",       // node id occupied; null while in lane transit
     x: 0, y: -130,            // system-view world coords (player-driven, so stored)
@@ -194,6 +202,11 @@ simulation ticks, so `advanceTime` stays deterministic.
 installs the old single `state.system` (structures intact) as the Stronghold
 system, and spawns the flagship there. The checksum is verified **before**
 migration — it always covers the file as written.
+
+### Migration 1 → 2
+
+Adds `owner` per system, `scouts[]`, `intel`, `capture`, shipyard `build` queues,
+and re-seeds neutral outposts/shipyards deterministically from `meta.seed`.
 
 ### Schema evolution rules
 
@@ -295,10 +308,11 @@ Phases follow GDD §19. One task per agent session; do not skip phases.
 | 1.3 | Flagship free flight: WASD/arrow thrust integrated in ticks; follow camera (pan breaks, thrust/F re-engage) | pause freezes flight; `advanceTime` + `__setFlagshipInput` deterministic |
 | 1.4 | Lane transit: click star to order travel; BFS multi-hop routing; ETA HUD; arrival at system edge retargets view | transit position pure function of `state.time`; pause freezes progress; build requires flagship presence |
 | 1.5 | Galaxy map view: lanes + traffic pulses, star nodes, stronghold ring, black hole/wormhole visuals, transit icon; M view toggle; double-click opens system | all observable via `render_game_to_text()`; verified in `output/verify_phase1.mjs` |
-| 1.6 | Scout intel overlay (scout ship, fog peel, per-system intel) | *pending* |
-| 1.7 | Dynamic capture requirement + 20 s uncontested hold | *pending* |
+| 1.5b | Shipyard + scout production: build shipyard, queue scout hulls, multi-scout fleet | local 1-slot queue per shipyard; scouts travel lanes independently; no free starting scout |
+| 1.6 | Scout intel overlay (scout ship, fog peel, per-system intel) | **done** — Shift+click dispatch; intel on scout arrival or flagship visit |
+| 1.7 | Dynamic capture requirement + 20 s uncontested hold | **done** — owner gate on build; contest via `__setEnemyPresence` test hook |
 
-Tasks 1.1–1.5 shipped in the 2026-07-02 flagship & galaxy session. The wormhole
+Tasks 1.1–1.7 shipped in the 2026-07-02 Phase 1 sessions. The wormhole
 at the galactic core is a **dormant landmark** until Phase 4 (a single galaxy
 gives an unanchored exit nowhere to go).
 

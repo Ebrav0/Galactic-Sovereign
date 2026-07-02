@@ -11,6 +11,7 @@ import {
   screenToWorld,
   hitTestPlanet,
   hitTestStar,
+  hitTestScout,
 } from './render.js';
 
 const DRAG_THRESHOLD_PX = 5;
@@ -33,13 +34,13 @@ export function attachInput(canvas, ctx) {
     onToggleView,
     onFlagshipInput,
     onStarTravel,
+    onScoutTravel,
     onStarView,
+    onScoutSelect,
     onFollowRequest,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
-
-  // --- Thrust keys (held-key set -> normalized vector) ---
 
   const held = new Set();
 
@@ -87,19 +88,26 @@ export function attachInput(canvas, ctx) {
     }
   });
 
-  // --- Pointer: pan / click / double-click ---
-
   let pointerDown = false;
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
-  let pendingStarClick = null; // { id, timer } — single-click delayed to catch double-clicks
+  let pendingStarClick = null;
+  let shiftHeld = false;
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = false;
+  });
 
   canvas.addEventListener('mousedown', (e) => {
     pointerDown = true;
     dragging = false;
     lastX = e.clientX;
     lastY = e.clientY;
+    shiftHeld = e.shiftKey;
   });
 
   window.addEventListener('mousemove', (e) => {
@@ -111,16 +119,15 @@ export function attachInput(canvas, ctx) {
         const cam = activeCamera();
         cam.x -= dx / cam.zoom;
         cam.y -= dy / cam.zoom;
-        if (getView() === 'system') follow.enabled = false; // panning away breaks follow
+        if (getView() === 'system') follow.enabled = false;
         canvas.classList.add('panning');
       }
       lastX = e.clientX;
       lastY = e.clientY;
     } else {
-      // Hover feedback
       const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
       const hit = getView() === 'galaxy'
-        ? hitTestStar(getState(), w.x, w.y)
+        ? hitTestStar(getState(), w.x, w.y) ?? hitTestScout(getState(), w.x, w.y)
         : hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
       canvas.classList.toggle('hover-body', hit !== null);
     }
@@ -130,21 +137,31 @@ export function attachInput(canvas, ctx) {
     if (!pointerDown) return;
     pointerDown = false;
     canvas.classList.remove('panning');
-    if (dragging) return; // pan, not a click
+    if (dragging) return;
 
     const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
 
     if (getView() === 'system') {
       const hit = hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
-      onSelect(hit); // null clears selection
+      onSelect(hit);
       return;
     }
 
-    // Galaxy view: single click = travel order, double click = view system.
-    // The first click is delayed briefly so a double-click doesn't also
-    // dispatch a stray travel order.
+    // Galaxy: scout click takes priority over star click.
+    const scoutHit = hitTestScout(getState(), w.x, w.y);
+    if (scoutHit && !e.shiftKey) {
+      onScoutSelect(scoutHit);
+      return;
+    }
+
     const starId = hitTestStar(getState(), w.x, w.y);
     if (!starId) return;
+
+    if (e.shiftKey || shiftHeld) {
+      onScoutTravel(starId);
+      return;
+    }
+
     if (pendingStarClick && pendingStarClick.id === starId) {
       clearTimeout(pendingStarClick.timer);
       pendingStarClick = null;
@@ -168,11 +185,9 @@ export function attachInput(canvas, ctx) {
     const factor = e.deltaY < 0 ? CAMERA_ZOOM_STEP : 1 / CAMERA_ZOOM_STEP;
 
     if (getView() === 'system' && follow.enabled) {
-      // While following, zoom stays centered on the flagship.
       cam.zoom = clamp(cam.zoom * factor);
       return;
     }
-    // Zoom toward the cursor: keep the world point under the cursor fixed.
     const before = screenToWorld(cam, e.clientX, e.clientY, canvas);
     cam.zoom = clamp(cam.zoom * factor);
     const after = screenToWorld(cam, e.clientX, e.clientY, canvas);

@@ -13,8 +13,14 @@ import {
   LANE_SPEED,
   LANE_MIN_LEG_MS,
 } from './constants.js';
-import { findPath, nodeById, laneLength } from './galaxy.js';
+import { findPath, nodeById } from './galaxy.js';
 import { systemById } from './state.js';
+import {
+  legDurationMs,
+  transitStatus as transitStatusCore,
+  transitEtaMs as transitEtaMsCore,
+  advanceTransit,
+} from './transit.js';
 
 // Current thrust vector, set by input (or test hooks). Visual-only in the
 // sense of never being serialized; ticks read it as the pilot's live order.
@@ -31,11 +37,6 @@ export function getFlagshipInput() {
 
 // --- Lane transit ---
 
-export function legDurationMs(galaxy, idA, idB) {
-  return Math.max(LANE_MIN_LEG_MS, Math.round((laneLength(galaxy, idA, idB) / LANE_SPEED) * 1000));
-}
-
-// Returns {ok, path, etaMs} or {ok:false, reason} — UI shows the reason verbatim.
 export function orderTravel(state, targetId) {
   const f = state.flagship;
   if (f.transit) return { ok: false, reason: 'Flagship is already in transit' };
@@ -49,42 +50,30 @@ export function orderTravel(state, targetId) {
     path,
     legIndex: 0,
     legStartTime: state.time,
-    legDurationMs: legDurationMs(state.galaxy, path[0], path[1]),
+    legDurationMs: legDurationMs(state.galaxy, path[0], path[1], LANE_SPEED, LANE_MIN_LEG_MS),
   };
   f.systemId = null;
   return { ok: true, path, etaMs: transitEtaMs(state) };
 }
 
-// Remaining travel time; pure function of state.time and the transit record.
 export function transitEtaMs(state) {
-  const t = state.flagship.transit;
-  if (!t) return 0;
-  let eta = Math.max(0, t.legStartTime + t.legDurationMs - state.time);
-  for (let i = t.legIndex + 1; i < t.path.length - 1; i++) {
-    eta += legDurationMs(state.galaxy, t.path[i], t.path[i + 1]);
-  }
-  return eta;
+  return transitEtaMsCore(
+    state.flagship.transit,
+    state.galaxy,
+    state.time,
+    LANE_SPEED,
+    LANE_MIN_LEG_MS,
+  );
 }
 
-// Galaxy-map position of an in-transit flagship, or null when not in transit.
 export function transitStatus(state) {
-  const t = state.flagship.transit;
-  if (!t) return null;
-  const fromId = t.path[t.legIndex];
-  const toId = t.path[t.legIndex + 1];
-  const from = nodeById(state.galaxy, fromId);
-  const to = nodeById(state.galaxy, toId);
-  const progress = Math.min(1, Math.max(0, (state.time - t.legStartTime) / t.legDurationMs));
-  return {
-    fromId,
-    toId,
-    destId: t.path[t.path.length - 1],
-    x: from.x + (to.x - from.x) * progress,
-    y: from.y + (to.y - from.y) * progress,
-    angle: Math.atan2(to.y - from.y, to.x - from.x),
-    progress,
-    etaMs: transitEtaMs(state),
-  };
+  return transitStatusCore(
+    state.flagship.transit,
+    state.galaxy,
+    state.time,
+    LANE_SPEED,
+    LANE_MIN_LEG_MS,
+  );
 }
 
 // --- Per-tick update (called from simulation.js after state.time advances) ---
@@ -92,7 +81,14 @@ export function transitStatus(state) {
 export function tickFlagship(state) {
   const f = state.flagship;
   if (f.transit) {
-    advanceTransit(state);
+    advanceTransit(
+      f.transit,
+      state.galaxy,
+      state.time,
+      LANE_SPEED,
+      LANE_MIN_LEG_MS,
+      (destId, fromId) => arrive(state, destId, fromId),
+    );
     return;
   }
 
@@ -129,31 +125,11 @@ export function tickFlagship(state) {
   }
 }
 
-// Legs chain off exact leg-end times (not wall clock) so a large advanceTime
-// jump completes multiple legs deterministically.
-function advanceTransit(state) {
-  const f = state.flagship;
-  while (f.transit) {
-    const t = f.transit;
-    const legEnd = t.legStartTime + t.legDurationMs;
-    if (state.time < legEnd) return;
-    if (t.legIndex + 2 >= t.path.length) {
-      arrive(state, t.path[t.path.length - 1], t.path[t.path.length - 2]);
-      return;
-    }
-    t.legIndex += 1;
-    t.legStartTime = legEnd;
-    t.legDurationMs = legDurationMs(state.galaxy, t.path[t.legIndex], t.path[t.legIndex + 1]);
-  }
-}
-
 function arrive(state, destId, fromId) {
   const f = state.flagship;
   f.transit = null;
   f.systemId = destId;
 
-  // Enter at the system edge on the side facing the star we came from,
-  // pointed at the local star.
   const dest = nodeById(state.galaxy, destId);
   const from = nodeById(state.galaxy, fromId);
   const entryAngle = Math.atan2(from.y - dest.y, from.x - dest.x);

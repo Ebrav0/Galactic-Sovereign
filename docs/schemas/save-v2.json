@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 2",
+  "description": "Adds system ownership, scout fleet, intel map, capture timers, and shipyard production queues.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 2 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": ["meta", "time", "credits", "paused", "stronghold", "galaxy", "systems", "flagship", "scouts", "intel", "capture"],
+      "properties": {
+        "meta": {
+          "type": "object",
+          "required": ["seed", "createdAt", "playTimeMs"],
+          "properties": {
+            "seed": { "type": "integer" },
+            "createdAt": { "type": "number" },
+            "playTimeMs": { "type": "number" }
+          }
+        },
+        "time": { "type": "number" },
+        "credits": { "type": "number" },
+        "paused": { "type": "boolean" },
+        "stronghold": { "type": "string" },
+        "galaxy": { "$ref": "save-v1.json#/properties/state/properties/galaxy" },
+        "systems": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["id", "name", "owner", "star", "bodies", "structures"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "owner": { "enum": ["player", "neutral"] },
+              "star": { "type": "object" },
+              "bodies": { "type": "array" },
+              "structures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "type", "bodyId", "builtAtTime"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "type": { "enum": ["outpost", "shipyard"] },
+                    "bodyId": { "type": "string" },
+                    "builtAtTime": { "type": "number" },
+                    "build": {
+                      "type": ["object", "null"],
+                      "properties": {
+                        "hull": { "enum": ["scout"] },
+                        "startedAt": { "type": "number" },
+                        "durationMs": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "flagship": { "$ref": "save-v1.json#/properties/state/properties/flagship" },
+        "scouts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "systemId", "transit"],
+            "properties": {
+              "id": { "type": "string" },
+              "systemId": { "type": ["string", "null"] },
+              "transit": { "$ref": "save-v1.json#/properties/state/properties/flagship/properties/transit" }
+            }
+          }
+        },
+        "intel": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["gatheredAt"],
+            "properties": {
+              "gatheredAt": { "type": "number" }
+            }
+          }
+        },
+        "capture": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["progressMs"],
+            "properties": {
+              "progressMs": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

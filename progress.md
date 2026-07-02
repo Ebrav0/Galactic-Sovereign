@@ -80,4 +80,25 @@ Never delete prior entries.
 - `output/verify_phase0.mjs` asserts the v0 schema (e.g. stronghold id `sys-home`) and no longer passes against save-v1 — superseded by `verify_phase1.mjs`; kept as a historical artifact
 
 ### Suggested next
-- Phase 1 task 1.6: scout intel overlay (scout ship on lanes, fog-of-war peel in galaxy + system views). Groundwork exists: lane transit generalizes beyond the flagship; `render_game_to_text` already scopes per-system data.
+- Phase 2 task 2.x: hybrid combat, shipyard combat hull production, fleet capture force
+
+---
+
+## Session 2026-07-02 — Phase 1.6 + 1.7 + shipyard (save-v2)
+
+**Task claimed:** Phase 1 tasks 1.5b, 1.6, 1.7 (shipyard/scout production, intel overlay, capture hold)
+**Status:** complete
+
+### Done
+- save-v2: ownership, scouts[], intel, capture, shipyard production queues
+- `transit.js`, `production.js`, `scout.js`, `intel.js`, `capture.js` modules
+- UI: build panel (outpost/shipyard/scout), scout roster, intel/capture panels
+- Galaxy fog + scout sprites; capture hold arc; Shift+click scout dispatch
+- `output/verify_phase1.mjs` section 14 (~28 checks); `docs/schemas/save-v2.json`
+
+### Decisions
+- No free starting scout; intel from scout arrival or flagship visit
+- Phase 1 capture force = flagship only; enemy contest via test hook
+
+### Suggested next
+- Phase 2: hybrid combat and fleet-based capture force

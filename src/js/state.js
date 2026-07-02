@@ -1,4 +1,4 @@
-// Authoritative, serializable game state (IMPLEMENTATION_PLAN §5, save-v1).
+// Authoritative, serializable game state (IMPLEMENTATION_PLAN §5, save-v2).
 // Everything here must survive JSON.stringify/parse round trips.
 // Visual-only data (camera, shuttle sprites) must never enter these shapes.
 
@@ -20,7 +20,7 @@ import {
   OTHER_PLANET_COUNT_RANGE,
   FLAGSHIP_SPAWN_ORBIT,
 } from './constants.js';
-import { generateGalaxy } from './galaxy.js';
+import { generateGalaxy, BLACK_HOLE_ID } from './galaxy.js';
 
 // Mulberry32 — small deterministic PRNG so the same seed always
 // generates the same galaxy (GDD §15 determinism requirement).
@@ -47,6 +47,32 @@ const PLANET_NAMES = ['Aurelia', 'Boreas', 'Cinder', 'Dagon', 'Erebus', 'Ferrum'
 const MOON_SUFFIXES = ['I', 'II', 'III', 'IV'];
 const PLANET_TYPES = ['habitable', 'barren', 'gas'];
 const STAR_COLORS = ['#ffd27a', '#ffb46b', '#ffe9a8', '#9fc7ff', '#ff9d7a', '#cfe3ff'];
+
+// Seed neutral outposts/shipyards on non-home stars for varied capture targets.
+function seedNeutralStructures(rng, system, { isHome }) {
+  if (isHome) return;
+  let nextId = 1;
+  for (const planet of system.bodies) {
+    if (planet.type !== 'habitable') continue;
+    if (rng() < 0.3) {
+      system.structures.push({
+        id: `nst${nextId++}`,
+        type: 'outpost',
+        bodyId: planet.id,
+        builtAtTime: 0,
+      });
+      if (rng() < 0.1) {
+        system.structures.push({
+          id: `nst${nextId++}`,
+          type: 'shipyard',
+          bodyId: planet.id,
+          builtAtTime: 0,
+          build: null,
+        });
+      }
+    }
+  }
+}
 
 // One star system's bodies. The home system guarantees a habitable planet
 // with moons so a new game is always playable; other stars roll freely and
@@ -97,9 +123,10 @@ function generateSystem(rng, star, { isHome }) {
     });
   }
 
-  return {
+  const system = {
     id: star.id,
     name: star.name,
+    owner: isHome ? 'player' : 'neutral',
     star: {
       radius: isHome ? STAR_RADIUS : Math.round(range(rng, [28, 52])),
       color: isHome ? '#ffd27a' : STAR_COLORS[Math.floor(rng() * STAR_COLORS.length)],
@@ -107,6 +134,9 @@ function generateSystem(rng, star, { isHome }) {
     bodies,
     structures: [],
   };
+
+  seedNeutralStructures(rng, system, { isHome });
+  return system;
 }
 
 // The galactic core is enterable but hosts no buildable bodies — just the
@@ -115,10 +145,25 @@ function createBlackHoleSystem(blackHole) {
   return {
     id: blackHole.id,
     name: blackHole.name,
+    owner: 'neutral',
     star: { radius: 30, color: '#05060c', kind: 'blackhole' },
     bodies: [],
     structures: [],
   };
+}
+
+// Re-seed neutral structures on all non-home stars (used by v1→v2 migration).
+export function seedNeutralStructuresForGalaxy(state) {
+  const seed = state.meta.seed;
+  for (let i = 0; i < state.galaxy.stars.length; i++) {
+    const star = state.galaxy.stars[i];
+    if (star.id === state.stronghold) continue;
+    const sysRng = createRng((seed + (i + 1) * 0x9e3779b9 + 0x6e657574) >>> 0);
+    const system = state.systems[star.id];
+    // Strip prior neutral-seeded structures (keep player-built ones from migration).
+    system.structures = system.structures.filter((s) => !s.id.startsWith('nst'));
+    seedNeutralStructures(sysRng, system, { isHome: false });
+  }
 }
 
 export function createNewGame(seed) {
@@ -158,8 +203,11 @@ export function createNewGame(seed) {
       vx: 0,
       vy: 0,
       heading: 0,
-      transit: null, // { path: [nodeIds], legIndex, legStartTime, legDurationMs }
+      transit: null,
     },
+    scouts: [],
+    intel: { [strongholdId]: { gatheredAt: 0 } },
+    capture: {},
   };
 }
 
@@ -204,4 +252,27 @@ export function structuresOn(state, systemId, bodyId) {
 
 export function hasOutpost(state, systemId, planetId) {
   return structuresOn(state, systemId, planetId).some((s) => s.type === 'outpost');
+}
+
+export function hasShipyard(state, systemId, planetId) {
+  return structuresOn(state, systemId, planetId).some((s) => s.type === 'shipyard');
+}
+
+export function findShipyardOnPlanet(state, systemId, planetId) {
+  return structuresOn(state, systemId, planetId).find((s) => s.type === 'shipyard') ?? null;
+}
+
+export function findStructure(state, systemId, structureId) {
+  const system = systemById(state, systemId);
+  return system?.structures.find((s) => s.id === structureId) ?? null;
+}
+
+export function isPlayerOwned(state, systemId) {
+  const system = systemById(state, systemId);
+  return system?.owner === 'player';
+}
+
+export function isCapturableTarget(state, systemId) {
+  if (systemId === BLACK_HOLE_ID) return false;
+  return !isPlayerOwned(state, systemId);
 }

@@ -2,7 +2,7 @@
 // Pure serialize/deserialize plus I/O calls; holds no live state references.
 
 import { SAVE_VERSION } from './constants.js';
-import { createNewGame } from './state.js';
+import { createNewGame, seedNeutralStructuresForGalaxy } from './state.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -45,12 +45,11 @@ export function serialize(state) {
 function migrateSave(envelope) {
   let e = envelope;
   if (e.saveVersion === 0) e = migrateV0toV1(e);
+  if (e.saveVersion === 1) e = migrateV1toV2(e);
   return e;
 }
 
 // v0 (single home system) -> v1 (galaxy + multi-system + flagship).
-// Regenerates the galaxy from the saved seed, then installs the player's
-// actual v0 system — structures intact — as the Stronghold system.
 function migrateV0toV1(envelope) {
   const old = envelope.state;
   const fresh = createNewGame(old.meta.seed);
@@ -63,9 +62,13 @@ function migrateV0toV1(envelope) {
   const strongholdId = fresh.stronghold;
   const oldSystem = old.system;
   oldSystem.id = strongholdId;
+  oldSystem.owner = 'player';
   fresh.systems[strongholdId] = oldSystem;
-  // Keep the galaxy-map star label in sync with the migrated system name.
   fresh.galaxy.stars.find((s) => s.id === strongholdId).name = oldSystem.name;
+
+  fresh.intel = { [strongholdId]: { gatheredAt: 0 } };
+  fresh.scouts = [];
+  fresh.capture = {};
 
   const stateJson = JSON.stringify(fresh);
   return {
@@ -73,6 +76,39 @@ function migrateV0toV1(envelope) {
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state: fresh,
+  };
+}
+
+// v1 -> v2 (ownership, scouts, intel, capture, neutral seeding, shipyard build slots).
+function migrateV1toV2(envelope) {
+  const state = envelope.state;
+
+  for (const star of state.galaxy.stars) {
+    const system = state.systems[star.id];
+    if (!system) continue;
+    system.owner = star.id === state.stronghold ? 'player' : 'neutral';
+    for (const s of system.structures) {
+      if (s.type === 'shipyard' && s.build === undefined) s.build = null;
+    }
+  }
+  const core = state.systems[state.galaxy.blackHole.id];
+  if (core) core.owner = 'neutral';
+
+  state.scouts = state.scouts ?? [];
+  state.intel = state.intel ?? { [state.stronghold]: { gatheredAt: 0 } };
+  if (!state.intel[state.stronghold]) {
+    state.intel[state.stronghold] = { gatheredAt: 0 };
+  }
+  state.capture = state.capture ?? {};
+
+  seedNeutralStructuresForGalaxy(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 2,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
   };
 }
 

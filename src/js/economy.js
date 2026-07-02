@@ -1,8 +1,13 @@
-// Economy: outpost construction and credit income (GDD §6).
+// Economy: outpost/shipyard construction and credit income (GDD §6).
 // May mutate state.credits and system structures. Never touches DOM/canvas.
 
 import { OUTPOST_COST, OUTPOST_BASE_INCOME, MOON_YIELD_BONUS, TICK_MS } from './constants.js';
-import { systemById, findPlanet, hasOutpost } from './state.js';
+import {
+  systemById,
+  findPlanet,
+  hasOutpost,
+  isPlayerOwned,
+} from './state.js';
 
 let nextStructureId = 1;
 
@@ -18,18 +23,27 @@ export function resetStructureIds(state) {
   nextStructureId = max + 1;
 }
 
+export function allocateStructureId() {
+  return `st${nextStructureId++}`;
+}
+
+function flagshipInSystem(state, systemId) {
+  return state.flagship.systemId === systemId && !state.flagship.transit;
+}
+
 // Returns {ok} or {ok:false, reason} — UI displays the reason verbatim.
 export function canBuildOutpost(state, systemId, planetId) {
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
+  if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
   const planet = findPlanet(state, systemId, planetId);
   if (!planet) return { ok: false, reason: 'No such planet' };
   if (planet.type === 'gas') return { ok: false, reason: 'Gas giants have no surface — orbital structures only' };
   if (planet.type === 'barren') return { ok: false, reason: 'Barren world — cannot support an outpost (v0)' };
   if (hasOutpost(state, systemId, planetId)) return { ok: false, reason: 'Outpost already built' };
-  // Construction is directed from the flagship — it must be on-site (Phase 1
-  // stand-in for ownership; capture mechanics arrive later in the phase).
-  if (state.flagship.systemId !== systemId) return { ok: false, reason: 'Flagship must be in this system to direct construction' };
+  if (!flagshipInSystem(state, systemId)) {
+    return { ok: false, reason: 'Flagship must be in this system to direct construction' };
+  }
   if (state.credits < OUTPOST_COST) return { ok: false, reason: `Need ${OUTPOST_COST} credits` };
   return { ok: true };
 }
@@ -40,7 +54,7 @@ export function buildOutpost(state, systemId, planetId) {
 
   state.credits -= OUTPOST_COST;
   systemById(state, systemId).structures.push({
-    id: `st${nextStructureId++}`,
+    id: allocateStructureId(),
     type: 'outpost',
     bodyId: planetId,
     builtAtTime: state.time,
@@ -48,10 +62,11 @@ export function buildOutpost(state, systemId, planetId) {
   return { ok: true };
 }
 
-// Credits per second across all outposts in every system; yield scales with moon count.
+// Credits per second from player-owned outposts only; yield scales with moon count.
 export function incomePerSecond(state) {
   let total = 0;
   for (const system of Object.values(state.systems)) {
+    if (!isPlayerOwned(state, system.id)) continue;
     for (const s of system.structures) {
       if (s.type !== 'outpost') continue;
       const planet = system.bodies.find((b) => b.id === s.bodyId);
