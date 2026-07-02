@@ -95,7 +95,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     title: 'Galactic Sovereign',
-    backgroundColor: '#05070f',
+    backgroundColor: '#05070f', // sync with --bg-deep in src/css/tokens.css
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

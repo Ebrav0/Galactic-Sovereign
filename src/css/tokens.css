@@ -1,0 +1,73 @@
+:root {
+  /* Backgrounds */
+  --bg-deep: #05070f;
+  --bg-galaxy: #04060d;
+  --bg-panel: rgba(8, 12, 24, 0.88);
+  --bg-panel-solid: #0a0e1c;
+  --bg-chip: rgba(16, 24, 48, 0.72);
+
+  /* Borders */
+  --border-subtle: rgba(120, 160, 255, 0.12);
+  --border-default: rgba(120, 160, 255, 0.22);
+  --border-accent: rgba(120, 160, 255, 0.38);
+
+  /* Text */
+  --text-primary: #cfe0ff;
+  --text-secondary: rgba(207, 224, 255, 0.82);
+  --text-muted: #7a8db5;
+  --text-dim: rgba(122, 141, 181, 0.9);
+
+  /* Accents */
+  --accent-gold: #ffd27a;
+  --accent-cyan: #7ad0ff;
+  --accent-green: #7aff9e;
+  --danger: #ff7a7a;
+  --ok: #7aff9e;
+
+  /* Planet type dots */
+  --planet-habitable: #4f9e6b;
+  --planet-barren: #9e8a72;
+  --planet-gas: #b07adb;
+
+  /* Surfaces */
+  --panel-blur: 12px;
+  --panel-shadow: 0 4px 24px rgba(0, 0, 0, 0.45), 0 0 1px rgba(120, 160, 255, 0.15);
+  --glow-accent: 0 0 20px rgba(120, 160, 255, 0.25);
+  --glow-gold: 0 0 16px rgba(255, 210, 122, 0.3);
+
+  /* Spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Typography */
+  --font-ui: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  --font-display: 'Exo 2', 'Orbitron', sans-serif;
+  --text-xs: 10px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* Layout */
+  --header-height: 52px;
+  --footer-height: 44px;
+  --rail-width: 280px;
+  --rail-gap: var(--space-3);
+
+  /* Legacy aliases (for gradual migration) */
+  --hud-bg: var(--bg-panel);
+  --hud-border: var(--border-default);
+  --text: var(--text-primary);
+  --text-dim: var(--text-muted);
+  --accent: var(--accent-gold);
+}

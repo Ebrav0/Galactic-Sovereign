@@ -3,8 +3,16 @@
 // multi-hop), build-requires-flagship rule, save-v1 round trip, v0->v1 migration,
 // determinism, and console cleanliness.
 import { createRequire } from 'node:module';
-const require = createRequire(process.env.HOME + '/.codex/skills/develop-web-game/scripts/');
-const { chromium } = require('playwright');
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+const __dir = path.dirname(fileURLToPath(import.meta.url));
+const skillRequire = createRequire(process.env.HOME + '/.codex/skills/develop-web-game/scripts/');
+let chromium;
+try {
+  ({ chromium } = skillRequire('playwright'));
+} catch {
+  ({ chromium } = createRequire(path.join(__dir, '../package.json'))('playwright'));
+}
 
 const results = [];
 const check = (name, cond, detail = '') => {
