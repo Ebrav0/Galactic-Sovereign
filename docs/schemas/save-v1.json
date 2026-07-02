@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 1",
+  "description": "Envelope written to <Documents>/Galactic Sovereign/saves/<slot>.json (Electron) or localStorage key gs-save-<slot> (browser fallback). checksum is CRC-32 hex of JSON.stringify(state). v1 adds the galaxy graph, one system per star (plus the black-hole core system), and the player flagship. Migration from v0 regenerates the galaxy from the seed and installs the old single system as the Stronghold system.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 1 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number", "description": "epoch ms when written" },
+    "state": {
+      "type": "object",
+      "required": ["meta", "time", "credits", "paused", "stronghold", "galaxy", "systems", "flagship"],
+      "properties": {
+        "meta": {
+          "type": "object",
+          "required": ["seed", "createdAt", "playTimeMs"],
+          "properties": {
+            "seed": { "type": "integer" },
+            "createdAt": { "type": "number" },
+            "playTimeMs": { "type": "number" }
+          }
+        },
+        "time": { "type": "number", "description": "simulated ms; the determinism clock — orbital and lane-transit positions derive from this" },
+        "credits": { "type": "number" },
+        "paused": { "type": "boolean" },
+        "stronghold": { "type": "string", "description": "star id of the player Stronghold" },
+        "galaxy": {
+          "type": "object",
+          "required": ["stars", "blackHole", "lanes"],
+          "properties": {
+            "stars": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "name", "x", "y"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "name": { "type": "string" },
+                  "x": { "type": "number", "description": "galaxy-map coords; the black hole sits at the origin" },
+                  "y": { "type": "number" }
+                }
+              }
+            },
+            "blackHole": {
+              "type": "object",
+              "required": ["id", "name", "x", "y"],
+              "properties": {
+                "id": { "const": "core" },
+                "name": { "type": "string" },
+                "x": { "type": "number" },
+                "y": { "type": "number" }
+              }
+            },
+            "lanes": {
+              "type": "array",
+              "description": "undirected edges as [nodeIdA, nodeIdB]; connected graph including the black hole",
+              "items": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "systems": {
+          "type": "object",
+          "description": "map of node id -> system; every star has one, plus the black-hole core system (kind: blackhole, no bodies)",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["id", "name", "star", "bodies", "structures"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "star": {
+                "type": "object",
+                "required": ["radius", "color"],
+                "properties": {
+                  "radius": { "type": "number" },
+                  "color": { "type": "string" },
+                  "kind": { "enum": ["blackhole"], "description": "present only on the core system" }
+                }
+              },
+              "bodies": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "kind", "type", "name", "orbitRadius", "orbitPeriodMs", "orbitPhase", "radius", "moons"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "kind": { "const": "planet" },
+                    "type": { "enum": ["habitable", "barren", "gas"] },
+                    "name": { "type": "string" },
+                    "orbitRadius": { "type": "number" },
+                    "orbitPeriodMs": { "type": "number" },
+                    "orbitPhase": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "radius": { "type": "number" },
+                    "moons": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "kind", "name", "orbitRadius", "orbitPeriodMs", "orbitPhase", "radius"],
+                        "properties": {
+                          "id": { "type": "string" },
+                          "kind": { "const": "moon" },
+                          "name": { "type": "string" },
+                          "orbitRadius": { "type": "number" },
+                          "orbitPeriodMs": { "type": "number" },
+                          "orbitPhase": { "type": "number", "minimum": 0, "maximum": 1 },
+                          "radius": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "structures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "type", "bodyId", "builtAtTime"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "type": { "enum": ["outpost"] },
+                    "bodyId": { "type": "string" },
+                    "builtAtTime": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "flagship": {
+          "type": "object",
+          "required": ["systemId", "x", "y", "vx", "vy", "heading", "transit"],
+          "properties": {
+            "systemId": {
+              "type": ["string", "null"],
+              "description": "node id the flagship occupies; null while in lane transit"
+            },
+            "x": { "type": "number", "description": "system-view world coords (origin at the local star)" },
+            "y": { "type": "number" },
+            "vx": { "type": "number" },
+            "vy": { "type": "number" },
+            "heading": { "type": "number", "description": "radians" },
+            "transit": {
+              "type": ["object", "null"],
+              "description": "lane transit record; on-lane position is a pure function of state.time",
+              "required": ["path", "legIndex", "legStartTime", "legDurationMs"],
+              "properties": {
+                "path": { "type": "array", "items": { "type": "string" }, "minItems": 2 },
+                "legIndex": { "type": "integer", "minimum": 0 },
+                "legStartTime": { "type": "number" },
+                "legDurationMs": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

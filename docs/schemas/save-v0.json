@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 0",
+  "description": "Envelope written to <Documents>/Galactic Sovereign/saves/<slot>.json (Electron) or localStorage key gs-save-<slot> (browser fallback). checksum is CRC-32 hex of JSON.stringify(state).",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 0 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number", "description": "epoch ms when written" },
+    "state": {
+      "type": "object",
+      "required": ["meta", "time", "credits", "paused", "stronghold", "system"],
+      "properties": {
+        "meta": {
+          "type": "object",
+          "required": ["seed", "createdAt", "playTimeMs"],
+          "properties": {
+            "seed": { "type": "integer" },
+            "createdAt": { "type": "number" },
+            "playTimeMs": { "type": "number" }
+          }
+        },
+        "time": { "type": "number", "description": "simulated ms; the determinism clock — all orbital positions derive from this" },
+        "credits": { "type": "number" },
+        "paused": { "type": "boolean" },
+        "stronghold": { "type": "string", "description": "system id of the player Stronghold" },
+        "system": {
+          "type": "object",
+          "required": ["id", "name", "star", "bodies", "structures"],
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "star": {
+              "type": "object",
+              "required": ["radius", "color"],
+              "properties": {
+                "radius": { "type": "number" },
+                "color": { "type": "string" }
+              }
+            },
+            "bodies": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "kind", "type", "name", "orbitRadius", "orbitPeriodMs", "orbitPhase", "radius", "moons"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "kind": { "const": "planet" },
+                  "type": { "enum": ["habitable", "barren", "gas"] },
+                  "name": { "type": "string" },
+                  "orbitRadius": { "type": "number" },
+                  "orbitPeriodMs": { "type": "number" },
+                  "orbitPhase": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "radius": { "type": "number" },
+                  "moons": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["id", "kind", "name", "orbitRadius", "orbitPeriodMs", "orbitPhase", "radius"],
+                      "properties": {
+                        "id": { "type": "string" },
+                        "kind": { "const": "moon" },
+                        "name": { "type": "string" },
+                        "orbitRadius": { "type": "number" },
+                        "orbitPeriodMs": { "type": "number" },
+                        "orbitPhase": { "type": "number", "minimum": 0, "maximum": 1 },
+                        "radius": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "structures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "type", "bodyId", "builtAtTime"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "type": { "enum": ["outpost"] },
+                  "bodyId": { "type": "string" },
+                  "builtAtTime": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

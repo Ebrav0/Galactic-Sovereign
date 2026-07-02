@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Galactic Sovereign</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <div id="hud">
+    <div id="top-bar">
+      <div class="hud-group">
+        <span id="system-name">—</span>
+        <span id="stronghold-badge" class="badge hidden">STRONGHOLD</span>
+      </div>
+      <div class="hud-group">
+        <span class="stat"><span class="stat-label">Credits</span> <span id="credits-value">0</span></span>
+        <span class="stat"><span class="stat-label">Income</span> <span id="income-value">0</span>/s</span>
+        <span class="stat"><span class="stat-label">Flagship</span> <span id="flagship-loc">—</span></span>
+      </div>
+      <div class="hud-group">
+        <button id="view-toggle-btn" type="button">Galaxy Map (M)</button>
+        <button id="pause-btn" type="button">Pause</button>
+        <button id="save-menu-btn" type="button">Saves</button>
+      </div>
+    </div>
+
+    <div id="build-panel" class="panel hidden">
+      <div class="panel-title" id="build-panel-title">Planet</div>
+      <div class="panel-body" id="build-panel-body"></div>
+      <button id="build-outpost-btn" type="button">Build Outpost</button>
+      <div id="build-panel-note" class="panel-note"></div>
+    </div>
+
+    <div id="save-menu" class="panel hidden">
+      <div class="panel-title">Save / Load</div>
+      <div id="save-slots"></div>
+      <div class="save-menu-actions">
+        <button id="export-save-btn" type="button">Export</button>
+        <button id="import-save-btn" type="button">Import</button>
+        <button id="close-save-menu-btn" type="button">Close</button>
+      </div>
+      <input type="file" id="import-file-input" accept=".json" class="hidden" />
+    </div>
+
+    <div id="view-hint"></div>
+
+    <div id="pause-overlay" class="hidden"><span>PAUSED</span></div>
+    <div id="toast-container"></div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
