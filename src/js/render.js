@@ -358,7 +358,7 @@ function drawScoutSprite(ctx, x, y, angle, r, selected) {
 function starNodeRadius(state, starId) {
   const system = systemById(state, starId);
   const bonus = typeSizeBonus(system?.star);
-  return 9 + (system ? system.bodies.length : 0) * 1.6 + bonus;
+  return 11 + (system ? system.bodies.length : 0) * 1.6 + bonus;
 }
 
 const BLACK_HOLE_NODE_RADIUS = 26;
@@ -483,12 +483,12 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     }
 
     if (state.stronghold === star.id) {
-      drawGlowRing(ctx, s.x, s.y, nodeR + 6 * z, THEME.accentGold, Math.max(1, 2 * z), 0.9);
-      drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1 * z), 0.35);
+      drawGlowRing(ctx, s.x, s.y, nodeR + 18 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.75);
+      drawGlowRing(ctx, s.x, s.y, nodeR + 24 * z, THEME.accentGold, Math.max(1, 0.8 * z), 0.28);
     }
 
-    if (owned) {
-      drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.65);
+    if (owned && state.stronghold !== star.id) {
+      drawGlowRing(ctx, s.x, s.y, nodeR + 20 * z, THEME.accentGold, Math.max(1, 1.2 * z), 0.55);
     }
 
     const progress = captureProgressMs(state, star.id);

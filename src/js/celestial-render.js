@@ -45,12 +45,67 @@ function pulseAlpha(time, speed, base, amplitude) {
   return base + amplitude * (0.5 + 0.5 * Math.sin(time * speed));
 }
 
-function drawLensSpikes(ctx, x, y, r, color, count, rot) {
+function drawGodRays(ctx, x, y, r, color, count, rot, alpha, lengthScale = 2.8) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  for (let i = 0; i < count; i++) {
+    ctx.rotate((Math.PI * 2) / count);
+    const ray = ctx.createRadialGradient(0, 0, r * 0.05, 0, 0, r * lengthScale);
+    ray.addColorStop(0, hexToRgba(color, alpha));
+    ray.addColorStop(0.45, hexToRgba(color, alpha * 0.35));
+    ray.addColorStop(1, hexToRgba(color, 0));
+    ctx.fillStyle = ray;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, r * lengthScale, -0.12, 0.12);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawChromosphere(ctx, x, y, r, innerColor, outerColor, alpha) {
+  const ring = ctx.createRadialGradient(x, y, r * 0.82, x, y, r * 1.18);
+  ring.addColorStop(0, hexToRgba(innerColor, 0));
+  ring.addColorStop(0.55, hexToRgba(outerColor, alpha));
+  ring.addColorStop(1, hexToRgba(outerColor, 0));
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = ring;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.18, 0, Math.PI * 2);
+  ctx.arc(x, y, r * 0.82, 0, Math.PI * 2, true);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCompactGranulation(ctx, x, y, r, seed, time, color, rotSpeed, count = 10) {
+  const rng = seededRng(seed ^ 0x4d2a1f9c);
+  const drift = (time * rotSpeed) % (Math.PI * 2);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.95, 0, Math.PI * 2);
+  ctx.clip();
+  for (let i = 0; i < count; i++) {
+    const angle = drift + rng() * Math.PI * 2;
+    const dist = r * (0.1 + rng() * 0.65);
+    const gr = r * (0.04 + rng() * 0.07);
+    ctx.fillStyle = hexToRgba(shiftHex(color, rng() > 0.5 ? 30 : -20), 0.18 + rng() * 0.15);
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, gr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawLensSpikes(ctx, x, y, r, color, count, rot, scale = 1) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (let i = 0; i < count; i++) {
     const angle = rot + (i * Math.PI * 2) / count;
-    const len = r * (2.2 + (i % 2) * 0.6);
+    const len = r * (2.2 + (i % 2) * 0.6) * scale;
     const gx = ctx.createLinearGradient(
       x, y,
       x + Math.cos(angle) * len,
@@ -220,42 +275,55 @@ export function drawBlackHole(ctx, x, y, r, time, large) {
 function drawStarBloom(ctx, x, y, r, profile, color, time, intel, compact) {
   if (!intel) return;
 
-  const glowScale = profile.glowScale * (compact ? 0.85 : 1);
-  const pulse = pulseAlpha(time, profile.pulseSpeed, 0.5, hasFeature(profile, 'diffuseHalo') ? 0.2 : 0.1);
+  const glowScale = profile.glowScale * (compact ? 1.35 : 1);
+  const pulse = pulseAlpha(time, profile.pulseSpeed, 0.5, hasFeature(profile, 'diffuseHalo') ? 0.28 : 0.16);
 
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
 
-  const outerAlpha = hasFeature(profile, 'diffuseHalo') ? 0.22 * pulse : 0.15 * pulse;
-  const outerGlow = ctx.createRadialGradient(x, y, r * 0.15, x, y, r * glowScale);
-  outerGlow.addColorStop(0, hexToRgba(profile.coronaColor, outerAlpha + 0.25));
-  outerGlow.addColorStop(0.45, hexToRgba(profile.secondaryColor, outerAlpha));
+  if (compact) {
+    const nebula = ctx.createRadialGradient(x, y, r * 0.2, x, y, r * (glowScale + 1.2));
+    nebula.addColorStop(0, hexToRgba(profile.secondaryColor, 0.08 * pulse));
+    nebula.addColorStop(0.35, hexToRgba(profile.coronaColor, 0.14 * pulse));
+    nebula.addColorStop(1, hexToRgba(color, 0));
+    ctx.fillStyle = nebula;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (glowScale + 1.2), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const outerAlpha = hasFeature(profile, 'diffuseHalo') ? 0.32 * pulse : 0.22 * pulse;
+  const outerGlow = ctx.createRadialGradient(x, y, r * 0.08, x, y, r * glowScale);
+  outerGlow.addColorStop(0, hexToRgba('#ffffff', compact ? 0.35 : 0.25));
+  outerGlow.addColorStop(0.18, hexToRgba(profile.coronaColor, outerAlpha + 0.3));
+  outerGlow.addColorStop(0.5, hexToRgba(profile.secondaryColor, outerAlpha));
   outerGlow.addColorStop(1, hexToRgba(color, 0));
   ctx.fillStyle = outerGlow;
   if (compact) {
     ctx.shadowColor = profile.coronaColor;
-    ctx.shadowBlur = r * 0.8;
+    ctx.shadowBlur = r * 1.4;
   }
   ctx.beginPath();
   ctx.arc(x, y, r * glowScale, 0, Math.PI * 2);
   ctx.fill();
   ctx.shadowBlur = 0;
 
-  const midGlow = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * (compact ? 1.4 : 1.7));
-  midGlow.addColorStop(0, hexToRgba(shiftHex(color, 40), compact ? 0.35 : 0.55));
+  const midGlow = ctx.createRadialGradient(x, y, r * 0.15, x, y, r * (compact ? 1.55 : 1.85));
+  midGlow.addColorStop(0, hexToRgba('#ffffff', compact ? 0.45 : 0.35));
+  midGlow.addColorStop(0.35, hexToRgba(shiftHex(color, 50), compact ? 0.5 : 0.55));
   midGlow.addColorStop(1, hexToRgba(color, 0));
   ctx.fillStyle = midGlow;
   ctx.beginPath();
-  ctx.arc(x, y, r * (compact ? 1.4 : 1.7), 0, Math.PI * 2);
+  ctx.arc(x, y, r * (compact ? 1.55 : 1.85), 0, Math.PI * 2);
   ctx.fill();
 
   if (!compact && hasFeature(profile, 'diffuseHalo')) {
-    const wide = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * (glowScale + 0.8));
-    wide.addColorStop(0, hexToRgba(profile.secondaryColor, 0.08 * pulse));
+    const wide = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * (glowScale + 1.1));
+    wide.addColorStop(0, hexToRgba(profile.secondaryColor, 0.12 * pulse));
     wide.addColorStop(1, hexToRgba(color, 0));
     ctx.fillStyle = wide;
     ctx.beginPath();
-    ctx.arc(x, y, r * (glowScale + 0.8), 0, Math.PI * 2);
+    ctx.arc(x, y, r * (glowScale + 1.1), 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -263,34 +331,75 @@ function drawStarBloom(ctx, x, y, r, profile, color, time, intel, compact) {
 }
 
 function drawStarCore(ctx, x, y, r, profile, color, intel) {
-  const coreAlpha = intel ? (hasFeature(profile, 'compactCore') ? 0.98 : 0.88) : 0.45;
-  const highlight = hasFeature(profile, 'compactCore') ? 80 : 60;
-  const core = ctx.createRadialGradient(x - r * 0.25, y - r * 0.25, r * 0.05, x, y, r);
-  core.addColorStop(0, hexToRgba(shiftHex(color, highlight), coreAlpha));
-  core.addColorStop(0.55, hexToRgba(color, coreAlpha));
-  core.addColorStop(1, hexToRgba(shiftHex(color, -40), intel ? 0.75 : 0.35));
+  const coreAlpha = intel ? (hasFeature(profile, 'compactCore') ? 0.98 : 0.92) : 0.45;
+  const highlight = hasFeature(profile, 'compactCore') ? 90 : 70;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  const hot = ctx.createRadialGradient(x - r * 0.2, y - r * 0.22, 0, x, y, r * 0.55);
+  hot.addColorStop(0, hexToRgba('#ffffff', intel ? 0.95 : 0.4));
+  hot.addColorStop(0.35, hexToRgba(shiftHex(color, highlight), coreAlpha));
+  hot.addColorStop(1, hexToRgba(color, 0));
+  ctx.fillStyle = hot;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.55, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  const core = ctx.createRadialGradient(x - r * 0.28, y - r * 0.3, r * 0.02, x, y, r);
+  core.addColorStop(0, hexToRgba('#ffffff', intel ? 0.85 : 0.35));
+  core.addColorStop(0.25, hexToRgba(shiftHex(color, highlight), coreAlpha));
+  core.addColorStop(0.65, hexToRgba(color, coreAlpha * 0.95));
+  core.addColorStop(1, hexToRgba(shiftHex(color, -50), intel ? 0.8 : 0.35));
   ctx.fillStyle = core;
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
 }
 
-function drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng) {
+function drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng, seed) {
   drawStarBloom(ctx, x, y, r, profile, color, time, intel, true);
 
-  drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
-
   if (intel) {
-    drawCoronaArcs(ctx, x, y, r, profile.coronaColor, time, rng, 2, 5200);
+    const rot = (time * profile.rotationSpeed * 55) % (Math.PI * 2);
+    drawGodRays(ctx, x, y, r, profile.coronaColor, 6, rot, 0.12, 3.2);
+
+    if (hasFeature(profile, 'lensSpikes')) {
+      drawLensSpikes(ctx, x, y, r, profile.coronaColor, 6, rot * 0.7, 0.55);
+    }
+
+    drawChromosphere(ctx, x, y, r, color, profile.secondaryColor, 0.35);
+
+    if (hasFeature(profile, 'granulation') || profile.id === 'yellow_dwarf' || profile.id === 'orange_dwarf') {
+      drawCompactGranulation(ctx, x, y, r, seed, time, color, profile.rotationSpeed * 40, 12);
+    }
+
+    if (hasFeature(profile, 'sunspots')) {
+      drawSunspots(ctx, x, y, r, rng, time, profile.rotationSpeed * 60, 0.7);
+    }
+
+    if (hasFeature(profile, 'flareBursts')) {
+      drawFlareBurst(ctx, x, y, r, time, seed, color);
+    }
   }
+
+  drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
 }
 
 function drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed) {
   drawStarBloom(ctx, x, y, r, profile, color, time, intel, false);
 
-  if (intel && hasFeature(profile, 'lensSpikes')) {
+  if (intel) {
     const rot = (time * profile.rotationSpeed * 40) % (Math.PI * 2);
-    drawLensSpikes(ctx, x, y, r, profile.coronaColor, 8, rot);
+    drawGodRays(ctx, x, y, r, profile.coronaColor, 8, rot, 0.08, 3.6);
+
+    if (hasFeature(profile, 'lensSpikes')) {
+      drawLensSpikes(ctx, x, y, r, profile.coronaColor, 8, rot);
+    }
+
+    drawChromosphere(ctx, x, y, r, color, profile.secondaryColor, 0.28);
   }
 
   if (intel && hasFeature(profile, 'granulation')) {
@@ -325,14 +434,16 @@ export function drawStar(ctx, { star, x, y, screenR, time, intel, state, systemI
     return;
   }
 
-  const r = screenR * CELESTIAL_VISUAL_SCALE;
   const seed = resolveVisualSeed(state, systemId, 'star', star.visualSeed);
   const rng = seededRng(seed);
   const profile = getStarVisualProfile(star);
   const color = intel ? (star.color ?? profile.color) : '#505868';
+  const r = mode === 'galaxy'
+    ? screenR * 0.82
+    : screenR * CELESTIAL_VISUAL_SCALE;
 
   if (mode === 'galaxy') {
-    drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng);
+    drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng, seed);
   } else {
     drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed);
   }
