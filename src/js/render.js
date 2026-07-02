@@ -27,12 +27,13 @@ import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
 import { shipyardBuildProgress } from './production.js';
+import { laneBulge, laneControlPoint } from './galaxy.js';
 import {
   THEME,
   hexToRgba,
   fillPlanetSphere,
-  drawCurvedLane,
   bezierPoint,
+  drawQuadraticCurve,
 } from './theme.js';
 
 export const camera = { x: 0, y: 0, zoom: 1 };
@@ -417,13 +418,15 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       ctx.lineWidth = Math.max(1, (onFlagshipRoute ? 2 : 1.4) * z);
     }
 
-    const bulge = 0.08 + (i % 3) * 0.03;
-    const curve = drawCurvedLane(ctx, sa.x, sa.y, sb.x, sb.y, bulge);
+    const bulge = laneBulge(galaxy, aId, bId);
+    const ctrl = laneControlPoint(a, b, bulge);
+    const sc = worldToScreen(galaxyCamera, ctrl.x, ctrl.y, canvas);
+    drawQuadraticCurve(ctx, sa.x, sa.y, sc.x, sc.y, sb.x, sb.y);
     ctx.setLineDash([]);
 
     for (let k = 0; k < 2; k++) {
       const t = ((state.time / 6000) + k * 0.5 + i * 0.13) % 1;
-      const pt = bezierPoint(sa.x, sa.y, curve.cx, curve.cy, sb.x, sb.y, t);
+      const pt = bezierPoint(sa.x, sa.y, sc.x, sc.y, sb.x, sb.y, t);
       ctx.globalAlpha = 0.55;
       ctx.shadowColor = THEME.trafficPulse;
       ctx.shadowBlur = 4;

@@ -79,20 +79,12 @@ export function fillPlanetSphere(ctx, x, y, r, baseColor, intel = true) {
   ctx.stroke();
 }
 
-/** Quadratic bezier lane between two screen points. */
-export function drawCurvedLane(ctx, sx, sy, ex, ey, bulge = 0.12) {
-  const mx = (sx + ex) / 2;
-  const my = (sy + ey) / 2;
-  const dx = ex - sx;
-  const dy = ey - sy;
-  const len = Math.hypot(dx, dy) || 1;
-  const cx = mx - (dy / len) * len * bulge;
-  const cy = my + (dx / len) * len * bulge;
+/** Draw a quadratic bezier curve with a precomputed control point. */
+export function drawQuadraticCurve(ctx, sx, sy, cx, cy, ex, ey) {
   ctx.beginPath();
   ctx.moveTo(sx, sy);
   ctx.quadraticCurveTo(cx, cy, ex, ey);
   ctx.stroke();
-  return { cx, cy };
 }
 
 /** Point on quadratic bezier at t ∈ [0,1]. */
