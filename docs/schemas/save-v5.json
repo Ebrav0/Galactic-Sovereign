@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 5",
+  "description": "Adds Dyson megastructure state, Solarii dual currency (Phase 3).",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 5 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "galaxy", "systems",
+        "flagship", "scouts", "intel", "capture", "playerShips", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked"
+      ],
+      "properties": {
+        "solarii": { "type": "number" },
+        "solariiUnlocked": { "type": "boolean" },
+        "systems": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["id", "dyson"],
+            "properties": {
+              "dyson": {
+                "type": "object",
+                "required": ["completedShells", "shellSails", "foundryStock", "launcherStock"],
+                "properties": {
+                  "completedShells": { "type": "integer", "minimum": 0, "maximum": 8 },
+                  "shellSails": { "type": "number", "minimum": 0 },
+                  "foundryStock": { "type": "number", "minimum": 0 },
+                  "launcherStock": { "type": "object" },
+                  "launcherLastFireAt": { "type": "object" },
+                  "lastShellCompletedAt": { "type": ["number", "null"] }
+                }
+              },
+              "structures": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": { "enum": ["outpost", "shipyard", "sail_foundry", "dyson_launcher"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

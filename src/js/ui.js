@@ -7,6 +7,11 @@ import {
   CAPTURE_HOLD_MS,
   HULL_STATS,
   SHIPYARD_COMBAT_HULLS,
+  FOUNDRY_COST,
+  LAUNCHER_COST,
+  LAUNCHERS_PER_BODY_MAX,
+  SHELL_SAILS_REQUIRED,
+  SHELL_COUNT,
 } from './constants.js';
 import {
   systemById,
@@ -15,9 +20,20 @@ import {
   hasShipyard,
   findShipyardOnPlanet,
   isPlayerOwned,
+  hasFoundry,
+  launcherCountOnBody,
+  ensureDyson,
+  dysonLaunchers,
 } from './state.js';
-import { canBuildOutpost, incomePerSecond } from './economy.js';
+import { canBuildOutpost, incomePerSecond, incomePerSecondInSystem } from './economy.js';
 import { canBuildShipyard, canQueueScout, canQueueHull } from './production.js';
+import {
+  canBuildFoundry,
+  canBuildLauncher,
+  solariiPerSecond,
+  solariiPerSecondInSystem,
+  activeShellBonuses,
+} from './dyson.js';
 import { transitStatus } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
 import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
@@ -234,9 +250,97 @@ function renderBuildBody(container, planet, state, systemId) {
   }
 }
 
-function updateTabBar(view) {
-  el('tab-galaxy').classList.toggle('tab--active', view === 'galaxy');
-  el('tab-system').classList.toggle('tab--active', view === 'system');
+function updateTabBar(view, sidePanel) {
+  el('tab-galaxy').classList.toggle('tab--active', view === 'galaxy' && sidePanel !== 'dyson');
+  el('tab-system').classList.toggle('tab--active', view === 'system' && sidePanel !== 'dyson');
+  el('tab-dyson').classList.toggle('tab--active', sidePanel === 'dyson');
+}
+
+function renderDysonPanel(container, state, systemId) {
+  clearChildren(container);
+  const system = systemById(state, systemId);
+  if (!system || systemId === 'core') {
+    const msg = document.createElement('p');
+    msg.className = 'empty-state';
+    msg.textContent = 'No Dyson project in this system.';
+    container.appendChild(msg);
+    return;
+  }
+
+  const dyson = ensureDyson(system);
+  const launchers = dysonLaunchers(state, systemId);
+
+  const header = document.createElement('div');
+  header.className = 'intel-header';
+  const name = document.createElement('span');
+  name.className = 'intel-header__name';
+  name.textContent = system.name;
+  header.appendChild(name);
+  container.appendChild(header);
+
+  const rows = [
+    { label: 'Foundry', value: hasFoundry(state, systemId) ? 'Online' : 'Not built' },
+    { label: 'Launchers', value: String(launchers.length) },
+    { label: 'Shells', value: `${dyson.completedShells} / ${SHELL_COUNT}` },
+    { label: 'Sails to next shell', value: `${Math.floor(dyson.shellSails)} / ${SHELL_SAILS_REQUIRED}` },
+    { label: 'Foundry stock', value: `${Math.floor(dyson.foundryStock)} sails` },
+    { label: 'System Solarii', value: `${solariiPerSecondInSystem(state, systemId).toFixed(3)}/s` },
+  ];
+  for (const row of rows) {
+    const r = document.createElement('div');
+    r.className = 'status-row';
+    const label = document.createElement('span');
+    label.className = 'status-row__label';
+    label.textContent = row.label;
+    const val = document.createElement('span');
+    val.className = 'status-indicator status-indicator--built';
+    val.textContent = row.value;
+    r.appendChild(label);
+    r.appendChild(val);
+    container.appendChild(r);
+  }
+
+  const shellPct = dyson.completedShells >= SHELL_COUNT
+    ? 1
+    : dyson.shellSails / SHELL_SAILS_REQUIRED;
+  const progBlock = document.createElement('div');
+  progBlock.className = 'progress-block';
+  progBlock.style.marginTop = '12px';
+  const progLabel = document.createElement('div');
+  progLabel.className = 'progress-block__label';
+  progLabel.textContent = dyson.completedShells >= SHELL_COUNT
+    ? 'Sphere complete'
+    : `Shell ${dyson.completedShells + 1} progress`;
+  const prog = document.createElement('div');
+  prog.className = 'progress';
+  const fill = document.createElement('div');
+  fill.className = 'progress__fill';
+  fill.style.width = `${Math.round(shellPct * 100)}%`;
+  prog.appendChild(fill);
+  progBlock.appendChild(progLabel);
+  progBlock.appendChild(prog);
+  container.appendChild(progBlock);
+
+  const bonusTitle = document.createElement('div');
+  bonusTitle.className = 'intel-section-title';
+  bonusTitle.style.marginTop = '12px';
+  bonusTitle.textContent = 'Active bonuses';
+  container.appendChild(bonusTitle);
+
+  const bonuses = activeShellBonuses(system);
+  if (bonuses.length === 0) {
+    const none = document.createElement('p');
+    none.className = 'panel-note panel-note--muted';
+    none.textContent = 'Complete Shell #1 to begin earning Solarii.';
+    container.appendChild(none);
+  } else {
+    for (const b of bonuses) {
+      const li = document.createElement('div');
+      li.className = 'planet-row__meta';
+      li.textContent = `• ${b}`;
+      container.appendChild(li);
+    }
+  }
 }
 
 export function toast(message, kind = '') {
@@ -274,7 +378,11 @@ export function initUi(ctx) {
     enemyCombatPresence,
     battleSummaryForSystem,
     canQueueHull,
+    doBuildFoundry,
+    doBuildLauncher,
   } = ctx;
+
+  let sidePanel = null;
 
   let hullBtnContainer = el('combat-hull-buttons');
   if (!hullBtnContainer) {
@@ -303,9 +411,15 @@ export function initUi(ctx) {
   el('pause-btn').addEventListener('click', doTogglePause);
   el('view-toggle-btn').addEventListener('click', doToggleView);
   el('tab-galaxy').addEventListener('click', () => {
+    sidePanel = null;
     if (getView() !== 'galaxy') doToggleView();
   });
   el('tab-system').addEventListener('click', () => {
+    sidePanel = null;
+    if (getView() !== 'system') doToggleView();
+  });
+  el('tab-dyson').addEventListener('click', () => {
+    sidePanel = 'dyson';
     if (getView() !== 'system') doToggleView();
   });
 
@@ -316,6 +430,11 @@ export function initUi(ctx) {
   el('build-shipyard-btn').addEventListener('click', () => {
     const sel = getSelection();
     if (sel) doBuildShipyard(sel);
+  });
+  el('build-foundry-btn').addEventListener('click', () => doBuildFoundry());
+  el('build-launcher-btn').addEventListener('click', () => {
+    const sel = getSelection();
+    if (sel) doBuildLauncher(sel);
   });
   el('queue-scout-btn').addEventListener('click', () => {
     const state = getState();
@@ -431,12 +550,30 @@ export function initUi(ctx) {
 
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
     el('income-value').textContent = incomePerSecond(state).toFixed(1);
+
+    const solariiChip = el('solarii-chip');
+    if (state.solariiUnlocked) {
+      solariiChip.classList.remove('hidden');
+      el('solarii-value').textContent = (state.solarii ?? 0).toFixed(2);
+      el('solarii-rate').textContent = solariiPerSecond(state).toFixed(3);
+    } else {
+      solariiChip.classList.add('hidden');
+    }
+
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
     el('pause-overlay').classList.toggle('hidden', !state.paused);
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
     el('view-hint').textContent = HINTS[view];
-    updateTabBar(view);
+    updateTabBar(view, sidePanel);
+
+    const dysonPanel = el('dyson-panel');
+    if (sidePanel === 'dyson' && view === 'system') {
+      dysonPanel.classList.remove('hidden');
+      renderDysonPanel(el('dyson-panel-body'), state, viewedSystemId);
+    } else {
+      dysonPanel.classList.add('hidden');
+    }
 
     el('system-name').textContent = view === 'galaxy' ? 'Galaxy Map' : (viewedSystem?.name ?? '—');
     el('stronghold-badge').classList.toggle(
@@ -556,7 +693,7 @@ export function initUi(ctx) {
     }
 
     const panel = el('build-panel');
-    if (view !== 'system' || !selection) {
+    if (view !== 'system' || sidePanel === 'dyson' || !selection) {
       panel.classList.add('hidden');
       return;
     }
@@ -575,6 +712,21 @@ export function initUi(ctx) {
     const shipyardCheck = canBuildShipyard(state, viewedSystemId, planet.id);
     const shipyard = findShipyardOnPlanet(state, viewedSystemId, planet.id);
     const scoutCheck = shipyard ? canQueueScout(state, shipyard.id, viewedSystemId) : { ok: false };
+
+    const foundryCheck = canBuildFoundry(state, viewedSystemId);
+    const launcherCheck = canBuildLauncher(state, viewedSystemId, planet.id);
+    const launcherCount = launcherCountOnBody(state, viewedSystemId, planet.id);
+
+    const foundryBtn = el('build-foundry-btn');
+    foundryBtn.classList.toggle('hidden', hasFoundry(state, viewedSystemId));
+    foundryBtn.disabled = !foundryCheck.ok;
+    foundryBtn.textContent = `Build Sail Foundry (${FOUNDRY_COST} cr)`;
+
+    const launcherBtn = el('build-launcher-btn');
+    const showLauncher = hasFoundry(state, viewedSystemId) && launcherCount < LAUNCHERS_PER_BODY_MAX;
+    launcherBtn.classList.toggle('hidden', !showLauncher);
+    launcherBtn.disabled = !launcherCheck.ok;
+    launcherBtn.textContent = `Build Dyson Launcher (${launcherCount}/${LAUNCHERS_PER_BODY_MAX}) · ${LAUNCHER_COST} cr`;
 
     const outpostBtn = el('build-outpost-btn');
     outpostBtn.classList.toggle('hidden', hasOutpost(state, viewedSystemId, planet.id));
@@ -623,6 +775,8 @@ export function initUi(ctx) {
     ) {
       note = shipyardCheck.reason;
     } else if (shipyard && !scoutCheck.ok && !shipyard.build) note = scoutCheck.reason;
+    else if (showLauncher && !launcherCheck.ok) note = launcherCheck.reason;
+    else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
     else if (showHullBtns) {
       const firstHull = SHIPYARD_COMBAT_HULLS.find((h) => !canQueueHull(state, shipyard.id, viewedSystemId, h).ok);
       if (firstHull) note = canQueueHull(state, shipyard.id, viewedSystemId, firstHull).reason;

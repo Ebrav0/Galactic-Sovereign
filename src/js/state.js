@@ -53,6 +53,17 @@ export function hashSeed(baseSeed, key) {
   return h >>> 0;
 }
 
+export function createDefaultDyson() {
+  return {
+    completedShells: 0,
+    shellSails: 0,
+    foundryStock: 0,
+    launcherStock: {},
+    lastShellCompletedAt: null,
+    launcherLastFireAt: {},
+  };
+}
+
 const PLANET_NAMES = ['Aurelia', 'Boreas', 'Cinder', 'Dagon', 'Erebus', 'Ferrum'];
 const MOON_SUFFIXES = ['I', 'II', 'III', 'IV'];
 const PLANET_TYPES = ['habitable', 'barren', 'gas'];
@@ -149,6 +160,7 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
     },
     bodies,
     structures: [],
+    dyson: createDefaultDyson(),
   };
 
   seedNeutralStructures(rng, system, { isHome });
@@ -165,6 +177,7 @@ function createBlackHoleSystem(blackHole) {
     star: { radius: 30, color: '#05060c', kind: 'blackhole' },
     bodies: [],
     structures: [],
+    dyson: createDefaultDyson(),
   };
 }
 
@@ -228,6 +241,8 @@ export function createNewGame(seed) {
     pirates: { fleets: [], pendingRespawn: [] },
     systemBattles: {},
     battleStance: 'balanced',
+    solarii: 0,
+    solariiUnlocked: false,
   };
 }
 
@@ -265,6 +280,25 @@ export function findPlanet(state, systemId, planetId) {
   return system?.bodies.find((b) => b.id === planetId) ?? null;
 }
 
+/** Resolve a planet or moon id to { body, planet } (planet null for top-level planets). */
+export function findBody(state, systemId, bodyId) {
+  const system = systemById(state, systemId);
+  if (!system) return null;
+  for (const planet of system.bodies) {
+    if (planet.id === bodyId) return { body: planet, planet: null };
+    const moon = planet.moons.find((m) => m.id === bodyId);
+    if (moon) return { body: moon, planet };
+  }
+  return null;
+}
+
+export function ensureDyson(system) {
+  if (!system.dyson) system.dyson = createDefaultDyson();
+  if (!system.dyson.launcherStock) system.dyson.launcherStock = {};
+  if (!system.dyson.launcherLastFireAt) system.dyson.launcherLastFireAt = {};
+  return system.dyson;
+}
+
 export function structuresOn(state, systemId, bodyId) {
   const system = systemById(state, systemId);
   return system ? system.structures.filter((s) => s.bodyId === bodyId) : [];
@@ -295,4 +329,38 @@ export function isPlayerOwned(state, systemId) {
 export function isCapturableTarget(state, systemId) {
   if (systemId === BLACK_HOLE_ID) return false;
   return !isPlayerOwned(state, systemId);
+}
+
+export function hasFoundry(state, systemId) {
+  const system = systemById(state, systemId);
+  return system?.structures.some((s) => s.type === 'sail_foundry') ?? false;
+}
+
+export function findFoundry(state, systemId) {
+  const system = systemById(state, systemId);
+  return system?.structures.find((s) => s.type === 'sail_foundry') ?? null;
+}
+
+export function launcherCountOnBody(state, systemId, bodyId) {
+  return structuresOn(state, systemId, bodyId).filter((s) => s.type === 'dyson_launcher').length;
+}
+
+export function dysonLaunchers(state, systemId) {
+  const system = systemById(state, systemId);
+  return system?.structures.filter((s) => s.type === 'dyson_launcher') ?? [];
+}
+
+export function dysonSummary(state, systemId) {
+  const system = systemById(state, systemId);
+  if (!system) return null;
+  const dyson = ensureDyson(system);
+  const launchers = dysonLaunchers(state, systemId);
+  return {
+    hasFoundry: hasFoundry(state, systemId),
+    launcherCount: launchers.length,
+    completedShells: dyson.completedShells,
+    shellSails: dyson.shellSails,
+    foundryStock: dyson.foundryStock,
+    launcherStockTotal: launchers.reduce((n, l) => n + (dyson.launcherStock[l.id] ?? 0), 0),
+  };
 }

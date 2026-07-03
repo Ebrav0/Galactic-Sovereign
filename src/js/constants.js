@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -88,7 +88,13 @@ export const SCOUT_LANE_MIN_LEG_MS = 1800;
 export const CAPTURE_BASE = 1;
 export const CAPTURE_PER_PLANET = 1;
 export const CAPTURE_PER_MOON = 0.5;
-export const CAPTURE_STRUCTURE_WEIGHT = { outpost: 2, shipyard: 4 };
+export const CAPTURE_STRUCTURE_WEIGHT = {
+  outpost: 2,
+  shipyard: 4,
+  sail_foundry: 6,
+  dyson_launcher: 3,
+};
+export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
 export const CAPTURE_HOLD_MS = 20000;
 
@@ -135,6 +141,28 @@ export const MOON_ORBIT_PERIOD_RANGE = [24000, 60000];
 // --- Shuttles (visual only) ---
 export const SHUTTLE_TRIP_MS = 8000;   // one full planet->moon->planet round trip
 export const SHUTTLE_SIZE = 2.2;       // draw radius
+
+// --- Dyson megastructure (Phase 3, GDD §6–7) ---
+export const FOUNDRY_COST = 800;
+export const LAUNCHER_COST = 250;
+export const LAUNCHERS_PER_BODY_MAX = 3;
+export const SHELL_SAILS_REQUIRED = 5000;
+export const SHELL_COUNT = 8;
+export const SAIL_CREDIT_COST = 3.0;
+export const FOUNDRY_SAIL_RATE = 0.4;              // sails per second at base
+export const LAUNCHER_BATCH_SIZE = 8;
+export const LAUNCHER_LAUNCH_INTERVAL_MS = 2000;
+export const SHUTTLE_TRANSFER_RATE = 0.6;          // sails/s per launcher route
+export const SOLARII_BASE_RATE = 0.08;             // per second at Shell #1, one system
+// Index = completedShells (0 = none, 1–8 = active tier).
+export const SOLARII_SHELL_MULTIPLIERS = [0, 1, 1.25, 1.5, 2, 2.5, 3.25, 4, 5];
+// Index = completedShells; credit multiplier for outposts in that system.
+export const SHELL_BONUS_CREDIT_MULT = [1, 1, 1.1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35];
+// Index = completedShells; foundry sail rate multiplier.
+export const SHELL_BONUS_SAIL_EFFICIENCY = [1, 1, 1, 1.15, 1.15, 1.2, 1.25, 1.3, 1.35];
+export const SAIL_SHUTTLE_TRIP_MS = 6000;
+export const SAIL_SHUTTLE_SIZE = 2.8;
+export const FOUNDRY_ORBIT_OFFSET = 80;            // world units beyond star edge
 
 // --- Camera ---
 export const CAMERA_MIN_ZOOM = 0.15;

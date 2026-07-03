@@ -8,6 +8,7 @@ import {
   hasOutpost,
   isPlayerOwned,
 } from './state.js';
+import { shellCreditBonus } from './dyson.js';
 
 let nextStructureId = 1;
 
@@ -67,12 +68,28 @@ export function incomePerSecond(state) {
   let total = 0;
   for (const system of Object.values(state.systems)) {
     if (!isPlayerOwned(state, system.id)) continue;
+    const creditMult = shellCreditBonus(system);
     for (const s of system.structures) {
       if (s.type !== 'outpost') continue;
       const planet = system.bodies.find((b) => b.id === s.bodyId);
       const moons = planet ? planet.moons.length : 0;
-      total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons);
+      total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons) * creditMult;
     }
+  }
+  return total;
+}
+
+/** Credit income from outposts in one system (for UI / tests). */
+export function incomePerSecondInSystem(state, systemId) {
+  const system = systemById(state, systemId);
+  if (!system || !isPlayerOwned(state, systemId)) return 0;
+  const creditMult = shellCreditBonus(system);
+  let total = 0;
+  for (const s of system.structures) {
+    if (s.type !== 'outpost') continue;
+    const planet = system.bodies.find((b) => b.id === s.bodyId);
+    const moons = planet ? planet.moons.length : 0;
+    total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons) * creditMult;
   }
   return total;
 }
