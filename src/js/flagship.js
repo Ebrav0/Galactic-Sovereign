@@ -26,6 +26,38 @@ import {
 // sense of never being serialized; ticks read it as the pilot's live order.
 const input = { x: 0, y: 0 };
 
+// Previous-tick pose for render-time extrapolation between 20 Hz physics steps.
+const prev = { x: 0, y: 0, heading: 0 };
+let prevInit = false;
+
+function syncPrevPose(f) {
+  prev.x = f.x;
+  prev.y = f.y;
+  prev.heading = f.heading;
+  prevInit = true;
+}
+
+// Smooth display pose for rendering; does not affect simulation state.
+export function getFlagshipDisplayPose(state, accumulatorMs) {
+  const f = state.flagship;
+  if (!prevInit) syncPrevPose(f);
+  if (state.paused || f.transit || !accumulatorMs) {
+    return { x: f.x, y: f.y, heading: f.heading };
+  }
+  const t = Math.min(1, Math.max(0, accumulatorMs / TICK_MS));
+  if (t === 0) return { x: f.x, y: f.y, heading: f.heading };
+  const dx = f.x - prev.x;
+  const dy = f.y - prev.y;
+  let dHeading = f.heading - prev.heading;
+  while (dHeading > Math.PI) dHeading -= 2 * Math.PI;
+  while (dHeading < -Math.PI) dHeading += 2 * Math.PI;
+  return {
+    x: f.x + dx * t,
+    y: f.y + dy * t,
+    heading: f.heading + dHeading * t,
+  };
+}
+
 export function setFlagshipInput(x, y) {
   input.x = x;
   input.y = y;
@@ -80,6 +112,7 @@ export function transitStatus(state) {
 
 export function tickFlagship(state) {
   const f = state.flagship;
+  if (!f.transit) syncPrevPose(f);
   if (f.transit) {
     advanceTransit(
       f.transit,
@@ -139,6 +172,7 @@ function arrive(state, destId, fromId) {
   f.vx = 0;
   f.vy = 0;
   f.heading = entryAngle + Math.PI;
+  syncPrevPose(f);
 }
 
 function systemEntryRadius(state, systemId) {

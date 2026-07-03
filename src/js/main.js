@@ -307,8 +307,8 @@ function frame(now) {
   if (view === 'galaxy') {
     drawGalaxy(ctx2d, state, selectedScoutId);
   } else {
-    updateFollowCamera(state, viewedSystemId, dt);
-    drawSystem(ctx2d, state, viewedSystemId, selection);
+    updateFollowCamera(state, viewedSystemId, dt, accumulator);
+    drawSystem(ctx2d, state, viewedSystemId, selection, accumulator);
   }
   updateUi();
   requestAnimationFrame(frame);

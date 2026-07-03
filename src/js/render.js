@@ -25,7 +25,7 @@ import {
   isPlayerOwned,
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
-import { getFlagshipInput, transitStatus } from './flagship.js';
+import { getFlagshipInput, getFlagshipDisplayPose, transitStatus } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
@@ -64,12 +64,13 @@ export function screenToWorld(cam, sx, sy, canvas) {
   };
 }
 
-export function updateFollowCamera(state, viewedSystemId, dtMs) {
+export function updateFollowCamera(state, viewedSystemId, dtMs, accumulatorMs = 0) {
   const f = state.flagship;
   if (!follow.enabled || f.transit || f.systemId !== viewedSystemId) return;
+  const pose = getFlagshipDisplayPose(state, accumulatorMs);
   const k = 1 - Math.exp(-CAMERA_FOLLOW_RATE * (dtMs / 1000));
-  camera.x += (f.x - camera.x) * k;
-  camera.y += (f.y - camera.y) * k;
+  camera.x += (pose.x - camera.x) * k;
+  camera.y += (pose.y - camera.y) * k;
 }
 
 export function snapCameraTo(x, y) {
@@ -147,7 +148,7 @@ function labelText(ctx, text, x, y, size, color, align = 'center') {
 
 // ============================= SYSTEM VIEW =============================
 
-export function drawSystem(ctx, state, systemId, selection) {
+export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   const canvas = ctx.canvas;
   const system = systemById(state, systemId);
   ctx.fillStyle = THEME.bgDeep;
@@ -285,10 +286,11 @@ export function drawSystem(ctx, state, systemId, selection) {
 
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit) {
-    const fs = worldToScreen(camera, f.x, f.y, canvas);
+    const pose = getFlagshipDisplayPose(state, accumulatorMs);
+    const fs = worldToScreen(camera, pose.x, pose.y, canvas);
     const inp = getFlagshipInput();
     const thrusting = !state.paused && (inp.x !== 0 || inp.y !== 0);
-    drawFlagshipSprite(ctx, fs.x, fs.y, f.heading, FLAGSHIP_RADIUS * z, thrusting);
+    drawFlagshipSprite(ctx, fs.x, fs.y, pose.heading, FLAGSHIP_RADIUS * z, thrusting);
   }
 }
 
