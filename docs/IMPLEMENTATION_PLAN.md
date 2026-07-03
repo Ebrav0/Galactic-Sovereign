@@ -208,6 +208,14 @@ migration — it always covers the file as written.
 Adds `owner` per system, `scouts[]`, `intel`, `capture`, shipyard `build` queues,
 and re-seeds neutral outposts/shipyards deterministically from `meta.seed`.
 
+### Migration 2 → 3
+
+Star type backfill for cinematic multi-type stars (`star-types.js`).
+
+### Migration 3 → 4
+
+Adds `playerShips[]`, `pirates` (wandering test faction), `systemBattles`, and `battleStance` for Phase 2 combat.
+
 ### Schema evolution rules
 
 Any change to the state shape requires, in the same change:
@@ -316,8 +324,23 @@ Tasks 1.1–1.7 shipped in the 2026-07-02 Phase 1 sessions. The wormhole
 at the galactic core is a **dormant landmark** until Phase 4 (a single galaxy
 gives an unanchored exit nowhere to go).
 
-### Phase 2 — Combat hybrid
-Tactical mode when player flagship in system; auto-resolve elsewhere; healer logic; 8–10 ship classes; combat observability in `render_game_to_text()`.
+### Phase 2 — Combat hybrid + wandering pirates
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 2.1 | Hull defs + player ships + save-v4 | `HULL_STATS` for 8+ classes; `playerShips[]`, `pirates`, `systemBattles` serializable; v3→v4 migration preserves scouts/ownership |
+| 2.2 | Shipyard combat queues | Queue corvette/frigate/destroyer/healer; observable in `render_game_to_text().production` |
+| 2.3 | Player fleet transit | `fleets.js`; ships dispatch along lanes; pause freezes transit |
+| 2.10 | Wandering pirate faction | `pirates.js`; 2 rim fleets wander deterministically; galaxy markers |
+| 2.4 | Auto-resolve engine | Same inputs → same casualties; stance via test hook |
+| 2.5 | Tactical combat sim | Positions, weapons, pause, entry vector |
+| 2.6 | Combat render layer | Ship sprites, HP bars, shots in `render.js` |
+| 2.7 | Healers | Repair drones tactical + auto-resolve heal rate |
+| 2.8 | Fleet capture + enemy presence | Combat ships count for capture; pirates contest timer; no `__setEnemyPresence` |
+| 2.11 | Combat UI | Battle panel, pirate warning, stance selector |
+| 2.9 | Verification + handoff | `output/verify_phase2.mjs`; `progress.md` entry |
+
+**Phase 2 exit criteria:** hybrid combat works with wandering pirates; fleet-based capture; all verify sections pass.
 
 ### Phase 3 — Dyson loop
 Sail foundry (1/system), auto sail shuttles, launchers (≤3/body), 8 shell tiers with Solarii scaling and visuals; dual currency.

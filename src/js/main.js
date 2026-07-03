@@ -1,6 +1,6 @@
 // Boot + loop wiring + test hooks. Wiring only — no balance or game logic here.
 
-import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS, CAMERA_DEFAULT_ZOOM } from './constants.js';
+import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS, CAMERA_DEFAULT_ZOOM, HULL_STATS, PIRATE_FLEET_COUNT, PIRATE_WANDER_MS } from './constants.js';
 import {
   createNewGame,
   systemById,
@@ -15,9 +15,12 @@ import { buildOutpost, canBuildOutpost, incomePerSecond, resetStructureIds } fro
 import {
   buildShipyard,
   queueScout,
+  queueHull,
   canBuildShipyard,
   canQueueScout,
+  canQueueHull,
   shipyardBuildProgress,
+  activeCombatQueues,
 } from './production.js';
 import { setFlagshipInput, orderTravel, transitStatus, transitEtaMs } from './flagship.js';
 import {
@@ -36,6 +39,9 @@ import {
   canHoldCapture,
   enemyCombatPresence,
 } from './capture.js';
+import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, resetPirateIds, pirateFleetAtSystem } from './pirates.js';
+import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
+import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { activeShuttleCount } from './shuttles.js';
 import {
   drawSystem,
@@ -48,8 +54,10 @@ import {
 import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
 import { initUi, toast } from './ui.js';
+import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
 
 let state = createNewGame(DEFAULT_SEED);
+state.pirates = spawnPirateFleets(state);
 let selection = null;
 let view = 'system';
 let viewedSystemId = state.stronghold;
@@ -58,16 +66,21 @@ let selectedScoutId = null;
 
 const canvas = document.getElementById('game-canvas');
 const ctx2d = canvas.getContext('2d');
+const glCanvas = document.getElementById('game-canvas-gl');
 
 function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  canvas.width = w;
+  canvas.height = h;
+  resizeStarRenderer(w, h);
 }
 window.addEventListener('resize', resizeCanvas);
+initStarRenderer(glCanvas);
 resizeCanvas();
 
 camera.zoom = CAMERA_DEFAULT_ZOOM;
-snapCameraTo(state.flagship.x, state.flagship.y);
+snapCameraTo(0, 0);
 
 function ensureSelectedScout() {
   if (selectedScoutId && findScout(state, selectedScoutId)) return;
@@ -100,9 +113,8 @@ function doViewSystem(systemId) {
   viewedSystemId = systemId;
   view = 'system';
   selection = null;
-  follow.enabled = true;
-  const f = state.flagship;
-  snapCameraTo(f.systemId === systemId ? f.x : 0, f.systemId === systemId ? f.y : 0);
+  follow.enabled = false;
+  snapCameraTo(0, 0);
 }
 
 function doFlagshipInput(x, y) {
@@ -171,6 +183,22 @@ function doQueueScout(shipyardId) {
   return res;
 }
 
+function doQueueHull(shipyardId, hull) {
+  const res = queueHull(state, shipyardId, viewedSystemId, hull);
+  if (res.ok) toast(`${hull} queued`, 'ok');
+  else toast(res.reason, 'error');
+  return res;
+}
+
+function doDispatchShip(shipId, starId) {
+  const res = orderShipTravel(state, shipId, starId);
+  if (res.ok) {
+    const dest = systemById(state, starId);
+    toast(`Ship dispatched to ${dest?.name ?? starId}`, 'ok');
+  } else toast(res.reason, 'error');
+  return res;
+}
+
 async function doSaveSlot(slot) {
   const res = await writeSlot(slot, state);
   toast(res.ok ? `Saved to ${slot}` : `Save failed: ${res.error}`, res.ok ? 'ok' : 'error');
@@ -196,6 +224,11 @@ function doImportState(newState) {
   follow.enabled = true;
   resetStructureIds(state);
   resetScoutIds(state);
+  resetShipIds(state);
+  resetPirateIds(state);
+  if (!newState.pirates?.fleets?.length) {
+    newState.pirates = spawnPirateFleets(newState);
+  }
   ensureSelectedScout();
   const f = state.flagship;
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
@@ -230,6 +263,7 @@ const updateUi = initUi({
   doBuildOutpost,
   doBuildShipyard,
   doQueueScout,
+  doQueueHull,
   doTogglePause,
   doToggleView,
   doSaveSlot,
@@ -242,6 +276,8 @@ const updateUi = initUi({
   captureProgressMs,
   canHoldCapture,
   enemyCombatPresence,
+  battleSummaryForSystem,
+  canQueueHull,
 });
 
 attachInput(canvas, {
@@ -282,14 +318,23 @@ function frame(now) {
   const tickEvents = step(state, accumulator + dt);
   accumulator = tickEvents.remainingMs ?? 0;
 
-  for (const ready of tickEvents.scoutReady ?? []) {
+  for (const ready of tickEvents.prodReady ?? []) {
     const name = systemById(state, ready.systemId)?.name ?? ready.systemId;
-    toast(`Scout ready at ${name}`, 'ok');
-    selectedScoutId = ready.scoutId;
+    if (ready.scoutId) {
+      toast(`Scout ready at ${name}`, 'ok');
+      selectedScoutId = ready.scoutId;
+    } else if (ready.shipId) {
+      toast(`${ready.hull} ready at ${name}`, 'ok');
+    }
   }
   for (const arrival of tickEvents.scoutArrivals ?? []) {
     const name = systemById(state, arrival.systemId)?.name ?? arrival.systemId;
     toast(`Intel gathered: ${name}`, 'ok');
+  }
+  for (const battle of tickEvents.battleEvents ?? []) {
+    const name = systemById(state, battle.systemId)?.name ?? battle.systemId;
+    const outcome = battle.playerWins ? 'Victory' : 'Defeat';
+    toast(`${outcome} at ${name} (${battle.mode})`, battle.playerWins ? 'ok' : 'error');
   }
   for (const cap of tickEvents.captures ?? []) {
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
@@ -321,8 +366,8 @@ window.advanceTime = (ms) => {
   const events = advance(state, ms);
   checkFlagshipArrival();
   ensureSelectedScout();
-  for (const ready of events.scoutReady) {
-    selectedScoutId = ready.scoutId;
+  for (const ready of events.prodReady ?? []) {
+    if (ready.scoutId) selectedScoutId = ready.scoutId;
   }
   return events;
 };
@@ -396,10 +441,33 @@ window.render_game_to_text = () => {
         0,
       ),
       buildingScout: Object.values(state.systems).some(
-        (sys) => sys.structures.some((s) => s.type === 'shipyard' && s.build),
+        (sys) => sys.structures.some((s) => s.type === 'shipyard' && s.build?.hull === 'scout'),
       ),
       scoutCount: state.scouts.length,
+      combatQueues: activeCombatQueues(state),
     },
+    playerShips: (state.playerShips ?? []).map((ship) => ({
+      id: ship.id,
+      hull: ship.hull,
+      systemId: ship.systemId,
+      inTransit: !!ship.transit,
+      hp: ship.hp,
+      maxHp: ship.maxHp,
+    })),
+    pirates: {
+      fleetCount: state.pirates?.fleets?.length ?? 0,
+      inViewedSystem: pirateFleetAtSystem(state, viewedSystemId).length > 0,
+      markers: pirateSystemsWithPresence(state),
+      fleets: (state.pirates?.fleets ?? []).map((fleet) => ({
+        id: fleet.id,
+        systemId: fleet.systemId,
+        inTransit: !!fleet.transit,
+        shipCount: fleet.ships.filter((s) => s.hp > 0).length,
+        totalHp: fleet.ships.reduce((n, s) => n + Math.max(0, s.hp), 0),
+      })),
+    },
+    battle: battleSummaryForSystem(state, viewedSystemId),
+    hullStats: Object.keys(HULL_STATS),
     galaxy: {
       starCount: state.galaxy.stars.length,
       laneCount: state.galaxy.lanes.length,
@@ -442,6 +510,21 @@ window.__selectPlanet = (id) => { selection = id; };
 window.__buildOutpost = (id) => doBuildOutpost(id);
 window.__buildShipyard = (id) => doBuildShipyard(id);
 window.__queueScout = (shipyardId) => doQueueScout(shipyardId);
+window.__queueHull = (shipyardId, hull) => doQueueHull(shipyardId, hull);
+window.__dispatchShip = (shipId, starId) => doDispatchShip(shipId, starId);
+window.__setBattleStance = (stance) => setBattleStance(state, stance);
+window.__forcePirateIntoSystem = (systemId) => {
+  forcePirateIntoSystem(state, systemId);
+  checkBattleTrigger(state, systemId);
+};
+window.__getBattleState = (systemId) => getBattleState(state, systemId);
+window.__getHullStats = () => ({ ...HULL_STATS });
+window.__newGame = (seed = DEFAULT_SEED) => {
+  state = createNewGame(seed);
+  state.pirates = spawnPirateFleets(state);
+  doImportState(state);
+  return state;
+};
 window.__saveSlot = (slot) => doSaveSlot(slot);
 window.__loadSlot = (slot) => doLoadSlot(slot);
 window.__setFlagshipInput = (x, y) => setFlagshipInput(x, y);
@@ -454,10 +537,3 @@ window.__selectScout = (scoutId) => doSelectScout(scoutId);
 window.__gatherIntel = (systemId) => gatherIntel(state, systemId);
 window.__setView = (v) => doSetView(v);
 window.__viewSystem = (systemId) => doViewSystem(systemId);
-window.__setEnemyPresence = (systemId, count) => {
-  state._testEnemyPresence = state._testEnemyPresence ?? {};
-  state._testEnemyPresence[systemId] = count;
-};
-window.__clearEnemyPresence = (systemId) => {
-  if (state._testEnemyPresence) delete state._testEnemyPresence[systemId];
-};

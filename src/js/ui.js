@@ -5,6 +5,8 @@ import {
   SHIPYARD_COST,
   SCOUT_HULL_COST,
   CAPTURE_HOLD_MS,
+  HULL_STATS,
+  SHIPYARD_COMBAT_HULLS,
 } from './constants.js';
 import {
   systemById,
@@ -15,7 +17,7 @@ import {
   isPlayerOwned,
 } from './state.js';
 import { canBuildOutpost, incomePerSecond } from './economy.js';
-import { canBuildShipyard, canQueueScout } from './production.js';
+import { canBuildShipyard, canQueueScout, canQueueHull } from './production.js';
 import { transitStatus } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
 import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
@@ -257,6 +259,7 @@ export function initUi(ctx) {
     doBuildOutpost,
     doBuildShipyard,
     doQueueScout,
+    doQueueHull,
     doTogglePause,
     doToggleView,
     doSaveSlot,
@@ -269,7 +272,33 @@ export function initUi(ctx) {
     captureProgressMs,
     canHoldCapture,
     enemyCombatPresence,
+    battleSummaryForSystem,
+    canQueueHull,
   } = ctx;
+
+  let hullBtnContainer = el('combat-hull-buttons');
+  if (!hullBtnContainer) {
+    hullBtnContainer = document.createElement('div');
+    hullBtnContainer.id = 'combat-hull-buttons';
+    hullBtnContainer.className = 'panel__actions';
+    el('queue-scout-btn').after(hullBtnContainer);
+    for (const hull of SHIPYARD_COMBAT_HULLS) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--primary btn--block';
+      btn.dataset.hull = hull;
+      hullBtnContainer.appendChild(btn);
+    }
+    hullBtnContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-hull]');
+      if (!btn || btn.disabled) return;
+      const state = getState();
+      const sel = getSelection();
+      const shipyard = findShipyardOnPlanet(state, getViewedSystemId(), sel);
+      if (shipyard) doQueueHull(shipyard.id, btn.dataset.hull);
+    });
+  }
+  const hullButtons = [...hullBtnContainer.querySelectorAll('[data-hull]')];
 
   el('pause-btn').addEventListener('click', doTogglePause);
   el('view-toggle-btn').addEventListener('click', doToggleView);
@@ -500,6 +529,20 @@ export function initUi(ctx) {
       const req = captureRequirement(state, viewedSystemId);
       renderIntelBody(intelBody, sys, req);
       renderCaptureBody(captureBody, state, viewedSystemId, req, captureCtx);
+      const battle = battleSummaryForSystem(state, viewedSystemId);
+      if (battle?.active) {
+        const warn = document.createElement('div');
+        warn.className = 'panel-note';
+        warn.style.marginTop = '10px';
+        warn.innerHTML = `<span class="badge badge--contested">Battle</span> ${battle.mode} — ${battle.playerShips} vs ${battle.enemyShips}`;
+        captureBody.appendChild(warn);
+      } else if (enemyCombatPresence(state, viewedSystemId) > 0) {
+        const warn = document.createElement('div');
+        warn.className = 'panel-note panel-note--muted';
+        warn.style.marginTop = '10px';
+        warn.textContent = 'Pirate presence detected in this system.';
+        captureBody.appendChild(warn);
+      }
     } else if (view === 'system' && viewedSystem) {
       intelPanel.classList.remove('hidden');
       clearChildren(intelBody);
@@ -552,9 +595,21 @@ export function initUi(ctx) {
     scoutBtn.disabled = !scoutCheck.ok;
     scoutBtn.textContent = `Build Scout (${SCOUT_HULL_COST} cr)`;
 
+    const showHullBtns = shipyard && !shipyard.build && isPlayerOwned(state, viewedSystemId);
+    hullBtnContainer.classList.toggle('hidden', !showHullBtns);
+    for (const btn of hullButtons) {
+      const hull = btn.dataset.hull;
+      if (!showHullBtns) continue;
+      const check = canQueueHull(state, shipyard.id, viewedSystemId, hull);
+      btn.disabled = !check.ok;
+      btn.textContent = `Build ${hull} (${HULL_STATS[hull].cost} cr)`;
+    }
+
     if (shipyard?.build) {
       const prog = shipyardBuildProgress(shipyard, state.time);
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', prog, true);
+      el('build-progress').querySelector('.progress-block__label').textContent =
+        `Building ${shipyard.build.hull}`;
     } else {
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', 0, false);
     }
@@ -568,6 +623,10 @@ export function initUi(ctx) {
     ) {
       note = shipyardCheck.reason;
     } else if (shipyard && !scoutCheck.ok && !shipyard.build) note = scoutCheck.reason;
+    else if (showHullBtns) {
+      const firstHull = SHIPYARD_COMBAT_HULLS.find((h) => !canQueueHull(state, shipyard.id, viewedSystemId, h).ok);
+      if (firstHull) note = canQueueHull(state, shipyard.id, viewedSystemId, firstHull).reason;
+    }
     el('build-panel-note').textContent = note;
   };
 }

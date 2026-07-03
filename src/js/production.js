@@ -1,10 +1,12 @@
-// Shipyard production: local 1-slot queue, scout hulls only (Phase 1.5b).
+// Shipyard production: scout + combat hull queues (Phase 1.5b + 2.2).
 
 import {
   SHIPYARD_COST,
   SCOUT_HULL_COST,
   SCOUT_BUILD_MS,
+  SHIPYARD_COMBAT_HULLS,
 } from './constants.js';
+import { hullStats } from './hull.js';
 import {
   systemById,
   findPlanet,
@@ -14,6 +16,7 @@ import {
 } from './state.js';
 import { allocateStructureId } from './economy.js';
 import { spawnScout } from './scout.js';
+import { spawnPlayerShip } from './fleets.js';
 
 function flagshipInSystem(state, systemId) {
   return state.flagship.systemId === systemId && !state.flagship.transit;
@@ -50,7 +53,9 @@ export function buildShipyard(state, systemId, planetId) {
   return { ok: true };
 }
 
-export function canQueueScout(state, shipyardId, systemId) {
+function canQueueHullType(state, shipyardId, systemId, hull) {
+  const stats = hullStats(hull);
+  if (!stats) return { ok: false, reason: 'Unknown hull type' };
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
@@ -60,22 +65,37 @@ export function canQueueScout(state, shipyardId, systemId) {
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct production' };
   }
-  if (state.credits < SCOUT_HULL_COST) return { ok: false, reason: `Need ${SCOUT_HULL_COST} credits` };
-  return { ok: true };
+  const cost = hull === 'scout' ? SCOUT_HULL_COST : stats.cost;
+  if (state.credits < cost) return { ok: false, reason: `Need ${cost} credits` };
+  return { ok: true, cost, buildMs: hull === 'scout' ? SCOUT_BUILD_MS : stats.buildMs };
+}
+
+export function canQueueScout(state, shipyardId, systemId) {
+  return canQueueHullType(state, shipyardId, systemId, 'scout');
+}
+
+export function canQueueHull(state, shipyardId, systemId, hull) {
+  if (hull === 'scout') return canQueueScout(state, shipyardId, systemId);
+  if (!SHIPYARD_COMBAT_HULLS.includes(hull)) return { ok: false, reason: 'Hull not available at shipyard' };
+  return canQueueHullType(state, shipyardId, systemId, hull);
 }
 
 export function queueScout(state, shipyardId, systemId) {
-  const check = canQueueScout(state, shipyardId, systemId);
+  return queueHull(state, shipyardId, systemId, 'scout');
+}
+
+export function queueHull(state, shipyardId, systemId, hull) {
+  const check = canQueueHull(state, shipyardId, systemId, hull);
   if (!check.ok) return check;
 
   const shipyard = findStructure(state, systemId, shipyardId);
-  state.credits -= SCOUT_HULL_COST;
+  state.credits -= check.cost;
   shipyard.build = {
-    hull: 'scout',
+    hull,
     startedAt: state.time,
-    durationMs: SCOUT_BUILD_MS,
+    durationMs: check.buildMs,
   };
-  return { ok: true };
+  return { ok: true, hull };
 }
 
 export function shipyardBuildProgress(structure, time) {
@@ -91,9 +111,15 @@ export function tickProduction(state) {
       if (structure.type !== 'shipyard' || !structure.build) continue;
       const end = structure.build.startedAt + structure.build.durationMs;
       if (state.time < end) continue;
+      const hull = structure.build.hull;
       structure.build = null;
-      const scout = spawnScout(state, system.id);
-      completed.push({ systemId: system.id, scoutId: scout.id });
+      if (hull === 'scout') {
+        const scout = spawnScout(state, system.id);
+        completed.push({ systemId: system.id, hull, scoutId: scout.id, shipId: null });
+      } else {
+        const ship = spawnPlayerShip(state, system.id, hull, structure.bodyId);
+        completed.push({ systemId: system.id, hull, scoutId: null, shipId: ship.id });
+      }
     }
   }
   return completed;
@@ -115,4 +141,21 @@ export function buildingScoutCount(state) {
     }
   }
   return count;
+}
+
+export function activeCombatQueues(state) {
+  const queues = [];
+  for (const system of Object.values(state.systems)) {
+    for (const s of system.structures) {
+      if (s.type === 'shipyard' && s.build && s.build.hull !== 'scout') {
+        queues.push({
+          shipyardId: s.id,
+          systemId: system.id,
+          hull: s.build.hull,
+          progress: shipyardBuildProgress(s, state.time),
+        });
+      }
+    }
+  }
+  return queues;
 }

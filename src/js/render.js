@@ -14,6 +14,7 @@ import {
   CAPTURE_HOLD_MS,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole } from './celestial-render.js';
+import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { typeSizeBonus } from './star-types.js';
 import {
   createRng,
@@ -31,6 +32,11 @@ import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
 import { shipyardBuildProgress } from './production.js';
 import { laneBulge, laneControlPoint } from './galaxy.js';
+import { getBattleState } from './combat.js';
+import { playerShipsAtSystem } from './fleets.js';
+import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
+import { drawHullSprite } from './ship-sprites.js';
+import { ambientShipPose, ambientPiratePose } from './ship-motion.js';
 import {
   THEME,
   hexToRgba,
@@ -40,7 +46,7 @@ import {
 
 export const camera = { x: 0, y: 0, zoom: 1 };
 export const galaxyCamera = { x: 0, y: 0, zoom: 0.4 };
-export const follow = { enabled: true };
+export const follow = { enabled: false };
 
 export function clampZoom(z) {
   return Math.min(CAMERA_MAX_ZOOM, Math.max(CAMERA_MIN_ZOOM, z));
@@ -48,6 +54,13 @@ export function clampZoom(z) {
 
 export function clampGalaxyZoom(z) {
   return Math.min(GALAXY_CAMERA_MAX_ZOOM, Math.max(GALAXY_CAMERA_MIN_ZOOM, z));
+}
+
+let starAnimOrigin = performance.now();
+
+/** Session-relative clock for fluid star visuals (game time alone starts near zero). */
+export function starVisualTime(state) {
+  return state.time + performance.now() - starAnimOrigin;
 }
 
 export function worldToScreen(cam, wx, wy, canvas) {
@@ -157,6 +170,8 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   const intel = hasIntel(state, systemId);
 
+  beginStarPass('system');
+
   drawStarfield(ctx, camera, canvas, state.time);
 
   const z = camera.zoom;
@@ -171,11 +186,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     x: starScreen.x,
     y: starScreen.y,
     screenR: system.star.radius * z,
-    time: state.time,
+    time: starVisualTime(state),
     intel,
     state,
     systemId,
   });
+
+  flushStars(ctx, 'core');
 
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
 
@@ -292,6 +309,66 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     const thrusting = !state.paused && (inp.x !== 0 || inp.y !== 0);
     drawFlagshipSprite(ctx, fs.x, fs.y, pose.heading, FLAGSHIP_RADIUS * z, thrusting);
   }
+
+  drawCombatLayer(ctx, state, systemId, canvas, z);
+
+  flushStars(ctx, 'outer');
+  flushStars(ctx, 'bloom');
+}
+
+function drawCombatShipSprite(ctx, x, y, hull, baseR, opts) {
+  drawHullSprite(ctx, x, y, hull, baseR, opts);
+}
+
+function drawCombatLayer(ctx, state, systemId, canvas, z) {
+  const system = systemById(state, systemId);
+  if (!system) return;
+  const baseR = Math.max(4, 6 * z);
+  const battle = getBattleState(state, systemId);
+
+  if (battle?.active && battle.units?.length) {
+    for (const unit of battle.units) {
+      if (unit.hp <= 0) continue;
+      const p = worldToScreen(camera, unit.x, unit.y, canvas);
+      drawCombatShipSprite(ctx, p.x, p.y, unit.hull, baseR, {
+        heading: unit.heading ?? 0,
+        side: unit.side,
+        hp: unit.hp,
+        maxHp: unit.maxHp,
+      });
+    }
+    return;
+  }
+
+  const playerShips = playerShipsAtSystem(state, systemId);
+  playerShips.forEach((ship, idx) => {
+    const pose = ambientShipPose(state, system, ship, idx, playerShips.length);
+    const p = worldToScreen(camera, pose.x, pose.y, canvas);
+    drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
+      heading: pose.heading,
+      side: 'player',
+      hp: ship.hp,
+      maxHp: ship.maxHp,
+    });
+  });
+
+  const pirateFleets = pirateFleetAtSystem(state, systemId);
+  let pIdx = 0;
+  const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
+  for (const fleet of pirateFleets) {
+    for (const ship of fleet.ships) {
+      if (ship.hp <= 0) continue;
+      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal);
+      const p = worldToScreen(camera, pose.x, pose.y, canvas);
+      drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
+        heading: pose.heading,
+        side: 'enemy',
+        hp: ship.hp,
+        maxHp: ship.maxHp,
+      });
+      pIdx++;
+    }
+  }
 }
 
 function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
@@ -371,6 +448,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   ctx.fillStyle = THEME.bgGalaxy;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  beginStarPass('galaxy');
+
   drawStarfield(ctx, galaxyCamera, canvas, state.time);
 
   const z = galaxyCamera.zoom;
@@ -443,15 +522,12 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
 
   const bhScreen = worldToScreen(galaxyCamera, galaxy.blackHole.x, galaxy.blackHole.y, canvas);
   drawBlackHole(ctx, bhScreen.x, bhScreen.y, BLACK_HOLE_NODE_RADIUS * z, state.time, false);
-  labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
-  labelText(ctx, 'Wormhole — dormant', bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.75)');
 
   for (const star of galaxy.stars) {
     const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
     const nodeR = starNodeRadius(state, star.id) * z;
     const intel = hasIntel(state, star.id);
-    const owned = isPlayerOwned(state, star.id);
 
     if (!intel) {
       ctx.fillStyle = THEME.fog.galaxyNode;
@@ -466,13 +542,28 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
         x: s.x,
         y: s.y,
         screenR: nodeR,
-        time: state.time,
+        time: starVisualTime(state),
         intel,
         state,
         systemId: star.id,
         mode: 'galaxy',
       });
-    } else {
+    }
+  }
+
+  flushStars(ctx, 'core');
+
+  labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
+  labelText(ctx, 'Wormhole — dormant', bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.75)');
+
+  for (const star of galaxy.stars) {
+    const system = systemById(state, star.id);
+    const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
+    const nodeR = starNodeRadius(state, star.id) * z;
+    const intel = hasIntel(state, star.id);
+    const owned = isPlayerOwned(state, star.id);
+
+    if (!system?.star) {
       const color = THEME.accentGold;
       const glow = ctx.createRadialGradient(s.x, s.y, nodeR * 0.3, s.x, s.y, nodeR * 3);
       glow.addColorStop(0, hexToRgba(color, intel ? 0.55 : 0.15));
@@ -494,6 +585,16 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
 
     if (owned) {
       drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.65);
+    }
+
+    if (pirateSystemsWithPresence(state).includes(star.id)) {
+      ctx.fillStyle = '#ff4444';
+      ctx.shadowColor = '#ff4444';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(s.x - nodeR - 8 * z, s.y + nodeR + 6 * z, Math.max(2, 3.5 * z), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
     }
 
     const progress = captureProgressMs(state, star.id);
@@ -576,6 +677,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       entry.scout.id === selectedScoutId,
     );
   }
+
+  flushStars(ctx, 'bloom');
 }
 
 function nodePos(galaxy, id) {

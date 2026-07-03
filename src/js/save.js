@@ -4,6 +4,7 @@
 import { SAVE_VERSION } from './constants.js';
 import { createNewGame, seedNeutralStructuresForGalaxy } from './state.js';
 import { backfillStarTypes } from './star-types.js';
+import { spawnPirateFleets } from './pirates.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -48,6 +49,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 0) e = migrateV0toV1(e);
   if (e.saveVersion === 1) e = migrateV1toV2(e);
   if (e.saveVersion === 2) e = migrateV2toV3(e);
+  if (e.saveVersion === 3) e = migrateV3toV4(e);
   return e;
 }
 
@@ -122,6 +124,29 @@ function migrateV2toV3(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 3,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v3 -> v4 (combat: playerShips, pirates, systemBattles, battleStance).
+function migrateV3toV4(envelope) {
+  const state = envelope.state;
+
+  state.playerShips = state.playerShips ?? [];
+  state.systemBattles = state.systemBattles ?? {};
+  state.battleStance = state.battleStance ?? 'balanced';
+
+  if (!state.pirates?.fleets?.length) {
+    state.pirates = spawnPirateFleets(state);
+  } else {
+    state.pirates.pendingRespawn = state.pirates.pendingRespawn ?? [];
+  }
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 4,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,

@@ -102,3 +102,28 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 2: hybrid combat and fleet-based capture force
+
+---
+
+## Session 2026-07-03 — Phase 2 combat hybrid + wandering pirates
+
+**Task claimed:** Phase 2 tasks 2.1–2.11 (full phase)
+**Status:** complete
+
+### Done
+- `src/js/hull.js`, `fleets.js`, `pirates.js`, `combat.js` — ship stats, player fleet transit, wandering pirate faction, hybrid tactical/auto-resolve combat
+- `src/js/constants.js` — `HULL_STATS`, pirate/combat balance numbers; `SAVE_VERSION` 4
+- `src/js/state.js`, `save.js`, `docs/schemas/save-v4.json` — v3→v4 migration for combat state
+- `src/js/production.js` — combat hull queues (corvette, frigate, destroyer, healer)
+- `src/js/capture.js` — fleet-based capture force; real pirate `enemyCombatPresence`
+- `src/js/simulation.js`, `render.js`, `ui.js`, `main.js` — tick wiring, combat render, build panel, test hooks
+- `output/verify_phase2.mjs` — 24/24 pass; `verify_phase1.mjs` updated for real pirate contest
+- `docs/IMPLEMENTATION_PLAN.md` §8 Phase 2 task table
+
+### Decisions
+- Save v4 (not v3) for combat data because v3 was already used for star-type backfill
+- Pirates spawn on neutral rim systems, wander deterministically, respawn after defeat
+- `__setEnemyPresence` removed; tests use `__forcePirateIntoSystem`
+
+### Suggested next
+- Phase 3: Dyson loop (sail foundry, shuttles, launchers, 8 shells, Solarii)

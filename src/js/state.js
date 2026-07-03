@@ -224,6 +224,10 @@ export function createNewGame(seed) {
     scouts: [],
     intel: { [strongholdId]: { gatheredAt: 0 } },
     capture: {},
+    playerShips: [],
+    pirates: { fleets: [], pendingRespawn: [] },
+    systemBattles: {},
+    battleStance: 'balanced',
   };
 }
 

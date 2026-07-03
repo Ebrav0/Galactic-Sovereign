@@ -12,6 +12,8 @@ import {
 import { BLACK_HOLE_ID } from './galaxy.js';
 import { systemById } from './state.js';
 import { hasIntel } from './intel.js';
+import { totalCaptureForceFromShips } from './fleets.js';
+import { pirateCombatPresence } from './pirates.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -28,13 +30,14 @@ export function captureRequirement(state, systemId) {
 }
 
 export function captureForceInSystem(state, systemId) {
+  let force = totalCaptureForceFromShips(state, systemId);
   const f = state.flagship;
-  if (f.systemId === systemId && !f.transit) return CAPTURE_FLAGSHIP_FORCE;
-  return 0;
+  if (f.systemId === systemId && !f.transit) force += CAPTURE_FLAGSHIP_FORCE;
+  return force;
 }
 
 export function enemyCombatPresence(state, systemId) {
-  return state._testEnemyPresence?.[systemId] ?? 0;
+  return pirateCombatPresence(state, systemId);
 }
 
 export function isCapturableSystem(state, systemId) {

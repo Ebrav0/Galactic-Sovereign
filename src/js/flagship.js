@@ -15,6 +15,7 @@ import {
 } from './constants.js';
 import { findPath, nodeById } from './galaxy.js';
 import { systemById } from './state.js';
+import { keepOutRepulsion } from './ship-motion.js';
 import {
   legDurationMs,
   transitStatus as transitStatusCore,
@@ -108,6 +109,17 @@ export function transitStatus(state) {
   );
 }
 
+function applyFlagshipKeepOut(state) {
+  const f = state.flagship;
+  if (f.transit || !f.systemId) return;
+  const system = systemById(state, f.systemId);
+  if (!system) return;
+  const dt = TICK_MS / 1000;
+  const rep = keepOutRepulsion(state, system, f.x, f.y);
+  f.vx += rep.ax * dt;
+  f.vy += rep.ay * dt;
+}
+
 // --- Per-tick update (called from simulation.js after state.time advances) ---
 
 export function tickFlagship(state) {
@@ -150,6 +162,8 @@ export function tickFlagship(state) {
       f.vy = 0;
     }
   }
+
+  applyFlagshipKeepOut(state);
 
   f.x += f.vx * dt;
   f.y += f.vy * dt;

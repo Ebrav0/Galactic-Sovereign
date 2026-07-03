@@ -446,14 +446,17 @@ check('14.17 pause freezes hold timer', s.capture.progressMs < CAPTURE_HOLD_MS,
   `progress=${s.capture.progressMs}`);
 await page.keyboard.press('Space');
 
-// Enemy presence resets timer
+// Enemy presence resets timer (real pirates)
 await page.evaluate(([nid]) => {
-  window.__setEnemyPresence(nid, 1);
-  window.advanceTime(3000);
+  window.__forcePirateIntoSystem(nid);
+  window.advanceTime(1000);
 }, [neighbor14]);
 s = await text();
 check('14.18 enemy presence resets timer', s.capture.progressMs === 0, `progress=${s.capture.progressMs}`);
-await page.evaluate(([nid]) => window.__clearEnemyPresence(nid), [neighbor14]);
+await page.evaluate(([nid]) => {
+  const st = window.getGameState();
+  st.pirates.fleets = st.pirates.fleets.filter((f) => f.systemId !== nid);
+}, [neighbor14]);
 
 // Scout in system during hold does NOT reset
 await page.evaluate(([nid]) => {

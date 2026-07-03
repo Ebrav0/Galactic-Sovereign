@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 4",
+  "description": "Adds playerShips, wandering pirate fleets, systemBattles, and battleStance (Phase 2 combat).",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 4 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "galaxy", "systems",
+        "flagship", "scouts", "intel", "capture", "playerShips", "pirates",
+        "systemBattles", "battleStance"
+      ],
+      "properties": {
+        "playerShips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "hull", "systemId", "hp", "maxHp"],
+            "properties": {
+              "id": { "type": "string" },
+              "hull": { "type": "string" },
+              "systemId": { "type": ["string", "null"] },
+              "hp": { "type": "number" },
+              "maxHp": { "type": "number" },
+              "transit": { "type": ["object", "null"] }
+            }
+          }
+        },
+        "pirates": {
+          "type": "object",
+          "required": ["fleets"],
+          "properties": {
+            "fleets": { "type": "array" },
+            "pendingRespawn": { "type": "array" }
+          }
+        },
+        "systemBattles": { "type": "object" },
+        "battleStance": { "enum": ["aggressive", "balanced", "defensive"] }
+      }
+    }
+  }
+}
