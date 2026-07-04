@@ -79,6 +79,31 @@ float siteHash(float i) {
   return fract(sin((u_seed * 0.000013 + i * 127.1) * 43758.5453));
 }
 
+// Ember particle swarm — sparks spiraling off the star on the solar wind.
+vec3 emberParticles(vec2 delta, float dist, float t, vec3 warmTint) {
+  if (dist > u_radius * 3.4 || dist < u_radius * 0.92) return vec3(0.0);
+  vec3 acc = vec3(0.0);
+  for (int i = 0; i < 40; i++) {
+    float fi = float(i);
+    float h1 = siteHash(fi + 50.0);
+    float h2 = siteHash(fi + 90.0);
+    float h3 = siteHash(fi + 130.0);
+    float speed = 0.05 + h2 * 0.12;
+    float cycle = fract(t * speed + h1 * 7.0);
+    float pr = u_radius * mix(1.02, 3.1, pow(cycle, 0.8));
+    float dir = h2 > 0.5 ? 1.0 : -1.0;
+    float pa = h1 * 6.2831853 + t * (0.12 + h3 * 0.3) * dir + cycle * 1.6 * dir;
+    vec2 pp = vec2(cos(pa), sin(pa)) * pr;
+    float d = length(delta - pp);
+    float size = u_radius * (0.009 + h3 * 0.016) * (1.0 + cycle * 1.2);
+    float fade = (1.0 - cycle) * smoothstep(0.0, 0.12, cycle);
+    float flick = 0.6 + 0.4 * sin(t * (5.0 + h2 * 8.0) + fi * 2.7);
+    float g = exp(-(d * d) / max(size * size * 2.0, 0.0001));
+    acc += mix(u_corona, warmTint, h3) * g * fade * flick;
+  }
+  return acc * (0.85 + u_turbulence * 0.55);
+}
+
 // Soft prominence arch — sways and breathes.
 float prominenceArch(float normR, float angle, float siteAngle, float idx, float t) {
   float sway = sin(t * 1.8 + idx) * 0.06;
@@ -114,12 +139,12 @@ vec3 lightningStrike(vec2 delta, float angle, float siteAngle, float idx, float 
 
   // Flicker / strike cadence
   float strike = fract(t * (1.6 + siteHash(idx + 7.0)) + siteHash(idx) * 6.0);
-  float active = smoothstep(0.0, 0.08, strike) * (1.0 - smoothstep(0.08, 0.38, strike));
-  active = max(active, 0.25 + 0.75 * step(0.72, strike) * (1.0 - smoothstep(0.72, 0.92, strike)));
+  float strikeOn = smoothstep(0.0, 0.08, strike) * (1.0 - smoothstep(0.08, 0.38, strike));
+  strikeOn = max(strikeOn, 0.25 + 0.75 * step(0.72, strike) * (1.0 - smoothstep(0.72, 0.92, strike)));
 
   // Jagged bolt path
-  float jag1 = fbm(vec2(relN * 20.0 - t * 1.4 + idx * 3.1, idx * 1.7)) * 2.0 - 1.0;
-  float jag2 = fbm(vec2(relN * 38.0 + t * 2.0 + idx, idx + 11.0)) * 2.0 - 1.0;
+  float jag1 = fbm(vec2(relN * 20.0 - t * 1.4 + idx * 3.1, idx * 1.7), 3) * 2.0 - 1.0;
+  float jag2 = fbm(vec2(relN * 38.0 + t * 2.0 + idx, idx + 11.0), 3) * 2.0 - 1.0;
   float jag = (jag1 * 0.72 + jag2 * 0.28) * u_radius * (0.06 + siteHash(idx + 3.0) * 0.05);
 
   float coreW = u_radius * (0.012 + 0.008 * (1.0 - relN / max(reach, 0.01)));
@@ -135,7 +160,7 @@ vec3 lightningStrike(vec2 delta, float angle, float siteAngle, float idx, float 
   float forkD = abs(perp - forkJag);
   float fork = exp(-pow(forkD / (coreW * 1.4), 2.0)) * forkMask * smoothstep(forkAt, forkAt + 0.2, relN);
 
-  float bolt = (core * 1.8 + glow * 0.55 + fork * 1.1) * angM * life * active;
+  float bolt = (core * 1.8 + glow * 0.55 + fork * 1.1) * angM * life * strikeOn;
   vec3 col = mix(boltTint, vec3(1.0, 0.98, 0.95), core * 0.85 + fork * 0.5);
   return col * bolt * (0.85 + u_turbulence * 0.45);
 }
@@ -188,7 +213,27 @@ void main() {
   coronaFalloff *= (0.88 + 0.12 * pulse) * u_coronaIntensity;
 
   vec3 coronaCol = mix(u_corona, u_secondary, coronaNoise * 0.35 + 0.25);
-  vec3 bloomOut = coronaCol * coronaFalloff * 0.12;
+  vec3 bloomOut = coronaCol * coronaFalloff * 0.2;
+
+  // Rotating coronal streamers — long seamless rays sweeping the corona.
+  {
+    float s1 = pow(0.5 + 0.5 * sin(angle * 7.0 + outerSpin * 5.0), 3.5);
+    float s2 = pow(0.5 + 0.5 * sin(angle * 11.0 - outerSpin * 8.0 + 2.1), 5.0);
+    float s3 = pow(0.5 + 0.5 * sin(angle * 4.0 + outerSpin * 3.0 + 4.4), 2.5);
+    float streamer = s1 * 0.55 + s2 * 0.4 + s3 * 0.45;
+    float reach = 1.0 - smoothstep(u_radius * 1.05, coronaR * 1.75, dist);
+    float outside = smoothstep(u_radius * 0.96, u_radius * 1.12, dist);
+    streamer *= reach * outside * (0.7 + 0.3 * coronaNoise);
+    bloomOut += coronaCol * streamer * (0.42 + 0.3 * u_coronaIntensity);
+  }
+
+  // Solar wind shimmer — fine turbulent wisps drifting off the limb.
+  {
+    float wisp = fbm(coronaUV * 5.5 + vec2(-anim * 0.5, anim * 0.3) + u_seed * 0.002, 4);
+    float band = smoothstep(u_radius * 1.0, u_radius * 1.25, dist)
+               * (1.0 - smoothstep(u_radius * 1.3, coronaR * 1.4, dist));
+    bloomOut += mix(u_secondary, u_corona, 0.6) * max(0.0, wisp) * band * 0.28;
+  }
 
   float outerMask = smoothstep(u_radius * 0.92, u_radius * 1.04, dist);
   float boltTime = anim;
@@ -205,6 +250,9 @@ void main() {
       flareCol += lightningStrike(delta, angle, sAngle, fi, boltTime, boltTint);
     }
   }
+
+  // Ember particle swarm riding the solar wind.
+  flareCol += emberParticles(delta, dist, boltTime, plasmaHot);
 
   if (hasFeature(64)) {
     for (int i = 0; i < 3; i++) {
@@ -228,16 +276,19 @@ void main() {
     vec2 flow = surfUV * 6.0 + vec2(anim * 0.16, anim * 0.11);
 
     float mu = sqrt(max(0.0, 1.0 - normDist * normDist));
-    float limb = pow(mu, 0.28);
+    float limb = pow(mu, 0.35);
 
     float gran = 0.0;
     float granBright = 0.0;
+    float granDark = 0.0;
     if (hasFeature(1)) {
       float coarse = fbm(flow + u_seed * 0.001, 4);
       float fine = fbm(flow * 2.4 + vec2(anim * 0.2, 0.0) + u_seed * 0.002, 5);
       float cells = smoothstep(-0.05, 0.35, coarse) * smoothstep(0.95, 0.45, fine);
-      gran = coarse * 0.18 + fine * 0.12;
+      gran = coarse * 0.26 + fine * 0.18;
       granBright = cells * (0.65 + 0.35 * sin(anim * 1.5 + coarse * 8.0));
+      // Dark intergranular lanes give the surface convection-cell depth.
+      granDark = smoothstep(0.15, -0.35, coarse + fine * 0.5) * 0.38;
     }
 
     float spotDark = 0.0;
@@ -248,9 +299,10 @@ void main() {
     }
 
     vec3 centerHot = mix(u_color, vec3(1.0, 0.98, 0.92), u_temperature * 0.45 + gran * 0.5);
-    vec3 edgeCool = mix(u_secondary * 0.9, u_color, 0.4);
+    vec3 edgeCool = mix(u_secondary * 0.62, u_color * 0.85, 0.4);
     vec3 hot = mix(edgeCool, centerHot, limb) * (1.0 - spotDark);
-    hot += vec3(1.0, 0.94, 0.82) * granBright * 0.22;
+    hot *= 1.0 - granDark;
+    hot += vec3(1.0, 0.94, 0.82) * granBright * 0.3;
 
     // Convection shimmer
     float shimmer = sin(dot(surfUV, vec2(4.0, 3.0)) + anim * 1.6) * 0.035;
@@ -258,7 +310,7 @@ void main() {
 
     float coreSize = hasFeature(32) ? 0.24 : 0.38;
     float core = pow(mu, 1.0 / coreSize);
-    starCol = mix(hot, vec3(1.0, 0.99, 0.94), core * (0.58 + u_temperature * 0.22));
+    starCol = mix(hot, vec3(1.0, 0.99, 0.94), core * (0.42 + u_temperature * 0.2));
 
     if (hasFeature(128)) {
       for (int a = 0; a < 3; a++) {

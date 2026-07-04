@@ -343,12 +343,39 @@ function renderDysonPanel(container, state, systemId) {
   }
 }
 
+const LOG_LIMIT = 40;
+
+function appendLogEntry(message, kind) {
+  const body = el('notification-log-body');
+  if (!body) return;
+  body.querySelector('.empty-state')?.remove();
+
+  const entry = document.createElement('div');
+  entry.className = `log-entry${kind ? ` log-entry--${kind}` : ''}`;
+  const time = document.createElement('span');
+  time.className = 'log-entry__time';
+  time.textContent = new Date().toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const msg = document.createElement('span');
+  msg.className = 'log-entry__msg';
+  msg.textContent = message;
+  entry.appendChild(time);
+  entry.appendChild(msg);
+  body.prepend(entry);
+
+  while (body.children.length > LOG_LIMIT) body.removeChild(body.lastChild);
+}
+
 export function toast(message, kind = '') {
   const t = document.createElement('div');
   t.className = `toast ${kind}`;
   t.textContent = message;
   el('toast-container').appendChild(t);
   setTimeout(() => t.remove(), 3600);
+  appendLogEntry(message, kind);
 }
 
 export function initUi(ctx) {

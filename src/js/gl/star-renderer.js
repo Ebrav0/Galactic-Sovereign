@@ -175,7 +175,9 @@ function drawStarEntity(entry, pass = 0) {
   const profile = getStarVisualProfile(star);
   if (!profile) return;
 
-  const seed = resolveVisualSeed(state, systemId, 'star', star.visualSeed);
+  // Wrap to a small range: large raw seeds push noise coords past float32
+  // fractional precision in the shader, quantizing fbm into visible blocks.
+  const seed = resolveVisualSeed(state, systemId, 'star', star.visualSeed) % 8192;
   const color = intel ? (star.color ?? profile.color) : '#505868';
   const gpu = starGpuUniforms(profile);
   const [cr, cg, cb] = hexToRgb(color);

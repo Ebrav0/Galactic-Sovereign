@@ -39,7 +39,12 @@ import { laneBulge, laneControlPoint } from './galaxy.js';
 import { getBattleState } from './combat.js';
 import { playerShipsAtSystem } from './fleets.js';
 import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
-import { drawHullSprite } from './ship-sprites.js';
+import {
+  drawHullSprite,
+  drawFlagshipSprite,
+  drawScoutSprite,
+  drawShuttleSprite,
+} from './ship-sprites.js';
 import { ambientShipPose, ambientPiratePose } from './ship-motion.js';
 import {
   THEME,
@@ -96,33 +101,98 @@ export function snapCameraTo(x, y) {
 }
 
 let starfield = null;
+let nebulae = null;
 function getStarfield() {
   if (!starfield) {
     const rng = createRng(0xbeef);
     const tints = ['#c8d4e8', '#e8dcc8', '#b8c8f0', '#f0d8b8', '#d0e0ff'];
-    starfield = Array.from({ length: STARFIELD_COUNT }, () => ({
-      x: (rng() - 0.5) * STARFIELD_SPREAD,
-      y: (rng() - 0.5) * STARFIELD_SPREAD,
-      r: 0.4 + rng() * 1.1,
-      a: 0.25 + rng() * 0.6,
-      tint: tints[Math.floor(rng() * tints.length)],
-      twinkle: rng() * Math.PI * 2,
-      twinkleSpeed: 0.0008 + rng() * 0.0015,
-    }));
+    // Three parallax depth layers: far dust, mid stars, near bright stars.
+    const layers = [
+      { count: Math.floor(STARFIELD_COUNT * 0.5), depth: 0.25, rMin: 0.3, rMax: 0.8, aMax: 0.45 },
+      { count: Math.floor(STARFIELD_COUNT * 0.35), depth: 0.55, rMin: 0.5, rMax: 1.3, aMax: 0.7 },
+      { count: Math.floor(STARFIELD_COUNT * 0.15), depth: 1.0, rMin: 0.9, rMax: 1.9, aMax: 0.95 },
+    ];
+    starfield = layers.flatMap((layer) =>
+      Array.from({ length: layer.count }, () => ({
+        x: (rng() - 0.5) * STARFIELD_SPREAD,
+        y: (rng() - 0.5) * STARFIELD_SPREAD,
+        r: layer.rMin + rng() * (layer.rMax - layer.rMin),
+        a: 0.2 + rng() * (layer.aMax - 0.2),
+        depth: layer.depth,
+        tint: tints[Math.floor(rng() * tints.length)],
+        twinkle: rng() * Math.PI * 2,
+        twinkleSpeed: 0.0008 + rng() * 0.0015,
+        bright: layer.depth === 1.0 && rng() > 0.55,
+      })),
+    );
   }
   return starfield;
 }
 
+function getNebulae() {
+  if (!nebulae) {
+    const rng = createRng(0xcafe);
+    const palettes = [
+      ['rgba(90, 60, 160, 0.16)', 'rgba(40, 30, 90, 0)'],
+      ['rgba(40, 110, 150, 0.13)', 'rgba(20, 50, 80, 0)'],
+      ['rgba(150, 70, 110, 0.11)', 'rgba(70, 30, 60, 0)'],
+      ['rgba(60, 90, 170, 0.14)', 'rgba(30, 40, 90, 0)'],
+    ];
+    nebulae = Array.from({ length: 7 }, () => ({
+      x: (rng() - 0.5) * STARFIELD_SPREAD * 0.8,
+      y: (rng() - 0.5) * STARFIELD_SPREAD * 0.8,
+      r: 900 + rng() * 2400,
+      palette: palettes[Math.floor(rng() * palettes.length)],
+      depth: 0.15 + rng() * 0.2,
+    }));
+  }
+  return nebulae;
+}
+
+function parallaxToScreen(cam, wx, wy, depth, canvas) {
+  return {
+    x: (wx - cam.x * depth) * cam.zoom + canvas.width / 2,
+    y: (wy - cam.y * depth) * cam.zoom + canvas.height / 2,
+  };
+}
+
 function drawStarfield(ctx, cam, canvas, time = 0) {
+  // Deep-space nebula haze (far parallax layer).
+  for (const n of getNebulae()) {
+    const p = parallaxToScreen(cam, n.x, n.y, n.depth, canvas);
+    const sr = n.r * cam.zoom;
+    if (p.x < -sr || p.x > canvas.width + sr || p.y < -sr || p.y > canvas.height + sr) continue;
+    const g = ctx.createRadialGradient(p.x, p.y, sr * 0.1, p.x, p.y, sr);
+    g.addColorStop(0, n.palette[0]);
+    g.addColorStop(1, n.palette[1]);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   for (const s of getStarfield()) {
-    const p = worldToScreen(cam, s.x, s.y, canvas);
-    if (p.x < -5 || p.x > canvas.width + 5 || p.y < -5 || p.y > canvas.height + 5) continue;
+    const p = parallaxToScreen(cam, s.x, s.y, s.depth, canvas);
+    if (p.x < -6 || p.x > canvas.width + 6 || p.y < -6 || p.y > canvas.height + 6) continue;
     const twinkle = 0.55 + 0.45 * Math.sin(time * s.twinkleSpeed + s.twinkle);
     ctx.globalAlpha = s.a * twinkle;
     ctx.fillStyle = s.tint;
     ctx.beginPath();
     ctx.arc(p.x, p.y, s.r, 0, Math.PI * 2);
     ctx.fill();
+    if (s.bright) {
+      // Diffraction cross on the brightest foreground stars.
+      ctx.globalAlpha = s.a * twinkle * 0.4;
+      ctx.strokeStyle = s.tint;
+      ctx.lineWidth = 0.6;
+      const len = s.r * 3.2 * twinkle;
+      ctx.beginPath();
+      ctx.moveTo(p.x - len, p.y);
+      ctx.lineTo(p.x + len, p.y);
+      ctx.moveTo(p.x, p.y - len);
+      ctx.lineTo(p.x, p.y + len);
+      ctx.stroke();
+    }
   }
   ctx.globalAlpha = 1;
 }
@@ -313,15 +383,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     }
   }
 
-  ctx.fillStyle = THEME.accentCyan;
   for (const sh of shuttlePositions(state, systemId)) {
     const ss = worldToScreen(camera, sh.x, sh.y, canvas);
-    ctx.shadowColor = THEME.accentCyan;
-    ctx.shadowBlur = 4;
-    ctx.beginPath();
-    ctx.arc(ss.x, ss.y, Math.max(1, SHUTTLE_SIZE * z), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    drawShuttleSprite(ctx, ss.x, ss.y, sh.heading, Math.max(2.5, SHUTTLE_SIZE * z), {
+      wingSpread: sh.wingSpread,
+      thrusting: sh.thrusting && !state.paused,
+      seed: sh.seed,
+    });
   }
 
   ctx.fillStyle = THEME.accentGold;
@@ -415,68 +483,6 @@ function drawCombatLayer(ctx, state, systemId, canvas, z) {
       pIdx++;
     }
   }
-}
-
-function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(heading);
-
-  if (thrusting) {
-    const flicker = 0.75 + 0.25 * Math.sin(performance.now() / 40);
-    const flameLen = r * 2.4 * flicker;
-    const flame = ctx.createLinearGradient(-r, 0, -r - flameLen, 0);
-    flame.addColorStop(0, hexToRgba(THEME.accentCyan, 0.9));
-    flame.addColorStop(0.5, hexToRgba(THEME.accentCyan, 0.4));
-    flame.addColorStop(1, hexToRgba(THEME.accentCyan, 0));
-    ctx.fillStyle = flame;
-    ctx.beginPath();
-    ctx.moveTo(-r * 0.9, r * 0.45);
-    ctx.lineTo(-r - flameLen, 0);
-    ctx.lineTo(-r * 0.9, -r * 0.45);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  ctx.beginPath();
-  ctx.moveTo(r * 1.7, 0);
-  ctx.lineTo(-r * 1.1, r * 0.95);
-  ctx.lineTo(-r * 0.65, 0);
-  ctx.lineTo(-r * 1.1, -r * 0.95);
-  ctx.closePath();
-  ctx.fillStyle = THEME.hull;
-  ctx.fill();
-  ctx.strokeStyle = THEME.accentCyan;
-  ctx.lineWidth = Math.max(1, r * 0.14);
-  ctx.stroke();
-
-  ctx.fillStyle = THEME.accentCyan;
-  ctx.shadowColor = THEME.accentCyan;
-  ctx.shadowBlur = r * 0.5;
-  ctx.beginPath();
-  ctx.arc(r * 0.55, 0, Math.max(1, r * 0.3), 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-
-  ctx.restore();
-}
-
-function drawScoutSprite(ctx, x, y, angle, r, selected) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle);
-  ctx.beginPath();
-  ctx.moveTo(r * 1.4, 0);
-  ctx.lineTo(-r, r * 0.7);
-  ctx.lineTo(-r * 0.5, 0);
-  ctx.lineTo(-r, -r * 0.7);
-  ctx.closePath();
-  ctx.fillStyle = selected ? THEME.scout.selected : THEME.scout.normal;
-  ctx.fill();
-  ctx.strokeStyle = selected ? THEME.accentGreen : THEME.accentCyan;
-  ctx.lineWidth = Math.max(1, r * 0.15);
-  ctx.stroke();
-  ctx.restore();
 }
 
 // ============================= GALAXY VIEW =============================

@@ -13,6 +13,7 @@ import {
   launcherCountOnBody,
   dysonSummary,
   ensureDyson,
+  planetPosition,
 } from './state.js';
 import { step, advance, togglePaused } from './simulation.js';
 import { buildOutpost, canBuildOutpost, incomePerSecond, incomePerSecondInSystem, resetStructureIds } from './economy.js';
@@ -46,7 +47,7 @@ import {
 import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, resetPirateIds, pirateFleetAtSystem } from './pirates.js';
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
-import { activeShuttleCount } from './shuttles.js';
+import { activeShuttleCount, shuttlePositions } from './shuttles.js';
 import { activeSailShuttleCount } from './sail-shuttles.js';
 import {
   buildFoundry,
@@ -64,6 +65,7 @@ import {
   updateFollowCamera,
   snapCameraTo,
   camera,
+  galaxyCamera,
 } from './render.js';
 import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
@@ -607,3 +609,18 @@ window.__selectScout = (scoutId) => doSelectScout(scoutId);
 window.__gatherIntel = (systemId) => gatherIntel(state, systemId);
 window.__setView = (v) => doSetView(v);
 window.__viewSystem = (systemId) => doViewSystem(systemId);
+window.__snapCamera = (x, y, zoom) => {
+  follow.enabled = false;
+  snapCameraTo(x, y);
+  if (zoom != null) camera.zoom = zoom;
+};
+window.__snapGalaxyCamera = (x, y, zoom) => {
+  galaxyCamera.x = x;
+  galaxyCamera.y = y;
+  if (zoom != null) galaxyCamera.zoom = zoom;
+};
+window.__planetPos = (systemId, planetId) => {
+  const planet = findPlanet(state, systemId, planetId);
+  return planet ? planetPosition(planet, state.time) : null;
+};
+window.__shuttleInfo = (systemId) => shuttlePositions(state, systemId ?? viewedSystemId);

@@ -1,39 +1,57 @@
+/* Design tokens — Sovereign Command console theme. */
+
 :root {
   /* Backgrounds */
-  --bg-deep: #05070f;
-  --bg-galaxy: #04060d;
-  --bg-panel: rgba(8, 12, 24, 0.88);
+  --bg-deep: #04060f;
+  --bg-galaxy: #03050c;
+  --bg-panel: rgba(8, 13, 28, 0.78);
+  --bg-panel-raised: rgba(13, 20, 40, 0.88);
   --bg-panel-solid: #0a0e1c;
-  --bg-chip: rgba(16, 24, 48, 0.72);
+  --bg-chip: rgba(14, 22, 44, 0.55);
+  --bg-inset: rgba(4, 7, 16, 0.65);
 
   /* Borders */
-  --border-subtle: rgba(120, 160, 255, 0.12);
-  --border-default: rgba(120, 160, 255, 0.22);
-  --border-accent: rgba(120, 160, 255, 0.38);
+  --border-subtle: rgba(120, 170, 255, 0.10);
+  --border-default: rgba(120, 170, 255, 0.22);
+  --border-accent: rgba(120, 170, 255, 0.45);
+  --border-gold: rgba(255, 205, 120, 0.45);
 
   /* Text */
-  --text-primary: #cfe0ff;
-  --text-secondary: rgba(207, 224, 255, 0.82);
-  --text-muted: #7a8db5;
-  --text-dim: rgba(122, 141, 181, 0.9);
+  --text-primary: #dbe8ff;
+  --text-secondary: rgba(219, 232, 255, 0.78);
+  --text-muted: #7e91ba;
+  --text-dim: rgba(126, 145, 186, 0.85);
 
   /* Accents */
-  --accent-gold: #ffd27a;
-  --accent-cyan: #7ad0ff;
-  --accent-green: #7aff9e;
-  --danger: #ff7a7a;
-  --ok: #7aff9e;
+  --accent-gold: #ffcf7a;
+  --accent-cyan: #6fd6ff;
+  --accent-green: #7dffa8;
+  --accent-violet: #a78bff;
+  --danger: #ff7d7d;
+  --ok: #7dffa8;
 
   /* Planet type dots */
-  --planet-habitable: #4f9e6b;
-  --planet-barren: #9e8a72;
+  --planet-habitable: #55b578;
+  --planet-barren: #b09578;
   --planet-gas: #b07adb;
 
   /* Surfaces */
-  --panel-blur: 12px;
-  --panel-shadow: 0 4px 24px rgba(0, 0, 0, 0.45), 0 0 1px rgba(120, 160, 255, 0.15);
-  --glow-accent: 0 0 20px rgba(120, 160, 255, 0.25);
-  --glow-gold: 0 0 16px rgba(255, 210, 122, 0.3);
+  --panel-blur: 14px;
+  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(120, 170, 255, 0.06);
+  --glow-accent: 0 0 18px rgba(111, 214, 255, 0.28);
+  --glow-gold: 0 0 18px rgba(255, 207, 122, 0.32);
+
+  /* Angular corner cuts */
+  --cut: 10px;
+  --cut-sm: 6px;
+  --clip-panel: polygon(
+    var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)),
+    calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut)
+  );
+  --clip-btn: polygon(
+    var(--cut-sm) 0, 100% 0, 100% calc(100% - var(--cut-sm)),
+    calc(100% - var(--cut-sm)) 100%, 0 100%, 0 var(--cut-sm)
+  );
 
   /* Spacing (4px base) */
   --space-1: 4px;
@@ -42,32 +60,33 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+  --space-8: 32px;
 
-  /* Radius */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  /* Radius (used sparingly; cuts do most of the work) */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
 
   /* Typography */
-  --font-ui: 'IBM Plex Sans', 'Segoe UI', sans-serif;
-  --font-display: 'Exo 2', 'Orbitron', sans-serif;
+  --font-ui: 'Rajdhani', 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  --font-display: 'Orbitron', 'Exo 2', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', monospace;
   --text-xs: 10px;
   --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 21px;
 
   /* Layout */
-  --header-height: 52px;
-  --footer-height: 44px;
-  --rail-width: 280px;
+  --header-height: 58px;
+  --footer-height: 52px;
+  --rail-width: 292px;
   --rail-gap: var(--space-3);
 
-  /* Legacy aliases (for gradual migration) */
+  /* Legacy aliases */
   --hud-bg: var(--bg-panel);
   --hud-border: var(--border-default);
   --text: var(--text-primary);
-  --text-dim: var(--text-muted);
   --accent: var(--accent-gold);
 }

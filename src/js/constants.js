@@ -128,20 +128,22 @@ export const LANE_MIN_LEG_MS = 2500;       // floor so short lanes still read as
 export const HOME_SYSTEM_NAME = 'Solara Prime';
 export const STAR_RADIUS = 200;
 export const PLANET_COUNT_RANGE = [2, 3];        // min, max (inclusive)
-export const PLANET_ORBIT_BASE = 800;            // world units, first orbit
-export const PLANET_ORBIT_SPACING = 550;         // gap between orbits
+export const PLANET_ORBIT_BASE = 1100;           // world units, first orbit
+export const PLANET_ORBIT_SPACING = 720;         // gap between orbits
 export const PLANET_RADIUS_RANGE = [22, 38];
 export const PLANET_ORBIT_PERIOD_RANGE = [180000, 420000]; // ms per revolution
 export const MOON_COUNT_RANGE = [1, 3];          // for the guaranteed habitable planet
-export const MOON_ORBIT_BASE = 110;
-export const MOON_ORBIT_SPACING = 55;
+export const MOON_ORBIT_BASE = 165;
+export const MOON_ORBIT_SPACING = 85;
 export const MOON_RADIUS = 12;
 export const MOON_RADIUS_RANGE = [8, 16];
 export const MOON_ORBIT_PERIOD_RANGE = [24000, 60000];
 
 // --- Shuttles (visual only) ---
-export const SHUTTLE_TRIP_MS = 8000;   // one full planet->moon->planet round trip
-export const SHUTTLE_SIZE = 2.2;       // draw radius
+export const SHUTTLE_FLIGHT_MS = 4200;        // one leg: planet surface -> moon surface
+export const SHUTTLE_MOON_DWELL_MS = 2500;    // parked on the moon
+export const SHUTTLE_PLANET_DWELL_MS = 1600;  // turnaround on the planet surface
+export const SHUTTLE_SIZE = 7;                // draw radius (world units)
 
 // --- Dyson megastructure (Phase 3, GDD §6–7) ---
 export const FOUNDRY_COST = 800;
@@ -181,4 +183,4 @@ export const CELESTIAL_VISUAL_SCALE = 1.35;    // render-only body size multipli
 export const SELECTION_PULSE_MS = 1600;
 export const STAR_BLOOM_SCALE = 1.0;           // bloom FBO resolution fraction (full res avoids blocky upscale)
 export const STAR_BLOOM_THRESHOLD = 0.38;      // luminance threshold for HDR bloom
-export const STAR_GL_QUALITY = 'medium';       // 'high' | 'medium' | 'low'
+export const STAR_GL_QUALITY = 'high';        // 'high' | 'medium' | 'low'
