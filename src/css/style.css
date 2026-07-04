@@ -1176,3 +1176,124 @@ button {
   }
   #notification-log { display: none; }
 }
+
+/* Technology web graph (Phase 5 UI) */
+.tech-web-stats,
+.fleet-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.tech-web-stats strong,
+.fleet-stats strong {
+  color: var(--text-secondary);
+}
+
+.tech-web-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: var(--space-2) 0;
+}
+
+.tech-web-legend__chip {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border: 1px solid;
+  clip-path: var(--clip-btn);
+  background: rgba(8, 12, 22, 0.6);
+}
+
+.tech-web-mount {
+  margin-top: var(--space-2);
+}
+
+.tech-web-scroll {
+  overflow: auto;
+  max-height: min(52vh, 420px);
+  border: 1px solid var(--border-subtle);
+  background: rgba(6, 10, 18, 0.55);
+  clip-path: var(--clip-panel);
+}
+
+.tech-web-graph {
+  width: 100%;
+  min-width: 520px;
+  height: auto;
+  display: block;
+}
+
+.tech-web-cluster-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.tech-web-edge {
+  stroke: rgba(90, 110, 150, 0.35);
+  stroke-width: 1.5;
+}
+
+.tech-web-edge--lit {
+  stroke: rgba(122, 208, 255, 0.55);
+  stroke-width: 2;
+}
+
+.tech-web-node__circle {
+  transition: stroke-width 0.15s ease;
+}
+
+.tech-web-node--available .tech-web-node__circle {
+  cursor: pointer;
+}
+
+.tech-web-node--available:hover .tech-web-node__circle {
+  stroke-width: 3;
+}
+
+.tech-web-node__tier {
+  font-size: 11px;
+  font-weight: 800;
+  fill: var(--text-primary);
+  pointer-events: none;
+}
+
+.tech-web-node__name {
+  font-size: 8px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+.tech-web-node__done {
+  font-size: 10px;
+  fill: var(--accent-gold);
+  pointer-events: none;
+}
+
+.tech-web-node--locked .tech-web-node__tier,
+.tech-web-node--locked .tech-web-node__name {
+  opacity: 0.45;
+}
+
+.tech-web-node--active .tech-web-node__tier {
+  fill: var(--accent-cyan);
+}
+
+.fleet-ship-row {
+  pointer-events: none;
+}
+
+#tech-panel .panel__body,
+#fleet-panel .panel__body {
+  padding-bottom: var(--space-3);
+}
+

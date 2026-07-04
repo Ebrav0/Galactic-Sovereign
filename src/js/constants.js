@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -94,6 +94,8 @@ export const CAPTURE_STRUCTURE_WEIGHT = {
   shipyard: 4,
   sail_foundry: 6,
   dyson_launcher: 3,
+  trade_station: 3,
+  research_station: 4,
 };
 export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
@@ -223,6 +225,25 @@ export const CAMERA_FOLLOW_RATE = 6;   // 1/s exponential approach toward the fl
 export const GALAXY_CAMERA_MIN_ZOOM = 0.04;
 export const GALAXY_CAMERA_MAX_ZOOM = 2.2;
 export const GALAXY_LOD_ZOOM = 0.12;             // below this: simplified lane pulses
+
+// --- Phase 5: Empire layer ---
+export const EMPIRE_QUEUE_MAX = 20;
+export const RESEARCH_STATION_COST = 550;
+export const RESEARCH_STATION_CAP = 3;
+export const RESEARCH_STATION_BONUS = 0.15;
+export const RESEARCH_BASE_MS = 45000;
+export const TRADE_STATION_COST = 450;
+export const TRADE_BASE_INCOME = 1.5;
+export const TRADE_CONNECTIVITY_BONUS = 0.1;
+export const SHELL_TRADE_BONUS = 1.25;
+export const SHELL_RESEARCH_BONUS = 1.2;
+export const AI_STARTING_CREDITS = 1200;
+export const AI_STARTING_SYSTEMS = 4;
+export const AI_TICK_INTERVAL_TICKS = 20;
+export const AI_BUILD_OUTPOST_COST = 300;
+export const AI_PERSONALITY_NAMES = { expansionist: 'Dominion of Helix' };
+export const AI_LANE_SPEED = 90;
+export const AI_LANE_MIN_LEG_MS = 2500;
 
 // --- Rendering ---
 export const STARFIELD_COUNT = 320;

@@ -68,6 +68,7 @@ export function dehydrateGalaxy(state, galaxyId) {
   for (const [sysId, system] of Object.entries(gal.systems)) {
     if (sysId === BLACK_HOLE_ID) continue;
     if (system.owner === 'player' || system.structures.length > 0
+        || system.owner === 'ai'
         || system.dyson.completedShells > 0 || system.dyson.shellSails > 0) {
       overlay[sysId] = snapshotSystemOverlay(system);
     }
@@ -80,6 +81,10 @@ export function dehydrateGalaxy(state, galaxyId) {
     intel: { ...(gal.intel ?? {}) },
     capture: { ...(gal.capture ?? {}) },
     ownedSystemCount: Object.values(gal.systems).filter((s) => s.owner === 'player').length,
+    aiOwnedCount: Object.values(gal.systems).filter((s) => s.owner === 'ai').length,
+    aiFleetPower: (state.aiShips ?? [])
+      .filter((s) => s.galaxyId === galaxyId)
+      .reduce((n, s) => n + Math.max(0, s.hp), 0),
   };
 
   gal.systems = {};

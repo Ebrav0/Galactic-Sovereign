@@ -17,6 +17,8 @@ import {
   SOLARII_SHELL_MULTIPLIERS,
   SHELL_BONUS_CREDIT_MULT,
   SHELL_BONUS_SAIL_EFFICIENCY,
+  SHELL_TRADE_BONUS,
+  SHELL_RESEARCH_BONUS,
   TICK_MS,
 } from './constants.js';
 import {
@@ -123,12 +125,14 @@ export function shellShieldBonus(_system) {
   return 1.0; // Phase 6 Superweapon counterplay
 }
 
-export function shellTradeBonus(_system) {
-  return 1.0; // Phase 5 trade stations
+export function shellTradeBonus(system) {
+  const shells = system?.dyson?.completedShells ?? 0;
+  return shells >= 5 ? SHELL_TRADE_BONUS : 1.0;
 }
 
-export function shellResearchBonus(_system) {
-  return 1.0; // Phase 5 research stations
+export function shellResearchBonus(system) {
+  const shells = system?.dyson?.completedShells ?? 0;
+  return shells >= 6 ? SHELL_RESEARCH_BONUS : 1.0;
 }
 
 export function shellRepairBonus(_system) {
@@ -254,8 +258,8 @@ export function activeShellBonuses(system) {
   if (shells >= 2) bonuses.push(`Credit output ×${shellCreditBonus(system).toFixed(2)}`);
   if (shells >= 3) bonuses.push(`Sail efficiency ×${shellSailEfficiencyBonus(system).toFixed(2)}`);
   if (shells >= 4) bonuses.push('System shield (pending Phase 6)');
-  if (shells >= 5) bonuses.push('Trade output (pending Phase 5)');
-  if (shells >= 6) bonuses.push('Research efficiency (pending Phase 5)');
+  if (shells >= 5) bonuses.push(`Trade output ×${shellTradeBonus(system).toFixed(2)}`);
+  if (shells >= 6) bonuses.push(`Research efficiency ×${shellResearchBonus(system).toFixed(2)}`);
   if (shells >= 7) bonuses.push('Fleet repair (pending)');
   if (shells >= 8) bonuses.push('Completed Dyson sphere');
   return bonuses;

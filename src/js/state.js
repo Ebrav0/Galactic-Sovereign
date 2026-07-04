@@ -345,6 +345,24 @@ export function createNewGame(seed) {
     battleStance: 'balanced',
     solarii: 0,
     solariiUnlocked: false,
+    empireQueue: [],
+    research: {
+      activeNodeId: null,
+      progress: 0,
+      unlocked: ['eco_baseline'],
+      queue: [],
+    },
+    factions: {
+      ai: {
+        id: 'ai-0',
+        name: 'Dominion of Helix',
+        personality: 'expansionist',
+        homeSystemId: null,
+        credits: 1200,
+        lastActionTick: 0,
+      },
+    },
+    aiShips: [],
   };
 
   hydrateGalaxy(state, homeGalaxyId);
@@ -429,6 +447,21 @@ export function findStructure(state, systemId, structureId, galaxyId = state.act
 export function isPlayerOwned(state, systemId, galaxyId = state.activeGalaxyId) {
   const system = systemById(state, systemId, galaxyId);
   return system?.owner === 'player';
+}
+
+export function isAiOwned(state, systemId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
+  return system?.owner === 'ai';
+}
+
+export function isHostileOwner(owner) {
+  return owner === 'ai';
+}
+
+export function ownerFaction(owner) {
+  if (owner === 'player') return 'player';
+  if (owner === 'ai') return 'ai';
+  return 'neutral';
 }
 
 export function isCapturableTarget(state, systemId, galaxyId = state.activeGalaxyId) {

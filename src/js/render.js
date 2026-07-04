@@ -39,6 +39,7 @@ import {
   hasFoundry,
   ensureDyson,
   isPlayerOwned,
+  isAiOwned,
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
@@ -47,6 +48,11 @@ import { structureSites } from './structure-sites.js';
 import { drawShipyardStation, drawSailLauncher, drawLaunchMuzzleFlash } from './structure-render.js';
 import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
 import { drawSailFoundryRingStation, drawSailFoundryLabel, sailFoundryLabelAnchor } from './foundry-render.js';
+import {
+  drawResearchStation,
+  drawResearchStationLabel,
+  researchStationLabelAnchor,
+} from './research-render.js';
 import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
@@ -403,6 +409,10 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         const ss = worldToScreen(camera, st.x, st.y, canvas);
         if (st.kind === 'shipyard') {
           drawShipyardStation(ctx, ss.x, ss.y, z, st, t);
+        } else if (st.kind === 'research_station' && st.bodyId === planet.id) {
+          drawResearchStation(ctx, ss.x, ss.y, z, st, t);
+          const label = researchStationLabelAnchor(ss.x, ss.y, z);
+          drawResearchStationLabel(ctx, label, z);
         } else if (st.bodyId === planet.id) {
           drawSailLauncher(ctx, ss.x, ss.y, z, st, t);
         }
@@ -714,6 +724,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const nodeR = starNodeRadius(state, star.id) * z;
     const intel = hasIntel(state, star.id);
     const owned = isPlayerOwned(state, star.id);
+    const aiOwned = isAiOwned(state, star.id);
 
     if (!system?.star) {
       const color = THEME.accentGold;
@@ -737,6 +748,13 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
 
     if (owned) {
       drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.65);
+    }
+    if (aiOwned) {
+      drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, '#c44dff', Math.max(1, 1.5 * z), 0.75);
+      ctx.fillStyle = '#c44dff';
+      ctx.beginPath();
+      ctx.arc(s.x + nodeR + 6 * z, s.y - nodeR - 4 * z, Math.max(2, 3 * z), 0, Math.PI * 2);
+      ctx.fill();
     }
 
     if (pirateSystemsWithPresence(state).includes(star.id)) {

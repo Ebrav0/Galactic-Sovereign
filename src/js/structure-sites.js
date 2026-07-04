@@ -20,6 +20,7 @@ import {
   hashSeed,
 } from './state.js';
 import { shipyardBuildProgress } from './production.js';
+import { normalizeShipyardBuilds } from './empire-queue.js';
 
 const STAR_X = 0;
 const STAR_Y = 0;
@@ -78,10 +79,11 @@ function shipyardSite(state, systemId, planet, time = state.time) {
   const shipyard = findShipyardOnPlanet(state, systemId, planet.id);
   if (!shipyard) return null;
 
+  normalizeShipyardBuilds(shipyard);
   const bodyPos = planetPosition(planet, time);
   const slotAngle = fixedSlotAngle(shipyard.id, 0x73);
   const orbitR = computeShipyardOrbitRadius(planet);
-  const building = !!shipyard.build;
+  const building = shipyard.builds.length > 0;
 
   return {
     kind: 'shipyard',
@@ -93,11 +95,46 @@ function shipyardSite(state, systemId, planet, time = state.time) {
     slotAngle,
     hubHeading: slotAngle + Math.PI / 2,
     building,
-    buildProgress: building ? shipyardBuildProgress(shipyard, state.time) : 0,
-    buildHull: shipyard.build?.hull ?? null,
+    buildProgress: building ? shipyardBuildProgress(shipyard, state.time, 0) : 0,
+    buildHull: shipyard.builds[0]?.hull ?? null,
     seed: hashSeed(0x9e3779b9, shipyard.id) % 97,
     shipyardId: shipyard.id,
   };
+}
+
+const RESEARCH_ORBIT_PAD = 28;
+const RESEARCH_ORBIT_SPREAD = 0.42;
+
+function researchStationSites(state, systemId, planet, time = state.time) {
+  const system = systemById(state, systemId);
+  if (!system) return [];
+
+  const stations = system.structures.filter(
+    (s) => s.type === 'research_station' && s.bodyId === planet.id,
+  );
+  if (stations.length === 0) return [];
+
+  const bodyPos = planetPosition(planet, time);
+  const baseOrbit = planet.radius * CELESTIAL_VISUAL_SCALE + RESEARCH_ORBIT_PAD;
+
+  return stations.map((station) => {
+    const orbitIndex = station.orbitIndex ?? 0;
+    const slotAngle = fixedSlotAngle(station.id, 0x4a) + orbitIndex * RESEARCH_ORBIT_SPREAD;
+    const orbitR = baseOrbit + orbitIndex * (RESEARCH_ORBIT_PAD * 0.55);
+    return {
+      kind: 'research_station',
+      planetId: planet.id,
+      bodyId: planet.id,
+      stationId: station.id,
+      x: bodyPos.x + Math.cos(slotAngle) * orbitR,
+      y: bodyPos.y + Math.sin(slotAngle) * orbitR,
+      orbitR,
+      slotAngle,
+      hubHeading: slotAngle + Math.PI / 2,
+      orbitIndex,
+      seed: hashSeed(0xcafebabe, station.id) % 97,
+    };
+  });
 }
 
 function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
@@ -152,6 +189,7 @@ export function structureSites(state, systemId, time = state.time) {
   for (const planet of system.bodies) {
     const sy = shipyardSite(state, systemId, planet, time);
     if (sy) sites.push(sy);
+    sites.push(...researchStationSites(state, systemId, planet, time));
     sites.push(...launcherSitesForBody(state, systemId, planet.id, time));
     for (const moon of planet.moons) {
       sites.push(...launcherSitesForBody(state, systemId, moon.id, time));

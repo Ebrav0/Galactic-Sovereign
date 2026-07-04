@@ -16,6 +16,7 @@ import { getGalaxyCapture, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
 import { totalCaptureForceFromShips } from './fleets.js';
 import { pirateCombatPresence } from './pirates.js';
+import { aiCombatPresence } from './ai-ships.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -44,7 +45,7 @@ export function captureForceInSystem(state, systemId) {
 }
 
 export function enemyCombatPresence(state, systemId) {
-  return pirateCombatPresence(state, systemId);
+  return pirateCombatPresence(state, systemId) + aiCombatPresence(state, systemId);
 }
 
 export function isCapturableSystem(state, systemId) {

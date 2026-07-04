@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 7",
+  "description": "Empire layer: build queue, research, trade, AI faction (Phase 5).",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 7 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked",
+        "empireQueue", "research", "factions", "aiShips"
+      ],
+      "properties": {
+        "empireQueue": { "type": "array" },
+        "research": { "type": "object" },
+        "factions": { "type": "object" },
+        "aiShips": { "type": "array" }
+      }
+    }
+  }
+}

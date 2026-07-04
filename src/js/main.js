@@ -89,9 +89,26 @@ import {
   resetWormholeJumpCounter,
 } from './wormholes.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
+import { seedAiFaction } from './ai-faction.js';
+import {
+  enqueueHull,
+  cancelQueueItem,
+  pinQueueItem,
+  empireQueueSummary,
+  resetQueueIds,
+  migrateShipyardBuilds,
+  listPlayerShipyards,
+} from './empire-queue.js';
+import { startResearch, researchSummary, buildResearchStation, canBuildResearchStation } from './research.js';
+import { buildTradeStation, canBuildTradeStation, tradeSummary } from './trade.js';
+import { aiFactionSummary, forceAiCapture } from './ai-faction.js';
+import { resetAiShipIds, aiShipsSummary } from './ai-ships.js';
+import { productionSlotSummary } from './production.js';
+import { allTechNodes, isTechUnlocked, techPrereqsMet } from './tech-web.js';
 
 let state = createNewGame(DEFAULT_SEED);
 state.pirates = spawnPirateFleets(state);
+seedAiFaction(state, state.homeGalaxyId);
 let selection = null;
 let view = 'system';
 let viewedSystemId = state.stronghold;
@@ -317,6 +334,13 @@ function doImportState(newState) {
   resetScoutIds(state);
   resetShipIds(state);
   resetPirateIds(state);
+  resetQueueIds(state);
+  resetAiShipIds(state);
+  migrateShipyardBuilds(state);
+  if (!newState.empireQueue) newState.empireQueue = [];
+  if (!newState.research) newState.research = { activeNodeId: null, progress: 0, unlocked: ['eco_baseline'], queue: [] };
+  if (!newState.aiShips) newState.aiShips = [];
+  if (!newState.factions?.ai?.homeSystemId) seedAiFaction(newState, newState.homeGalaxyId ?? 'gal-0');
   if (!newState.pirates?.fleets?.length) {
     newState.pirates = spawnPirateFleets(newState);
   }
@@ -600,11 +624,17 @@ window.render_game_to_text = () => {
         0,
       ),
       buildingScout: Object.values(getSystems(state)).some(
-        (sys) => sys.structures.some((s) => s.type === 'shipyard' && s.build?.hull === 'scout'),
+        (sys) => sys.structures.some((s) => s.type === 'shipyard' && (s.builds?.some((b) => b.hull === 'scout') || s.build?.hull === 'scout')),
       ),
       scoutCount: state.scouts.filter((s) => s.galaxyId === state.activeGalaxyId).length,
       combatQueues: activeCombatQueues(state),
+      ...productionSlotSummary(state),
     },
+    empireQueue: empireQueueSummary(state),
+    research: researchSummary(state),
+    trade: tradeSummary(state),
+    factions: { ai: aiFactionSummary(state) },
+    aiShips: aiShipsSummary(state),
     playerShips: (state.playerShips ?? [])
       .filter((ship) => ship.galaxyId === state.activeGalaxyId)
       .map((ship) => ({
@@ -743,6 +773,55 @@ window.__forceShellProgress = (systemId, sails) => forceShellProgress(state, sys
 window.__fastForwardDyson = (ms) => window.advanceTime(ms);
 window.__queueScout = (shipyardId) => doQueueScout(shipyardId);
 window.__queueHull = (shipyardId, hull) => doQueueHull(shipyardId, hull);
+window.__queueHullLocal = (shipyardId, hull) => doQueueHull(shipyardId, hull);
+window.__enqueueHull = (hull) => enqueueHull(state, hull);
+window.__cancelQueueItem = (id) => cancelQueueItem(state, id);
+window.__pinQueueItem = (id, shipyardId) => pinQueueItem(state, id, shipyardId ?? null);
+window.__getEmpireQueue = () => empireQueueSummary(state);
+window.__startResearch = (nodeId) => startResearch(state, nodeId);
+window.__buildResearchStation = (systemId) => buildResearchStation(state, systemId ?? viewedSystemId);
+window.__buildTradeStation = (planetId) => buildTradeStation(state, viewedSystemId, planetId ?? selection);
+window.__getTradeSummary = () => tradeSummary(state);
+window.__getTechWeb = () => allTechNodes().map((n) => ({
+  id: n.id,
+  unlocked: isTechUnlocked(state, n.id),
+  available: techPrereqsMet(state, n.id) && !isTechUnlocked(state, n.id),
+}));
+window.__getAiSummary = () => aiFactionSummary(state);
+window.__forceAiCapture = (systemId) => forceAiCapture(state, systemId);
+window.__listPlayerShipyards = () => listPlayerShipyards(state);
+window.__seedTestShipyards = () => {
+  const st = window.getGameState();
+  const sys = st.stronghold;
+  const systems = st.galaxies['gal-0'].systems;
+  const ensureYard = (systemId) => {
+    const system = systems[systemId];
+    if (!system) return null;
+    const planet = system.bodies.find((b) => b.type === 'habitable') ?? system.bodies[0];
+    if (!planet) return null;
+    if (!system.structures.some((s) => s.type === 'outpost')) {
+      system.structures.push({ id: `test-out-${systemId}`, type: 'outpost', bodyId: planet.id, builtAtTime: 0 });
+    }
+    let yard = system.structures.find((s) => s.type === 'shipyard');
+    if (!yard) {
+      yard = { id: `test-yard-${systemId}`, type: 'shipyard', bodyId: planet.id, builds: [], builtAtTime: 0 };
+      system.structures.push(yard);
+    }
+    return { systemId, shipyardId: yard.id };
+  };
+  const near = ensureYard(sys);
+  const neighbors = st.galaxies['gal-0'].graph.lanes
+    .filter((l) => l.from === sys || l.to === sys)
+    .map((l) => (l.from === sys ? l.to : l.from))
+    .filter((id) => systems[id]);
+  let far = null;
+  for (const nid of neighbors) {
+    systems[nid].owner = 'player';
+    far = ensureYard(nid);
+    if (far) break;
+  }
+  return { ok: true, near, far };
+};
 window.__dispatchShip = (shipId, starId) => doDispatchShip(shipId, starId);
 window.__setBattleStance = (stance) => setBattleStance(state, stance);
 window.__forcePirateIntoSystem = (systemId) => {
@@ -755,6 +834,7 @@ window.__newGame = (seed = DEFAULT_SEED) => {
   resetWormholeJumpCounter(0);
   state = createNewGame(seed);
   state.pirates = spawnPirateFleets(state);
+  seedAiFaction(state, state.homeGalaxyId);
   doImportState(state);
   return state;
 };

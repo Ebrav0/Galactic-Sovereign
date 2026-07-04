@@ -11,7 +11,9 @@ import {
   LAUNCHER_COST,
   LAUNCHERS_PER_BODY_MAX,
   SHELL_SAILS_REQUIRED,
-  SHELL_COUNT,
+  TRADE_STATION_COST,
+  RESEARCH_STATION_COST,
+  RESEARCH_STATION_CAP,
 } from './constants.js';
 import {
   systemById,
@@ -20,6 +22,7 @@ import {
   hasShipyard,
   findShipyardOnPlanet,
   isPlayerOwned,
+  isAiOwned,
   hasFoundry,
   launcherCountOnBody,
   ensureDyson,
@@ -42,6 +45,18 @@ import { getActiveGalaxy } from './galaxy-scope.js';
 import { canEnterWormhole, canBuildWormholeAnchor } from './wormholes.js';
 import { WORMHOLE_ANCHOR_COST } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
+import { enqueueHull, cancelQueueItem, pinQueueItem, empireQueueSummary, listPlayerShipyards } from './empire-queue.js';
+import { startResearch, canBuildResearchStation, buildResearchStation, researchSummary, researchStationCount } from './research.js';
+import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.js';
+import { allTechNodes, techNode } from './tech-web.js';
+import { empireQueueHulls } from './tech-web.js';
+import { mountTechWebGraph, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
+import { normalizeShipyardBuilds } from './empire-queue.js';
+import {
+  playerShipEtaMs,
+  playerShipStatus,
+} from './fleets.js';
+import { getGraph } from './galaxy-scope.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -73,6 +88,13 @@ function setProgressBar(containerId, fillId, pctId, progress, visible) {
 
 function renderIntelBody(container, sys, captureReq) {
   clearChildren(container);
+  if (!sys) {
+    const msg = document.createElement('p');
+    msg.className = 'empty-state';
+    msg.textContent = 'No system data.';
+    container.appendChild(msg);
+    return;
+  }
 
   const header = document.createElement('div');
   header.className = 'intel-header';
@@ -279,9 +301,11 @@ function renderBuildBody(container, planet, state, systemId) {
 }
 
 function updateTabBar(view, sidePanel) {
-  el('tab-galaxy').classList.toggle('tab--active', view === 'galaxy' && sidePanel !== 'dyson');
-  el('tab-system').classList.toggle('tab--active', view === 'system' && sidePanel !== 'dyson');
+  el('tab-galaxy').classList.toggle('tab--active', view === 'galaxy' && !sidePanel);
+  el('tab-system').classList.toggle('tab--active', view === 'system' && !sidePanel);
   el('tab-dyson').classList.toggle('tab--active', sidePanel === 'dyson');
+  el('tab-tech').classList.toggle('tab--active', sidePanel === 'tech');
+  el('tab-fleet')?.classList.toggle('tab--active', sidePanel === 'fleet');
 }
 
 function renderDysonPanel(container, state, systemId) {
@@ -387,6 +411,293 @@ function renderDysonPanel(container, state, systemId) {
 
 const LOG_LIMIT = 40;
 
+function renderEmpireQueuePanel(state) {
+  const list = el('empire-queue-list');
+  const actions = el('empire-queue-actions');
+  if (!list || !actions) return;
+  clearChildren(list);
+  clearChildren(actions);
+
+  const queue = empireQueueSummary(state);
+  if (queue.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'No ships queued.';
+    list.appendChild(empty);
+  } else {
+    const yards = listPlayerShipyards(state);
+    for (const item of queue) {
+      const row = document.createElement('div');
+      row.className = 'planet-row';
+      const title = document.createElement('div');
+      title.className = 'planet-row__name';
+      title.textContent = `${item.hull} · ${item.status}`;
+      row.appendChild(title);
+      if (item.status === 'pending') {
+        const pin = document.createElement('select');
+        pin.className = 'btn btn--ghost btn--sm';
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Auto route';
+        pin.appendChild(opt);
+        for (const y of yards) {
+          const o = document.createElement('option');
+          o.value = y.shipyardId;
+          o.textContent = `${y.systemId.slice(-6)} / ${y.shipyardId}`;
+          if (item.pinnedShipyardId === y.shipyardId) o.selected = true;
+          pin.appendChild(o);
+        }
+        pin.onchange = () => pinQueueItem(state, item.id, pin.value || null);
+        row.appendChild(pin);
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn btn--ghost btn--xs';
+        cancel.textContent = 'Cancel';
+        cancel.onclick = () => {
+          const res = cancelQueueItem(state, item.id);
+          if (!res.ok) toast(res.reason, 'error');
+        };
+        row.appendChild(cancel);
+      }
+      list.appendChild(row);
+    }
+  }
+
+  for (const hull of empireQueueHulls(state)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--primary btn--block';
+    btn.textContent = `Queue ${hull}`;
+    btn.onclick = () => {
+      const res = enqueueHull(state, hull);
+      if (!res.ok) toast(res.reason, 'error');
+      else toast(`Queued ${hull}`, 'ok');
+    };
+    actions.appendChild(btn);
+  }
+}
+
+function renderFleetPanel(container, state, ctx) {
+  const { getSelectedScoutId, doSelectScout } = ctx;
+  clearChildren(container);
+  const galaxy = getGraph(state);
+  const selectedScoutId = getSelectedScoutId();
+
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId);
+  const scouts = state.scouts ?? [];
+  const yards = listPlayerShipyards(state);
+  const queue = empireQueueSummary(state);
+
+  const stats = document.createElement('div');
+  stats.className = 'fleet-stats';
+  const readyShips = playerShips.filter((s) => !s.transit && s.hp > 0).length;
+  const transitShips = playerShips.filter((s) => s.transit).length;
+  stats.innerHTML = `
+    <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
+    <span>Scouts: <strong>${scouts.length}</strong></span>
+    <span>Shipyards: <strong>${yards.length}</strong></span>
+    <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
+  `;
+  container.appendChild(stats);
+
+  const shipsTitle = document.createElement('div');
+  shipsTitle.className = 'intel-section-title';
+  shipsTitle.textContent = 'Combat Fleet';
+  container.appendChild(shipsTitle);
+
+  if (playerShips.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = 'No ships deployed — queue hulls from the Empire Build Queue.';
+    container.appendChild(empty);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'list';
+    for (const ship of playerShips) {
+      const row = document.createElement('div');
+      row.className = 'list-row fleet-ship-row';
+
+      const icon = document.createElement('span');
+      icon.className = 'list-row__icon';
+      icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      const title = document.createElement('div');
+      title.className = 'list-row__title';
+      title.textContent = `${ship.id} · ${ship.hull}`;
+      const sub = document.createElement('div');
+      sub.className = 'list-row__sub';
+
+      if (ship.transit) {
+        const st = playerShipStatus(ship, galaxy, state.time);
+        const destId = ship.transit.path[ship.transit.path.length - 1];
+        const dest = systemById(state, destId);
+        sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
+        if (st?.x != null) {
+          sub.textContent += ` · leg ${(ship.transit.legIndex ?? 0) + 1}`;
+        }
+      } else {
+        const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
+        sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+      }
+
+      main.appendChild(title);
+      main.appendChild(sub);
+      row.appendChild(icon);
+      row.appendChild(main);
+      list.appendChild(row);
+    }
+    container.appendChild(list);
+  }
+
+  const scoutTitle = document.createElement('div');
+  scoutTitle.className = 'intel-section-title';
+  scoutTitle.style.marginTop = '12px';
+  scoutTitle.textContent = 'Scouts';
+  container.appendChild(scoutTitle);
+
+  if (scouts.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = 'No scouts — build from a shipyard in an owned system.';
+    container.appendChild(empty);
+  } else {
+    const roster = document.createElement('div');
+    roster.className = 'list';
+    for (const scout of scouts) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      const selected = scout.id === selectedScoutId;
+      btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
+
+      const icon = document.createElement('span');
+      icon.className = 'list-row__icon';
+      icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      const title = document.createElement('div');
+      title.className = 'list-row__title';
+      title.textContent = scout.id;
+      const sub = document.createElement('div');
+      sub.className = 'list-row__sub';
+
+      if (scout.transit) {
+        const st = scout.transit;
+        const dest = systemById(state, st.path[st.path.length - 1]);
+        sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+      } else {
+        const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+        sub.textContent = `@ ${loc}`;
+      }
+
+      main.appendChild(title);
+      main.appendChild(sub);
+      btn.appendChild(icon);
+      btn.appendChild(main);
+      btn.addEventListener('click', () => doSelectScout(scout.id));
+      roster.appendChild(btn);
+    }
+    container.appendChild(roster);
+
+    const hint = document.createElement('p');
+    hint.className = 'panel-note panel-note--muted';
+    hint.style.marginTop = '8px';
+    hint.textContent = 'Shift+click a star on the galaxy map to dispatch the selected scout.';
+    container.appendChild(hint);
+  }
+
+  if (yards.length > 0) {
+    const yardTitle = document.createElement('div');
+    yardTitle.className = 'intel-section-title';
+    yardTitle.style.marginTop = '12px';
+    yardTitle.textContent = 'Shipyard Capacity';
+    container.appendChild(yardTitle);
+
+    for (const y of yards) {
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      const label = document.createElement('span');
+      label.className = 'status-row__label';
+      const sys = systemById(state, y.systemId);
+      label.textContent = sys?.name ?? y.systemId;
+      const val = document.createElement('span');
+      val.className = 'status-indicator status-indicator--built';
+      val.textContent = `${y.activeBuilds} / ${y.slots} slots`;
+      row.appendChild(label);
+      row.appendChild(val);
+      container.appendChild(row);
+    }
+  }
+}
+
+function renderTechPanel(container, state) {
+  clearChildren(container);
+  const summary = researchSummary(state);
+
+  const stats = document.createElement('div');
+  stats.className = 'tech-web-stats';
+  stats.innerHTML = `
+    <span>Stations: <strong>${summary.stationCount}</strong></span>
+    <span>Speed: <strong>${summary.speedMult}×</strong></span>
+    <span>Unlocked: <strong>${summary.unlocked.length - 1}</strong> / ${allTechNodes().length - 1}</span>
+  `;
+  container.appendChild(stats);
+
+  if (summary.activeNodeId) {
+    const node = techNode(summary.activeNodeId);
+    const active = document.createElement('div');
+    active.className = 'progress-block';
+    const progLabel = document.createElement('div');
+    progLabel.className = 'progress-block__label';
+    progLabel.textContent = node
+      ? `Researching: ${node.name} · Tier ${tierRoman(summary.activeNodeId)}`
+      : `Researching: ${summary.activeNodeId}`;
+    active.appendChild(progLabel);
+    const prog = document.createElement('div');
+    prog.className = 'progress';
+    const fill = document.createElement('div');
+    fill.className = 'progress__fill';
+    fill.style.width = `${Math.round(summary.progress * 100)}%`;
+    prog.appendChild(fill);
+    active.appendChild(prog);
+    container.appendChild(active);
+  }
+
+  if (summary.queue.length > 0) {
+    const q = document.createElement('p');
+    q.className = 'panel-note panel-note--muted';
+    q.textContent = `Queued: ${summary.queue.map((id) => techNode(id)?.name ?? id).join(', ')}`;
+    container.appendChild(q);
+  }
+
+  const legend = document.createElement('div');
+  legend.className = 'tech-web-legend';
+  for (const meta of Object.values(TECH_CLUSTERS)) {
+    const chip = document.createElement('span');
+    chip.className = 'tech-web-legend__chip';
+    chip.style.borderColor = meta.color;
+    chip.style.color = meta.color;
+    chip.textContent = meta.label;
+    legend.appendChild(chip);
+  }
+  container.appendChild(legend);
+
+  const graphHost = document.createElement('div');
+  graphHost.id = 'tech-web-graph-host';
+  container.appendChild(graphHost);
+
+  mountTechWebGraph(graphHost, state, {
+    summary,
+    onResearch: (nodeId) => {
+      const res = startResearch(state, nodeId);
+      if (!res.ok) toast(res.reason, 'error');
+      else toast(`Started ${techNode(nodeId)?.name ?? nodeId}`, 'ok');
+    },
+  });
+}
+
 function appendLogEntry(message, kind) {
   const body = el('notification-log-body');
   if (!body) return;
@@ -471,10 +782,9 @@ export function initUi(ctx) {
     hullBtnContainer.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-hull]');
       if (!btn || btn.disabled) return;
-      const state = getState();
-      const sel = getSelection();
-      const shipyard = findShipyardOnPlanet(state, getViewedSystemId(), sel);
-      if (shipyard) doQueueHull(shipyard.id, btn.dataset.hull);
+      const res = enqueueHull(getState(), btn.dataset.hull);
+      if (!res.ok) toast(res.reason, 'error');
+      else toast(`Queued ${btn.dataset.hull}`, 'ok');
     });
   }
   const hullButtons = [...hullBtnContainer.querySelectorAll('[data-hull]')];
@@ -493,6 +803,26 @@ export function initUi(ctx) {
     sidePanel = 'dyson';
     if (getView() !== 'system') doToggleView();
   });
+  el('tab-tech').addEventListener('click', () => {
+    sidePanel = 'tech';
+  });
+  el('tab-fleet')?.addEventListener('click', () => {
+    sidePanel = 'fleet';
+  });
+
+  el('build-trade-btn')?.addEventListener('click', () => {
+    const sel = getSelection();
+    if (sel) {
+      const res = buildTradeStation(getState(), getViewedSystemId(), sel);
+      if (!res.ok) toast(res.reason, 'error');
+      else toast('Trade station built', 'ok');
+    }
+  });
+  el('build-research-btn')?.addEventListener('click', () => {
+    const res = buildResearchStation(getState(), getViewedSystemId());
+    if (!res.ok) toast(res.reason, 'error');
+    else toast('Research station built', 'ok');
+  });
 
   el('build-outpost-btn').addEventListener('click', () => {
     const sel = getSelection();
@@ -508,10 +838,9 @@ export function initUi(ctx) {
     if (sel) doBuildLauncher(sel);
   });
   el('queue-scout-btn').addEventListener('click', () => {
-    const state = getState();
-    const sel = getSelection();
-    const shipyard = findShipyardOnPlanet(state, getViewedSystemId(), sel);
-    if (shipyard) doQueueScout(shipyard.id);
+    const res = enqueueHull(getState(), 'scout');
+    if (!res.ok) toast(res.reason, 'error');
+    else toast('Queued scout', 'ok');
   });
 
   const saveMenu = el('save-menu');
@@ -631,6 +960,36 @@ export function initUi(ctx) {
       solariiChip.classList.add('hidden');
     }
 
+    const trade = tradeSummary(state);
+    const tradeChip = el('trade-chip');
+    if (trade.incomePerSec > 0) {
+      tradeChip.classList.remove('hidden');
+      el('trade-income-value').textContent = trade.incomePerSec.toFixed(2);
+    } else {
+      tradeChip.classList.add('hidden');
+    }
+
+    renderEmpireQueuePanel(state);
+
+    const techPanel = el('tech-panel');
+    if (sidePanel === 'tech') {
+      techPanel.classList.remove('hidden');
+      renderTechPanel(el('tech-panel-body'), state);
+    } else {
+      techPanel.classList.add('hidden');
+    }
+
+    const fleetPanel = el('fleet-panel');
+    if (sidePanel === 'fleet') {
+      fleetPanel?.classList.remove('hidden');
+      renderFleetPanel(el('fleet-panel-body'), state, {
+        getSelectedScoutId,
+        doSelectScout,
+      });
+    } else {
+      fleetPanel?.classList.add('hidden');
+    }
+
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
     el('pause-overlay').classList.toggle('hidden', !state.paused);
     el('view-toggle-btn').querySelector('.btn-label').textContent =
@@ -675,7 +1034,7 @@ export function initUi(ctx) {
         : `${readyScouts}${transitScouts ? `+${transitScouts}` : ''}`;
 
     const scoutPanel = el('scout-panel');
-    if (state.scouts.length > 0) {
+    if (state.scouts.length > 0 && sidePanel !== 'fleet') {
       scoutPanel.classList.remove('hidden');
       const roster = el('scout-roster');
       roster.innerHTML = '';
@@ -803,7 +1162,7 @@ export function initUi(ctx) {
     }
     wormholePanel?.classList.add('hidden');
 
-    if (view !== 'system' || sidePanel === 'dyson' || !selection) {
+    if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || sidePanel === 'fleet' || !selection) {
       panel.classList.add('hidden');
       return;
     }
@@ -815,7 +1174,7 @@ export function initUi(ctx) {
     }
 
     panel.classList.remove('hidden');
-    el('build-panel-title').textContent = planet.name;
+    el('build-panel-title').textContent = planet?.name ?? 'Planet';
     renderBuildBody(el('build-panel-body'), planet, state, viewedSystemId);
 
     const outpostCheck = canBuildOutpost(state, viewedSystemId, planet.id);
@@ -838,6 +1197,19 @@ export function initUi(ctx) {
     launcherBtn.disabled = !launcherCheck.ok;
     launcherBtn.textContent = `Build Dyson Launcher (${launcherCount}/${LAUNCHERS_PER_BODY_MAX}) · ${LAUNCHER_COST} cr`;
 
+    const tradeCheck = canBuildTradeStation(state, viewedSystemId, planet.id);
+    const researchCheck = canBuildResearchStation(state, viewedSystemId);
+
+    const tradeBtn = el('build-trade-btn');
+    tradeBtn.classList.toggle('hidden', !hasOutpost(state, viewedSystemId, planet.id));
+    tradeBtn.disabled = !tradeCheck.ok;
+    tradeBtn.textContent = `Build Trade Station (${TRADE_STATION_COST} cr)`;
+
+    const researchBtn = el('build-research-btn');
+    researchBtn.classList.toggle('hidden', !isPlayerOwned(state, viewedSystemId));
+    researchBtn.disabled = !researchCheck.ok;
+    researchBtn.textContent = `Build Research Station (${researchStationCount(state, viewedSystemId)}/${RESEARCH_STATION_CAP}) · ${RESEARCH_STATION_COST} cr`;
+
     const outpostBtn = el('build-outpost-btn');
     outpostBtn.classList.toggle('hidden', hasOutpost(state, viewedSystemId, planet.id));
     outpostBtn.disabled = !outpostCheck.ok;
@@ -851,27 +1223,34 @@ export function initUi(ctx) {
     shipyardBtn.disabled = !shipyardCheck.ok;
     shipyardBtn.textContent = `Build Shipyard (${SHIPYARD_COST} cr)`;
 
-    const showScoutBtn = shipyard && !shipyard.build;
+    if (shipyard) normalizeShipyardBuilds(shipyard);
+    const showScoutBtn = isPlayerOwned(state, viewedSystemId);
     const scoutBtn = el('queue-scout-btn');
     scoutBtn.classList.toggle('hidden', !showScoutBtn);
-    scoutBtn.disabled = !scoutCheck.ok;
-    scoutBtn.textContent = `Build Scout (${SCOUT_HULL_COST} cr)`;
+    scoutBtn.disabled = false;
+    scoutBtn.textContent = `Add Scout to Empire Queue (${SCOUT_HULL_COST} cr)`;
 
-    const showHullBtns = shipyard && !shipyard.build && isPlayerOwned(state, viewedSystemId);
+    const showHullBtns = isPlayerOwned(state, viewedSystemId);
     hullBtnContainer.classList.toggle('hidden', !showHullBtns);
     for (const btn of hullButtons) {
       const hull = btn.dataset.hull;
       if (!showHullBtns) continue;
-      const check = canQueueHull(state, shipyard.id, viewedSystemId, hull);
-      btn.disabled = !check.ok;
-      btn.textContent = `Build ${hull} (${HULL_STATS[hull].cost} cr)`;
+      if (!empireQueueHulls(state).includes(hull)) {
+        btn.classList.add('hidden');
+        continue;
+      }
+      btn.classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = `Queue ${hull} (${HULL_STATS[hull].cost} cr)`;
     }
 
-    if (shipyard?.build) {
-      const prog = shipyardBuildProgress(shipyard, state.time);
+    const activeBuild = shipyard?.builds?.[0] ?? shipyard?.build;
+    if (activeBuild) {
+      normalizeShipyardBuilds(shipyard);
+      const prog = shipyardBuildProgress(shipyard, state.time, 0);
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', prog, true);
       el('build-progress').querySelector('.progress-block__label').textContent =
-        `Building ${shipyard.build.hull}`;
+        `Building ${activeBuild.hull}`;
     } else {
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', 0, false);
     }
@@ -884,13 +1263,9 @@ export function initUi(ctx) {
       !hasShipyard(state, viewedSystemId, planet.id)
     ) {
       note = shipyardCheck.reason;
-    } else if (shipyard && !scoutCheck.ok && !shipyard.build) note = scoutCheck.reason;
-    else if (showLauncher && !launcherCheck.ok) note = launcherCheck.reason;
+    } else if (!tradeCheck.ok && hasOutpost(state, viewedSystemId, planet.id)) note = tradeCheck.reason;
+    else if (!researchCheck.ok && isPlayerOwned(state, viewedSystemId)) note = researchCheck.reason;
     else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
-    else if (showHullBtns) {
-      const firstHull = SHIPYARD_COMBAT_HULLS.find((h) => !canQueueHull(state, shipyard.id, viewedSystemId, h).ok);
-      if (firstHull) note = canQueueHull(state, shipyard.id, viewedSystemId, firstHull).reason;
-    }
     el('build-panel-note').textContent = note;
   };
 }

@@ -52,7 +52,7 @@ const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()))
 
 // --- Section 1: Save v6 ---
 let s = await text();
-check('1.1 saveVersion is 6', s.saveVersion === 6);
+check('1.1 saveVersion is 7', s.saveVersion === 7);
 check('1.2 metaGalaxy present', s.metaGalaxy && s.metaGalaxy.activeGalaxyId === 'gal-0');
 check('1.3 wormholes summary', s.wormholes && s.wormholes.count === 10);
 
@@ -101,7 +101,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-2', 
 })), [v5Json, v5Checksum]);
 await page.evaluate(() => window.__loadSlot('slot-2'));
 s = await text();
-check('1.5 v5 migrates to v6', s.saveVersion === 6 && s.metaGalaxy.galaxyCount === 10);
+check('1.5 v5 migrates to v7', s.saveVersion === 7 && s.metaGalaxy.galaxyCount === 10);
 
 // --- Section 2: 400-star gen ---
 await page.evaluate(() => window.__newGame(42));
