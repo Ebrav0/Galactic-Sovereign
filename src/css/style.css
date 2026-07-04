@@ -1450,10 +1450,6 @@ button {
   fill: #ffb86a;
 }
 
-.fleet-ship-row {
-  pointer-events: none;
-}
-
 #tech-panel .panel__body,
 #fleet-panel .panel__body {
   padding-bottom: var(--space-3);

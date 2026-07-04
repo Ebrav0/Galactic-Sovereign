@@ -1319,7 +1319,8 @@ export function initUi(ctx) {
     let fleetDidDrag = false;
     const fleetPanelBody = el('fleet-panel-body');
 
-    fleetPanelBody?.addEventListener('click', (e) => {
+    fleetPanelBody?.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
       if (fleetDidDrag) {
         fleetDidDrag = false;
         return;
@@ -1327,7 +1328,7 @@ export function initUi(ctx) {
       const createTarget = e.target.closest('[data-fleet-create]');
       if (createTarget) {
         e.preventDefault();
-        const group = createBattleGroup(getState());
+        const group = createBattleGroup();
         doSelectBattleGroup(group.id);
         return;
       }
