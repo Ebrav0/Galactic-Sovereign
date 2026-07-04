@@ -27,14 +27,14 @@ export function resetShipIds(state) {
   nextShipId = max + 1;
 }
 
-export function stationedShipPose(state, system, ship, idx, total) {
+export function stationedShipPose(state, system, ship, idx, total, time = state.time) {
   const starR = system.star?.radius ?? 200;
   const minOrbit = starR + FLEET_STATION_ORBIT_PAD;
 
   if (ship.anchorBodyId) {
     const planet = system.bodies.find((b) => b.id === ship.anchorBodyId);
     if (planet) {
-      const pp = planetPosition(planet, state.time);
+      const pp = planetPosition(planet, time);
       const slotAngle = (idx / Math.max(1, total)) * Math.PI * 2 - Math.PI / 2;
       const offset = planet.radius + FLEET_STATION_BODY_PAD;
       return {

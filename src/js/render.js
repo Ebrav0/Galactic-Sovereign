@@ -33,6 +33,7 @@ import {
   systemById,
   planetPosition,
   moonPosition,
+  displayTime,
   hasOutpost,
   hasShipyard,
   hasFoundry,
@@ -259,10 +260,11 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   if (!system) return;
 
   const intel = hasIntel(state, systemId);
+  const t = displayTime(state, accumulatorMs);
 
   beginStarPass('system');
 
-  drawStarfield(ctx, camera, canvas, state.time);
+  drawStarfield(ctx, camera, canvas, t);
 
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
@@ -293,13 +295,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       z,
       dyson.completedShells,
       system.star.radius,
-      state.time,
+      t,
       dyson.lastShellCompletedAt,
     );
     const settled = settledInProgressDots(state, systemId, system.star.radius);
-    const inFlight = inFlightSailDots(state, systemId, system.star.radius);
+    const inFlight = inFlightSailDots(state, systemId, system.star.radius, t);
     if (settled.length > 0 || inFlight.length > 0) {
-      drawInProgressSailDots(ctx, starScreen.x, starScreen.y, z, settled, inFlight, state.time);
+      drawInProgressSailDots(ctx, starScreen.x, starScreen.y, z, settled, inFlight, t);
     }
   }
   drawStarOverlays(ctx, {
@@ -311,11 +313,11 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   });
 
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
-  const surfaceSites = intel ? outpostSurfaceSites(state, systemId) : [];
-  const orbitalStructures = intel ? structureSites(state, systemId) : [];
+  const surfaceSites = intel ? outpostSurfaceSites(state, systemId, t) : [];
+  const orbitalStructures = intel ? structureSites(state, systemId, t) : [];
 
   for (const planet of sortedPlanets) {
-    const wp = planetPosition(planet, state.time);
+    const wp = planetPosition(planet, t);
     const sp = worldToScreen(camera, wp.x, wp.y, canvas);
     const pr = planet.radius * z;
     const lightAngle = lightAngleFromOrigin(wp.x, wp.y);
@@ -325,7 +327,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     }
 
     for (const moon of planet.moons) {
-      const wm = moonPosition(planet, moon, state.time);
+      const wm = moonPosition(planet, moon, t);
       const sm = worldToScreen(camera, wm.x, wm.y, canvas);
       drawMoon(ctx, {
         moon,
@@ -349,13 +351,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
           if (site.kind === 'moon-rig') {
             drawMiningRig(ctx, ss.x, ss.y, site.heading, z, {
               active: site.active,
-              time: state.time,
+              time: t,
               seed: site.seed,
             });
           } else {
             drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
               active: site.active,
-              time: state.time,
+              time: t,
             });
           }
         }
@@ -365,7 +367,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         for (const st of orbitalStructures) {
           if (st.kind !== 'launcher' || st.bodyId !== moon.id) continue;
           const ls = worldToScreen(camera, st.x, st.y, canvas);
-          drawSailLauncher(ctx, ls.x, ls.y, z, st, state.time);
+          drawSailLauncher(ctx, ls.x, ls.y, z, st, t);
         }
       }
     }
@@ -375,7 +377,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       x: sp.x,
       y: sp.y,
       screenR: pr,
-      time: state.time,
+      time: t,
       intel,
       lightAngle,
       state,
@@ -388,7 +390,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         const ss = worldToScreen(camera, site.x, site.y, canvas);
         drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
           active: site.active,
-          time: state.time,
+          time: t,
         });
       }
 
@@ -400,9 +402,9 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         if (st.planetId !== planet.id) continue;
         const ss = worldToScreen(camera, st.x, st.y, canvas);
         if (st.kind === 'shipyard') {
-          drawShipyardStation(ctx, ss.x, ss.y, z, st, state.time);
+          drawShipyardStation(ctx, ss.x, ss.y, z, st, t);
         } else if (st.bodyId === planet.id) {
-          drawSailLauncher(ctx, ss.x, ss.y, z, st, state.time);
+          drawSailLauncher(ctx, ss.x, ss.y, z, st, t);
         }
       }
     }
@@ -445,16 +447,16 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   }
 
   if (intel && hasFoundry(state, systemId)) {
-    const fa = foundryAnchor(state, systemId);
+    const fa = foundryAnchor(state, systemId, t);
     if (fa.planetId && fa.foundryId) {
       const ps = worldToScreen(camera, fa.planetX, fa.planetY, canvas);
       const ringScreenR = fa.ringR * z;
-      drawSailFoundryRingStation(ctx, ps.x, ps.y, ringScreenR, z, state.time, fa.foundryId);
+      drawSailFoundryRingStation(ctx, ps.x, ps.y, ringScreenR, z, t, fa.foundryId);
       const label = sailFoundryLabelAnchor(ps.x, ps.y, ringScreenR, fa.dockAngle);
       drawSailFoundryLabel(ctx, label, z);
     }
 
-    for (const line of foundryLauncherSupplyLines(state, systemId)) {
+    for (const line of foundryLauncherSupplyLines(state, systemId, t)) {
       const from = worldToScreen(camera, line.fromX, line.fromY, canvas);
       const to = worldToScreen(camera, line.toX, line.toY, canvas);
       drawFoundrySupplyTie(ctx, {
@@ -462,11 +464,11 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         fromY: from.y,
         toX: to.x,
         toY: to.y,
-      }, z, state.time);
+      }, z, t);
     }
   }
 
-  for (const sh of shuttlePositions(state, systemId)) {
+  for (const sh of shuttlePositions(state, systemId, t)) {
     const ss = worldToScreen(camera, sh.x, sh.y, canvas);
     drawShuttleSprite(ctx, ss.x, ss.y, sh.heading, Math.max(2.5, SHUTTLE_SIZE * z), {
       wingSpread: sh.wingSpread,
@@ -476,7 +478,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   }
 
   ctx.fillStyle = THEME.accentGold;
-  for (const sh of sailShuttlePositions(state, systemId)) {
+  for (const sh of sailShuttlePositions(state, systemId, t)) {
     const ss = worldToScreen(camera, sh.x, sh.y, canvas);
     ctx.shadowColor = THEME.accentGold;
     ctx.shadowBlur = 5;
@@ -494,7 +496,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit) {
-    const orbitVisual = getFlagshipOrbitVisual(state);
+    const orbitVisual = getFlagshipOrbitVisual(state, t);
     if (orbitVisual) {
       const os = worldToScreen(camera, orbitVisual.cx, orbitVisual.cy, canvas);
       drawOrbitRing(ctx, os.x, os.y, orbitVisual.radius * z, 0.32);
@@ -508,7 +510,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     drawFlagshipSprite(ctx, fs.x, fs.y, pose.heading, FLAGSHIP_RADIUS * z, thrusting);
   }
 
-  drawCombatLayer(ctx, state, systemId, canvas, z);
+  drawCombatLayer(ctx, state, systemId, canvas, z, t);
 
   flushStars(ctx, 'outer');
   flushStars(ctx, 'bloom');
@@ -518,7 +520,7 @@ function drawCombatShipSprite(ctx, x, y, hull, baseR, opts) {
   drawHullSprite(ctx, x, y, hull, baseR, opts);
 }
 
-function drawCombatLayer(ctx, state, systemId, canvas, z) {
+function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   const system = systemById(state, systemId);
   if (!system) return;
   const baseR = Math.max(4, 6 * z);
@@ -540,7 +542,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z) {
 
   const playerShips = playerShipsAtSystem(state, systemId);
   playerShips.forEach((ship, idx) => {
-    const pose = ambientShipPose(state, system, ship, idx, playerShips.length);
+    const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time);
     const p = worldToScreen(camera, pose.x, pose.y, canvas);
     drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
       heading: pose.heading,
@@ -556,7 +558,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z) {
   for (const fleet of pirateFleets) {
     for (const ship of fleet.ships) {
       if (ship.hp <= 0) continue;
-      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal);
+      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal, time);
       const p = worldToScreen(camera, pose.x, pose.y, canvas);
       drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
         heading: pose.heading,

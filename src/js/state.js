@@ -354,6 +354,11 @@ export function createNewGame(seed) {
   return state;
 }
 
+/** Sub-tick time for smooth rendering between fixed simulation steps. */
+export function displayTime(state, accumulatorMs = 0) {
+  return state.time + accumulatorMs;
+}
+
 export function bodyAngle(body, time) {
   return 2 * Math.PI * (body.orbitPhase + time / body.orbitPeriodMs);
 }

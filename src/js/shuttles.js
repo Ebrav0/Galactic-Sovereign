@@ -8,21 +8,13 @@ import {
   SHUTTLE_PLANET_DWELL_MS,
 } from './constants.js';
 import { systemById, planetPosition, moonPosition, hasOutpost } from './state.js';
+import { surfacePoint } from './surface-structures.js';
 
 const CYCLE_MS =
   SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS + SHUTTLE_FLIGHT_MS + SHUTTLE_PLANET_DWELL_MS;
 
 function easeInOut(t) {
   return t * t * (3 - 2 * t);
-}
-
-/** Surface launch/landing pad: point on the body edge facing the target. */
-function surfacePoint(bodyPos, bodyRadius, towardPos, pad = 2) {
-  const dx = towardPos.x - bodyPos.x;
-  const dy = towardPos.y - bodyPos.y;
-  const d = Math.hypot(dx, dy) || 1;
-  const k = (bodyRadius + pad) / d;
-  return { x: bodyPos.x + dx * k, y: bodyPos.y + dy * k };
 }
 
 /** Quadratic bezier point + tangent heading. */
@@ -58,7 +50,7 @@ function flightPose(from, to, t, bulgeSign) {
 // One shuttle per moon of each outpost planet, each on a staggered
 // planet -> moon (dwell) -> planet (turnaround) loop.
 // Returns [{x, y, heading, phase, wingSpread, thrusting, seed}] world entries.
-export function shuttlePositions(state, systemId) {
+export function shuttlePositions(state, systemId, time = state.time) {
   const system = systemById(state, systemId);
   const result = [];
   if (!system) return result;
@@ -66,15 +58,15 @@ export function shuttlePositions(state, systemId) {
     if (planet.moons.length === 0) continue;
     if (!hasOutpost(state, systemId, planet.id)) continue;
 
-    const planetPos = planetPosition(planet, state.time);
+    const planetPos = planetPosition(planet, time);
     planet.moons.forEach((moon, idx) => {
-      const moonPos = moonPosition(planet, moon, state.time);
+      const moonPos = moonPosition(planet, moon, time);
       const pad = surfacePoint(planetPos, planet.radius, moonPos, 3);
       const moonPad = surfacePoint(moonPos, moon.radius, planetPos, 2);
 
       // Stagger departures per moon so traffic looks organic.
       const offset = (idx / planet.moons.length) * CYCLE_MS;
-      const cycleT = (state.time + offset) % CYCLE_MS;
+      const cycleT = (time + offset) % CYCLE_MS;
       const bulgeSign = idx % 2 === 0 ? 1 : -1;
       const seed = (planet.id.length * 31 + idx * 7) % 97;
 

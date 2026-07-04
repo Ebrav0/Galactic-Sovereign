@@ -135,7 +135,7 @@ function starOrbitMinRadius(system) {
   return baseR * glowScale + FLAGSHIP_ORBIT_PAD_STAR;
 }
 
-function orbitCenterPose(state, system, orbit) {
+function orbitCenterPose(state, system, orbit, time = state.time) {
   if (orbit.kind === 'star') {
     return { x: 0, y: 0, vx: 0, vy: 0 };
   }
@@ -145,7 +145,7 @@ function orbitCenterPose(state, system, orbit) {
 
   if (orbit.kind === 'planet') {
     const planet = resolved.body;
-    const a = bodyAngle(planet, state.time);
+    const a = bodyAngle(planet, time);
     const omega = (2 * Math.PI / planet.orbitPeriodMs) * 1000;
     return {
       x: Math.cos(a) * planet.orbitRadius,
@@ -157,11 +157,11 @@ function orbitCenterPose(state, system, orbit) {
 
   const moon = resolved.body;
   const planet = resolved.planet;
-  const pp = planetPosition(planet, state.time);
-  const ma = bodyAngle(moon, state.time);
+  const pp = planetPosition(planet, time);
+  const ma = bodyAngle(moon, time);
   const pOmega = (2 * Math.PI / planet.orbitPeriodMs) * 1000;
   const mOmega = (2 * Math.PI / moon.orbitPeriodMs) * 1000;
-  const pa = bodyAngle(planet, state.time);
+  const pa = bodyAngle(planet, time);
   return {
     x: pp.x + Math.cos(ma) * moon.orbitRadius,
     y: pp.y + Math.sin(ma) * moon.orbitRadius,
@@ -232,13 +232,13 @@ function clearOrbit(f) {
   f.orbit = null;
 }
 
-export function getFlagshipOrbitVisual(state) {
+export function getFlagshipOrbitVisual(state, time = state.time) {
   const f = state.flagship;
   ensureOrbitField(f);
   if (!f.orbit || !f.systemId) return null;
   const system = systemById(state, f.systemId);
   if (!system) return null;
-  const center = orbitCenterPose(state, system, f.orbit);
+  const center = orbitCenterPose(state, system, f.orbit, time);
   if (!center) return null;
   return { cx: center.x, cy: center.y, radius: f.orbit.radius };
 }
