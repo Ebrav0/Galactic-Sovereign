@@ -48,6 +48,11 @@ import { structureSites } from './structure-sites.js';
 import { drawShipyardStation, drawSailLauncher, drawLaunchMuzzleFlash } from './structure-render.js';
 import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
 import { drawSailFoundryRingStation, drawSailFoundryLabel, sailFoundryLabelAnchor } from './foundry-render.js';
+import {
+  drawResearchStation,
+  drawResearchStationLabel,
+  researchStationLabelAnchor,
+} from './research-render.js';
 import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
@@ -404,6 +409,10 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         const ss = worldToScreen(camera, st.x, st.y, canvas);
         if (st.kind === 'shipyard') {
           drawShipyardStation(ctx, ss.x, ss.y, z, st, t);
+        } else if (st.kind === 'research_station' && st.bodyId === planet.id) {
+          drawResearchStation(ctx, ss.x, ss.y, z, st, t);
+          const label = researchStationLabelAnchor(ss.x, ss.y, z);
+          drawResearchStationLabel(ctx, label, z);
         } else if (st.bodyId === planet.id) {
           drawSailLauncher(ctx, ss.x, ss.y, z, st, t);
         }

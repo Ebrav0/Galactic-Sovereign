@@ -111,6 +111,17 @@
     </header>
 
     <aside id="left-rail" class="hud-rail hud-rail--left">
+      <div id="fleet-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Fleet Command</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body" id="fleet-panel-body">
+          <p class="empty-state">Ships and scouts appear here.</p>
+        </div>
+      </div>
+
       <div id="scout-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -229,7 +240,7 @@
       <nav id="tab-bar" class="tab-bar" aria-label="View navigation">
         <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
-        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Fleet</button>
+        <button type="button" class="tab" data-panel="fleet" id="tab-fleet">Fleet</button>
         <button type="button" class="tab" data-panel="tech" id="tab-tech">Tech</button>
         <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
       </nav>

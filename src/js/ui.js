@@ -48,9 +48,15 @@ import { BLACK_HOLE_ID } from './galaxy.js';
 import { enqueueHull, cancelQueueItem, pinQueueItem, empireQueueSummary, listPlayerShipyards } from './empire-queue.js';
 import { startResearch, canBuildResearchStation, buildResearchStation, researchSummary, researchStationCount } from './research.js';
 import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.js';
-import { allTechNodes, isTechUnlocked, techPrereqsMet, techNode } from './tech-web.js';
+import { allTechNodes, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
+import { mountTechWebGraph, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
+import {
+  playerShipEtaMs,
+  playerShipStatus,
+} from './fleets.js';
+import { getGraph } from './galaxy-scope.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -299,6 +305,7 @@ function updateTabBar(view, sidePanel) {
   el('tab-system').classList.toggle('tab--active', view === 'system' && !sidePanel);
   el('tab-dyson').classList.toggle('tab--active', sidePanel === 'dyson');
   el('tab-tech').classList.toggle('tab--active', sidePanel === 'tech');
+  el('tab-fleet')?.classList.toggle('tab--active', sidePanel === 'fleet');
 }
 
 function renderDysonPanel(container, state, systemId) {
@@ -470,13 +477,184 @@ function renderEmpireQueuePanel(state) {
   }
 }
 
+function renderFleetPanel(container, state, ctx) {
+  const { getSelectedScoutId, doSelectScout } = ctx;
+  clearChildren(container);
+  const galaxy = getGraph(state);
+  const selectedScoutId = getSelectedScoutId();
+
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId);
+  const scouts = state.scouts ?? [];
+  const yards = listPlayerShipyards(state);
+  const queue = empireQueueSummary(state);
+
+  const stats = document.createElement('div');
+  stats.className = 'fleet-stats';
+  const readyShips = playerShips.filter((s) => !s.transit && s.hp > 0).length;
+  const transitShips = playerShips.filter((s) => s.transit).length;
+  stats.innerHTML = `
+    <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
+    <span>Scouts: <strong>${scouts.length}</strong></span>
+    <span>Shipyards: <strong>${yards.length}</strong></span>
+    <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
+  `;
+  container.appendChild(stats);
+
+  const shipsTitle = document.createElement('div');
+  shipsTitle.className = 'intel-section-title';
+  shipsTitle.textContent = 'Combat Fleet';
+  container.appendChild(shipsTitle);
+
+  if (playerShips.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = 'No ships deployed — queue hulls from the Empire Build Queue.';
+    container.appendChild(empty);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'list';
+    for (const ship of playerShips) {
+      const row = document.createElement('div');
+      row.className = 'list-row fleet-ship-row';
+
+      const icon = document.createElement('span');
+      icon.className = 'list-row__icon';
+      icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      const title = document.createElement('div');
+      title.className = 'list-row__title';
+      title.textContent = `${ship.id} · ${ship.hull}`;
+      const sub = document.createElement('div');
+      sub.className = 'list-row__sub';
+
+      if (ship.transit) {
+        const st = playerShipStatus(ship, galaxy, state.time);
+        const destId = ship.transit.path[ship.transit.path.length - 1];
+        const dest = systemById(state, destId);
+        sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
+        if (st?.x != null) {
+          sub.textContent += ` · leg ${(ship.transit.legIndex ?? 0) + 1}`;
+        }
+      } else {
+        const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
+        sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+      }
+
+      main.appendChild(title);
+      main.appendChild(sub);
+      row.appendChild(icon);
+      row.appendChild(main);
+      list.appendChild(row);
+    }
+    container.appendChild(list);
+  }
+
+  const scoutTitle = document.createElement('div');
+  scoutTitle.className = 'intel-section-title';
+  scoutTitle.style.marginTop = '12px';
+  scoutTitle.textContent = 'Scouts';
+  container.appendChild(scoutTitle);
+
+  if (scouts.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = 'No scouts — build from a shipyard in an owned system.';
+    container.appendChild(empty);
+  } else {
+    const roster = document.createElement('div');
+    roster.className = 'list';
+    for (const scout of scouts) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      const selected = scout.id === selectedScoutId;
+      btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
+
+      const icon = document.createElement('span');
+      icon.className = 'list-row__icon';
+      icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      const title = document.createElement('div');
+      title.className = 'list-row__title';
+      title.textContent = scout.id;
+      const sub = document.createElement('div');
+      sub.className = 'list-row__sub';
+
+      if (scout.transit) {
+        const st = scout.transit;
+        const dest = systemById(state, st.path[st.path.length - 1]);
+        sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+      } else {
+        const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+        sub.textContent = `@ ${loc}`;
+      }
+
+      main.appendChild(title);
+      main.appendChild(sub);
+      btn.appendChild(icon);
+      btn.appendChild(main);
+      btn.addEventListener('click', () => doSelectScout(scout.id));
+      roster.appendChild(btn);
+    }
+    container.appendChild(roster);
+
+    const hint = document.createElement('p');
+    hint.className = 'panel-note panel-note--muted';
+    hint.style.marginTop = '8px';
+    hint.textContent = 'Shift+click a star on the galaxy map to dispatch the selected scout.';
+    container.appendChild(hint);
+  }
+
+  if (yards.length > 0) {
+    const yardTitle = document.createElement('div');
+    yardTitle.className = 'intel-section-title';
+    yardTitle.style.marginTop = '12px';
+    yardTitle.textContent = 'Shipyard Capacity';
+    container.appendChild(yardTitle);
+
+    for (const y of yards) {
+      const row = document.createElement('div');
+      row.className = 'status-row';
+      const label = document.createElement('span');
+      label.className = 'status-row__label';
+      const sys = systemById(state, y.systemId);
+      label.textContent = sys?.name ?? y.systemId;
+      const val = document.createElement('span');
+      val.className = 'status-indicator status-indicator--built';
+      val.textContent = `${y.activeBuilds} / ${y.slots} slots`;
+      row.appendChild(label);
+      row.appendChild(val);
+      container.appendChild(row);
+    }
+  }
+}
+
 function renderTechPanel(container, state) {
   clearChildren(container);
   const summary = researchSummary(state);
+
+  const stats = document.createElement('div');
+  stats.className = 'tech-web-stats';
+  stats.innerHTML = `
+    <span>Stations: <strong>${summary.stationCount}</strong></span>
+    <span>Speed: <strong>${summary.speedMult}×</strong></span>
+    <span>Unlocked: <strong>${summary.unlocked.length - 1}</strong> / ${allTechNodes().length - 1}</span>
+  `;
+  container.appendChild(stats);
+
   if (summary.activeNodeId) {
+    const node = techNode(summary.activeNodeId);
     const active = document.createElement('div');
     active.className = 'progress-block';
-    active.innerHTML = `<div class="progress-block__label">Researching: ${summary.activeNodeId}</div>`;
+    const progLabel = document.createElement('div');
+    progLabel.className = 'progress-block__label';
+    progLabel.textContent = node
+      ? `Researching: ${node.name} · Tier ${tierRoman(summary.activeNodeId)}`
+      : `Researching: ${summary.activeNodeId}`;
+    active.appendChild(progLabel);
     const prog = document.createElement('div');
     prog.className = 'progress';
     const fill = document.createElement('div');
@@ -487,40 +665,37 @@ function renderTechPanel(container, state) {
     container.appendChild(active);
   }
 
-  for (const node of allTechNodes()) {
-    if (node.id === 'eco_baseline') continue;
-    const row = document.createElement('div');
-    row.className = 'planet-row';
-    const unlocked = isTechUnlocked(state, node.id);
-    const available = techPrereqsMet(state, node.id) && !unlocked;
-    const name = document.createElement('div');
-    name.className = 'planet-row__name';
-    name.textContent = `${node.name} (${node.creditCost} cr${node.solariiCost ? ` + ${node.solariiCost} SO` : ''})`;
-    row.appendChild(name);
-    if (unlocked) {
-      const badge = document.createElement('span');
-      badge.className = 'badge badge--gold';
-      badge.textContent = 'Done';
-      row.appendChild(badge);
-    } else if (available) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn btn--primary btn--sm';
-      btn.textContent = 'Research';
-      btn.onclick = () => {
-        const res = startResearch(state, node.id);
-        if (!res.ok) toast(res.reason, 'error');
-        else toast(`Started ${node.name}`, 'ok');
-      };
-      row.appendChild(btn);
-    } else {
-      const lock = document.createElement('span');
-      lock.className = 'planet-row__meta';
-      lock.textContent = 'Locked';
-      row.appendChild(lock);
-    }
-    container.appendChild(row);
+  if (summary.queue.length > 0) {
+    const q = document.createElement('p');
+    q.className = 'panel-note panel-note--muted';
+    q.textContent = `Queued: ${summary.queue.map((id) => techNode(id)?.name ?? id).join(', ')}`;
+    container.appendChild(q);
   }
+
+  const legend = document.createElement('div');
+  legend.className = 'tech-web-legend';
+  for (const meta of Object.values(TECH_CLUSTERS)) {
+    const chip = document.createElement('span');
+    chip.className = 'tech-web-legend__chip';
+    chip.style.borderColor = meta.color;
+    chip.style.color = meta.color;
+    chip.textContent = meta.label;
+    legend.appendChild(chip);
+  }
+  container.appendChild(legend);
+
+  const graphHost = document.createElement('div');
+  graphHost.id = 'tech-web-graph-host';
+  container.appendChild(graphHost);
+
+  mountTechWebGraph(graphHost, state, {
+    summary,
+    onResearch: (nodeId) => {
+      const res = startResearch(state, nodeId);
+      if (!res.ok) toast(res.reason, 'error');
+      else toast(`Started ${techNode(nodeId)?.name ?? nodeId}`, 'ok');
+    },
+  });
 }
 
 function appendLogEntry(message, kind) {
@@ -630,6 +805,9 @@ export function initUi(ctx) {
   });
   el('tab-tech').addEventListener('click', () => {
     sidePanel = 'tech';
+  });
+  el('tab-fleet')?.addEventListener('click', () => {
+    sidePanel = 'fleet';
   });
 
   el('build-trade-btn')?.addEventListener('click', () => {
@@ -801,6 +979,17 @@ export function initUi(ctx) {
       techPanel.classList.add('hidden');
     }
 
+    const fleetPanel = el('fleet-panel');
+    if (sidePanel === 'fleet') {
+      fleetPanel?.classList.remove('hidden');
+      renderFleetPanel(el('fleet-panel-body'), state, {
+        getSelectedScoutId,
+        doSelectScout,
+      });
+    } else {
+      fleetPanel?.classList.add('hidden');
+    }
+
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
     el('pause-overlay').classList.toggle('hidden', !state.paused);
     el('view-toggle-btn').querySelector('.btn-label').textContent =
@@ -845,7 +1034,7 @@ export function initUi(ctx) {
         : `${readyScouts}${transitScouts ? `+${transitScouts}` : ''}`;
 
     const scoutPanel = el('scout-panel');
-    if (state.scouts.length > 0) {
+    if (state.scouts.length > 0 && sidePanel !== 'fleet') {
       scoutPanel.classList.remove('hidden');
       const roster = el('scout-roster');
       roster.innerHTML = '';
@@ -973,7 +1162,7 @@ export function initUi(ctx) {
     }
     wormholePanel?.classList.add('hidden');
 
-    if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || !selection) {
+    if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || sidePanel === 'fleet' || !selection) {
       panel.classList.add('hidden');
       return;
     }
