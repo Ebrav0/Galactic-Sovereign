@@ -90,14 +90,56 @@ function engineFlame(ctx, x, y, len, width, color, flicker = 1) {
 }
 
 function glowDot(ctx, x, y, r, color, alpha = 1) {
-  ctx.save();
-  ctx.shadowColor = color;
-  ctx.shadowBlur = r * 3;
-  ctx.fillStyle = hexToRgba(color, alpha);
+  const outer = r * 2.2;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, outer);
+  g.addColorStop(0, hexToRgba(color, alpha));
+  g.addColorStop(0.45, hexToRgba(color, alpha * 0.55));
+  g.addColorStop(1, hexToRgba(color, 0));
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x, y, outer, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
+  ctx.fillStyle = hexToRgba(color, Math.min(1, alpha + 0.15));
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.65, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+const ANIMATED_HULLS = new Set([
+  'light_carrier', 'fleet_carrier', 'super_carrier',
+  'healer', 'sensor_ship', 'miner',
+]);
+
+const HULL_CACHE_MAX = 48;
+/** @type {Map<string, { canvas: HTMLCanvasElement, half: number }>} */
+const hullBitmapCache = new Map();
+
+function cacheHullBitmap(hull, side, r) {
+  const rKey = Math.max(4, Math.round(r));
+  const key = `${hull}:${side}:${rKey}`;
+  const existing = hullBitmapCache.get(key);
+  if (existing) {
+    hullBitmapCache.delete(key);
+    hullBitmapCache.set(key, existing);
+    return existing;
+  }
+
+  const pad = rKey * 2.4;
+  const size = Math.ceil(rKey * 4 + pad * 2);
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const c = canvas.getContext('2d');
+  c.translate(size / 2, size / 2);
+  drawHullShape(c, hull, rKey, hullColors(hull, side), 0);
+
+  const entry = { canvas, half: size / 2 };
+  if (hullBitmapCache.size >= HULL_CACHE_MAX) {
+    const oldest = hullBitmapCache.keys().next().value;
+    hullBitmapCache.delete(oldest);
+  }
+  hullBitmapCache.set(key, entry);
+  return entry;
 }
 
 // ============================= FLAGSHIP =============================
@@ -866,10 +908,12 @@ export function drawHullSprite(ctx, x, y, hull, baseR, opts = {}) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
-  ctx.shadowColor = hexToRgba(colors.glow, 0.35);
-  ctx.shadowBlur = r * 0.3;
-  drawHullShape(ctx, hull, r, colors, time);
-  ctx.shadowBlur = 0;
+  if (ANIMATED_HULLS.has(hull)) {
+    drawHullShape(ctx, hull, r, colors, time);
+  } else {
+    const cached = cacheHullBitmap(hull, side, r);
+    ctx.drawImage(cached.canvas, -cached.half, -cached.half);
+  }
   ctx.restore();
 
   if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);

@@ -55,6 +55,7 @@ import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
   playerShipEtaMs,
+  findPlayerShip,
 } from './fleets.js';
 import {
   formatFleetName,
@@ -447,6 +448,101 @@ function scoutRosterStructureSnapshot(state, selectedScoutId) {
       transit: !!s.transit,
     })),
   );
+}
+
+function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScoutId) {
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
+  return JSON.stringify({
+    groups: battleGroupsForGalaxy(state).map((g) => ({
+      id: g.id,
+      ordinal: g.ordinal,
+      shipIds: g.shipIds,
+      selected: g.id === selectedBattleGroupId,
+    })),
+    unassigned: unassignedPlayerShips(state).map((s) => s.id),
+    ships: playerShips.map((s) => ({
+      id: s.id,
+      hull: s.hull,
+      transit: !!s.transit,
+      loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+    })),
+    scouts: state.scouts.map((s) => ({
+      id: s.id,
+      selected: s.id === selectedScoutId,
+      transit: !!s.transit,
+      loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+    })),
+    yards: listPlayerShipyards(state).length,
+    queuePending: empireQueueSummary(state).filter((q) => q.status === 'pending').length,
+  });
+}
+
+function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId) {
+  const container = el('fleet-panel-body');
+  if (!container) return;
+
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
+  const readyShips = playerShips.filter((s) => !s.transit).length;
+  const transitShips = playerShips.filter((s) => s.transit).length;
+  const battleGroups = battleGroupsForGalaxy(state);
+  const queue = empireQueueSummary(state);
+
+  const stats = container.querySelector('.fleet-stats');
+  if (stats) {
+    stats.innerHTML = `
+      <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
+      <span>Fleets: <strong>${battleGroups.length}</strong></span>
+      <span>Scouts: <strong>${state.scouts.length}</strong></span>
+      <span>Shipyards: <strong>${listPlayerShipyards(state).length}</strong></span>
+      <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
+    `;
+  }
+
+  for (const row of container.querySelectorAll('.fleet-ship-row')) {
+    const ship = findPlayerShip(state, row.dataset.shipId);
+    if (!ship) continue;
+    const icon = row.querySelector('.list-row__icon');
+    if (icon) icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+    const sub = row.querySelector('.list-row__sub');
+    if (!sub) continue;
+    if (ship.transit) {
+      const destId = ship.transit.path[ship.transit.path.length - 1];
+      const dest = systemById(state, destId);
+      sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
+    } else {
+      const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
+      sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+    }
+  }
+
+  for (const header of container.querySelectorAll('.fleet-group-header')) {
+    const groupId = header.dataset.fleetSelect;
+    const group = battleGroups.find((g) => g.id === groupId);
+    if (!group) continue;
+    header.classList.toggle('list-row--selected', group.id === selectedBattleGroupId);
+    const sub = header.querySelector('.list-row__sub');
+    if (!sub) continue;
+    const shipCount = group.shipIds.length;
+    sub.textContent = `${shipCount} ship${shipCount === 1 ? '' : 's'} · ${fleetLocationSummary(state, group.id)}`;
+  }
+
+  for (const btn of container.querySelectorAll('.scout-select-btn')) {
+    const scout = findScout(state, btn.dataset.scoutId);
+    if (!scout) continue;
+    btn.classList.toggle('list-row--selected', scout.id === selectedScoutId);
+    const icon = btn.querySelector('.list-row__icon');
+    if (icon) icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+    const sub = btn.querySelector('.list-row__sub');
+    if (!sub) continue;
+    if (scout.transit) {
+      const st = scout.transit;
+      const dest = systemById(state, st.path[st.path.length - 1]);
+      sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+    } else {
+      const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+      sub.textContent = `@ ${loc}`;
+    }
+  }
 }
 
 function renderGroupedHullButtons(container, state) {
@@ -849,6 +945,7 @@ function renderFleetPanel(container, state, ctx) {
       btn.type = 'button';
       const selected = scout.id === selectedScoutId;
       btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
+      btn.dataset.scoutId = scout.id;
 
       const icon = document.createElement('span');
       icon.className = 'list-row__icon';
@@ -1173,6 +1270,7 @@ export function initUi(ctx) {
     empireQueueActions: '',
     scoutRoster: '',
     buildHullActions: '',
+    fleetPanel: '',
   };
 
   function queueHullFromUi(hull) {
@@ -1507,16 +1605,23 @@ export function initUi(ctx) {
     const fleetPanel = el('fleet-panel');
     if (sidePanel === 'fleet') {
       fleetPanel?.classList.remove('hidden');
-      renderFleetPanel(el('fleet-panel-body'), state, {
-        getSelectedScoutId,
-        doSelectScout,
-        getSelectedBattleGroupId,
-        doSelectBattleGroup,
-        createBattleGroup,
-        deleteBattleGroup,
-      });
+      const fleetSnap = fleetPanelStructureSnapshot(state, getSelectedBattleGroupId?.() ?? null, selectedScoutId);
+      if (fleetSnap !== uiSnapshots.fleetPanel) {
+        uiSnapshots.fleetPanel = fleetSnap;
+        renderFleetPanel(el('fleet-panel-body'), state, {
+          getSelectedScoutId,
+          doSelectScout,
+          getSelectedBattleGroupId,
+          doSelectBattleGroup,
+          createBattleGroup,
+          deleteBattleGroup,
+        });
+      } else {
+        updateFleetPanelLabels(state, selectedScoutId, getSelectedBattleGroupId?.() ?? null);
+      }
     } else {
       fleetPanel?.classList.add('hidden');
+      uiSnapshots.fleetPanel = '';
     }
 
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';

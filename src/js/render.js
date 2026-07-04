@@ -68,7 +68,7 @@ import {
   drawScoutSprite,
   drawShuttleSprite,
 } from './ship-sprites.js';
-import { ambientShipPose, ambientPiratePose } from './ship-motion.js';
+import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
 import {
   THEME,
   hexToRgba,
@@ -550,9 +550,11 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
     return;
   }
 
+  const bodyCache = buildKeepOutBodyCache(system, time);
+
   const playerShips = playerShipsAtSystem(state, systemId);
   playerShips.forEach((ship, idx) => {
-    const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time);
+    const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time, bodyCache);
     const p = worldToScreen(camera, pose.x, pose.y, canvas);
     drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
       heading: pose.heading,
@@ -568,7 +570,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   for (const fleet of pirateFleets) {
     for (const ship of fleet.ships) {
       if (ship.hp <= 0) continue;
-      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal, time);
+      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal, time, bodyCache);
       const p = worldToScreen(camera, pose.x, pose.y, canvas);
       drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
         heading: pose.heading,

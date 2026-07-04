@@ -81,6 +81,7 @@ export const PLANET_KEEP_OUT_PAD = 80;
 export const MOON_KEEP_OUT_PAD = 45;
 export const AMBIENT_PATROL_RADIUS = 55;
 export const AMBIENT_PATROL_OMEGA = 0.38;
+export const AMBIENT_KEEP_OUT_PASSES = 3;    // render-only nudge (combat init uses more)
 export const KEEP_OUT_SOFT_ZONE = 2.4;       // repulsion reach as multiple of keep radius
 export const KEEP_OUT_REPULSION = 480;       // flagship push accel (world units / s²)
 export const KEEP_OUT_NUDGE_STRENGTH = 320;  // kinematic ships + tactical nudge
