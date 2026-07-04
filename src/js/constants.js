@@ -43,6 +43,7 @@ export const SHIP_LANE_MIN_LEG_MS = 2000;
 
 // --- Ship motion (ambient patrol + keep-out) ---
 export const STAR_KEEP_OUT_PAD = 120;
+export const STAR_KEEP_OUT_ORBIT_FRACTION = 0.88; // star repulsion fades out by innermost orbit
 export const PLANET_KEEP_OUT_PAD = 80;
 export const MOON_KEEP_OUT_PAD = 45;
 export const AMBIENT_PATROL_RADIUS = 55;
