@@ -382,7 +382,21 @@ gives an unanchored exit nowhere to go).
 **Phase 4 exit criteria:** 400-star graphs with valid metrics; 10 unique galaxies per save; stronghold roster fixed; wormhole travel with hydration; save-v6; `verify_phase4.mjs` + phase3 regression pass.
 
 ### Phase 5 — Empire layer
-Empire-wide build queue with shipyard routing; research stations + tech web; trade stations; first AI faction.
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 5.1 | save-v7 + constants | `SAVE_VERSION=7`; Phase 5 constants; `docs/schemas/save-v7.json` |
+| 5.2 | State shapes | `empireQueue`, `research`, `factions`, `aiShips`; ownership helpers |
+| 5.3 | migrateV6toV7 | v6 loads; AI seeded on home galaxy; shipyard `builds[]` compat |
+| 5.4 | Ownership + capture | `isAiOwned`; AI counts for capture contest |
+| 5.5 | Simulation tick order | trade → research → dispatch → production → AI |
+| 5.6–5.14 | Empire queue | CRUD, dispatcher, multi-slot, UI panel, hooks |
+| 5.15–5.20 | Research + tech web | 18 nodes, stations, dual currency, Tech tab |
+| 5.21–5.25 | Trade stations | build, graph income, shell #5 bonus, HUD |
+| 5.26–5.31 | AI faction | seed, ships, economy, expansion, hydration |
+| 5.32–5.38 | Integration + verify | `verify_phase5.mjs` 24+ checks; phase3/4 regression |
+
+**Phase 5 exit criteria:** empire queue routes ships; research/trade/AI loops work; save-v7; `verify_phase5.mjs` pass; phase3/4 regression updated.
 
 ### Phase 6 — Late game
 Superweapon (3 completed spheres); hero flagships; diplomacy; 5–6 missions; tutorial; content roster completion.

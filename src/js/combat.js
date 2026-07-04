@@ -17,6 +17,7 @@ import {
   hullStats,
 } from './hull.js';
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
+import { aiShipsInSystem } from './ai-ships.js';
 import { playerCombatShipsAtSystem, stationedShipPose } from './fleets.js';
 import { softKeepOut, nudgeUnitKeepOut } from './ship-motion.js';
 import { getSystems, getGraph } from './galaxy-scope.js';
@@ -41,10 +42,12 @@ function playerForcesInSystem(state, systemId) {
 
 function shouldBattle(state, systemId) {
   const pirates = pirateFleetAtSystem(state, systemId);
-  if (!pirates.length) return false;
+  const aiShips = aiShipsInSystem(state, systemId);
+  const system = getSystems(state)[systemId];
+  if (!pirates.length && !aiShips.length) return false;
   const { ships, hasFlagship } = playerForcesInSystem(state, systemId);
   if (ships.length > 0 || hasFlagship) return true;
-  if (getSystems(state)[systemId]?.owner === 'player') return true;
+  if (system?.owner === 'player' || system?.owner === 'ai') return true;
   return false;
 }
 
@@ -55,12 +58,25 @@ function collectEnemyShips(state, systemId) {
       if (ship.hp > 0) out.push({ ...ship, fleetId: fleet.id, side: 'enemy' });
     }
   }
+  const system = getSystems(state)[systemId];
+  if (system?.owner === 'player') {
+    for (const ship of aiShipsInSystem(state, systemId)) {
+      out.push({ ...ship, side: 'enemy' });
+    }
+  }
   return out;
 }
 
 function collectAllyShips(state, systemId) {
   const out = [];
+  const system = getSystems(state)[systemId];
   const { ships, hasFlagship } = playerForcesInSystem(state, systemId);
+  if (system?.owner === 'ai') {
+    for (const ship of aiShipsInSystem(state, systemId)) {
+      out.push({ ...ship, side: 'ai' });
+    }
+    return out;
+  }
   for (const ship of ships) {
     out.push({ ...ship, side: 'player' });
   }

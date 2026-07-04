@@ -279,4 +279,35 @@ Never delete prior entries.
 - `graphDiameter()` is O(n²) — fine for tests; not called in the live loop
 
 ### Suggested next
-- Phase 5 task 5.x: empire-wide build queue, research stations, first AI faction (expand §8 Phase 5 table into numbered tasks first)
+- Phase 6: Superweapon, hero flagships, diplomacy, missions
+
+---
+
+## Session 2026-07-04 — Phase 5 empire layer
+
+**Task claimed:** Phase 5 tasks 5.1–5.38
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=7`; `docs/schemas/save-v7.json`; `migrateV6toV7`
+- New modules: `empire-queue.js`, `tech-web.js`, `research.js`, `trade.js`, `ai-faction.js`, `ai-ships.js`
+- Empire-wide build queue with stronghold-based dispatcher, pin, cancel/refund, multi-slot shipyards (`mil_parallel_dock`)
+- 18-node tech web; research stations (3/system); dual-currency research after Shell #1
+- Trade stations + connected-component income; shell #5/#6 bonuses wired in `dyson.js`
+- AI faction (Dominion of Helix): rim cluster seed, economy tick, expansion, capture contest, hydration overlays
+- UI: empire queue panel, Tech tab, trade HUD chip, build buttons
+- Test hooks + `render_game_to_text()` blocks for queue/research/trade/factions/aiShips
+- `output/verify_phase5.mjs` — 24/24; `verify_phase3.mjs` + `verify_phase4.mjs` updated for save-v7
+
+### Decisions
+- Dispatcher reference point: stronghold (not flagship)
+- `aiShips[]` parallel fleet model; pirates remain non-territorial
+- AI contests player capture but does not capture player systems in Phase 5
+- Credits deducted on empire enqueue; 100% refund on cancel before assignment
+
+### Known issues
+- Tech web UI is list-first (no force-directed graph)
+- Manual trade routes deferred to Phase 6
+
+### Suggested next
+- Phase 6 tasks: Superweapon cradle, hero flagships, diplomacy unlock

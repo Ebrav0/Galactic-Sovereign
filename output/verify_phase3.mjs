@@ -67,7 +67,7 @@ async function setupDysonInStronghold() {
 
 // --- Section 1: Save v6 shape (Dyson fields from Phase 3) ---
 let s = await text();
-check('1.1 saveVersion is 6', s.saveVersion === 6);
+check('1.1 saveVersion is 7', s.saveVersion === 7);
 check('1.2 solarii fields present', s.solarii === 0 && s.solariiUnlocked === false);
 check('1.3 dyson summary on viewed system', s.dyson && s.dyson.completedShells === 0);
 
@@ -120,7 +120,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-2', 
 })), [v4StateJson, v4Checksum]);
 await page.evaluate(() => window.__loadSlot('slot-2'));
 s = await text();
-check('1.5 v4 migrates to v6', s.saveVersion === 6 && s.playerShips.some((sh) => sh.id === 'mig-ship'));
+check('1.5 v4 migrates to v7', s.saveVersion === 7 && s.playerShips.some((sh) => sh.id === 'mig-ship'));
 check('1.6 v4 migration adds dyson defaults', s.dyson && typeof s.dyson.shellSails === 'number');
 
 // --- Section 2: Foundry build ---

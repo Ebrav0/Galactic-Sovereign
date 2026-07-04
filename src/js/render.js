@@ -39,6 +39,7 @@ import {
   hasFoundry,
   ensureDyson,
   isPlayerOwned,
+  isAiOwned,
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
@@ -714,6 +715,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const nodeR = starNodeRadius(state, star.id) * z;
     const intel = hasIntel(state, star.id);
     const owned = isPlayerOwned(state, star.id);
+    const aiOwned = isAiOwned(state, star.id);
 
     if (!system?.star) {
       const color = THEME.accentGold;
@@ -737,6 +739,13 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
 
     if (owned) {
       drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.65);
+    }
+    if (aiOwned) {
+      drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, '#c44dff', Math.max(1, 1.5 * z), 0.75);
+      ctx.fillStyle = '#c44dff';
+      ctx.beginPath();
+      ctx.arc(s.x + nodeR + 6 * z, s.y - nodeR - 4 * z, Math.max(2, 3 * z), 0, Math.PI * 2);
+      ctx.fill();
     }
 
     if (pirateSystemsWithPresence(state).includes(star.id)) {

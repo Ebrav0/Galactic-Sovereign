@@ -13,6 +13,7 @@ import {
   getGalaxyCount,
 } from './galaxy-scope.js';
 import { generateGalaxySystems } from './hydration.js';
+import { seedAiFaction } from './ai-faction.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -60,6 +61,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 3) e = migrateV3toV4(e);
   if (e.saveVersion === 4) e = migrateV4toV5(e);
   if (e.saveVersion === 5) e = migrateV5toV6(e);
+  if (e.saveVersion === 6) e = migrateV6toV7(e);
   return e;
 }
 
@@ -313,6 +315,65 @@ function migrateV5toV6(envelope) {
   };
 }
 
+function initPhase5State(state) {
+  state.empireQueue = state.empireQueue ?? [];
+  state.research = state.research ?? {
+    activeNodeId: null,
+    progress: 0,
+    unlocked: ['eco_baseline'],
+    queue: [],
+  };
+  if (!state.research.unlocked?.includes('eco_baseline')) {
+    state.research.unlocked = ['eco_baseline', ...(state.research.unlocked ?? [])];
+  }
+  state.factions = state.factions ?? {
+    ai: {
+      id: 'ai-0',
+      name: 'Dominion of Helix',
+      personality: 'expansionist',
+      homeSystemId: null,
+      credits: 1200,
+      lastActionTick: 0,
+    },
+  };
+  state.aiShips = state.aiShips ?? [];
+}
+
+function migrateShipyardsOnLoad(state) {
+  for (const gal of Object.values(state.galaxies ?? {})) {
+    for (const system of Object.values(gal.systems ?? {})) {
+      for (const s of system.structures ?? []) {
+        if (s.type === 'shipyard' && s.build && !s.builds) {
+          s.builds = [s.build];
+          delete s.build;
+        }
+        if (s.type === 'shipyard' && !s.builds) s.builds = [];
+      }
+    }
+  }
+}
+
+// v6 -> v7 (Phase 5 empire layer).
+function migrateV6toV7(envelope) {
+  const state = envelope.state;
+  initPhase5State(state);
+  migrateShipyardsOnLoad(state);
+
+  const homeGal = state.galaxies?.[state.homeGalaxyId ?? 'gal-0'];
+  const hasAi = homeGal?.systems && Object.values(homeGal.systems).some((s) => s.owner === 'ai');
+  if (!hasAi && homeGal?.status === 'active' && homeGal.systems) {
+    seedAiFaction(state, state.homeGalaxyId ?? 'gal-0');
+  }
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 7,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -346,6 +407,9 @@ export function deserialize(envelopeJson) {
       }
     }
   }
+
+  initPhase5State(envelope.state);
+  migrateShipyardsOnLoad(envelope.state);
 
   return { ok: true, state: envelope.state };
 }

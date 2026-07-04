@@ -84,6 +84,8 @@ export function abstractGalaxySummaries(state) {
       fleetPower: Math.round(g.abstract.fleetPower * 100) / 100,
       dysonShellProgress: Math.round(g.abstract.dysonShellProgress * 1000) / 1000,
       ownedSystemCount: g.abstract.ownedSystemCount,
+      aiOwnedCount: g.abstract.aiOwnedCount ?? 0,
+      aiFleetPower: g.abstract.aiFleetPower ?? 0,
       hasAnchor: !!g.abstract.wormholeAnchor,
     }));
 }

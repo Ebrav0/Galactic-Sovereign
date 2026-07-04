@@ -65,6 +65,15 @@
             <span class="chip__value"><span id="solarii-value">0</span> · <span id="solarii-rate">0</span>/s</span>
           </span>
         </div>
+        <div class="chip chip--green hidden" id="trade-chip">
+          <span class="chip__icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v2H2V3zm0 4h8v2H2V7zm0 4h10v2H2v-2z"/></svg>
+          </span>
+          <span class="chip__body">
+            <span class="chip__label">Trade</span>
+            <span class="chip__value"><span id="trade-income-value">0</span>/s</span>
+          </span>
+        </div>
         <div class="chip chip--cyan chip--wide">
           <span class="chip__icon" aria-hidden="true">
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M15 8L1 1l3.5 7L1 15l14-7zM4.8 7L3.2 3.6 12 8l-8.8 4.4L4.8 9H9V7H4.8z"/></svg>
@@ -114,6 +123,18 @@
         <div id="selected-scout-line" class="panel__footer panel-note"></div>
       </div>
 
+      <div id="empire-queue-panel" class="panel">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Empire Build Queue</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body">
+          <div id="empire-queue-list" class="list"></div>
+          <div id="empire-queue-actions" class="panel__actions"></div>
+        </div>
+      </div>
+
       <div id="intel-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -150,7 +171,9 @@
           <button id="build-shipyard-btn" type="button" class="btn btn--primary btn--block hidden">Build Shipyard</button>
           <button id="build-foundry-btn" type="button" class="btn btn--primary btn--block hidden">Build Sail Foundry</button>
           <button id="build-launcher-btn" type="button" class="btn btn--primary btn--block hidden">Build Dyson Launcher</button>
-          <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Build Scout</button>
+          <button id="build-trade-btn" type="button" class="btn btn--primary btn--block hidden">Build Trade Station</button>
+          <button id="build-research-btn" type="button" class="btn btn--primary btn--block hidden">Build Research Station</button>
+          <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Add Scout to Empire Queue</button>
           <div id="build-panel-note" class="panel-note"></div>
         </div>
       </div>
@@ -180,6 +203,15 @@
         </div>
       </div>
 
+      <div id="tech-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Technology Web</span>
+        </div>
+        <div class="panel__body" id="tech-panel-body">
+          <p class="empty-state">Research nodes appear here.</p>
+        </div>
+      </div>
+
       <div id="notification-log" class="panel panel--compact">
         <div class="panel__header panel__header--toggle">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -198,7 +230,7 @@
         <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
         <button type="button" class="tab tab--disabled" disabled title="Coming soon">Fleet</button>
-        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Tech</button>
+        <button type="button" class="tab" data-panel="tech" id="tab-tech">Tech</button>
         <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
       </nav>
     </footer>
