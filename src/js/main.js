@@ -14,6 +14,7 @@ import {
   dysonSummary,
   ensureDyson,
   planetPosition,
+  foundryHostPlanet,
 } from './state.js';
 import { step, advance, togglePaused } from './simulation.js';
 import { buildOutpost, canBuildOutpost, incomePerSecond, incomePerSecondInSystem, resetStructureIds } from './economy.js';
@@ -27,7 +28,7 @@ import {
   shipyardBuildProgress,
   activeCombatQueues,
 } from './production.js';
-import { setFlagshipInput, orderTravel, transitStatus, transitEtaMs } from './flagship.js';
+import { setFlagshipInput, orderTravel, transitStatus, transitEtaMs, toggleFlagshipOrbit, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
 import {
   orderScoutTravel,
   scoutEtaMs,
@@ -48,7 +49,10 @@ import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, re
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
-import { activeSailShuttleCount } from './sail-shuttles.js';
+import { outpostSurfaceSites } from './surface-structures.js';
+import { structureSites } from './structure-sites.js';
+import { activeSailShuttleCount, foundryAnchor, computeFoundryRingRadius, sailShuttlePositions } from './sail-shuttles.js';
+import { dysonVisualSummary, pointNearSupplySegment } from './dyson-visuals.js';
 import {
   buildFoundry,
   buildLauncher,
@@ -156,6 +160,27 @@ function doFlagshipInput(x, y) {
   if (x !== 0 || y !== 0) follow.enabled = true;
 }
 
+function doToggleOrbit() {
+  if (view !== 'system') {
+    toast('Switch to system view to enter orbit', 'error');
+    return;
+  }
+  const f = state.flagship;
+  if (f.systemId !== viewedSystemId) {
+    toast('Flagship is not in this system', 'error');
+    return;
+  }
+  const res = toggleFlagshipOrbit(state, selection);
+  if (res.ok && res.orbiting) {
+    toast(`Stable orbit: ${res.target}`, 'ok');
+    follow.enabled = true;
+  } else if (res.ok) {
+    toast('Orbit disengaged', 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+}
+
 function doOrderTravel(targetId) {
   const res = orderTravel(state, targetId);
   if (res.ok) {
@@ -229,10 +254,18 @@ function doDispatchShip(shipId, starId) {
   return res;
 }
 
-function doBuildFoundry() {
-  const res = buildFoundry(state, viewedSystemId);
-  if (res.ok) toast(`Sail foundry established in ${systemById(state, viewedSystemId)?.name}`, 'ok');
-  else toast(res.reason, 'error');
+function doBuildFoundry(planetId = selection) {
+  const system = systemById(state, viewedSystemId);
+  const resolvedId = planetId
+    ?? system?.bodies.find((p) => p.type === 'habitable')?.id
+    ?? system?.bodies[0]?.id;
+  const planet = resolvedId ? findPlanet(state, viewedSystemId, resolvedId) : null;
+  const res = buildFoundry(state, viewedSystemId, resolvedId);
+  if (res.ok) {
+    toast(`Sail Foundry ring established at ${planet?.name ?? 'planet'}`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
   return res;
 }
 
@@ -358,6 +391,7 @@ attachInput(canvas, {
   onStarView: doViewSystem,
   onScoutSelect: doSelectScout,
   onFollowRequest: () => { follow.enabled = true; },
+  onToggleOrbit: doToggleOrbit,
 });
 
 if (window.gameSave?.onExitSaveRequest) {
@@ -488,6 +522,9 @@ window.render_game_to_text = () => {
   const dyson = viewedSystem ? ensureDyson(viewedSystem) : null;
   const summary = dysonSummary(state, viewedSystemId);
   const shComp = strongholdComposition(state);
+  const foundryPlanet = foundryHostPlanet(state, viewedSystemId);
+  const foundryPose = foundryAnchor(state, viewedSystemId);
+  const orbitTarget = orbitTargetLabel(state);
 
   return JSON.stringify({
     saveVersion: SAVE_VERSION,
@@ -524,6 +561,8 @@ window.render_game_to_text = () => {
       vy: Math.round(f.vy * 100) / 100,
       heading: Math.round(f.heading * 1000) / 1000,
       inTransit: !!f.transit,
+      orbiting: isFlagshipOrbiting(state),
+      orbitTarget: orbitTarget ?? null,
       destination: transit?.destId ?? null,
       transitProgress: transit ? Math.round(transit.progress * 1000) / 1000 : null,
       etaMs: f.transit ? transitEtaMs(state) : null,
@@ -626,20 +665,67 @@ window.render_game_to_text = () => {
       active: activeShuttleCount(state, viewedSystemId) > 0,
       count: activeShuttleCount(state, viewedSystemId),
     },
+    surfaceSites: (() => {
+      const sites = hasIntel(state, viewedSystemId) ? outpostSurfaceSites(state, viewedSystemId) : [];
+      return {
+        count: sites.length,
+        pads: sites.filter((s) => s.kind.endsWith('-pad')).length,
+        rigs: sites.filter((s) => s.kind === 'moon-rig').length,
+        active: sites.filter((s) => s.active).length,
+      };
+    })(),
+    structureVisuals: (() => {
+      const sites = hasIntel(state, viewedSystemId) ? structureSites(state, viewedSystemId) : [];
+      const round = (n) => Math.round(n * 10) / 10;
+      return {
+        shipyards: sites
+          .filter((s) => s.kind === 'shipyard')
+          .map((s) => ({
+            planetId: s.planetId,
+            x: round(s.x),
+            y: round(s.y),
+            orbitR: round(s.orbitR),
+            slotAngle: round(s.slotAngle * 1000) / 1000,
+            building: s.building,
+            buildProgress: round(s.buildProgress),
+          })),
+        launchers: sites
+          .filter((s) => s.kind === 'launcher')
+          .map((s) => ({
+            bodyId: s.bodyId,
+            x: round(s.x),
+            y: round(s.y),
+            heading: round(s.heading * 1000) / 1000,
+            muzzleX: round(s.muzzleX),
+            muzzleY: round(s.muzzleY),
+            slotAngle: round(s.slotAngle * 1000) / 1000,
+            firing: s.firing,
+          })),
+      };
+    })(),
     sailShuttles: {
       active: activeSailShuttleCount(state, viewedSystemId) > 0,
       count: activeSailShuttleCount(state, viewedSystemId),
     },
     dyson: summary && dyson ? {
       ...summary,
+      foundryHostPlanetId: foundryPlanet?.id ?? null,
+      foundryRingRadius: foundryPlanet ? Math.round(computeFoundryRingRadius(foundryPlanet) * 10) / 10 : null,
+      firstMoonOrbit: foundryPlanet?.moons?.[0]?.orbitRadius ?? null,
+      foundryDock: foundryPose.planetId
+        ? { x: Math.round(foundryPose.x * 10) / 10, y: Math.round(foundryPose.y * 10) / 10 }
+        : null,
       shellProgress: summary.completedShells >= 8
         ? 1
         : Math.round((dyson.shellSails / SHELL_SAILS_REQUIRED) * 1000) / 1000,
       solariiPerSec: solariiPerSecondInSystem(state, viewedSystemId),
       solariiUnlocked: !!state.solariiUnlocked,
       nextShell: Math.min(8, summary.completedShells + 1),
-      canBuildFoundry: canBuildFoundry(state, viewedSystemId).ok,
+      canBuildFoundry: canBuildFoundry(state, viewedSystemId, selection).ok,
     } : null,
+    dysonVisuals: viewedSystem && hasIntel(state, viewedSystemId)
+      ? dysonVisualSummary(state, viewedSystemId, viewedSystem.star.radius, camera.zoom)
+      : null,
     tickMs: TICK_MS,
   });
 };
@@ -649,7 +735,8 @@ window.getGameState = () => state;
 window.__selectPlanet = (id) => { selection = id; };
 window.__buildOutpost = (id) => doBuildOutpost(id);
 window.__buildShipyard = (id) => doBuildShipyard(id);
-window.__buildFoundry = () => doBuildFoundry();
+window.__buildFoundry = (planetId) => doBuildFoundry(planetId ?? selection);
+window.__toggleOrbit = (planetId) => toggleFlagshipOrbit(state, planetId ?? selection);
 window.__buildLauncher = (bodyId) => doBuildLauncher(bodyId ?? selection);
 window.__grantCredits = (n) => { state.credits += n; return state.credits; };
 window.__forceShellProgress = (systemId, sails) => forceShellProgress(state, systemId, sails);
@@ -698,6 +785,8 @@ window.__planetPos = (systemId, planetId) => {
   return planet ? planetPosition(planet, state.time) : null;
 };
 window.__shuttleInfo = (systemId) => shuttlePositions(state, systemId ?? viewedSystemId);
+window.__sailShuttleInfo = (systemId) => sailShuttlePositions(state, systemId ?? viewedSystemId);
+window.__pointNearSupplySegment = pointNearSupplySegment;
 
 window.__setGalaxyScaleForTests = ({ stars, galaxies }) => {
   if (stars != null) setGalaxyStarCountForTests(stars);

@@ -16,6 +16,16 @@ import {
   CAPTURE_HOLD_MS,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
+import {
+  settledInProgressDots,
+  inFlightSailDots,
+  foundryLauncherSupplyLines,
+} from './dyson-visuals.js';
+import {
+  drawFoundrySupplyTie,
+  drawCompletedShellRings,
+  drawInProgressSailDots,
+} from './dyson-render.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { typeSizeBonus } from './star-types.js';
 import {
@@ -30,12 +40,16 @@ import {
   isPlayerOwned,
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
-import { sailShuttlePositions, foundryAnchor, launchBurstOrigins } from './sail-shuttles.js';
-import { getFlagshipInput, getFlagshipDisplayPose, transitStatus } from './flagship.js';
+import { outpostSurfaceSites } from './surface-structures.js';
+import { drawLandingPad, drawMiningRig } from './surface-structures-render.js';
+import { structureSites } from './structure-sites.js';
+import { drawShipyardStation, drawSailLauncher, drawLaunchMuzzleFlash } from './structure-render.js';
+import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
+import { drawSailFoundryRingStation, drawSailFoundryLabel, sailFoundryLabelAnchor } from './foundry-render.js';
+import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
-import { shipyardBuildProgress } from './production.js';
 import { laneBulge, laneControlPoint } from './galaxy.js';
 import { getGraph, getActiveGalaxy, wormholeIdForGalaxy } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
@@ -271,25 +285,34 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   flushStars(ctx, 'core');
 
   const dyson = ensureDyson(system);
+  if (intel && (dyson.completedShells > 0 || dyson.shellSails > 0 || hasFoundry(state, systemId))) {
+    drawCompletedShellRings(
+      ctx,
+      starScreen.x,
+      starScreen.y,
+      z,
+      dyson.completedShells,
+      system.star.radius,
+      state.time,
+      dyson.lastShellCompletedAt,
+    );
+    const settled = settledInProgressDots(state, systemId, system.star.radius);
+    const inFlight = inFlightSailDots(state, systemId, system.star.radius);
+    if (settled.length > 0 || inFlight.length > 0) {
+      drawInProgressSailDots(ctx, starScreen.x, starScreen.y, z, settled, inFlight, state.time);
+    }
+  }
   drawStarOverlays(ctx, {
     completedShells: dyson.completedShells,
-    shellSails: dyson.shellSails,
-    time: state.time,
     starRadius: system.star.radius,
     x: starScreen.x,
     y: starScreen.y,
     zoom: z,
-    lastShellCompletedAt: dyson.lastShellCompletedAt,
   });
 
-  if (intel && hasFoundry(state, systemId)) {
-    const fa = foundryAnchor(system);
-    const fs = worldToScreen(camera, fa.x, fa.y, canvas);
-    drawGlowRing(ctx, fs.x, fs.y, 14 * z, THEME.accentGold, Math.max(1, 2 * z), 0.85);
-    labelText(ctx, 'Sail Foundry', fs.x, fs.y - 18 * z, Math.max(9, 10 * z), THEME.accentGold);
-  }
-
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
+  const surfaceSites = intel ? outpostSurfaceSites(state, systemId) : [];
+  const orbitalStructures = intel ? structureSites(state, systemId) : [];
 
   for (const planet of sortedPlanets) {
     const wp = planetPosition(planet, state.time);
@@ -317,6 +340,34 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         state,
         systemId,
       });
+
+      if (intel && hasOutpost(state, systemId, planet.id)) {
+        for (const site of surfaceSites) {
+          if (site.planetId !== planet.id || site.moonId !== moon.id) continue;
+          if (site.kind === 'planet-pad') continue;
+          const ss = worldToScreen(camera, site.x, site.y, canvas);
+          if (site.kind === 'moon-rig') {
+            drawMiningRig(ctx, ss.x, ss.y, site.heading, z, {
+              active: site.active,
+              time: state.time,
+              seed: site.seed,
+            });
+          } else {
+            drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
+              active: site.active,
+              time: state.time,
+            });
+          }
+        }
+      }
+
+      if (intel) {
+        for (const st of orbitalStructures) {
+          if (st.kind !== 'launcher' || st.bodyId !== moon.id) continue;
+          const ls = worldToScreen(camera, st.x, st.y, canvas);
+          drawSailLauncher(ctx, ls.x, ls.y, z, st, state.time);
+        }
+      }
     }
 
     drawPlanet(ctx, {
@@ -332,24 +383,32 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     });
 
     if (intel && hasOutpost(state, systemId, planet.id)) {
+      for (const site of surfaceSites) {
+        if (site.planetId !== planet.id || site.kind !== 'planet-pad') continue;
+        const ss = worldToScreen(camera, site.x, site.y, canvas);
+        drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
+          active: site.active,
+          time: state.time,
+        });
+      }
+
       drawGlowRing(ctx, sp.x, sp.y, pr + 6 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.85);
     }
 
-    if (intel && hasShipyard(state, systemId, planet.id)) {
-      drawGlowRing(ctx, sp.x, sp.y, pr + 12 * z, THEME.accentCyan, Math.max(1, 2 * z), 0.9);
-
-      const shipyard = system.structures.find(
-        (s) => s.type === 'shipyard' && s.bodyId === planet.id,
-      );
-      if (shipyard?.build) {
-        const prog = shipyardBuildProgress(shipyard, state.time);
-        ctx.strokeStyle = hexToRgba(THEME.accentCyan, 0.4 + 0.5 * prog);
-        ctx.lineWidth = Math.max(1, 2.5 * z);
-        ctx.beginPath();
-        ctx.arc(sp.x, sp.y, pr + 18 * z, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
-        ctx.stroke();
-        ctx.lineWidth = 1;
+    if (intel) {
+      for (const st of orbitalStructures) {
+        if (st.planetId !== planet.id) continue;
+        const ss = worldToScreen(camera, st.x, st.y, canvas);
+        if (st.kind === 'shipyard') {
+          drawShipyardStation(ctx, ss.x, ss.y, z, st, state.time);
+        } else if (st.bodyId === planet.id) {
+          drawSailLauncher(ctx, ss.x, ss.y, z, st, state.time);
+        }
       }
+    }
+
+    if (intel && hasShipyard(state, systemId, planet.id)) {
+      drawGlowRing(ctx, sp.x, sp.y, pr + 12 * z, THEME.accentCyan, Math.max(1, 2 * z), 0.35);
     }
 
     if (selection === planet.id) {
@@ -385,6 +444,28 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     }
   }
 
+  if (intel && hasFoundry(state, systemId)) {
+    const fa = foundryAnchor(state, systemId);
+    if (fa.planetId && fa.foundryId) {
+      const ps = worldToScreen(camera, fa.planetX, fa.planetY, canvas);
+      const ringScreenR = fa.ringR * z;
+      drawSailFoundryRingStation(ctx, ps.x, ps.y, ringScreenR, z, state.time, fa.foundryId);
+      const label = sailFoundryLabelAnchor(ps.x, ps.y, ringScreenR, fa.dockAngle);
+      drawSailFoundryLabel(ctx, label, z);
+    }
+
+    for (const line of foundryLauncherSupplyLines(state, systemId)) {
+      const from = worldToScreen(camera, line.fromX, line.fromY, canvas);
+      const to = worldToScreen(camera, line.toX, line.toY, canvas);
+      drawFoundrySupplyTie(ctx, {
+        fromX: from.x,
+        fromY: from.y,
+        toX: to.x,
+        toY: to.y,
+      }, z, state.time);
+    }
+  }
+
   for (const sh of shuttlePositions(state, systemId)) {
     const ss = worldToScreen(camera, sh.x, sh.y, canvas);
     drawShuttleSprite(ctx, ss.x, ss.y, sh.heading, Math.max(2.5, SHUTTLE_SIZE * z), {
@@ -405,24 +486,25 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     ctx.shadowBlur = 0;
   }
 
-  for (const burst of launchBurstOrigins(state, systemId)) {
-    const bs = worldToScreen(camera, burst.x, burst.y, canvas);
-    const fade = 1 - burst.age / 600;
-    ctx.strokeStyle = `rgba(255, 220, 140, ${0.6 * fade})`;
-    ctx.lineWidth = Math.max(1, 2 * z);
-    ctx.beginPath();
-    ctx.moveTo(bs.x, bs.y);
-    const angle = (state.time / 400 + burst.launcherId.length) % (Math.PI * 2);
-    ctx.lineTo(bs.x + Math.cos(angle) * 30 * z * fade, bs.y + Math.sin(angle) * 30 * z * fade);
-    ctx.stroke();
+  for (const st of orbitalStructures) {
+    if (st.kind === 'launcher' && st.firing) {
+      drawLaunchMuzzleFlash(ctx, st, z, camera, canvas, worldToScreen);
+    }
   }
 
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit) {
+    const orbitVisual = getFlagshipOrbitVisual(state);
+    if (orbitVisual) {
+      const os = worldToScreen(camera, orbitVisual.cx, orbitVisual.cy, canvas);
+      drawOrbitRing(ctx, os.x, os.y, orbitVisual.radius * z, 0.32);
+    }
+
     const pose = getFlagshipDisplayPose(state, accumulatorMs);
     const fs = worldToScreen(camera, pose.x, pose.y, canvas);
     const inp = getFlagshipInput();
-    const thrusting = !state.paused && (inp.x !== 0 || inp.y !== 0);
+    const orbiting = isFlagshipOrbiting(state);
+    const thrusting = !state.paused && !orbiting && (inp.x !== 0 || inp.y !== 0);
     drawFlagshipSprite(ctx, fs.x, fs.y, pose.heading, FLAGSHIP_RADIUS * z, thrusting);
   }
 

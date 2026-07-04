@@ -38,6 +38,7 @@ export function attachInput(canvas, ctx) {
     onStarView,
     onScoutSelect,
     onFollowRequest,
+    onToggleOrbit,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -74,6 +75,9 @@ export function attachInput(canvas, ctx) {
       onToggleView();
     } else if (e.code === 'KeyF') {
       onFollowRequest();
+    } else if (e.code === 'KeyO') {
+      e.preventDefault();
+      onToggleOrbit();
     }
   });
 

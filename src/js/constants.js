@@ -141,6 +141,12 @@ export const FLAGSHIP_RADIUS = 9;          // draw radius (world units)
 export const FLAGSHIP_SPAWN_ORBIT = 580;   // spawn distance from the home star
 export const FLAGSHIP_ENTRY_MARGIN = 280;  // arrival distance beyond the outermost orbit
 export const FLAGSHIP_ENTRY_MIN_RADIUS = 1400;
+export const FLAGSHIP_ORBIT_OMEGA = 0.07;           // rad/s — slow lazy local orbit
+export const FLAGSHIP_ORBIT_PAD_STAR = 220;           // min radius beyond star corona
+export const FLAGSHIP_ORBIT_PAD_PLANET = 70;          // min radius beyond planet surface
+export const FLAGSHIP_ORBIT_PAD_MOON = 40;            // min radius beyond moon surface
+export const FLAGSHIP_ORBIT_MAX_DISTANCE = 520;       // engage planet/moon orbit within this range
+export const FLAGSHIP_ORBIT_STAR_MAX_DISTANCE = 920;    // engage star orbit within this range
 
 // --- Lane transit ---
 export const LANE_SPEED = 90;              // galaxy-map units per second
@@ -175,8 +181,8 @@ export const SHELL_SAILS_REQUIRED = 5000;
 export const SHELL_COUNT = 8;
 export const SAIL_CREDIT_COST = 3.0;
 export const FOUNDRY_SAIL_RATE = 0.4;              // sails per second at base
-export const LAUNCHER_BATCH_SIZE = 8;
-export const LAUNCHER_LAUNCH_INTERVAL_MS = 2000;
+export const LAUNCHER_BATCH_SIZE = 4;
+export const LAUNCHER_LAUNCH_INTERVAL_MS = 500;
 export const SHUTTLE_TRANSFER_RATE = 0.6;          // sails/s per launcher route
 export const SOLARII_BASE_RATE = 0.08;             // per second at Shell #1, one system
 // Index = completedShells (0 = none, 1–8 = active tier).
@@ -187,7 +193,26 @@ export const SHELL_BONUS_CREDIT_MULT = [1, 1, 1.1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.
 export const SHELL_BONUS_SAIL_EFFICIENCY = [1, 1, 1, 1.15, 1.15, 1.2, 1.25, 1.3, 1.35];
 export const SAIL_SHUTTLE_TRIP_MS = 6000;
 export const SAIL_SHUTTLE_SIZE = 2.8;
-export const FOUNDRY_ORBIT_OFFSET = 80;            // world units beyond star edge
+export const FOUNDRY_PLANET_PAD = 16;                // clearance beyond planet visual radius
+export const FOUNDRY_RING_BAND_HALF = 9;           // half-thickness for planet/moon clearance checks
+export const FOUNDRY_MOON_ORBIT_FRACTION = 0.68;   // ring center stays within this fraction of innermost moon orbit
+export const FOUNDRY_CAGE_SPIN_OMEGA = 0.042;      // rad/s — whole megastructure rotation
+export const FOUNDRY_RING_SPIN_OMEGA = 0.031;      // rad/s — extra spin on tilted rings
+export const SHIPYARD_WORLD_RADIUS = 36;           // world units — scales with camera zoom
+export const SHIPYARD_ORBIT_PAD = 32;              // fallback orbit pad when planet has no moons
+export const SHIPYARD_MOON_CLEARANCE = 14;         // gap beyond moon orbit ring
+export const SHIPYARD_SPIN_OMEGA = 0;              // hub mesh spin disabled (fixed orientation)
+export const LAUNCHER_WORLD_RADIUS = 32;           // world units — scales with camera zoom
+export const LAUNCHER_ORBIT_PAD = 48;              // orbital radius pad for sail launcher platforms
+export const LAUNCHER_ORBIT_SPREAD = 0.52;         // rad — angular offset per launcher index on same body
+export const LAUNCHER_RAIL_LENGTH = LAUNCHER_WORLD_RADIUS; // muzzle at end of visual rail
+export const LAUNCHER_BURST_MS = 600;              // muzzle flash duration after fire
+export const SAIL_LAUNCH_FLIGHT_MS = 900;          // sail particle flight launcher → star
+export const SAIL_LAUNCH_STAGGER_MS = 35;          // stagger within one 4-sail batch
+export const SAIL_DOT_SIZE = 0.8;                  // world units
+export const SAIL_DOT_LOD_ZOOM = 0.35;             // full in-progress dot field above this zoom
+export const SAIL_DOT_DRAW_MAX = 6000;             // hard cap with stride
+export const SAIL_DOT_LOD_STRIDE_TARGET = 400;     // visible settled dots when zoomed out
 
 // --- Camera ---
 export const CAMERA_MIN_ZOOM = 0.15;
