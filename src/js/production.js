@@ -7,6 +7,7 @@ import {
   SHIPYARD_COMBAT_HULLS,
 } from './constants.js';
 import { hullStats } from './hull.js';
+import { getSystems } from './galaxy-scope.js';
 import {
   systemById,
   findPlanet,
@@ -19,7 +20,9 @@ import { spawnScout } from './scout.js';
 import { spawnPlayerShip } from './fleets.js';
 
 function flagshipInSystem(state, systemId) {
-  return state.flagship.systemId === systemId && !state.flagship.transit;
+  const f = state.flagship;
+  return f.galaxyId === state.activeGalaxyId
+    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
 export function canBuildShipyard(state, systemId, planetId) {
@@ -106,7 +109,7 @@ export function shipyardBuildProgress(structure, time) {
 
 export function tickProduction(state) {
   const completed = [];
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     for (const structure of system.structures) {
       if (structure.type !== 'shipyard' || !structure.build) continue;
       const end = structure.build.startedAt + structure.build.durationMs;
@@ -127,7 +130,7 @@ export function tickProduction(state) {
 
 export function shipyardCount(state) {
   let count = 0;
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     count += system.structures.filter((s) => s.type === 'shipyard').length;
   }
   return count;
@@ -135,7 +138,7 @@ export function shipyardCount(state) {
 
 export function buildingScoutCount(state) {
   let count = 0;
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     for (const s of system.structures) {
       if (s.type === 'shipyard' && s.build) count += 1;
     }
@@ -145,7 +148,7 @@ export function buildingScoutCount(state) {
 
 export function activeCombatQueues(state) {
   const queues = [];
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     for (const s of system.structures) {
       if (s.type === 'shipyard' && s.build && s.build.hull !== 'scout') {
         queues.push({

@@ -310,11 +310,16 @@ export function starGpuUniforms(profile) {
 
 /** Backfill star.type on all systems (save migration). */
 export function backfillStarTypes(state) {
-  for (const id of Object.keys(state.systems)) {
-    const star = state.systems[id].star;
-    if (!star || star.kind === 'blackhole') continue;
-    if (!star.type) {
-      star.type = resolveStarType(star).id;
+  const scan = (systems) => {
+    for (const id of Object.keys(systems ?? {})) {
+      const star = systems[id].star;
+      if (!star || star.kind === 'blackhole') continue;
+      if (!star.type) star.type = resolveStarType(star).id;
     }
+  };
+  if (state.galaxies) {
+    for (const gal of Object.values(state.galaxies)) scan(gal.systems);
+  } else {
+    scan(state.systems);
   }
 }

@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 6",
+  "description": "Multi-galaxy scale, wormholes, abstract inactive galaxies (Phase 4).",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 6 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "scouts", "capture", "playerShips", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked"
+      ],
+      "properties": {
+        "activeGalaxyId": { "type": "string" },
+        "homeGalaxyId": { "type": "string" },
+        "stronghold": { "type": "string" },
+        "galaxies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["id", "name", "status", "graph", "strongholdStarId", "discovered"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "status": { "enum": ["active", "abstract"] },
+              "strongholdStarId": { "type": "string" },
+              "discovered": { "type": "boolean" },
+              "graph": { "type": "object" },
+              "systems": { "type": "object" },
+              "intel": { "type": "object" },
+              "capture": { "type": "object" },
+              "abstract": {
+                "oneOf": [{ "type": "null" }, { "type": "object" }]
+              }
+            }
+          }
+        },
+        "wormholes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["galaxyId"],
+            "properties": {
+              "galaxyId": { "type": "string" },
+              "anchor": { "type": ["string", "null"] },
+              "anchorOwner": { "type": ["string", "null"] },
+              "discovered": { "type": "boolean" }
+            }
+          }
+        },
+        "solarii": { "type": "number" },
+        "solariiUnlocked": { "type": "boolean" },
+        "flagship": {
+          "type": "object",
+          "required": ["galaxyId", "systemId"],
+          "properties": {
+            "galaxyId": { "type": "string" },
+            "wormholeTransit": { "type": ["object", "null"] }
+          }
+        }
+      }
+    }
+  }
+}

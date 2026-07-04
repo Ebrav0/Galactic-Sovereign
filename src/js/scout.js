@@ -6,6 +6,7 @@ import {
 } from './constants.js';
 import { findPath, nodeById } from './galaxy.js';
 import { systemById } from './state.js';
+import { getGraph } from './galaxy-scope.js';
 import {
   legDurationMs,
   transitStatus as transitStatusCore,
@@ -26,7 +27,12 @@ export function resetScoutIds(state) {
 }
 
 export function spawnScout(state, systemId) {
-  const scout = { id: `scout-${nextScoutId++}`, systemId, transit: null };
+  const scout = {
+    id: `scout-${nextScoutId++}`,
+    galaxyId: state.activeGalaxyId,
+    systemId,
+    transit: null,
+  };
   state.scouts.push(scout);
   return scout;
 }
@@ -36,11 +42,13 @@ export function findScout(state, scoutId) {
 }
 
 export function idleScouts(state) {
-  return state.scouts.filter((s) => !s.transit);
+  return state.scouts.filter((s) => !s.transit && s.galaxyId === state.activeGalaxyId);
 }
 
 export function scoutsAtSystem(state, systemId) {
-  return state.scouts.filter((s) => s.systemId === systemId && !s.transit);
+  return state.scouts.filter(
+    (s) => s.galaxyId === state.activeGalaxyId && s.systemId === systemId && !s.transit,
+  );
 }
 
 export function scoutStatus(scout, galaxy, time) {
@@ -56,22 +64,22 @@ export function scoutStatus(scout, galaxy, time) {
 export function scoutEtaMs(state, scout) {
   return transitEtaMs(
     scout.transit,
-    state.galaxy,
+    getGraph(state),
     state.time,
     SCOUT_LANE_SPEED,
     SCOUT_LANE_MIN_LEG_MS,
   );
 }
 
-// Returns {ok, path, etaMs} or {ok:false, reason}.
 export function orderScoutTravel(state, scoutId, targetId) {
   const scout = findScout(state, scoutId);
+  const galaxy = getGraph(state);
   if (!scout) return { ok: false, reason: 'No such scout' };
   if (scout.transit) return { ok: false, reason: 'Scout is already in transit' };
-  if (!nodeById(state.galaxy, targetId)) return { ok: false, reason: 'No such star' };
+  if (!nodeById(galaxy, targetId)) return { ok: false, reason: 'No such star' };
   if (targetId === scout.systemId) return { ok: false, reason: 'Scout is already at that star' };
 
-  const path = findPath(state.galaxy, scout.systemId, targetId);
+  const path = findPath(galaxy, scout.systemId, targetId);
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   scout.transit = {
@@ -79,7 +87,7 @@ export function orderScoutTravel(state, scoutId, targetId) {
     legIndex: 0,
     legStartTime: state.time,
     legDurationMs: legDurationMs(
-      state.galaxy,
+      galaxy,
       path[0],
       path[1],
       SCOUT_LANE_SPEED,
@@ -92,11 +100,12 @@ export function orderScoutTravel(state, scoutId, targetId) {
 
 export function tickScouts(state) {
   const arrivals = [];
+  const galaxy = getGraph(state);
   for (const scout of state.scouts) {
-    if (!scout.transit) continue;
+    if (scout.galaxyId !== state.activeGalaxyId || !scout.transit) continue;
     advanceTransit(
       scout.transit,
-      state.galaxy,
+      galaxy,
       state.time,
       SCOUT_LANE_SPEED,
       SCOUT_LANE_MIN_LEG_MS,
@@ -111,12 +120,12 @@ export function tickScouts(state) {
   return arrivals;
 }
 
-// Galaxy-map position for rendering; null when stationed (draw at star instead).
 export function scoutTransitPositions(state) {
   const out = [];
+  const galaxy = getGraph(state);
   for (const scout of state.scouts) {
-    if (!scout.transit) continue;
-    const status = scoutStatus(scout, state.galaxy, state.time);
+    if (scout.galaxyId !== state.activeGalaxyId || !scout.transit) continue;
+    const status = scoutStatus(scout, galaxy, state.time);
     if (status) out.push({ scout, ...status });
   }
   return out;

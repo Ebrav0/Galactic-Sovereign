@@ -159,3 +159,35 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 4: 400-star generation, anchored + unanchored wormholes, abstract inactive galaxies
+
+---
+
+## Session 2026-07-04 — Phase 4 scale & wormholes
+
+**Task claimed:** Phase 4 tasks 4.1–4.12
+**Status:** complete
+
+### Done
+- `src/js/constants.js` — `SAVE_VERSION=6`, 400 stars / 10 galaxies, wormhole/abstract/stronghold constants, scaled spatial params
+- `docs/schemas/save-v6.json` — multi-galaxy + wormhole registry schema
+- `src/js/galaxy.js` — 400-star BFS-from-core graph + backbone/small-world shortcuts; `graphStats()`, `galaxyGraphFingerprint()`; spatial-bucket lane candidates
+- `src/js/state.js` — `generateStrongholdSystem()` (5 habitable / 1 barren / 2 gas); multi-galaxy `createNewGame()`
+- `src/js/galaxy-scope.js`, `hydration.js`, `abstract-galaxy.js`, `wormholes.js` — scoped accessors, hydrate/dehydrate, abstract tick, wormhole travel + anchors
+- Refactored Phase 1–3 modules for galaxy scope (`flagship`, `scout`, `fleets`, `pirates`, `economy`, `intel`, `capture`, `combat`, `production`, `dyson`, `simulation`, `render`, `ui`, `save`)
+- `src/js/render.js` + `src/index.html` + `src/js/ui.js` — viewport culling, lane LOD, wormhole panel, galaxy name HUD
+- `src/js/main.js` — extended `render_game_to_text()` + Phase 4 test hooks (`__enterWormhole`, `__completeWormholeTransit`, etc.)
+- `output/verify_phase4.mjs` — 39/39 checks; `output/verify_phase3.mjs` updated for save-v6 shape (34/34); `output/verify_phase1.mjs` star count → 400
+- `docs/IMPLEMENTATION_PLAN.md` — §5 save-v6, §7 hooks, §8 Phase 4 table
+
+### Decisions
+- One hydrated galaxy at a time; dehydrate outgoing galaxy on wormhole departure, merge player overlays into abstract blob
+- BFS spanning tree from core (not greedy MST) keeps lane-graph diameter in the 10–35 hop band at 400 stars
+- Stronghold star picked randomly per galaxy sub-seed; home galaxy stronghold uses fixed planet roster with shuffled orbit slots
+- Verify scripts use `state.paused` and `__completeWormholeTransit()` instead of keyboard / long `advanceTime` during wormhole tests
+
+### Known issues
+- Full galaxy hydration (~400 systems) has a noticeable one-time hitch on wormhole entry (acceptable per plan)
+- `graphDiameter()` is O(n²) — fine for tests; not called in the live loop
+
+### Suggested next
+- Phase 5 task 5.x: empire-wide build queue, research stations, first AI faction (expand §8 Phase 5 table into numbered tasks first)

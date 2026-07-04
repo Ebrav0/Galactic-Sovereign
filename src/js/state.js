@@ -1,16 +1,13 @@
-// Authoritative, serializable game state (IMPLEMENTATION_PLAN §5, save-v2).
+// Authoritative, serializable game state (IMPLEMENTATION_PLAN §5, save-v6).
 // Everything here must survive JSON.stringify/parse round trips.
-// Visual-only data (camera, shuttle sprites) must never enter these shapes.
 
 import {
   STARTING_CREDITS,
   HOME_SYSTEM_NAME,
-  PLANET_COUNT_RANGE,
   PLANET_ORBIT_BASE,
   PLANET_ORBIT_SPACING,
   PLANET_RADIUS_RANGE,
   PLANET_ORBIT_PERIOD_RANGE,
-  MOON_COUNT_RANGE,
   MOON_ORBIT_BASE,
   MOON_ORBIT_SPACING,
   MOON_RADIUS_RANGE,
@@ -18,12 +15,27 @@ import {
   DEAD_STAR_CHANCE,
   OTHER_PLANET_COUNT_RANGE,
   FLAGSHIP_SPAWN_ORBIT,
+  STRONGHOLD_HABITABLE_COUNT,
+  STRONGHOLD_BARREN_COUNT,
+  STRONGHOLD_GAS_COUNT,
+  STRONGHOLD_MOON_COUNT_RANGE,
+  STRONGHOLD_SECONDARY_MOON_COUNT_RANGE,
 } from './constants.js';
 import { generateGalaxy, BLACK_HOLE_ID } from './galaxy.js';
 import { pickStarType, starFieldsFromType } from './star-types.js';
+import {
+  getGalaxyCount,
+  galaxyDisplayName,
+  wormholeIdForGalaxy,
+  getSystems,
+  getGraph,
+  getGalaxyIntel,
+} from './galaxy-scope.js';
+import { createDefaultAbstract } from './abstract-galaxy.js';
+import { generateGalaxySystems, hydrateGalaxy } from './hydration.js';
 
-// Mulberry32 — small deterministic PRNG so the same seed always
-// generates the same galaxy (GDD §15 determinism requirement).
+export { BLACK_HOLE_ID };
+
 export function createRng(seed) {
   let a = seed >>> 0;
   return function rng() {
@@ -43,7 +55,6 @@ function range(rng, [min, max]) {
   return min + rng() * (max - min);
 }
 
-// FNV-1a style hash for deterministic visual seeds (save-compatible fallback).
 export function hashSeed(baseSeed, key) {
   let h = (baseSeed >>> 0) ^ 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
@@ -64,11 +75,82 @@ export function createDefaultDyson() {
   };
 }
 
-const PLANET_NAMES = ['Aurelia', 'Boreas', 'Cinder', 'Dagon', 'Erebus', 'Ferrum'];
-const MOON_SUFFIXES = ['I', 'II', 'III', 'IV'];
+const PLANET_NAMES = ['Aurelia', 'Boreas', 'Cinder', 'Dagon', 'Erebus', 'Ferrum', 'Gaia', 'Helios'];
+const MOON_SUFFIXES = ['I', 'II', 'III', 'IV', 'V'];
 const PLANET_TYPES = ['habitable', 'barren', 'gas'];
 
-// Seed neutral outposts/shipyards on non-home stars for varied capture targets.
+function shuffleInPlace(arr, rng) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function buildPlanetBodies(rng, star, gameSeed, typeSlots) {
+  const bodies = [];
+  for (let i = 0; i < typeSlots.length; i++) {
+    const type = typeSlots[i];
+    const moonRange = type === 'habitable'
+      ? STRONGHOLD_MOON_COUNT_RANGE
+      : STRONGHOLD_SECONDARY_MOON_COUNT_RANGE;
+    const moonCount = rangeInt(rng, moonRange);
+    const moons = [];
+    for (let m = 0; m < moonCount; m++) {
+      moons.push({
+        id: `p${i + 1}m${m + 1}`,
+        kind: 'moon',
+        name: `${PLANET_NAMES[i % PLANET_NAMES.length]} ${MOON_SUFFIXES[m]}`,
+        orbitRadius: MOON_ORBIT_BASE + m * MOON_ORBIT_SPACING,
+        orbitPeriodMs: Math.round(range(rng, MOON_ORBIT_PERIOD_RANGE)),
+        orbitPhase: rng(),
+        radius: range(rng, MOON_RADIUS_RANGE),
+        surface: rng() < 0.5 ? 'rocky' : 'ice',
+        visualSeed: hashSeed(gameSeed, `${star.id}:p${i + 1}m${m + 1}`),
+      });
+    }
+    bodies.push({
+      id: `p${i + 1}`,
+      kind: 'planet',
+      type,
+      name: PLANET_NAMES[i % PLANET_NAMES.length],
+      orbitRadius: PLANET_ORBIT_BASE + i * PLANET_ORBIT_SPACING,
+      orbitPeriodMs: Math.round(range(rng, PLANET_ORBIT_PERIOD_RANGE)),
+      orbitPhase: rng(),
+      radius: range(rng, PLANET_RADIUS_RANGE),
+      visualSeed: hashSeed(gameSeed, `${star.id}:p${i + 1}`),
+      moons,
+    });
+  }
+  return bodies;
+}
+
+export function generateStrongholdSystem(rng, star, { gameSeed, galaxyId, renameHome = false }) {
+  const typeSlots = [
+    ...Array(STRONGHOLD_HABITABLE_COUNT).fill('habitable'),
+    ...Array(STRONGHOLD_BARREN_COUNT).fill('barren'),
+    ...Array(STRONGHOLD_GAS_COUNT).fill('gas'),
+  ];
+  shuffleInPlace(typeSlots, rng);
+
+  const typeProfile = pickStarType(rng, { isHome: true, isDead: false });
+  const starFields = starFieldsFromType(typeProfile, rng, { isHome: true });
+
+  const system = {
+    id: star.id,
+    name: renameHome ? HOME_SYSTEM_NAME : star.name,
+    owner: 'player',
+    star: {
+      ...starFields,
+      visualSeed: hashSeed(gameSeed, `${galaxyId}:${star.id}:star`),
+    },
+    bodies: buildPlanetBodies(rng, star, gameSeed, typeSlots),
+    structures: [],
+    dyson: createDefaultDyson(),
+  };
+  return system;
+}
+
 function seedNeutralStructures(rng, system, { isHome }) {
   if (isHome) return;
   let nextId = 1;
@@ -94,13 +176,10 @@ function seedNeutralStructures(rng, system, { isHome }) {
   }
 }
 
-// One star system's bodies. The home system guarantees a habitable planet
-// with moons so a new game is always playable; other stars roll freely and
-// may be dead (0 planets — forward-base material, GDD §4).
-function generateSystem(rng, star, { isHome, gameSeed }) {
+export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
   let planetCount;
   if (isHome) {
-    planetCount = rangeInt(rng, PLANET_COUNT_RANGE);
+    planetCount = rangeInt(rng, [2, 3]);
   } else {
     planetCount = rng() < DEAD_STAR_CHANCE ? 0 : rangeInt(rng, OTHER_PLANET_COUNT_RANGE);
   }
@@ -114,8 +193,8 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
       : PLANET_TYPES[Math.floor(rng() * PLANET_TYPES.length)];
 
     const moonCount = isGuaranteedHabitable
-      ? rangeInt(rng, MOON_COUNT_RANGE)
-      : Math.floor(rng() * 3); // 0-2 moons elsewhere
+      ? rangeInt(rng, [1, 3])
+      : Math.floor(rng() * 3);
 
     const moons = [];
     for (let m = 0; m < moonCount; m++) {
@@ -128,7 +207,7 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
         orbitPhase: rng(),
         radius: range(rng, MOON_RADIUS_RANGE),
         surface: rng() < 0.5 ? 'rocky' : 'ice',
-        visualSeed: hashSeed(gameSeed, `${star.id}:p${i + 1}m${m + 1}`),
+        visualSeed: hashSeed(gameSeed, `${galaxyId}:${star.id}:p${i + 1}m${m + 1}`),
       });
     }
 
@@ -141,7 +220,7 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
       orbitPeriodMs: Math.round(range(rng, PLANET_ORBIT_PERIOD_RANGE)),
       orbitPhase: rng(),
       radius: range(rng, PLANET_RADIUS_RANGE),
-      visualSeed: hashSeed(gameSeed, `${star.id}:p${i + 1}`),
+      visualSeed: hashSeed(gameSeed, `${galaxyId}:${star.id}:p${i + 1}`),
       moons,
     });
   }
@@ -156,7 +235,7 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
     owner: isHome ? 'player' : 'neutral',
     star: {
       ...starFields,
-      visualSeed: hashSeed(gameSeed, `${star.id}:star`),
+      visualSeed: hashSeed(gameSeed, `${galaxyId}:${star.id}:star`),
     },
     bodies,
     structures: [],
@@ -167,9 +246,7 @@ function generateSystem(rng, star, { isHome, gameSeed }) {
   return system;
 }
 
-// The galactic core is enterable but hosts no buildable bodies — just the
-// black hole and its dormant wormhole (functional wormholes are Phase 4).
-function createBlackHoleSystem(blackHole) {
+export function createBlackHoleSystem(blackHole) {
   return {
     id: blackHole.id,
     name: blackHole.name,
@@ -181,62 +258,86 @@ function createBlackHoleSystem(blackHole) {
   };
 }
 
-// Re-seed neutral structures on all non-home stars (used by v1→v2 migration).
-export function seedNeutralStructuresForGalaxy(state) {
+export function seedNeutralStructuresForGalaxy(state, galaxyId = state.activeGalaxyId) {
+  const gal = state.galaxies[galaxyId];
+  if (!gal?.systems) return;
   const seed = state.meta.seed;
-  for (let i = 0; i < state.galaxy.stars.length; i++) {
-    const star = state.galaxy.stars[i];
-    if (star.id === state.stronghold) continue;
-    const sysRng = createRng((seed + (i + 1) * 0x9e3779b9 + 0x6e657574) >>> 0);
-    const system = state.systems[star.id];
-    // Strip prior neutral-seeded structures (keep player-built ones from migration).
+  for (let i = 0; i < gal.graph.stars.length; i++) {
+    const star = gal.graph.stars[i];
+    if (star.id === gal.strongholdStarId && galaxyId === state.homeGalaxyId) continue;
+    const sysRng = createRng((hashSeed(hashSeed(seed, `galaxy:${galaxyId}`), 'systems')
+      + (i + 1) * 0x9e3779b9 + 0x6e657574) >>> 0);
+    const system = gal.systems[star.id];
+    if (!system) continue;
     system.structures = system.structures.filter((s) => !s.id.startsWith('nst'));
     seedNeutralStructures(sysRng, system, { isHome: false });
   }
 }
 
-export function createNewGame(seed) {
-  const rng = createRng(seed);
-  const galaxy = generateGalaxy(rng);
-
-  // The Stronghold is a seeded pick; its star adopts the home-system name.
-  const strongholdId = galaxy.stars[Math.floor(rng() * galaxy.stars.length)].id;
-  const homeStar = galaxy.stars.find((s) => s.id === strongholdId);
-  homeStar.name = HOME_SYSTEM_NAME;
-
-  const systems = {};
-  for (let i = 0; i < galaxy.stars.length; i++) {
-    const star = galaxy.stars[i];
-    // Per-star derived seed keeps each system independent of generation order.
-    const sysRng = createRng((seed + (i + 1) * 0x9e3779b9) >>> 0);
-    systems[star.id] = generateSystem(sysRng, star, { isHome: star.id === strongholdId, gameSeed: seed });
-  }
-  systems[galaxy.blackHole.id] = createBlackHoleSystem(galaxy.blackHole);
+function buildGalaxyRecord(metaSeed, index) {
+  const galId = `gal-${index}`;
+  const gSeed = hashSeed(metaSeed, `galaxy:${galId}`);
+  const graphRng = createRng(hashSeed(gSeed, 'graph'));
+  const pickRng = createRng(hashSeed(gSeed, 'stronghold'));
+  const abstractRng = createRng(hashSeed(gSeed, 'abstract-init'));
+  const graph = generateGalaxy(graphRng);
+  const strongholdStarId = graph.stars[Math.floor(pickRng() * graph.stars.length)].id;
 
   return {
-    meta: {
-      seed,
-      createdAt: Date.now(),
-      playTimeMs: 0,
-    },
+    id: galId,
+    name: galaxyDisplayName(index),
+    status: 'abstract',
+    graph,
+    systems: {},
+    intel: {},
+    capture: {},
+    abstract: index === 0 ? null : createDefaultAbstract(abstractRng),
+    strongholdStarId,
+    discovered: index === 0,
+  };
+}
+
+export function createNewGame(seed) {
+  const galaxyCount = getGalaxyCount();
+  const galaxies = {};
+  const wormholes = {};
+
+  for (let g = 0; g < galaxyCount; g++) {
+    const galId = `gal-${g}`;
+    galaxies[galId] = buildGalaxyRecord(seed, g);
+    wormholes[wormholeIdForGalaxy(galId)] = {
+      galaxyId: galId,
+      anchor: null,
+      anchorOwner: null,
+      discovered: g === 0,
+    };
+  }
+
+  const homeGalaxyId = 'gal-0';
+  const strongholdStarId = galaxies[homeGalaxyId].strongholdStarId;
+
+  const state = {
+    meta: { seed, createdAt: Date.now(), playTimeMs: 0 },
     time: 0,
     credits: STARTING_CREDITS,
     paused: false,
-    stronghold: strongholdId,
-    galaxy,
-    systems,
+    activeGalaxyId: homeGalaxyId,
+    homeGalaxyId,
+    stronghold: strongholdStarId,
+    galaxies,
+    wormholes,
     flagship: {
-      systemId: strongholdId,
+      galaxyId: homeGalaxyId,
+      systemId: strongholdStarId,
       x: 0,
       y: -FLAGSHIP_SPAWN_ORBIT,
       vx: 0,
       vy: 0,
       heading: 0,
       transit: null,
+      wormholeTransit: null,
     },
     scouts: [],
-    intel: { [strongholdId]: { gatheredAt: 0 } },
-    capture: {},
     playerShips: [],
     pirates: { fleets: [], pendingRespawn: [] },
     systemBattles: {},
@@ -244,9 +345,13 @@ export function createNewGame(seed) {
     solarii: 0,
     solariiUnlocked: false,
   };
-}
 
-// --- Derived-position helpers (determinism: pure functions of state.time) ---
+  hydrateGalaxy(state, homeGalaxyId);
+  const intel = getGalaxyIntel(state, homeGalaxyId);
+  intel[strongholdStarId] = { gatheredAt: 0 };
+
+  return state;
+}
 
 export function bodyAngle(body, time) {
   return 2 * Math.PI * (body.orbitPhase + time / body.orbitPeriodMs);
@@ -254,10 +359,7 @@ export function bodyAngle(body, time) {
 
 export function planetPosition(planet, time) {
   const a = bodyAngle(planet, time);
-  return {
-    x: Math.cos(a) * planet.orbitRadius,
-    y: Math.sin(a) * planet.orbitRadius,
-  };
+  return { x: Math.cos(a) * planet.orbitRadius, y: Math.sin(a) * planet.orbitRadius };
 }
 
 export function moonPosition(planet, moon, time) {
@@ -269,20 +371,17 @@ export function moonPosition(planet, moon, time) {
   };
 }
 
-// --- Lookups (all system-scoped since save-v1) ---
-
-export function systemById(state, systemId) {
-  return state.systems[systemId] ?? null;
+export function systemById(state, systemId, galaxyId = state.activeGalaxyId) {
+  return getSystems(state, galaxyId)[systemId] ?? null;
 }
 
-export function findPlanet(state, systemId, planetId) {
-  const system = systemById(state, systemId);
+export function findPlanet(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system?.bodies.find((b) => b.id === planetId) ?? null;
 }
 
-/** Resolve a planet or moon id to { body, planet } (planet null for top-level planets). */
-export function findBody(state, systemId, bodyId) {
-  const system = systemById(state, systemId);
+export function findBody(state, systemId, bodyId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   if (!system) return null;
   for (const planet of system.bodies) {
     if (planet.id === bodyId) return { body: planet, planet: null };
@@ -299,64 +398,64 @@ export function ensureDyson(system) {
   return system.dyson;
 }
 
-export function structuresOn(state, systemId, bodyId) {
-  const system = systemById(state, systemId);
+export function structuresOn(state, systemId, bodyId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system ? system.structures.filter((s) => s.bodyId === bodyId) : [];
 }
 
-export function hasOutpost(state, systemId, planetId) {
-  return structuresOn(state, systemId, planetId).some((s) => s.type === 'outpost');
+export function hasOutpost(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
+  return structuresOn(state, systemId, planetId, galaxyId).some((s) => s.type === 'outpost');
 }
 
-export function hasShipyard(state, systemId, planetId) {
-  return structuresOn(state, systemId, planetId).some((s) => s.type === 'shipyard');
+export function hasShipyard(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
+  return structuresOn(state, systemId, planetId, galaxyId).some((s) => s.type === 'shipyard');
 }
 
-export function findShipyardOnPlanet(state, systemId, planetId) {
-  return structuresOn(state, systemId, planetId).find((s) => s.type === 'shipyard') ?? null;
+export function findShipyardOnPlanet(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
+  return structuresOn(state, systemId, planetId, galaxyId).find((s) => s.type === 'shipyard') ?? null;
 }
 
-export function findStructure(state, systemId, structureId) {
-  const system = systemById(state, systemId);
+export function findStructure(state, systemId, structureId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system?.structures.find((s) => s.id === structureId) ?? null;
 }
 
-export function isPlayerOwned(state, systemId) {
-  const system = systemById(state, systemId);
+export function isPlayerOwned(state, systemId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system?.owner === 'player';
 }
 
-export function isCapturableTarget(state, systemId) {
+export function isCapturableTarget(state, systemId, galaxyId = state.activeGalaxyId) {
   if (systemId === BLACK_HOLE_ID) return false;
-  return !isPlayerOwned(state, systemId);
+  return !isPlayerOwned(state, systemId, galaxyId);
 }
 
-export function hasFoundry(state, systemId) {
-  const system = systemById(state, systemId);
+export function hasFoundry(state, systemId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system?.structures.some((s) => s.type === 'sail_foundry') ?? false;
 }
 
-export function findFoundry(state, systemId) {
-  const system = systemById(state, systemId);
+export function findFoundry(state, systemId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system?.structures.find((s) => s.type === 'sail_foundry') ?? null;
 }
 
-export function launcherCountOnBody(state, systemId, bodyId) {
-  return structuresOn(state, systemId, bodyId).filter((s) => s.type === 'dyson_launcher').length;
+export function launcherCountOnBody(state, systemId, bodyId, galaxyId = state.activeGalaxyId) {
+  return structuresOn(state, systemId, bodyId, galaxyId).filter((s) => s.type === 'dyson_launcher').length;
 }
 
-export function dysonLaunchers(state, systemId) {
-  const system = systemById(state, systemId);
+export function dysonLaunchers(state, systemId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   return system?.structures.filter((s) => s.type === 'dyson_launcher') ?? [];
 }
 
-export function dysonSummary(state, systemId) {
-  const system = systemById(state, systemId);
+export function dysonSummary(state, systemId, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
   if (!system) return null;
   const dyson = ensureDyson(system);
-  const launchers = dysonLaunchers(state, systemId);
+  const launchers = dysonLaunchers(state, systemId, galaxyId);
   return {
-    hasFoundry: hasFoundry(state, systemId),
+    hasFoundry: hasFoundry(state, systemId, galaxyId),
     launcherCount: launchers.length,
     completedShells: dyson.completedShells,
     shellSails: dyson.shellSails,
@@ -364,3 +463,9 @@ export function dysonSummary(state, systemId) {
     launcherStockTotal: launchers.reduce((n, l) => n + (dyson.launcherStock[l.id] ?? 0), 0),
   };
 }
+
+export function getActiveGraph(state) {
+  return getGraph(state);
+}
+
+export { seedNeutralStructures };
