@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 7;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -20,21 +20,54 @@ export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the sam
 export const SHIPYARD_COST = 400;
 export const SCOUT_HULL_COST = 120;
 
-// --- Combat hulls (Phase 2) ---
+// --- Combat hulls (Phase 2 + GDD roster) ---
 export const HULL_STATS = {
   scout: { hp: 50, dps: 0, captureForce: 0, cost: 120, buildMs: 18000, laneSpeed: 140, healRate: 0 },
   corvette: { hp: 120, dps: 8, captureForce: 1, cost: 180, buildMs: 22000, laneSpeed: 120, healRate: 0 },
+  patrol_cutter: { hp: 90, dps: 6, captureForce: 1, cost: 150, buildMs: 20000, laneSpeed: 130, healRate: 0 },
   frigate: { hp: 200, dps: 12, captureForce: 2, cost: 280, buildMs: 30000, laneSpeed: 110, healRate: 0 },
   destroyer: { hp: 350, dps: 18, captureForce: 3, cost: 450, buildMs: 40000, laneSpeed: 100, healRate: 0 },
   cruiser: { hp: 500, dps: 22, captureForce: 4, cost: 650, buildMs: 55000, laneSpeed: 95, healRate: 0 },
+  battleship: { hp: 750, dps: 28, captureForce: 5, cost: 900, buildMs: 70000, laneSpeed: 90, healRate: 0 },
+  dreadnought: { hp: 1000, dps: 35, captureForce: 6, cost: 1200, buildMs: 85000, laneSpeed: 85, healRate: 0 },
   light_carrier: { hp: 400, dps: 5, captureForce: 2, cost: 550, buildMs: 50000, laneSpeed: 90, healRate: 0 },
+  fleet_carrier: { hp: 550, dps: 7, captureForce: 3, cost: 750, buildMs: 62000, laneSpeed: 88, healRate: 0 },
+  super_carrier: { hp: 700, dps: 10, captureForce: 4, cost: 950, buildMs: 75000, laneSpeed: 85, healRate: 0 },
+  light_hauler: { hp: 180, dps: 2, captureForce: 0, cost: 200, buildMs: 25000, laneSpeed: 100, healRate: 0 },
+  bulk_freighter: { hp: 280, dps: 2, captureForce: 0, cost: 320, buildMs: 32000, laneSpeed: 85, healRate: 0 },
+  armored_convoy: { hp: 400, dps: 5, captureForce: 1, cost: 480, buildMs: 38000, laneSpeed: 80, healRate: 0 },
   fighter: { hp: 30, dps: 6, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 140, healRate: 0 },
+  interceptor: { hp: 25, dps: 7, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 150, healRate: 0 },
+  heavy_fighter: { hp: 45, dps: 12, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 125, healRate: 0 },
   bomber: { hp: 40, dps: 10, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 120, healRate: 0 },
   healer: { hp: 150, dps: 0, captureForce: 1, cost: 320, buildMs: 35000, laneSpeed: 105, healRate: 15 },
+  sensor_ship: { hp: 120, dps: 0, captureForce: 0, cost: 260, buildMs: 28000, laneSpeed: 115, healRate: 0 },
+  builder_ship: { hp: 200, dps: 0, captureForce: 1, cost: 380, buildMs: 42000, laneSpeed: 95, healRate: 0 },
+  command_cruiser: { hp: 450, dps: 14, captureForce: 3, cost: 720, buildMs: 58000, laneSpeed: 95, healRate: 0 },
+  miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
 };
 
-export const COMBAT_HULL_TYPES = ['corvette', 'frigate', 'destroyer', 'cruiser', 'light_carrier', 'healer'];
-export const SHIPYARD_COMBAT_HULLS = ['corvette', 'frigate', 'destroyer', 'healer'];
+/** Carrier-supplied wing craft — not built at shipyards. */
+export const CARRIER_WING_HULLS = ['fighter', 'interceptor', 'heavy_fighter', 'bomber'];
+
+export const COMBAT_HULL_TYPES = [
+  'corvette', 'patrol_cutter', 'frigate', 'destroyer', 'cruiser', 'battleship', 'dreadnought',
+  'light_carrier', 'fleet_carrier', 'super_carrier', 'healer', 'sensor_ship', 'builder_ship',
+  'command_cruiser', 'light_hauler', 'bulk_freighter', 'armored_convoy', 'miner',
+];
+
+export const SHIPYARD_COMBAT_HULLS = COMBAT_HULL_TYPES.filter((h) => !CARRIER_WING_HULLS.includes(h));
+
+/** UI grouping for empire build queue buttons. */
+export const SHIP_HULL_CATEGORIES = {
+  scout: { label: 'Scout', hulls: ['scout'] },
+  escorts: { label: 'Escorts', hulls: ['corvette', 'frigate', 'patrol_cutter'] },
+  line: { label: 'Line Warships', hulls: ['destroyer', 'cruiser', 'battleship', 'dreadnought'] },
+  carriers: { label: 'Carriers', hulls: ['light_carrier', 'fleet_carrier', 'super_carrier'] },
+  transports: { label: 'Transports', hulls: ['light_hauler', 'bulk_freighter', 'armored_convoy'] },
+  support: { label: 'Support', hulls: ['healer', 'sensor_ship', 'builder_ship'] },
+  special: { label: 'Special', hulls: ['miner', 'command_cruiser'] },
+};
 
 export const SHIP_LANE_SPEED = 100;
 export const FLEET_STATION_ORBIT_PAD = 300;   // min distance beyond star edge for idle formation
@@ -94,22 +127,46 @@ export const CAPTURE_STRUCTURE_WEIGHT = {
   shipyard: 4,
   sail_foundry: 6,
   dyson_launcher: 3,
+  trade_station: 3,
+  research_station: 4,
 };
 export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
 export const CAPTURE_HOLD_MS = 20000;
 
-// --- Galaxy generation (GDD §4–5) ---
-export const GALAXY_STAR_COUNT = 20;
-export const GALAXY_RADIUS = 950;                // max star distance from the galactic core
-export const GALAXY_INNER_RADIUS = 260;          // keep stars clear of the black hole
-export const GALAXY_MIN_STAR_SPACING = 190;      // rejection-sampling minimum distance
-export const GALAXY_EXTRA_LANE_MAX_DIST = 430;   // non-MST lanes must be shorter than this
-export const GALAXY_TARGET_AVG_DEGREE = 2.6;     // stop adding extra lanes past this
+// --- Galaxy generation (GDD §4–5, Phase 4) ---
+export const GALAXY_STAR_COUNT = 400;
+export const GALAXY_COUNT = 10;
+export const GALAXY_RADIUS = 4250;               // scaled ~4.5× for 400-star density
+export const GALAXY_INNER_RADIUS = 420;          // keep stars clear of the black hole
+export const GALAXY_MIN_STAR_SPACING = 85;       // rejection-sampling minimum distance
+export const GALAXY_EXTRA_LANE_MAX_DIST = 720;   // non-MST lanes must be shorter than this
+export const GALAXY_TARGET_AVG_DEGREE = 3.35;    // stop adding extra lanes past this
 export const GALAXY_MAX_DEGREE = 4;              // per-node lane cap
-export const BLACK_HOLE_MIN_LANES = 2;           // the core is a reachable travel node
+export const GALAXY_BACKBONE_SPOKE_COUNT = 18; // long-range shortcuts around the rim
+export const GALAXY_SMALL_WORLD_LANES = 96;    // random chords to keep diameter low
+export const BLACK_HOLE_MIN_LANES = 12;          // core hub keeps travel diameter low
 export const DEAD_STAR_CHANCE = 0.18;            // probability a non-home star has 0 planets
 export const OTHER_PLANET_COUNT_RANGE = [1, 5];  // planet roll for non-home stars
+
+// --- Stronghold system (fixed roster, Phase 4) ---
+export const STRONGHOLD_HABITABLE_COUNT = 5;
+export const STRONGHOLD_BARREN_COUNT = 1;
+export const STRONGHOLD_GAS_COUNT = 2;
+export const STRONGHOLD_MOON_COUNT_RANGE = [1, 4];           // per habitable planet
+export const STRONGHOLD_SECONDARY_MOON_COUNT_RANGE = [0, 2]; // barren + gas
+
+// --- Wormholes (Phase 4) ---
+export const WORMHOLE_TRANSIT_MS = 8000;
+export const WORMHOLE_HAZARD_CREDIT_COST = 50;
+export const WORMHOLE_ANCHOR_COST = 2000;
+export const WORMHOLE_ANCHOR_BUILD_MS = 30000;
+
+// --- Abstract galaxy simulation (Phase 4) ---
+export const ABSTRACT_TICK_CREDITS_RATE = 0.15;   // aiCredits per tick
+export const ABSTRACT_TICK_SOLARII_RATE = 0.002;  // aiSolarii per tick
+export const ABSTRACT_TICK_DYSON_RATE = 0.0004;   // shell progress per tick
+export const ABSTRACT_TICK_FLEET_RATE = 0.08;     // fleetPower per tick
 
 // --- Flagship (GDD §8) ---
 export const FLAGSHIP_ACCEL = 420;         // world units / s^2 while thrusting
@@ -133,7 +190,7 @@ export const LANE_MIN_LEG_MS = 2500;       // floor so short lanes still read as
 // --- Home system generation ---
 export const HOME_SYSTEM_NAME = 'Solara Prime';
 export const STAR_RADIUS = 200;
-export const PLANET_COUNT_RANGE = [2, 3];        // min, max (inclusive)
+export const PLANET_COUNT_RANGE = [2, 3];        // legacy; stronghold uses fixed roster
 export const PLANET_ORBIT_BASE = 1100;           // world units, first orbit
 export const PLANET_ORBIT_SPACING = 720;         // gap between orbits
 export const PLANET_RADIUS_RANGE = [22, 38];
@@ -158,10 +215,10 @@ export const LAUNCHERS_PER_BODY_MAX = 3;
 export const SHELL_SAILS_REQUIRED = 5000;
 export const SHELL_COUNT = 8;
 export const SAIL_CREDIT_COST = 3.0;
-export const FOUNDRY_SAIL_RATE = 0.4;              // sails per second at base
+export const FOUNDRY_SAIL_RATE = 6;                // sails per second at base
 export const LAUNCHER_BATCH_SIZE = 4;
-export const LAUNCHER_LAUNCH_INTERVAL_MS = 500;
-export const SHUTTLE_TRANSFER_RATE = 0.6;          // sails/s per launcher route
+export const LAUNCHER_LAUNCH_INTERVAL_MS = 1000;
+export const SAIL_SHUTTLE_CAPACITY = 500;          // sails delivered per shuttle arrival at launcher
 export const SOLARII_BASE_RATE = 0.08;             // per second at Shell #1, one system
 // Index = completedShells (0 = none, 1–8 = active tier).
 export const SOLARII_SHELL_MULTIPLIERS = [0, 1, 1.25, 1.5, 2, 2.5, 3.25, 4, 5];
@@ -169,7 +226,7 @@ export const SOLARII_SHELL_MULTIPLIERS = [0, 1, 1.25, 1.5, 2, 2.5, 3.25, 4, 5];
 export const SHELL_BONUS_CREDIT_MULT = [1, 1, 1.1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35];
 // Index = completedShells; foundry sail rate multiplier.
 export const SHELL_BONUS_SAIL_EFFICIENCY = [1, 1, 1, 1.15, 1.15, 1.2, 1.25, 1.3, 1.35];
-export const SAIL_SHUTTLE_TRIP_MS = 6000;
+export const SAIL_SHUTTLE_TRIP_MS = 1000;          // full foundry↔launcher round trip (one shuttle on route)
 export const SAIL_SHUTTLE_SIZE = 2.8;
 export const FOUNDRY_PLANET_PAD = 16;                // clearance beyond planet visual radius
 export const FOUNDRY_RING_BAND_HALF = 9;           // half-thickness for planet/moon clearance checks
@@ -198,8 +255,28 @@ export const CAMERA_MAX_ZOOM = 3.5;
 export const CAMERA_DEFAULT_ZOOM = 0.38;
 export const CAMERA_ZOOM_STEP = 1.1;   // per wheel notch
 export const CAMERA_FOLLOW_RATE = 6;   // 1/s exponential approach toward the flagship
-export const GALAXY_CAMERA_MIN_ZOOM = 0.22;
+export const GALAXY_CAMERA_MIN_ZOOM = 0.04;
 export const GALAXY_CAMERA_MAX_ZOOM = 2.2;
+export const GALAXY_LOD_ZOOM = 0.12;             // below this: simplified lane pulses
+
+// --- Phase 5: Empire layer ---
+export const EMPIRE_QUEUE_MAX = 20;
+export const RESEARCH_STATION_COST = 550;
+export const RESEARCH_STATION_CAP = 3;
+export const RESEARCH_STATION_BONUS = 0.15;
+export const RESEARCH_BASE_MS = 45000;
+export const TRADE_STATION_COST = 450;
+export const TRADE_BASE_INCOME = 1.5;
+export const TRADE_CONNECTIVITY_BONUS = 0.1;
+export const SHELL_TRADE_BONUS = 1.25;
+export const SHELL_RESEARCH_BONUS = 1.2;
+export const AI_STARTING_CREDITS = 1200;
+export const AI_STARTING_SYSTEMS = 4;
+export const AI_TICK_INTERVAL_TICKS = 20;
+export const AI_BUILD_OUTPOST_COST = 300;
+export const AI_PERSONALITY_NAMES = { expansionist: 'Dominion of Helix' };
+export const AI_LANE_SPEED = 90;
+export const AI_LANE_MIN_LEG_MS = 2500;
 
 // --- Rendering ---
 export const STARFIELD_COUNT = 320;

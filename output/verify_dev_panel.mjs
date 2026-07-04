@@ -80,7 +80,7 @@ res = await devAction('revealIntel', { systemId: 'nope' });
 check('invalid system rejected', res.ok === false && res.code === 'INVALID_SYSTEM', res.code);
 
 // --- Negative: invalid hull ---
-res = await devAction('spawnFriendly', { hull: 'cruiser', count: 1 });
+res = await devAction('spawnFriendly', { hull: 'fighter', count: 1 });
 check('invalid hull rejected', res.ok === false && res.code === 'INVALID_HULL', res.code);
 
 // --- Negative: invalid count ---
@@ -119,7 +119,8 @@ check('dyson kit ok', res.ok === true, JSON.stringify(res.details));
 s = await text();
 check('foundry after dyson kit', s.structures.some((st) => st.type === 'sail_foundry'));
 const state = await page.evaluate(() => window.getGameState());
-const sys = state.systems[s.currentSystem];
+const sys = state.galaxies?.[state.activeGalaxyId]?.systems?.[s.currentSystem]
+  ?? state.systems?.[s.currentSystem];
 const launcher = sys.structures.find((st) => st.type === 'dyson_launcher');
 check('launcher after dyson kit', !!launcher);
 check('launcher stock initialized', launcher && sys.dyson?.launcherStock?.[launcher.id] != null);

@@ -39,6 +39,7 @@ export function attachInput(canvas, ctx) {
     onScoutSelect,
     onFollowRequest,
     onToggleOrbit,
+    onCloseSidePanel,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -70,6 +71,7 @@ export function attachInput(canvas, ctx) {
       e.preventDefault();
       onTogglePause();
     } else if (e.code === 'Escape') {
+      if (onCloseSidePanel) onCloseSidePanel();
       onSelect(null);
     } else if (e.code === 'KeyM') {
       onToggleView();

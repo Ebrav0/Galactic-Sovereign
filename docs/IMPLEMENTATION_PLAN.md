@@ -114,70 +114,57 @@ Enforcement is by convention + review; there is no runtime guard. When a change 
 
 ---
 
-## §5 State & Save Schema (save-v2, current)
+## §5 State & Save Schema (save-v6, current)
 
 ### Live state shape (authoritative, in `state.js`)
 
+Phase 4 introduces **multi-galaxy** saves: one **hydrated** galaxy runs the full simulation; the other nine run as lightweight **abstract** blobs until entered via wormhole.
+
 ```js
 {
-  meta: {
-    seed: 123456789,          // integer; drives all procedural generation
-    createdAt: 1751470000000, // epoch ms
-    playTimeMs: 0             // accumulated real play time (informational)
+  meta: { seed, createdAt, playTimeMs },
+  time: 0,
+  credits: 900,
+  paused: false,
+  activeGalaxyId: "gal-0",       // hydrated galaxy
+  homeGalaxyId: "gal-0",
+  stronghold: "sys-51",          // stronghold star id in home galaxy (varies per seed)
+  galaxies: {
+    "gal-0": {
+      id: "gal-0",
+      name: "Milky Way",
+      status: "active" | "abstract",
+      graph: { stars[400], blackHole, lanes },
+      systems: { /* 401 entries when active; {} when abstract */ },
+      intel: {},
+      capture: {},
+      abstract: null | { aiCredits, systemOverlays, intel, capture, ... },
+      strongholdStarId: "sys-51",
+      discovered: true
+    },
+    "gal-1": { /* same shape; abstract by default */ }
   },
-  time: 0,                    // simulated ms; the determinism clock
-  credits: 900,               // starting credits from constants
-  paused: false,              // serialized so a save reopens paused
-  stronghold: "sys-19",       // star id of the Stronghold
-  galaxy: {                   // 20-star lane graph, all from the seed
-    stars: [ { id: "sys-0", name: "...", x: 412, y: -305 } ],
-    blackHole: { id: "core", name: "Galactic Core", x: 0, y: 0 },
-    lanes: [ ["sys-0", "sys-7"], ["sys-7", "core"] ]  // undirected edges
+  wormholes: {
+    "wh-gal-0": { galaxyId: "gal-0", anchor: null | "wh-gal-2", anchorOwner, discovered }
   },
-  systems: {                  // one system per star + the black-hole core
-    "sys-0": {
-      id: "sys-0",
-      name: "...",
-      owner: "player" | "neutral",
-      star: { radius: 40, color: "#ffd27a" },   // core adds kind: "blackhole"
-      bodies: [               // planets; moons nested under their planet
-        {
-          id: "p1",
-          kind: "planet",
-          type: "habitable" | "barren" | "gas",
-          name: "...",
-          orbitRadius: 220,     // world units from star
-          orbitPeriodMs: 240000,// full revolution time
-          orbitPhase: 0.37,     // 0..1 offset from seed
-          radius: 12,           // draw/hit radius
-          moons: [
-            { id: "p1m1", name: "...", orbitRadius: 30,
-              orbitPeriodMs: 30000, orbitPhase: 0.1, radius: 4 }
-          ]
-        }
-      ],
-      structures: [           // flat list; body linkage by bodyId
-        { id: "st1", type: "outpost", bodyId: "p1", builtAtTime: 12345 },
-        { id: "st2", type: "shipyard", bodyId: "p1", builtAtTime: 5000,
-          build: null | { hull: "scout", startedAt: 12000, durationMs: 18000 } }
-      ]
-    }
-  },
-  scouts: [
-    { id: "scout-1", systemId: "sys-19", transit: null }
-  ],
-  intel: { "sys-19": { gatheredAt: 0 } },   // Stronghold pre-populated
-  capture: { "sys-3": { progressMs: 4000 } },
   flagship: {
-    systemId: "sys-19",       // node id occupied; null while in lane transit
-    x: 0, y: -130,            // system-view world coords (player-driven, so stored)
-    vx: 0, vy: 0,
-    heading: 0,               // radians
-    transit: null             // or { path: [nodeIds], legIndex,
-                              //      legStartTime, legDurationMs }
-  }
+    galaxyId: "gal-0",
+    systemId: "sys-51",
+    x, y, vx, vy, heading,
+    transit: null,
+    wormholeTransit: null | { fromWh, toWh, startTime, durationMs }
+  },
+  scouts: [{ id, galaxyId, systemId, transit }],
+  playerShips: [{ id, hull, galaxyId, systemId, hp, maxHp, transit }],
+  pirates: { fleets: [{ id, galaxyId, systemId, ships, transit, ... }] },
+  solarii: 0,
+  solariiUnlocked: false,
+  systemBattles: {},
+  battleStance: "balanced"
 }
 ```
+
+Legacy flat fields (`state.galaxy`, `state.systems`, top-level `intel`/`capture`) are **not** written by new saves; `galaxy-scope.js` falls back to them when loading migrated v1–v5 files before hydration completes.
 
 Orbital positions are **not stored**: `angle = 2π * (orbitPhase + time / orbitPeriodMs)`.
 Lane-transit positions are **not stored** either: they interpolate from
@@ -189,12 +176,16 @@ simulation ticks, so `advanceTime` stays deterministic.
 
 ```json
 {
-  "saveVersion": 1,
+  "saveVersion": 6,
   "checksum": "<crc32 hex of the JSON-stringified state field>",
   "savedAt": 1751470000000,
   "state": { }
 }
 ```
+
+### Migration 5 → 6
+
+Wraps the flat v5 galaxy into `galaxies['gal-0']`, generates nine abstract sibling galaxies from derived sub-seeds, builds the wormhole registry, and adds `activeGalaxyId` / `homeGalaxyId`. Player progress (ships, dyson, scouts, credits, Solarii) is preserved on the home galaxy.
 
 ### Migration 0 → 1
 
@@ -272,8 +263,18 @@ Exposed on `window` by `src/js/main.js`. **Every new feature must be observable 
 | `__orderTravel` | `(starId) => result` | Issues a lane-travel order; returns `{ok, path, etaMs}` or `{ok:false, reason}`. |
 | `__setView` | `('system'\|'galaxy') => void` | Switches the active view. |
 | `__viewSystem` | `(systemId) => void` | Opens a system's view (any node, including `core`). |
+| `__setGalaxyScaleForTests` | `({ stars?, galaxies? }) => void` | Override star/galaxy counts for fast verify runs. |
+| `__enterWormhole` | `(opts?) => result` | Order wormhole travel from core; `{ forceAnchored?, targetGalaxyId? }`. |
+| `__completeWormholeTransit` | `() => result` | Instantly finish in-progress wormhole transit (tests). |
+| `__buildWormholeAnchor` | `(targetGalaxyId) => result` | Build paired anchor at core. |
+| `__hydrateGalaxy` / `__dehydrateGalaxy` | `(galaxyId) => result` | Direct hydration control. |
+| `__getGraphStats` | `() => metrics` | `{ starCount, avgDegree, diameter, blackHoleDegree }`. |
+| `__getGalaxyFingerprint` | `(galaxyId) => string` | Hash of star coords + lane keys. |
+| `__getStrongholdComposition` | `() => object` | Home stronghold planet/moon counts. |
+| `__listGalaxyIds` | `() => string[]` | All galaxy ids in save. |
+| `__resetWormholeJumpCounter` | `(n?) => void` | Reset unanchored exit RNG counter. |
 
-Assertion pattern (Playwright client or console):
+`render_game_to_text()` also exposes `saveVersion`, `metaGalaxy`, `wormholes`, `abstractGalaxies`, `stronghold`, and `flagship.galaxyId` / `flagship.wormholeTransit`.
 
 ```js
 const before = JSON.parse(window.render_game_to_text()).credits;
@@ -361,10 +362,41 @@ gives an unanchored exit nowhere to go).
 **Phase 3 exit criteria:** full production chain; Solarii after Shell #1; shell visuals; save-v5; verify scripts pass.
 
 ### Phase 4 — Scale & wormholes
-400-star generation; black hole node; anchored + unanchored wormholes; abstract simulation of inactive galaxies; hydration on entry.
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 4.1 | Constants + save-v6 | `GALAXY_STAR_COUNT=400`, `GALAXY_COUNT=10`, wormhole/abstract rates; `docs/schemas/save-v6.json` |
+| 4.2 | 400-star generation | BFS spanning tree from core + extra lanes + backbone/small-world shortcuts; `graphStats()`; unique fingerprints per galaxy |
+| 4.2b | Stronghold generator | Fixed roster 5 habitable / 1 barren / 2 gas; shuffled slots; varying moons; random stronghold star per seed |
+| 4.3 | Multi-galaxy state + migration | `createNewGame` builds 10 galaxies; `migrateV5toV6` preserves Phase 3 progress |
+| 4.4 | Galaxy-scope refactor | `galaxy-scope.js`; all modules use scoped graph/systems/intel/capture; entities carry `galaxyId` |
+| 4.5 | Hydration | `hydrateGalaxy` / `dehydrateGalaxy`; single active galaxy invariant; overlay merge |
+| 4.6 | Abstract sim | `abstract-galaxy.js`; ticks inactive galaxies; AI anchor stub |
+| 4.7 | Unanchored wormholes | Core entry; hazard cost; dehydrate/hydrate on arrival; `wormholeTransit` |
+| 4.8 | Wormhole anchors | Build at core; pairwise linking; anchored routing |
+| 4.9 | Render + UI scale | Viewport culling; lane LOD; galaxy name HUD; wormhole panel |
+| 4.10 | Test hooks | Phase 4 hooks + extended `render_game_to_text()` |
+| 4.11 | Verification | `output/verify_phase4.mjs` (39 checks); phase3 regression updated |
+| 4.12 | Docs + handoff | This table + `progress.md` entry |
+
+**Phase 4 exit criteria:** 400-star graphs with valid metrics; 10 unique galaxies per save; stronghold roster fixed; wormhole travel with hydration; save-v6; `verify_phase4.mjs` + phase3 regression pass.
 
 ### Phase 5 — Empire layer
-Empire-wide build queue with shipyard routing; research stations + tech web; trade stations; first AI faction.
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 5.1 | save-v7 + constants | `SAVE_VERSION=7`; Phase 5 constants; `docs/schemas/save-v7.json` |
+| 5.2 | State shapes | `empireQueue`, `research`, `factions`, `aiShips`; ownership helpers |
+| 5.3 | migrateV6toV7 | v6 loads; AI seeded on home galaxy; shipyard `builds[]` compat |
+| 5.4 | Ownership + capture | `isAiOwned`; AI counts for capture contest |
+| 5.5 | Simulation tick order | trade → research → dispatch → production → AI |
+| 5.6–5.14 | Empire queue | CRUD, dispatcher, multi-slot, UI panel, hooks |
+| 5.15–5.20 | Research + tech web | 18 nodes, stations, dual currency, Tech tab |
+| 5.21–5.25 | Trade stations | build, graph income, shell #5 bonus, HUD |
+| 5.26–5.31 | AI faction | seed, ships, economy, expansion, hydration |
+| 5.32–5.38 | Integration + verify | `verify_phase5.mjs` 24+ checks; phase3/4 regression |
+
+**Phase 5 exit criteria:** empire queue routes ships; research/trade/AI loops work; save-v7; `verify_phase5.mjs` pass; phase3/4 regression updated.
 
 ### Phase 6 — Late game
 Superweapon (3 completed spheres); hero flagships; diplomacy; 5–6 missions; tutorial; content roster completion.

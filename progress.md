@@ -248,3 +248,66 @@ Never delete prior entries.
 - In-flight particles: 8 per launcher fire, staggered 35 ms, 900 ms flight from muzzle to target slot; all derived from `state.time` + dyson counters (never serialized)
 - Supply tie: dashed amber line from closest equatorial foundry ring point to each launcher dock
 - Zoom LOD: stride to ~400 visible settled dots below `SAIL_DOT_LOD_ZOOM` (0.35); always draw all in-flight sparks
+
+---
+
+## Session 2026-07-04 — Phase 4 scale & wormholes
+
+**Task claimed:** Phase 4 tasks 4.1–4.12
+**Status:** complete
+
+### Done
+- `src/js/constants.js` — `SAVE_VERSION=6`, 400 stars / 10 galaxies, wormhole/abstract/stronghold constants, scaled spatial params
+- `docs/schemas/save-v6.json` — multi-galaxy + wormhole registry schema
+- `src/js/galaxy.js` — 400-star BFS-from-core graph + backbone/small-world shortcuts; `graphStats()`, `galaxyGraphFingerprint()`; spatial-bucket lane candidates
+- `src/js/state.js` — `generateStrongholdSystem()` (5 habitable / 1 barren / 2 gas); multi-galaxy `createNewGame()`
+- `src/js/galaxy-scope.js`, `hydration.js`, `abstract-galaxy.js`, `wormholes.js` — scoped accessors, hydrate/dehydrate, abstract tick, wormhole travel + anchors
+- Refactored Phase 1–3 modules for galaxy scope (`flagship`, `scout`, `fleets`, `pirates`, `economy`, `intel`, `capture`, `combat`, `production`, `dyson`, `simulation`, `render`, `ui`, `save`)
+- `src/js/render.js` + `src/index.html` + `src/js/ui.js` — viewport culling, lane LOD, wormhole panel, galaxy name HUD
+- `src/js/main.js` — extended `render_game_to_text()` + Phase 4 test hooks (`__enterWormhole`, `__completeWormholeTransit`, etc.)
+- `output/verify_phase4.mjs` — 39/39 checks; `output/verify_phase3.mjs` updated for save-v6 shape (34/34); `output/verify_phase1.mjs` star count → 400
+- `docs/IMPLEMENTATION_PLAN.md` — §5 save-v6, §7 hooks, §8 Phase 4 table
+
+### Decisions
+- One hydrated galaxy at a time; dehydrate outgoing galaxy on wormhole departure, merge player overlays into abstract blob
+- BFS spanning tree from core (not greedy MST) keeps lane-graph diameter in the 10–35 hop band at 400 stars
+- Stronghold star picked randomly per galaxy sub-seed; home galaxy stronghold uses fixed planet roster with shuffled orbit slots
+- Verify scripts use `state.paused` and `__completeWormholeTransit()` instead of keyboard / long `advanceTime` during wormhole tests
+
+### Known issues
+- Full galaxy hydration (~400 systems) has a noticeable one-time hitch on wormhole entry (acceptable per plan)
+- `graphDiameter()` is O(n²) — fine for tests; not called in the live loop
+
+### Suggested next
+- Phase 6: Superweapon, hero flagships, diplomacy, missions
+
+---
+
+## Session 2026-07-04 — Phase 5 empire layer
+
+**Task claimed:** Phase 5 tasks 5.1–5.38
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=7`; `docs/schemas/save-v7.json`; `migrateV6toV7`
+- New modules: `empire-queue.js`, `tech-web.js`, `research.js`, `trade.js`, `ai-faction.js`, `ai-ships.js`
+- Empire-wide build queue with stronghold-based dispatcher, pin, cancel/refund, multi-slot shipyards (`mil_parallel_dock`)
+- 18-node tech web; research stations (3/system); dual-currency research after Shell #1
+- Trade stations + connected-component income; shell #5/#6 bonuses wired in `dyson.js`
+- AI faction (Dominion of Helix): rim cluster seed, economy tick, expansion, capture contest, hydration overlays
+- UI: empire queue panel, Tech tab, trade HUD chip, build buttons
+- Test hooks + `render_game_to_text()` blocks for queue/research/trade/factions/aiShips
+- `output/verify_phase5.mjs` — 24/24; `verify_phase3.mjs` + `verify_phase4.mjs` updated for save-v7
+
+### Decisions
+- Dispatcher reference point: stronghold (not flagship)
+- `aiShips[]` parallel fleet model; pirates remain non-territorial
+- AI contests player capture but does not capture player systems in Phase 5
+- Credits deducted on empire enqueue; 100% refund on cancel before assignment
+
+### Known issues
+- Tech web UI is list-first (no force-directed graph)
+- Manual trade routes deferred to Phase 6
+
+### Suggested next
+- Phase 6 tasks: Superweapon cradle, hero flagships, diplomacy unlock

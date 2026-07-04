@@ -17,8 +17,10 @@ import {
   hullStats,
 } from './hull.js';
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
+import { aiShipsInSystem } from './ai-ships.js';
 import { playerCombatShipsAtSystem, stationedShipPose } from './fleets.js';
 import { softKeepOut, nudgeUnitKeepOut } from './ship-motion.js';
+import { getSystems, getGraph } from './galaxy-scope.js';
 
 function seededEntryVector(seed, systemId, time) {
   let h = (seed ^ systemId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) >>> 0;
@@ -28,7 +30,8 @@ function seededEntryVector(seed, systemId, time) {
 
 function flagshipInSystem(state, systemId) {
   const f = state.flagship;
-  return f.systemId === systemId && !f.transit;
+  return f.galaxyId === state.activeGalaxyId
+    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
 function playerForcesInSystem(state, systemId) {
@@ -39,10 +42,12 @@ function playerForcesInSystem(state, systemId) {
 
 function shouldBattle(state, systemId) {
   const pirates = pirateFleetAtSystem(state, systemId);
-  if (!pirates.length) return false;
+  const aiShips = aiShipsInSystem(state, systemId);
+  const system = getSystems(state)[systemId];
+  if (!pirates.length && !aiShips.length) return false;
   const { ships, hasFlagship } = playerForcesInSystem(state, systemId);
   if (ships.length > 0 || hasFlagship) return true;
-  if (state.systems[systemId]?.owner === 'player') return true;
+  if (system?.owner === 'player' || system?.owner === 'ai') return true;
   return false;
 }
 
@@ -53,12 +58,25 @@ function collectEnemyShips(state, systemId) {
       if (ship.hp > 0) out.push({ ...ship, fleetId: fleet.id, side: 'enemy' });
     }
   }
+  const system = getSystems(state)[systemId];
+  if (system?.owner === 'player') {
+    for (const ship of aiShipsInSystem(state, systemId)) {
+      out.push({ ...ship, side: 'enemy' });
+    }
+  }
   return out;
 }
 
 function collectAllyShips(state, systemId) {
   const out = [];
+  const system = getSystems(state)[systemId];
   const { ships, hasFlagship } = playerForcesInSystem(state, systemId);
+  if (system?.owner === 'ai') {
+    for (const ship of aiShipsInSystem(state, systemId)) {
+      out.push({ ...ship, side: 'ai' });
+    }
+    return out;
+  }
   for (const ship of ships) {
     out.push({ ...ship, side: 'player' });
   }
@@ -75,7 +93,7 @@ function collectAllyShips(state, systemId) {
 }
 
 function initTacticalUnits(state, systemId, battle) {
-  const system = state.systems[systemId];
+  const system = getSystems(state)[systemId];
   const starR = system?.star?.radius ?? 200;
   const battleOrbit = starR + FLEET_STATION_ORBIT_PAD;
   const entry = battle.entryVector ?? 0.5;
@@ -253,7 +271,7 @@ function resolveAutoBattle(state, systemId, battle) {
 
 function tickTacticalBattle(state, systemId, battle) {
   if (!battle.units) initTacticalUnits(state, systemId, battle);
-  const system = state.systems[systemId];
+  const system = getSystems(state)[systemId];
 
   for (const unit of battle.units) {
     if (unit.hp <= 0) continue;
@@ -329,7 +347,7 @@ export function tickCombat(state) {
   const events = [];
   const systemIds = new Set([
     ...Object.keys(state.systemBattles ?? {}),
-    ...state.galaxy.stars.map((s) => s.id).filter((id) => shouldBattle(state, id)),
+    ...getGraph(state).stars.map((s) => s.id).filter((id) => shouldBattle(state, id)),
   ]);
 
   for (const systemId of systemIds) {

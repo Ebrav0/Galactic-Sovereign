@@ -1,6 +1,8 @@
-// Orbital structure site positions — fixed slots from structure id (never serialized).
+// Orbital structure anchors: shipyard ring station + sail launcher platforms (visual, deterministic).
 
 import {
+  CELESTIAL_VISUAL_SCALE,
+  MOON_ORBIT_SPACING,
   SHIPYARD_ORBIT_PAD,
   SHIPYARD_MOON_CLEARANCE,
   LAUNCHER_ORBIT_PAD,
@@ -12,119 +14,197 @@ import {
   systemById,
   planetPosition,
   moonPosition,
+  findShipyardOnPlanet,
   findBody,
-  findStructure,
   dysonLaunchers,
+  hashSeed,
 } from './state.js';
 import { shipyardBuildProgress } from './production.js';
+import { normalizeShipyardBuilds } from './empire-queue.js';
 
-function slotAngleFromId(id, salt = 0) {
-  let h = salt;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return ((h % 1000) / 1000) * Math.PI * 2;
+const STAR_X = 0;
+const STAR_Y = 0;
+
+function fixedSlotAngle(structureId, salt = 0) {
+  return ((hashSeed(0x5f3759df + salt, structureId) % 10000) / 10000) * Math.PI * 2;
 }
 
-function orbitRadiusForPlanet(planet) {
-  if (planet.moons.length > 0) {
-    const outer = Math.max(...planet.moons.map((m) => m.orbitRadius));
-    return outer + planet.radius + SHIPYARD_MOON_CLEARANCE;
-  }
-  return planet.orbitRadius + planet.radius + SHIPYARD_ORBIT_PAD;
-}
-
-function bodyWorldPos(state, systemId, bodyId) {
+function bodyWorldPos(state, systemId, bodyId, time = state.time) {
   const found = findBody(state, systemId, bodyId);
   if (!found) return null;
   if (found.planet) {
-    const pp = planetPosition(found.planet, state.time);
-    return moonPosition(found.planet, found.body, state.time);
+    const moonPos = moonPosition(found.planet, found.body, time);
+    return { bodyPos: moonPos, bodyRadius: found.body.radius, hostPlanetId: found.planet.id };
   }
-  return planetPosition(found.body, state.time);
+  const planet = found.body;
+  return {
+    bodyPos: planetPosition(planet, time),
+    bodyRadius: planet.radius,
+    hostPlanetId: planet.id,
+  };
 }
 
-function shipyardSite(state, systemId, structure, planet) {
-  const orbitR = orbitRadiusForPlanet(planet);
-  const slotAngle = slotAngleFromId(structure.id, 1);
-  const pp = planetPosition(planet, state.time);
-  const x = pp.x + Math.cos(slotAngle) * orbitR;
-  const y = pp.y + Math.sin(slotAngle) * orbitR;
-  const building = structure.type === 'shipyard' && !!structure.build;
-  const buildProgress = building ? shipyardBuildProgress(structure, state.time) : 0;
+function bodyOrbitAnchor(bodyPos, bodyRadius, orbitPad, slotAngle) {
+  const orbitR = bodyRadius * CELESTIAL_VISUAL_SCALE + orbitPad;
+  return {
+    x: bodyPos.x + Math.cos(slotAngle) * orbitR,
+    y: bodyPos.y + Math.sin(slotAngle) * orbitR,
+    orbitR,
+    slotAngle,
+  };
+}
+
+function starHeading(x, y) {
+  return Math.atan2(STAR_Y - y, STAR_X - x);
+}
+
+/** Orbit radius: outside moon I, inside moon II (midpoint band). */
+export function computeShipyardOrbitRadius(planet) {
+  const moons = planet.moons ?? [];
+  if (moons.length >= 2) {
+    const inner = moons[0].orbitRadius + SHIPYARD_MOON_CLEARANCE;
+    const outer = moons[1].orbitRadius - SHIPYARD_MOON_CLEARANCE;
+    if (outer > inner) return inner + (outer - inner) * 0.5;
+    return inner;
+  }
+  if (moons.length === 1) {
+    const inner = moons[0].orbitRadius + SHIPYARD_MOON_CLEARANCE;
+    const outer = moons[0].orbitRadius + MOON_ORBIT_SPACING - SHIPYARD_MOON_CLEARANCE;
+    return inner + (outer - inner) * 0.5;
+  }
+  return planet.radius * CELESTIAL_VISUAL_SCALE + SHIPYARD_ORBIT_PAD;
+}
+
+function shipyardSite(state, systemId, planet, time = state.time) {
+  const shipyard = findShipyardOnPlanet(state, systemId, planet.id);
+  if (!shipyard) return null;
+
+  normalizeShipyardBuilds(shipyard);
+  const bodyPos = planetPosition(planet, time);
+  const slotAngle = fixedSlotAngle(shipyard.id, 0x73);
+  const orbitR = computeShipyardOrbitRadius(planet);
+  const building = shipyard.builds.length > 0;
+
   return {
     kind: 'shipyard',
     planetId: planet.id,
     bodyId: planet.id,
-    x,
-    y,
+    x: bodyPos.x + Math.cos(slotAngle) * orbitR,
+    y: bodyPos.y + Math.sin(slotAngle) * orbitR,
     orbitR,
     slotAngle,
     hubHeading: slotAngle + Math.PI / 2,
-    seed: slotAngleFromId(structure.id, 7) * 100,
     building,
-    buildProgress,
+    buildProgress: building ? shipyardBuildProgress(shipyard, state.time, 0) : 0,
+    buildHull: shipyard.builds[0]?.hull ?? null,
+    seed: hashSeed(0x9e3779b9, shipyard.id) % 97,
+    shipyardId: shipyard.id,
   };
 }
 
-function launcherSite(state, systemId, structure) {
-  const found = findBody(state, systemId, structure.bodyId);
-  if (!found) return null;
-  const host = found.body;
-  const planet = found.planet ?? found.body;
-  const hostPos = found.planet
-    ? moonPosition(found.planet, found.body, state.time)
-    : planetPosition(found.body, state.time);
+const RESEARCH_ORBIT_PAD = 28;
+const RESEARCH_ORBIT_SPREAD = 0.42;
 
-  const launchersOnBody = dysonLaunchers(state, systemId).filter((l) => l.bodyId === structure.bodyId);
-  const idx = launchersOnBody.findIndex((l) => l.id === structure.id);
-  const baseAngle = slotAngleFromId(structure.bodyId, 3);
-  const slotAngle = baseAngle + idx * LAUNCHER_ORBIT_SPREAD;
-  const orbitR = (found.planet ? found.planet.orbitRadius : 0) + host.radius + LAUNCHER_ORBIT_PAD;
-  const x = hostPos.x + Math.cos(slotAngle) * orbitR;
-  const y = hostPos.y + Math.sin(slotAngle) * orbitR;
-  const heading = Math.atan2(-y, -x);
-  const muzzleX = x + Math.cos(heading) * LAUNCHER_RAIL_LENGTH;
-  const muzzleY = y + Math.sin(heading) * LAUNCHER_RAIL_LENGTH;
-  const dyson = systemById(state, systemId)?.dyson;
-  const lastFire = dyson?.launcherLastFireAt?.[structure.id] ?? -1e9;
-  const fireAge = state.time - lastFire;
-  const firing = fireAge >= 0 && fireAge < LAUNCHER_BURST_MS;
-
-  return {
-    kind: 'launcher',
-    bodyId: structure.bodyId,
-    planetId: planet.id,
-    x,
-    y,
-    heading,
-    slotAngle,
-    dockX: x,
-    dockY: y,
-    muzzleX,
-    muzzleY,
-    seed: slotAngleFromId(structure.id, 11) * 100,
-    firing,
-    fireAge: firing ? fireAge : null,
-  };
-}
-
-export function structureSites(state, systemId) {
+function researchStationSites(state, systemId, planet, time = state.time) {
   const system = systemById(state, systemId);
   if (!system) return [];
+
+  const stations = system.structures.filter(
+    (s) => s.type === 'research_station' && s.bodyId === planet.id,
+  );
+  if (stations.length === 0) return [];
+
+  const bodyPos = planetPosition(planet, time);
+  const baseOrbit = planet.radius * CELESTIAL_VISUAL_SCALE + RESEARCH_ORBIT_PAD;
+
+  return stations.map((station) => {
+    const orbitIndex = station.orbitIndex ?? 0;
+    const slotAngle = fixedSlotAngle(station.id, 0x4a) + orbitIndex * RESEARCH_ORBIT_SPREAD;
+    const orbitR = baseOrbit + orbitIndex * (RESEARCH_ORBIT_PAD * 0.55);
+    return {
+      kind: 'research_station',
+      planetId: planet.id,
+      bodyId: planet.id,
+      stationId: station.id,
+      x: bodyPos.x + Math.cos(slotAngle) * orbitR,
+      y: bodyPos.y + Math.sin(slotAngle) * orbitR,
+      orbitR,
+      slotAngle,
+      hubHeading: slotAngle + Math.PI / 2,
+      orbitIndex,
+      seed: hashSeed(0xcafebabe, station.id) % 97,
+    };
+  });
+}
+
+function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
+  const world = bodyWorldPos(state, systemId, bodyId, time);
+  if (!world) return [];
+
+  const launchers = dysonLaunchers(state, systemId).filter((l) => l.bodyId === bodyId);
+  const dyson = systemById(state, systemId)?.dyson;
   const sites = [];
-  for (const structure of system.structures) {
-    if (structure.type === 'shipyard') {
-      const planet = system.bodies.find((b) => b.id === structure.bodyId);
-      if (planet) sites.push(shipyardSite(state, systemId, structure, planet));
-    } else if (structure.type === 'dyson_launcher') {
-      const site = launcherSite(state, systemId, structure);
-      if (site) sites.push(site);
-    }
-  }
+
+  launchers.forEach((launcher, idx) => {
+    const slotAngle = fixedSlotAngle(launcher.id, 0x2c) + idx * LAUNCHER_ORBIT_SPREAD;
+    const anchor = bodyOrbitAnchor(world.bodyPos, world.bodyRadius, LAUNCHER_ORBIT_PAD, slotAngle);
+    const heading = starHeading(anchor.x, anchor.y);
+    const muzzleX = anchor.x + Math.cos(heading) * LAUNCHER_RAIL_LENGTH;
+    const muzzleY = anchor.y + Math.sin(heading) * LAUNCHER_RAIL_LENGTH;
+    const dockX = anchor.x - Math.cos(heading) * 4;
+    const dockY = anchor.y - Math.sin(heading) * 4;
+    const lastFire = dyson?.launcherLastFireAt?.[launcher.id] ?? 0;
+    const fireAge = time - lastFire;
+    const firing = fireAge >= 0 && fireAge < LAUNCHER_BURST_MS;
+
+    sites.push({
+      kind: 'launcher',
+      planetId: world.hostPlanetId,
+      bodyId,
+      launcherId: launcher.id,
+      ...anchor,
+      heading,
+      muzzleX,
+      muzzleY,
+      dockX,
+      dockY,
+      firing,
+      fireAge,
+      seed: hashSeed(0xdeadbeef, launcher.id) % 97,
+    });
+  });
+
   return sites;
 }
 
-export function launcherSiteById(state, systemId, launcherId) {
-  const structure = findStructure(state, systemId, launcherId);
-  if (!structure || structure.type !== 'dyson_launcher') return null;
-  return launcherSite(state, systemId, structure);
+/**
+ * All orbital shipyard + launcher sites in a system.
+ * @returns {Array<object>}
+ */
+export function structureSites(state, systemId, time = state.time) {
+  const system = systemById(state, systemId);
+  const sites = [];
+  if (!system) return sites;
+
+  for (const planet of system.bodies) {
+    const sy = shipyardSite(state, systemId, planet, time);
+    if (sy) sites.push(sy);
+    sites.push(...researchStationSites(state, systemId, planet, time));
+    sites.push(...launcherSitesForBody(state, systemId, planet.id, time));
+    for (const moon of planet.moons) {
+      sites.push(...launcherSitesForBody(state, systemId, moon.id, time));
+    }
+  }
+
+  return sites;
+}
+
+/** Sail shuttle dock point for one launcher. */
+export function launcherSiteById(state, systemId, launcherId, time = state.time) {
+  return structureSites(state, systemId, time).find((s) => s.kind === 'launcher' && s.launcherId === launcherId) ?? null;
+}
+
+/** Recent firing launchers for burst rendering. */
+export function activeLauncherBursts(state, systemId, time = state.time) {
+  return structureSites(state, systemId, time).filter((s) => s.kind === 'launcher' && s.firing);
 }

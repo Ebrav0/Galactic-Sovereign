@@ -12,6 +12,7 @@ import {
 import { createRng, hashSeed, systemById } from './state.js';
 import { createShipInstance, hullStats } from './hull.js';
 import { BLACK_HOLE_ID, findPath, neighborsOf } from './galaxy.js';
+import { getGraph } from './galaxy-scope.js';
 import {
   legDurationMs,
   transitStatus as transitStatusCore,
@@ -71,7 +72,7 @@ export function spawnPirateFleets(state) {
   nextPirateShipId = 1;
   nextFleetId = 1;
   const seed = state.meta?.seed ?? 1;
-  const rim = rimStarIds(state.galaxy, state.stronghold);
+  const rim = rimStarIds(getGraph(state), state.stronghold);
   const rng = createRng(hashSeed(seed, 'pirate-spawn'));
   const fleets = [];
   const used = new Set();
@@ -86,6 +87,7 @@ export function spawnPirateFleets(state) {
     used.add(systemId);
     fleets.push({
       id: fleetId,
+      galaxyId: state.activeGalaxyId,
       systemId,
       transit: null,
       ships: buildFleetShips(seed, fleetId),
@@ -97,7 +99,8 @@ export function spawnPirateFleets(state) {
 }
 
 function pickWanderTarget(state, fleet) {
-  const adj = neighborsOf(state.galaxy, fleet.systemId);
+  const galaxy = getGraph(state);
+  const adj = neighborsOf(galaxy, fleet.systemId);
   const candidates = adj.filter((id) => id !== BLACK_HOLE_ID);
   if (!candidates.length) return null;
   const rng = pirateRng(state.meta.seed, fleet.id, `wander:${state.time}`);
@@ -106,7 +109,7 @@ function pickWanderTarget(state, fleet) {
 
 function orderFleetTravel(state, fleet, targetId) {
   if (fleet.transit || !targetId || targetId === fleet.systemId) return false;
-  const path = findPath(state.galaxy, fleet.systemId, targetId);
+  const path = findPath(getGraph(state), fleet.systemId, targetId);
   if (!path || path.length < 2) return false;
 
   fleet.transit = {
@@ -114,7 +117,7 @@ function orderFleetTravel(state, fleet, targetId) {
     legIndex: 0,
     legStartTime: state.time,
     legDurationMs: legDurationMs(
-      state.galaxy,
+      getGraph(state),
       path[0],
       path[1],
       PIRATE_LANE_SPEED,
@@ -128,7 +131,8 @@ function orderFleetTravel(state, fleet, targetId) {
 
 export function pirateFleetAtSystem(state, systemId) {
   return (state.pirates?.fleets ?? []).filter(
-    (f) => f.systemId === systemId && !f.transit && f.ships.some((s) => s.hp > 0),
+    (f) => f.galaxyId === state.activeGalaxyId
+      && f.systemId === systemId && !f.transit && f.ships.some((s) => s.hp > 0),
   );
 }
 
@@ -155,7 +159,7 @@ export function pirateFleetStatus(fleet, galaxy, time) {
 export function pirateFleetEtaMs(state, fleet) {
   return transitEtaMs(
     fleet.transit,
-    state.galaxy,
+    getGraph(state),
     state.time,
     PIRATE_LANE_SPEED,
     PIRATE_LANE_MIN_LEG_MS,
@@ -165,6 +169,7 @@ export function pirateFleetEtaMs(state, fleet) {
 export function pirateSystemsWithPresence(state) {
   const ids = new Set();
   for (const fleet of state.pirates?.fleets ?? []) {
+    if (fleet.galaxyId !== state.activeGalaxyId) continue;
     if (fleet.systemId && !fleet.transit) ids.add(fleet.systemId);
   }
   return [...ids];
@@ -180,12 +185,13 @@ function scheduleRespawn(state, fleetId) {
 
 function respawnFleet(state, pending) {
   const seed = state.meta.seed;
-  const rim = rimStarIds(state.galaxy, state.stronghold);
+  const rim = rimStarIds(getGraph(state), state.stronghold);
   const rng = createRng(hashSeed(seed, `respawn:${pending.fleetId}:${state.time}`));
   const systemId = rim[Math.floor(rng() * rim.length)];
   nextPirateShipId = 1;
   return {
     id: pending.fleetId,
+    galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
     ships: buildFleetShips(seed, pending.fleetId),
@@ -212,10 +218,11 @@ export function tickPirates(state, onArrive) {
   });
 
   for (const fleet of state.pirates.fleets) {
+    if (fleet.galaxyId !== state.activeGalaxyId) continue;
     if (fleet.transit) {
       advanceTransit(
         fleet.transit,
-        state.galaxy,
+        getGraph(state),
         state.time,
         PIRATE_LANE_SPEED,
         PIRATE_LANE_MIN_LEG_MS,
@@ -309,6 +316,7 @@ export function devSpawnEnemyFleetAtSystem(state, systemId, composition = PIRATE
   const fleetId = `pirate-${nextFleetId++}`;
   const fleet = {
     id: fleetId,
+    galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
     ships: buildFleetShipsFromComposition(composition),
@@ -341,6 +349,7 @@ export function devTeleportPirateFleet(state, systemId, fleetIndex = 0) {
   }
   fleet.transit = null;
   fleet.systemId = systemId;
+  fleet.galaxyId = state.activeGalaxyId;
   fleet.wanderCooldownMs = PIRATE_WANDER_MS;
   return { ok: true, details: { fleetId: fleet.id, systemId } };
 }

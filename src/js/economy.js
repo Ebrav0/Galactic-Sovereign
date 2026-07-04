@@ -9,16 +9,28 @@ import {
   isPlayerOwned,
 } from './state.js';
 import { shellCreditBonus } from './dyson.js';
+import { getSystems } from './galaxy-scope.js';
 
 let nextStructureId = 1;
 
 export function resetStructureIds(state) {
   // Called after load so new ids never collide with saved ones.
   let max = 0;
-  for (const system of Object.values(state.systems)) {
-    for (const s of system.structures) {
-      const n = parseInt(s.id.replace('st', ''), 10);
-      if (Number.isFinite(n)) max = Math.max(max, n);
+  if (state.galaxies) {
+    for (const gal of Object.values(state.galaxies)) {
+      for (const system of Object.values(gal.systems ?? {})) {
+        for (const s of system.structures) {
+          const n = parseInt(String(s.id).replace('st', ''), 10);
+          if (Number.isFinite(n)) max = Math.max(max, n);
+        }
+      }
+    }
+  } else {
+    for (const system of Object.values(state.systems ?? {})) {
+      for (const s of system.structures) {
+        const n = parseInt(String(s.id).replace('st', ''), 10);
+        if (Number.isFinite(n)) max = Math.max(max, n);
+      }
     }
   }
   nextStructureId = max + 1;
@@ -29,7 +41,9 @@ export function allocateStructureId() {
 }
 
 function flagshipInSystem(state, systemId) {
-  return state.flagship.systemId === systemId && !state.flagship.transit;
+  const f = state.flagship;
+  return f.galaxyId === state.activeGalaxyId
+    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
 // Returns {ok} or {ok:false, reason} — UI displays the reason verbatim.
@@ -66,7 +80,7 @@ export function buildOutpost(state, systemId, planetId) {
 // Credits per second from player-owned outposts only; yield scales with moon count.
 export function incomePerSecond(state) {
   let total = 0;
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     if (!isPlayerOwned(state, system.id)) continue;
     const creditMult = shellCreditBonus(system);
     for (const s of system.structures) {

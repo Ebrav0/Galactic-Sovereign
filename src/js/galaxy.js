@@ -9,6 +9,8 @@ import {
   GALAXY_EXTRA_LANE_MAX_DIST,
   GALAXY_TARGET_AVG_DEGREE,
   GALAXY_MAX_DEGREE,
+  GALAXY_BACKBONE_SPOKE_COUNT,
+  GALAXY_SMALL_WORLD_LANES,
   BLACK_HOLE_MIN_LANES,
 } from './constants.js';
 
@@ -21,21 +23,33 @@ const STAR_NAMES = [
   'Sable', 'Talos', 'Umbriel', 'Vesper', 'Wren', 'Ythaca',
 ];
 
+let starCountOverride = null;
+
+export function getGalaxyStarCount() {
+  return starCountOverride ?? GALAXY_STAR_COUNT;
+}
+
+export function setGalaxyStarCountForTests(n) {
+  starCountOverride = n;
+}
+
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-// --- Generation ---
+function proceduralStarName(rng, index) {
+  const base = STAR_NAMES[index % STAR_NAMES.length];
+  const suffix = Math.floor(index / STAR_NAMES.length);
+  return suffix === 0 ? base : `${base} ${suffix + 1}`;
+}
 
 // Returns { stars: [{id, name, x, y}], blackHole: {id, name, x, y}, lanes: [[idA, idB]] }.
-// Everything derives from the passed rng; iteration order is fixed, so the same
-// seed always yields the same graph (GDD §15 determinism requirement).
 export function generateGalaxy(rng) {
+  const starCount = getGalaxyStarCount();
   const stars = [];
-  for (let i = 0; i < GALAXY_STAR_COUNT; i++) {
+  for (let i = 0; i < starCount; i++) {
     let x = 0;
     let y = 0;
-    // Rejection-sample positions; relax spacing if a pocket gets crowded.
     for (let attempt = 0; attempt < 80; attempt++) {
       const r = GALAXY_INNER_RADIUS + Math.sqrt(rng()) * (GALAXY_RADIUS - GALAXY_INNER_RADIUS);
       const a = rng() * Math.PI * 2;
@@ -46,7 +60,7 @@ export function generateGalaxy(rng) {
     }
     stars.push({
       id: `sys-${i}`,
-      name: STAR_NAMES[i % STAR_NAMES.length],
+      name: proceduralStarName(rng, i),
       x: Math.round(x),
       y: Math.round(y),
     });
@@ -55,27 +69,9 @@ export function generateGalaxy(rng) {
   const blackHole = { id: BLACK_HOLE_ID, name: 'Galactic Core', x: 0, y: 0 };
   const nodes = [...stars, blackHole];
 
-  // Minimum spanning tree (Prim) guarantees a connected lane graph.
   const lanes = [];
   const degree = new Map(nodes.map((n) => [n.id, 0]));
-  const inTree = new Set([nodes[0].id]);
-  while (inTree.size < nodes.length) {
-    let best = null;
-    for (const from of nodes) {
-      if (!inTree.has(from.id)) continue;
-      for (const to of nodes) {
-        if (inTree.has(to.id)) continue;
-        const d = dist(from, to);
-        if (!best || d < best.d) best = { from, to, d };
-      }
-    }
-    lanes.push([best.from.id, best.to.id]);
-    degree.set(best.from.id, degree.get(best.from.id) + 1);
-    degree.set(best.to.id, degree.get(best.to.id) + 1);
-    inTree.add(best.to.id);
-  }
-
-  const laneSet = new Set(lanes.map(([a, b]) => laneKey(a, b)));
+  const laneSet = new Set();
   const addLane = (a, b) => {
     lanes.push([a.id, b.id]);
     laneSet.add(laneKey(a.id, b.id));
@@ -83,13 +79,45 @@ export function generateGalaxy(rng) {
     degree.set(b.id, degree.get(b.id) + 1);
   };
 
-  // Extra short lanes until the average degree approaches the target,
-  // producing loops and chokepoints instead of a pure tree.
+  const inTree = new Set([blackHole.id]);
+  const bfsQueue = [blackHole];
+  while (inTree.size < nodes.length) {
+    const current = bfsQueue.shift();
+    const candidates = nodes
+      .filter((n) => !inTree.has(n.id))
+      .map((n) => ({ node: n, d: dist(current, n) }))
+      .sort((p, q) => p.d - q.d);
+    if (candidates.length === 0) break;
+    const nearest = candidates[0].node;
+    addLane(current, nearest);
+    inTree.add(nearest.id);
+    bfsQueue.push(nearest);
+  }
+
   const candidates = [];
+  const cellSize = GALAXY_EXTRA_LANE_MAX_DIST;
+  const grid = new Map();
+  for (const node of nodes) {
+    const cx = Math.floor(node.x / cellSize);
+    const cy = Math.floor(node.y / cellSize);
+    const key = `${cx},${cy}`;
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(node);
+  }
   for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const d = dist(nodes[i], nodes[j]);
-      if (d <= GALAXY_EXTRA_LANE_MAX_DIST) candidates.push({ a: nodes[i], b: nodes[j], d });
+    const a = nodes[i];
+    const cx = Math.floor(a.x / cellSize);
+    const cy = Math.floor(a.y / cellSize);
+    for (let gx = cx - 1; gx <= cx + 1; gx++) {
+      for (let gy = cy - 1; gy <= cy + 1; gy++) {
+        const bucket = grid.get(`${gx},${gy}`);
+        if (!bucket) continue;
+        for (const b of bucket) {
+          if (b.id <= a.id) continue;
+          const d = dist(a, b);
+          if (d <= GALAXY_EXTRA_LANE_MAX_DIST) candidates.push({ a, b, d });
+        }
+      }
     }
   }
   candidates.sort((p, q) => p.d - q.d);
@@ -101,14 +129,16 @@ export function generateGalaxy(rng) {
     addLane(a, b);
   }
 
-  // The black hole must be a real waypoint: connect its nearest stars until
-  // it has at least BLACK_HOLE_MIN_LANES.
   const nearest = [...stars].sort((p, q) => dist(p, blackHole) - dist(q, blackHole));
   for (const star of nearest) {
     if (degree.get(BLACK_HOLE_ID) >= BLACK_HOLE_MIN_LANES) break;
     if (laneSet.has(laneKey(star.id, BLACK_HOLE_ID))) continue;
     addLane(star, blackHole);
   }
+
+  addBackboneLanes(stars, degree, laneSet, addLane);
+  addHubSpokeLanes(stars, blackHole, degree, laneSet, addLane);
+  addSmallWorldLanes(stars, rng, degree, laneSet, addLane);
 
   return { stars, blackHole, lanes };
 }
@@ -117,7 +147,66 @@ function laneKey(a, b) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
-// --- Graph helpers ---
+function addBackboneLanes(stars, degree, laneSet, addLane) {
+  const sorted = [...stars].sort((p, q) => Math.atan2(p.y, p.x) - Math.atan2(q.y, q.x));
+  const step = Math.max(1, Math.floor(sorted.length / GALAXY_BACKBONE_SPOKE_COUNT));
+  const spokes = [];
+  for (let i = 0; i < sorted.length && spokes.length < GALAXY_BACKBONE_SPOKE_COUNT; i += step) {
+    spokes.push(sorted[i]);
+  }
+  for (let i = 0; i < spokes.length; i++) {
+    const a = spokes[i];
+    const b = spokes[(i + 1) % spokes.length];
+    if (degree.get(a.id) >= GALAXY_MAX_DEGREE || degree.get(b.id) >= GALAXY_MAX_DEGREE) continue;
+    if (laneSet.has(laneKey(a.id, b.id))) continue;
+    if (dist(a, b) > GALAXY_EXTRA_LANE_MAX_DIST * 2.5) continue;
+    addLane(a, b);
+  }
+}
+
+function addHubSpokeLanes(stars, blackHole, degree, laneSet, addLane) {
+  const hubs = [...stars]
+    .sort((p, q) => dist(p, blackHole) - dist(q, blackHole))
+    .slice(0, BLACK_HOLE_MIN_LANES);
+  for (let i = 0; i < hubs.length; i++) {
+    const a = hubs[i];
+    const b = hubs[(i + 1) % hubs.length];
+    if (degree.get(a.id) >= GALAXY_MAX_DEGREE || degree.get(b.id) >= GALAXY_MAX_DEGREE) continue;
+    if (laneSet.has(laneKey(a.id, b.id))) continue;
+    addLane(a, b);
+  }
+  for (const star of stars) {
+    if (hubs.some((h) => h.id === star.id)) continue;
+    let best = null;
+    let bestD = Infinity;
+    for (const hub of hubs) {
+      const d = dist(star, hub);
+      if (d < bestD) {
+        bestD = d;
+        best = hub;
+      }
+    }
+    if (!best) continue;
+    if (degree.get(star.id) >= GALAXY_MAX_DEGREE || degree.get(best.id) >= GALAXY_MAX_DEGREE) continue;
+    if (laneSet.has(laneKey(star.id, best.id))) continue;
+    if (bestD > GALAXY_EXTRA_LANE_MAX_DIST * 1.5) continue;
+    addLane(star, best);
+  }
+}
+
+function addSmallWorldLanes(stars, rng, degree, laneSet, addLane) {
+  let added = 0;
+  for (let tries = 0; tries < 800 && added < GALAXY_SMALL_WORLD_LANES; tries++) {
+    const a = stars[Math.floor(rng() * stars.length)];
+    const b = stars[Math.floor(rng() * stars.length)];
+    if (a.id === b.id) continue;
+    if (degree.get(a.id) >= GALAXY_MAX_DEGREE || degree.get(b.id) >= GALAXY_MAX_DEGREE) continue;
+    if (laneSet.has(laneKey(a.id, b.id))) continue;
+    if (dist(a, b) > GALAXY_EXTRA_LANE_MAX_DIST * 2.2) continue;
+    addLane(a, b);
+    added++;
+  }
+}
 
 export function galaxyNodes(galaxy) {
   return [...galaxy.stars, galaxy.blackHole];
@@ -140,8 +229,6 @@ export function neighborsOf(galaxy, id) {
 export function laneLength(galaxy, idA, idB) {
   return dist(nodeById(galaxy, idA), nodeById(galaxy, idB));
 }
-
-// --- Lane curve geometry (world space, shared by transit + render) ---
 
 export function laneIndex(galaxy, idA, idB) {
   const key = laneKey(idA, idB);
@@ -179,7 +266,6 @@ export function laneBezierAngle(from, ctrl, to, t) {
   return Math.atan2(dy, dx);
 }
 
-// BFS shortest hop path, inclusive of both endpoints. Returns null if unreachable.
 export function findPath(galaxy, fromId, toId) {
   if (fromId === toId) return [fromId];
   const cameFrom = new Map([[fromId, null]]);
@@ -202,4 +288,51 @@ export function findPath(galaxy, fromId, toId) {
     }
   }
   return null;
+}
+
+export function graphDiameter(galaxy) {
+  const ids = galaxyNodes(galaxy).map((n) => n.id);
+  let maxDist = 0;
+  for (const start of ids) {
+    const distMap = new Map([[start, 0]]);
+    const queue = [start];
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const next of neighborsOf(galaxy, cur)) {
+        if (distMap.has(next)) continue;
+        distMap.set(next, distMap.get(cur) + 1);
+        queue.push(next);
+      }
+    }
+    for (const d of distMap.values()) maxDist = Math.max(maxDist, d);
+  }
+  return maxDist;
+}
+
+export function graphStats(galaxy) {
+  const nodeCount = galaxyNodes(galaxy).length;
+  const avgDegree = (galaxy.lanes.length * 2) / nodeCount;
+  let bhDegree = 0;
+  for (const [a, b] of galaxy.lanes) {
+    if (a === galaxy.blackHole.id || b === galaxy.blackHole.id) bhDegree++;
+  }
+  return {
+    starCount: galaxy.stars.length,
+    laneCount: galaxy.lanes.length,
+    avgDegree,
+    blackHoleDegree: bhDegree,
+    diameter: graphDiameter(galaxy),
+  };
+}
+
+export function galaxyGraphFingerprint(galaxy) {
+  const stars = galaxy.stars.map((s) => `${s.id}:${s.x},${s.y}`).sort().join(';');
+  const lanes = galaxy.lanes.map(([a, b]) => laneKey(a, b)).sort().join(';');
+  let h = 2166136261;
+  const str = `${stars}|${lanes}`;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
 }

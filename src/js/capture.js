@@ -12,9 +12,11 @@ import {
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
 import { systemById } from './state.js';
+import { getGalaxyCapture, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
 import { totalCaptureForceFromShips } from './fleets.js';
 import { pirateCombatPresence } from './pirates.js';
+import { aiCombatPresence } from './ai-ships.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -35,12 +37,15 @@ export function captureRequirement(state, systemId) {
 export function captureForceInSystem(state, systemId) {
   let force = totalCaptureForceFromShips(state, systemId);
   const f = state.flagship;
-  if (f.systemId === systemId && !f.transit) force += CAPTURE_FLAGSHIP_FORCE;
+  if (f.systemId === systemId && !f.transit && !f.wormholeTransit
+      && f.galaxyId === state.activeGalaxyId) {
+    force += CAPTURE_FLAGSHIP_FORCE;
+  }
   return force;
 }
 
 export function enemyCombatPresence(state, systemId) {
-  return pirateCombatPresence(state, systemId);
+  return pirateCombatPresence(state, systemId) + aiCombatPresence(state, systemId);
 }
 
 export function isCapturableSystem(state, systemId) {
@@ -58,28 +63,29 @@ export function canHoldCapture(state, systemId) {
 }
 
 export function captureProgressMs(state, systemId) {
-  return state.capture[systemId]?.progressMs ?? 0;
+  return getGalaxyCapture(state)[systemId]?.progressMs ?? 0;
 }
 
 export function tickCapture(state) {
-  for (const systemId of Object.keys(state.systems)) {
+  const capture = getGalaxyCapture(state);
+  for (const systemId of Object.keys(getSystems(state))) {
     if (!isCapturableSystem(state, systemId)) {
-      if (state.capture[systemId]) delete state.capture[systemId];
+      if (capture[systemId]) delete capture[systemId];
       continue;
     }
 
     if (canHoldCapture(state, systemId)) {
-      const entry = state.capture[systemId] ?? { progressMs: 0 };
+      const entry = capture[systemId] ?? { progressMs: 0 };
       entry.progressMs += TICK_MS;
-      state.capture[systemId] = entry;
+      capture[systemId] = entry;
 
       if (entry.progressMs >= CAPTURE_HOLD_MS) {
         systemById(state, systemId).owner = 'player';
-        delete state.capture[systemId];
+        delete capture[systemId];
         return { captured: systemId };
       }
-    } else if (state.capture[systemId]) {
-      delete state.capture[systemId];
+    } else if (capture[systemId]) {
+      delete capture[systemId];
     }
   }
   return null;

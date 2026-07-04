@@ -12,13 +12,16 @@ import {
   FOUNDRY_SAIL_RATE,
   LAUNCHER_BATCH_SIZE,
   LAUNCHER_LAUNCH_INTERVAL_MS,
-  SHUTTLE_TRANSFER_RATE,
+  SAIL_SHUTTLE_CAPACITY,
   SOLARII_BASE_RATE,
   SOLARII_SHELL_MULTIPLIERS,
   SHELL_BONUS_CREDIT_MULT,
   SHELL_BONUS_SAIL_EFFICIENCY,
+  SHELL_TRADE_BONUS,
+  SHELL_RESEARCH_BONUS,
   TICK_MS,
 } from './constants.js';
+import { isTechUnlocked } from './tech-web.js';
 import {
   systemById,
   findBody,
@@ -30,14 +33,21 @@ import {
   ensureDyson,
 } from './state.js';
 import { allocateStructureId } from './economy.js';
+import { getSystems } from './galaxy-scope.js';
+import { sailShuttleLauncherArrivals } from './sail-shuttles.js';
 
 function flagshipInSystem(state, systemId) {
-  return state.flagship.systemId === systemId && !state.flagship.transit;
+  const f = state.flagship;
+  return f.galaxyId === state.activeGalaxyId
+    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
 // --- Build validation ---
 
 export function canBuildFoundry(state, systemId, bodyId) {
+  if (!isTechUnlocked(state, 'mega_foundry_unlock')) {
+    return { ok: false, reason: 'Research Sail Foundry first' };
+  }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };
@@ -67,6 +77,9 @@ export function buildFoundry(state, systemId, bodyId) {
 }
 
 export function canBuildLauncher(state, systemId, bodyId) {
+  if (!isTechUnlocked(state, 'mega_launcher_unlock')) {
+    return { ok: false, reason: 'Research Dyson Launcher first' };
+  }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };
@@ -119,12 +132,14 @@ export function shellShieldBonus(_system) {
   return 1.0; // Phase 6 Superweapon counterplay
 }
 
-export function shellTradeBonus(_system) {
-  return 1.0; // Phase 5 trade stations
+export function shellTradeBonus(system) {
+  const shells = system?.dyson?.completedShells ?? 0;
+  return shells >= 5 ? SHELL_TRADE_BONUS : 1.0;
 }
 
-export function shellResearchBonus(_system) {
-  return 1.0; // Phase 5 research stations
+export function shellResearchBonus(system) {
+  const shells = system?.dyson?.completedShells ?? 0;
+  return shells >= 6 ? SHELL_RESEARCH_BONUS : 1.0;
 }
 
 export function shellRepairBonus(_system) {
@@ -133,7 +148,7 @@ export function shellRepairBonus(_system) {
 
 export function solariiPerSecond(state) {
   let total = 0;
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     if (!isPlayerOwned(state, system.id)) continue;
     const shells = system.dyson?.completedShells ?? 0;
     if (shells < 1) continue;
@@ -175,6 +190,7 @@ function tickSystemDyson(state, system) {
 
   const launchers = dysonLaunchers(state, system.id);
   const dt = TICK_MS / 1000;
+  const prevTime = state.time - TICK_MS;
 
   // 1. Foundry production
   const sailRate = FOUNDRY_SAIL_RATE * shellSailEfficiencyBonus(system);
@@ -187,15 +203,17 @@ function tickSystemDyson(state, system) {
     }
   }
 
-  // 2. Auto logistics: foundry -> launcher stocks
+  // 2. Trip logistics: one shuttle per launcher; deliver capacity on each docking
   if (launchers.length > 0 && dyson.foundryStock > 0) {
-    const transferCap = SHUTTLE_TRANSFER_RATE * launchers.length * dt;
-    const toTransfer = Math.min(dyson.foundryStock, transferCap);
-    const perLauncher = toTransfer / launchers.length;
-    dyson.foundryStock -= toTransfer;
-    for (const launcher of launchers) {
-      dyson.launcherStock[launcher.id] = (dyson.launcherStock[launcher.id] ?? 0) + perLauncher;
-    }
+    launchers.forEach((launcher, idx) => {
+      const arrivals = sailShuttleLauncherArrivals(prevTime, state.time, idx, launchers.length);
+      if (arrivals <= 0) return;
+      const wanted = SAIL_SHUTTLE_CAPACITY * arrivals;
+      const deliver = Math.min(dyson.foundryStock, wanted);
+      if (deliver <= 0) return;
+      dyson.foundryStock -= deliver;
+      dyson.launcherStock[launcher.id] = (dyson.launcherStock[launcher.id] ?? 0) + deliver;
+    });
   }
 
   // 3. Launcher firing
@@ -221,7 +239,7 @@ function tickSystemDyson(state, system) {
 
 export function tickDyson(state) {
   const events = [];
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     events.push(...tickSystemDyson(state, system));
   }
   return events;
@@ -247,8 +265,8 @@ export function activeShellBonuses(system) {
   if (shells >= 2) bonuses.push(`Credit output ×${shellCreditBonus(system).toFixed(2)}`);
   if (shells >= 3) bonuses.push(`Sail efficiency ×${shellSailEfficiencyBonus(system).toFixed(2)}`);
   if (shells >= 4) bonuses.push('System shield (pending Phase 6)');
-  if (shells >= 5) bonuses.push('Trade output (pending Phase 5)');
-  if (shells >= 6) bonuses.push('Research efficiency (pending Phase 5)');
+  if (shells >= 5) bonuses.push(`Trade output ×${shellTradeBonus(system).toFixed(2)}`);
+  if (shells >= 6) bonuses.push(`Research efficiency ×${shellResearchBonus(system).toFixed(2)}`);
   if (shells >= 7) bonuses.push('Fleet repair (pending)');
   if (shells >= 8) bonuses.push('Completed Dyson sphere');
   return bonuses;

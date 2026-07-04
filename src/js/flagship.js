@@ -21,13 +21,8 @@ import {
   CELESTIAL_VISUAL_SCALE,
 } from './constants.js';
 import { findPath, nodeById } from './galaxy.js';
-import {
-  systemById,
-  findBody,
-  bodyAngle,
-  planetPosition,
-  moonPosition,
-} from './state.js';
+import { systemById, findBody, bodyAngle, planetPosition, moonPosition } from './state.js';
+import { getGraph } from './galaxy-scope.js';
 import { keepOutRepulsion } from './ship-motion.js';
 import { getStarVisualProfile } from './star-types.js';
 import {
@@ -140,7 +135,7 @@ function starOrbitMinRadius(system) {
   return baseR * glowScale + FLAGSHIP_ORBIT_PAD_STAR;
 }
 
-function orbitCenterPose(state, system, orbit) {
+function orbitCenterPose(state, system, orbit, time = state.time) {
   if (orbit.kind === 'star') {
     return { x: 0, y: 0, vx: 0, vy: 0 };
   }
@@ -150,7 +145,7 @@ function orbitCenterPose(state, system, orbit) {
 
   if (orbit.kind === 'planet') {
     const planet = resolved.body;
-    const a = bodyAngle(planet, state.time);
+    const a = bodyAngle(planet, time);
     const omega = (2 * Math.PI / planet.orbitPeriodMs) * 1000;
     return {
       x: Math.cos(a) * planet.orbitRadius,
@@ -162,11 +157,11 @@ function orbitCenterPose(state, system, orbit) {
 
   const moon = resolved.body;
   const planet = resolved.planet;
-  const pp = planetPosition(planet, state.time);
-  const ma = bodyAngle(moon, state.time);
+  const pp = planetPosition(planet, time);
+  const ma = bodyAngle(moon, time);
   const pOmega = (2 * Math.PI / planet.orbitPeriodMs) * 1000;
   const mOmega = (2 * Math.PI / moon.orbitPeriodMs) * 1000;
-  const pa = bodyAngle(planet, state.time);
+  const pa = bodyAngle(planet, time);
   return {
     x: pp.x + Math.cos(ma) * moon.orbitRadius,
     y: pp.y + Math.sin(ma) * moon.orbitRadius,
@@ -237,13 +232,13 @@ function clearOrbit(f) {
   f.orbit = null;
 }
 
-export function getFlagshipOrbitVisual(state) {
+export function getFlagshipOrbitVisual(state, time = state.time) {
   const f = state.flagship;
   ensureOrbitField(f);
   if (!f.orbit || !f.systemId) return null;
   const system = systemById(state, f.systemId);
   if (!system) return null;
-  const center = orbitCenterPose(state, system, f.orbit);
+  const center = orbitCenterPose(state, system, f.orbit, time);
   if (!center) return null;
   return { cx: center.x, cy: center.y, radius: f.orbit.radius };
 }
@@ -331,11 +326,12 @@ function tickOrbit(state) {
 
 export function orderTravel(state, targetId) {
   const f = state.flagship;
-  if (f.transit) return { ok: false, reason: 'Flagship is already in transit' };
-  if (!nodeById(state.galaxy, targetId)) return { ok: false, reason: 'No such star' };
+  const galaxy = getGraph(state);
+  if (f.transit || f.wormholeTransit) return { ok: false, reason: 'Flagship is already in transit' };
+  if (!nodeById(galaxy, targetId)) return { ok: false, reason: 'No such star' };
   if (targetId === f.systemId) return { ok: false, reason: 'Flagship is already in that system' };
 
-  const path = findPath(state.galaxy, f.systemId, targetId);
+  const path = findPath(galaxy, f.systemId, targetId);
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   clearOrbit(f);
@@ -343,7 +339,7 @@ export function orderTravel(state, targetId) {
     path,
     legIndex: 0,
     legStartTime: state.time,
-    legDurationMs: legDurationMs(state.galaxy, path[0], path[1], LANE_SPEED, LANE_MIN_LEG_MS),
+    legDurationMs: legDurationMs(galaxy, path[0], path[1], LANE_SPEED, LANE_MIN_LEG_MS),
   };
   f.systemId = null;
   return { ok: true, path, etaMs: transitEtaMs(state) };
@@ -352,7 +348,7 @@ export function orderTravel(state, targetId) {
 export function transitEtaMs(state) {
   return transitEtaMsCore(
     state.flagship.transit,
-    state.galaxy,
+    getGraph(state),
     state.time,
     LANE_SPEED,
     LANE_MIN_LEG_MS,
@@ -362,7 +358,7 @@ export function transitEtaMs(state) {
 export function transitStatus(state) {
   return transitStatusCore(
     state.flagship.transit,
-    state.galaxy,
+    getGraph(state),
     state.time,
     LANE_SPEED,
     LANE_MIN_LEG_MS,
@@ -385,12 +381,13 @@ function applyFlagshipKeepOut(state) {
 
 export function tickFlagship(state) {
   const f = state.flagship;
+  if (f.wormholeTransit) return;
   ensureOrbitField(f);
   if (!f.transit) syncPrevPose(f);
   if (f.transit) {
     advanceTransit(
       f.transit,
-      state.galaxy,
+      getGraph(state),
       state.time,
       LANE_SPEED,
       LANE_MIN_LEG_MS,
@@ -450,8 +447,9 @@ function arrive(state, destId, fromId) {
   f.systemId = destId;
   clearOrbit(f);
 
-  const dest = nodeById(state.galaxy, destId);
-  const from = nodeById(state.galaxy, fromId);
+  const galaxy = getGraph(state);
+  const dest = nodeById(galaxy, destId);
+  const from = nodeById(galaxy, fromId);
   const entryAngle = Math.atan2(from.y - dest.y, from.x - dest.x);
   const entryRadius = systemEntryRadius(state, destId);
   f.x = Math.cos(entryAngle) * entryRadius;

@@ -1,4 +1,5 @@
-// Surface pad/rig positions for outpost shuttle routes (never serialized).
+// Outpost surface sites: landing pads + moon mining rigs (visual, deterministic from state.time).
+// Shuttle routes in shuttles.js use the same pad positions.
 
 import {
   SHUTTLE_FLIGHT_MS,
@@ -10,6 +11,7 @@ import { systemById, planetPosition, moonPosition, hasOutpost } from './state.js
 const CYCLE_MS =
   SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS + SHUTTLE_FLIGHT_MS + SHUTTLE_PLANET_DWELL_MS;
 
+/** Point on a body limb facing another world — shuttle touchdown / launch site. */
 export function surfacePoint(bodyPos, bodyRadius, towardPos, pad = 2) {
   const dx = towardPos.x - bodyPos.x;
   const dy = towardPos.y - bodyPos.y;
@@ -18,60 +20,92 @@ export function surfacePoint(bodyPos, bodyRadius, towardPos, pad = 2) {
   return { x: bodyPos.x + dx * k, y: bodyPos.y + dy * k };
 }
 
-function shuttlePhase(state, idx, moonCount) {
-  const offset = (idx / moonCount) * CYCLE_MS;
-  const cycleT = (state.time + offset) % CYCLE_MS;
-  const outboundEnd = SHUTTLE_PLANET_DWELL_MS + SHUTTLE_FLIGHT_MS;
-  const moonEnd = outboundEnd + SHUTTLE_MOON_DWELL_MS;
-  if (cycleT < SHUTTLE_PLANET_DWELL_MS) return 'planet-dwell';
-  if (cycleT < outboundEnd) return 'outbound';
-  if (cycleT < moonEnd) return 'moon-dwell';
-  return 'inbound';
+function padHeading(from, toward) {
+  return Math.atan2(toward.y - from.y, toward.x - from.x);
 }
 
-export function outpostSurfaceSites(state, systemId) {
+function miningRigSite(moonPos, moonRadius, padPoint, seed) {
+  const padAngle = Math.atan2(padPoint.y - moonPos.y, padPoint.x - moonPos.x);
+  const offset = (seed % 2 === 0 ? 1 : -1) * (0.55 + (seed % 5) * 0.08);
+  const rigAngle = padAngle + offset;
+  const r = moonRadius + 1.5;
+  return {
+    x: moonPos.x + Math.cos(rigAngle) * r,
+    y: moonPos.y + Math.sin(rigAngle) * r,
+    heading: rigAngle + Math.PI / 2,
+  };
+}
+
+function shuttleCyclePhase(time, planet, moonIdx) {
+  const offset = (moonIdx / planet.moons.length) * CYCLE_MS;
+  return (time + offset) % CYCLE_MS;
+}
+
+/**
+ * Landing pads and mining rigs for outpost worlds.
+ * @returns {Array<{kind, x, y, heading, active, planetId, moonId?, seed}>}
+ */
+export function outpostSurfaceSites(state, systemId, time = state.time) {
   const system = systemById(state, systemId);
-  if (!system) return [];
   const sites = [];
+  if (!system) return sites;
+
   for (const planet of system.bodies) {
-    if (!planet.moons.length || !hasOutpost(state, systemId, planet.id)) continue;
-    const planetPos = planetPosition(planet, state.time);
+    if (!hasOutpost(state, systemId, planet.id) || planet.moons.length === 0) continue;
+
+    const planetPos = planetPosition(planet, time);
+
     planet.moons.forEach((moon, idx) => {
-      const moonPos = moonPosition(planet, moon, state.time);
-      const phase = shuttlePhase(state, idx, planet.moons.length);
+      const moonPos = moonPosition(planet, moon, time);
       const planetPad = surfacePoint(planetPos, planet.radius, moonPos, 3);
       const moonPad = surfacePoint(moonPos, moon.radius, planetPos, 2);
-      const rigOffset = surfacePoint(moonPos, moon.radius + 8, planetPos, 4);
+      const cycleT = shuttleCyclePhase(time, planet, idx);
+      const seed = (planet.id.length * 31 + idx * 7) % 97;
+
+      const planetDwell =
+        cycleT >= SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS + SHUTTLE_FLIGHT_MS;
+      const moonDwell =
+        cycleT >= SHUTTLE_FLIGHT_MS && cycleT < SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS;
+      const outbound = cycleT < SHUTTLE_FLIGHT_MS;
+      const inbound =
+        cycleT >= SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS &&
+        cycleT < SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS + SHUTTLE_FLIGHT_MS;
 
       sites.push({
         kind: 'planet-pad',
-        planetId: planet.id,
-        moonId: null,
         x: planetPad.x,
         y: planetPad.y,
-        heading: Math.atan2(moonPos.y - planetPos.y, moonPos.x - planetPos.x),
-        active: phase === 'planet-dwell' || phase === 'outbound',
+        heading: padHeading(planetPad, moonPos),
+        active: planetDwell || outbound,
+        planetId: planet.id,
+        moonId: moon.id,
+        seed,
       });
+
       sites.push({
         kind: 'moon-pad',
-        planetId: planet.id,
-        moonId: moon.id,
         x: moonPad.x,
         y: moonPad.y,
-        heading: Math.atan2(planetPos.y - moonPos.y, planetPos.x - moonPos.x),
-        active: phase === 'moon-dwell' || phase === 'inbound',
-      });
-      sites.push({
-        kind: 'moon-rig',
+        heading: padHeading(moonPad, planetPos),
+        active: moonDwell || inbound,
         planetId: planet.id,
         moonId: moon.id,
-        x: rigOffset.x,
-        y: rigOffset.y,
-        heading: Math.atan2(planetPos.y - moonPos.y, planetPos.x - moonPos.x),
-        active: phase !== 'planet-dwell',
-        seed: (planet.id.length * 17 + idx * 5) % 97,
+        seed,
+      });
+
+      const rig = miningRigSite(moonPos, moon.radius, moonPad, seed);
+      sites.push({
+        kind: 'moon-rig',
+        x: rig.x,
+        y: rig.y,
+        heading: rig.heading,
+        active: moonDwell || inbound || outbound,
+        planetId: planet.id,
+        moonId: moon.id,
+        seed,
       });
     });
   }
+
   return sites;
 }

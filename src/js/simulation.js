@@ -1,4 +1,4 @@
-// Fixed-timestep tick driver (IMPLEMENTATION_PLAN §1).
+// Fixed-timestep tick driver (IMPLEMENTATION_PLAN §1, Phase 5 tick order).
 
 import { TICK_MS } from './constants.js';
 import { applyIncomeTick } from './economy.js';
@@ -10,6 +10,13 @@ import { tickPlayerShips } from './fleets.js';
 import { tickPirates } from './pirates.js';
 import { onForcesArrive, tickCombat } from './combat.js';
 import { tickDyson, applySolariiTick } from './dyson.js';
+import { tickAbstractGalaxies } from './abstract-galaxy.js';
+import { tickWormholeTransit } from './wormholes.js';
+import { tickTrade } from './trade.js';
+import { tickResearch } from './research.js';
+import { dispatchEmpireQueue } from './empire-queue.js';
+import { tickAiFaction } from './ai-faction.js';
+import { tickAiShips } from './ai-ships.js';
 
 function handleArrival(state, systemId) {
   onForcesArrive(state, systemId);
@@ -17,24 +24,36 @@ function handleArrival(state, systemId) {
 
 function tickOnce(state) {
   state.time += TICK_MS;
+  // Phase 5 order: abstract → wormhole → income → trade → research → dispatch → production
+  // → AI faction → fleet transits → pirates → combat → dyson → capture
+  tickAbstractGalaxies(state);
+  const wormholeArrival = tickWormholeTransit(state);
   applyIncomeTick(state);
+  tickTrade(state);
+  tickResearch(state);
+  dispatchEmpireQueue(state);
   const prodReady = tickProduction(state);
+  tickAiFaction(state);
   const scoutArrivals = tickScouts(state);
   const shipArrivals = tickPlayerShips(state, (destId) => handleArrival(state, destId));
+  const aiArrivals = tickAiShips(state, (destId) => handleArrival(state, destId));
   const pirateArrivals = tickPirates(state, (destId) => handleArrival(state, destId));
-  tickFlagship(state);
+  if (!state.flagship.wormholeTransit) tickFlagship(state);
   const battleEvents = tickCombat(state);
   const dysonEvents = tickDyson(state);
   applySolariiTick(state);
   const capture = tickCapture(state);
-  return { prodReady, scoutArrivals, shipArrivals, pirateArrivals, battleEvents, dysonEvents, capture };
+  return {
+    prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, battleEvents, dysonEvents, capture,
+    wormholeArrival,
+  };
 }
 
 export function step(state, accumulatedMs) {
   if (state.paused) {
     return {
-      captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], pirateArrivals: [],
-      battleEvents: [], dysonEvents: [],
+      captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], aiArrivals: [], pirateArrivals: [],
+      battleEvents: [], dysonEvents: [], wormholeArrivals: [],
     };
   }
   let remaining = accumulatedMs;
@@ -42,31 +61,35 @@ export function step(state, accumulatedMs) {
   const prodReady = [];
   const scoutArrivals = [];
   const shipArrivals = [];
+  const aiArrivals = [];
   const pirateArrivals = [];
   const battleEvents = [];
   const dysonEvents = [];
+  const wormholeArrivals = [];
   while (remaining >= TICK_MS) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
     scoutArrivals.push(...events.scoutArrivals);
     shipArrivals.push(...events.shipArrivals);
+    aiArrivals.push(...events.aiArrivals);
     pirateArrivals.push(...events.pirateArrivals);
     battleEvents.push(...events.battleEvents);
     dysonEvents.push(...events.dysonEvents);
     if (events.capture) captures.push(events.capture);
+    if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
     remaining -= TICK_MS;
   }
   return {
-    captures, prodReady, scoutArrivals, shipArrivals, pirateArrivals, battleEvents, dysonEvents,
-    remainingMs: remaining,
+    captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, battleEvents, dysonEvents,
+    wormholeArrivals, remainingMs: remaining,
   };
 }
 
 export function advance(state, ms) {
   if (state.paused) {
     return {
-      captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], pirateArrivals: [],
-      battleEvents: [], dysonEvents: [],
+      captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], aiArrivals: [], pirateArrivals: [],
+      battleEvents: [], dysonEvents: [], wormholeArrivals: [],
     };
   }
   const ticks = Math.floor(ms / TICK_MS);
@@ -74,20 +97,27 @@ export function advance(state, ms) {
   const prodReady = [];
   const scoutArrivals = [];
   const shipArrivals = [];
+  const aiArrivals = [];
   const pirateArrivals = [];
   const battleEvents = [];
   const dysonEvents = [];
+  const wormholeArrivals = [];
   for (let i = 0; i < ticks; i++) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
     scoutArrivals.push(...events.scoutArrivals);
     shipArrivals.push(...events.shipArrivals);
+    aiArrivals.push(...events.aiArrivals);
     pirateArrivals.push(...events.pirateArrivals);
     battleEvents.push(...events.battleEvents);
     dysonEvents.push(...events.dysonEvents);
     if (events.capture) captures.push(events.capture);
+    if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
   }
-  return { captures, prodReady, scoutArrivals, shipArrivals, pirateArrivals, battleEvents, dysonEvents };
+  return {
+    captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, battleEvents, dysonEvents,
+    wormholeArrivals,
+  };
 }
 
 export function setPaused(state, paused) {

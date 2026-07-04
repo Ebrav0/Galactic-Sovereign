@@ -5,9 +5,11 @@ import {
   SHIPYARD_COMBAT_HULLS,
   LAUNCHERS_PER_BODY_MAX,
   PIRATE_SHIPS,
-  PIRATE_WANDER_MS,
+  SHELL_SAILS_REQUIRED,
+  RESEARCH_STATION_CAP,
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
+import { getSystems } from './galaxy-scope.js';
 import {
   systemById,
   findPlanet,
@@ -33,6 +35,10 @@ import {
   devTeleportPirateFleet,
   ensurePiratesState,
 } from './pirates.js';
+import { ensureResearchState, researchStationCount } from './research.js';
+import { forceAiCapture } from './ai-faction.js';
+import { allTechNodes, applyTechEffect, isTechUnlocked, techNode } from './tech-web.js';
+import { normalizeShipyardBuilds } from './empire-queue.js';
 
 export const DEV_CODES = {
   INVALID_SYSTEM: 'INVALID_SYSTEM',
@@ -51,6 +57,9 @@ export const DEV_CODES = {
   NO_PIRATES_STATE: 'NO_PIRATES_STATE',
   NO_FLEET: 'NO_FLEET',
   ALREADY_OWNED: 'ALREADY_OWNED',
+  UNKNOWN_TECH: 'UNKNOWN_TECH',
+  RESEARCH_CAP: 'RESEARCH_CAP',
+  TRADE_DUPLICATE: 'TRADE_DUPLICATE',
 };
 
 function ok(details) {
@@ -97,11 +106,11 @@ export function devValidateBody(state, systemId, bodyId) {
   return ok({ bodyId, found });
 }
 
-export function devValidateHull(hull, { includeScout = true } = {}) {
+export function devValidateHull(hull, { includeScout = true, allowedHulls = null } = {}) {
   if (!hull) return err(DEV_CODES.INVALID_HULL, 'No hull specified');
-  const allowed = includeScout
+  const allowed = allowedHulls ?? (includeScout
     ? ['scout', ...SHIPYARD_COMBAT_HULLS]
-    : [...SHIPYARD_COMBAT_HULLS];
+    : [...SHIPYARD_COMBAT_HULLS]);
   if (!allowed.includes(hull)) return err(DEV_CODES.INVALID_HULL, `Hull not allowed: ${hull}`);
   if (!hullStats(hull)) return err(DEV_CODES.INVALID_HULL, `Unknown hull: ${hull}`);
   return ok({ hull });
@@ -203,6 +212,15 @@ export function devRevealIntel(state, systemId) {
   return ok({ systemId, hasIntel: true });
 }
 
+export function devRevealAllIntel(state) {
+  let count = 0;
+  for (const systemId of Object.keys(getSystems(state))) {
+    const res = devRevealIntel(state, systemId);
+    if (res.ok) count++;
+  }
+  return ok({ systems: count });
+}
+
 export function devAdvanceTime(state, ms) {
   const amount = Number(ms);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -281,7 +299,7 @@ export function devForceBuildShipyard(state, systemId, planetId) {
     type: 'shipyard',
     bodyId: planetId,
     builtAtTime: state.time,
-    build: null,
+    builds: [],
   });
   return ok({ built: 'shipyard', structureId: id, bodyId: planetId });
 }
@@ -321,6 +339,118 @@ export function devForceBuildLauncher(state, systemId, bodyId) {
   dyson.launcherStock[id] = 0;
   dyson.launcherLastFireAt[id] = state.time;
   return ok({ built: 'dyson_launcher', structureId: id, bodyId });
+}
+
+export function devForceBuildResearchStation(state, systemId) {
+  const check = devValidateSystem(state, systemId, { forbidCore: true });
+  if (!check.ok) return check;
+  if (researchStationCount(state, systemId) >= RESEARCH_STATION_CAP) {
+    return ok({ skipped: true, type: 'research_station', atCap: true });
+  }
+  const system = check.details.system;
+  const host = system.bodies.find((b) => b.type === 'habitable') ?? system.bodies[0];
+  if (!host) return err(DEV_CODES.INVALID_PLANET, 'No anchor body for research station');
+
+  const id = allocateStructureId();
+  const orbitIndex = researchStationCount(state, systemId);
+  system.structures.push({
+    id,
+    type: 'research_station',
+    bodyId: host.id,
+    orbitIndex,
+    builtAtTime: state.time,
+  });
+  system.researchStationCount = researchStationCount(state, systemId) + 1;
+  return ok({ built: 'research_station', structureId: id, bodyId: host.id });
+}
+
+export function devForceBuildTradeStation(state, systemId, planetId) {
+  const planetCheck = devValidatePlanet(state, systemId, planetId);
+  if (!planetCheck.ok) return planetCheck;
+  const system = systemById(state, systemId);
+  const existing = system.structures.some((s) => s.type === 'trade_station' && s.bodyId === planetId);
+  if (existing) return ok({ skipped: true, type: 'trade_station' });
+
+  const id = allocateStructureId();
+  system.structures.push({
+    id,
+    type: 'trade_station',
+    bodyId: planetId,
+    builtAtTime: state.time,
+  });
+  return ok({ built: 'trade_station', structureId: id, bodyId: planetId });
+}
+
+export function devUnlockTech(state, nodeId) {
+  ensureResearchState(state);
+  if (!techNode(nodeId)) return err(DEV_CODES.UNKNOWN_TECH, `Unknown tech: ${nodeId}`);
+  if (!isTechUnlocked(state, nodeId)) {
+    state.research.unlocked.push(nodeId);
+    applyTechEffect(state, nodeId);
+  }
+  return ok({ nodeId, unlocked: true });
+}
+
+export function devUnlockAllTech(state) {
+  ensureResearchState(state);
+  const unlocked = [];
+  for (const node of allTechNodes()) {
+    if (!isTechUnlocked(state, node.id)) {
+      state.research.unlocked.push(node.id);
+      applyTechEffect(state, node.id);
+      unlocked.push(node.id);
+    }
+  }
+  return ok({ count: unlocked.length, unlocked });
+}
+
+export function devCompleteActiveResearch(state) {
+  ensureResearchState(state);
+  if (!state.research.activeNodeId) {
+    return err(DEV_CODES.INVALID_SYSTEM, 'No active research');
+  }
+  const nodeId = state.research.activeNodeId;
+  if (!isTechUnlocked(state, nodeId)) {
+    state.research.unlocked.push(nodeId);
+    applyTechEffect(state, nodeId);
+  }
+  state.research.activeNodeId = null;
+  state.research.progress = 0;
+  state.research.durationMs = null;
+  return ok({ nodeId, completed: true });
+}
+
+export function devForceAiCaptureSystem(state, systemId) {
+  const check = devValidateSystem(state, systemId, { forbidCore: true });
+  if (!check.ok) return check;
+  return forceAiCapture(state, systemId);
+}
+
+export function devBuildEmpireKit(state, systemId, planetId) {
+  const results = [
+    devBuildPlanetKit(state, systemId, planetId),
+    devForceBuildResearchStation(state, systemId),
+    devForceBuildTradeStation(state, systemId, planetId),
+  ];
+  const built = [];
+  const skipped = [];
+  const errors = [];
+  for (const r of results) {
+    if (!r.ok) {
+      errors.push({ code: r.code, reason: r.reason });
+      continue;
+    }
+    if (r.details?.built) {
+      if (Array.isArray(r.details.built)) built.push(...r.details.built);
+      else built.push(r.details.built);
+    }
+    if (r.details?.skipped) {
+      if (Array.isArray(r.details.skipped)) skipped.push(...r.details.skipped);
+      else skipped.push(r.details.skipped);
+    }
+    if (r.details?.errors) errors.push(...r.details.errors);
+  }
+  return ok({ built, skipped, errors });
 }
 
 // --- Kits ---
@@ -428,7 +558,8 @@ export function devInstantSpawnAtShipyard(state, systemId, shipyardId, hull) {
     return err(DEV_CODES.NO_SHIPYARD, 'No such shipyard');
   }
 
-  if (shipyard.build) shipyard.build = null;
+  if (shipyard.builds?.length) shipyard.builds = [];
+  normalizeShipyardBuilds(shipyard);
 
   let spawned;
   if (hull === 'scout') {
@@ -510,10 +641,12 @@ export function devAction(state, action, params = {}) {
       return devUnlockSolarii(state);
     case 'revealIntel':
       return devRevealIntel(state, params.systemId);
+    case 'revealAllIntel':
+      return devRevealAllIntel(state);
     case 'advanceTime':
       return devAdvanceTime(state, params.ms ?? 60000);
     case 'forceShellProgress':
-      return devForceShellProgress(state, params.systemId, params.sails ?? 100);
+      return devForceShellProgress(state, params.systemId, params.sails ?? SHELL_SAILS_REQUIRED);
     case 'setBattleStance':
       return devSetBattleStance(state, params.stance ?? 'balanced');
     case 'forceCapture':
@@ -525,13 +658,27 @@ export function devAction(state, action, params = {}) {
     case 'forceBuildFoundry':
       return devForceBuildFoundry(state, params.systemId, params.planetId);
     case 'forceBuildLauncher':
-      return devForceBuildLauncher(state, params.systemId, params.bodyId);
+      return devForceBuildLauncher(state, params.systemId, params.bodyId ?? params.planetId);
+    case 'forceBuildResearchStation':
+      return devForceBuildResearchStation(state, params.systemId);
+    case 'forceBuildTradeStation':
+      return devForceBuildTradeStation(state, params.systemId, params.planetId);
     case 'buildPlanetKit':
       return devBuildPlanetKit(state, params.systemId, params.planetId);
     case 'buildSystemKit':
       return devBuildSystemKit(state, params.systemId);
     case 'buildDysonKit':
       return devBuildDysonKit(state, params.systemId);
+    case 'buildEmpireKit':
+      return devBuildEmpireKit(state, params.systemId, params.planetId);
+    case 'unlockTech':
+      return devUnlockTech(state, params.nodeId);
+    case 'unlockAllTech':
+      return devUnlockAllTech(state);
+    case 'completeResearch':
+      return devCompleteActiveResearch(state);
+    case 'forceAiCapture':
+      return devForceAiCaptureSystem(state, params.systemId);
     case 'instantSpawnAtShipyard':
       return devInstantSpawnAtShipyard(state, params.systemId, params.shipyardId, params.hull);
     case 'spawnFriendly':

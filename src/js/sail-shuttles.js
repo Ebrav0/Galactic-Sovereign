@@ -52,7 +52,7 @@ export function foundryRingMotion(foundryId, time) {
 }
 
 /** Sail foundry — animated orbital ring station around its host planet. */
-export function foundryAnchor(state, systemId) {
+export function foundryAnchor(state, systemId, time = state.time) {
   const system = systemById(state, systemId);
   const foundry = findFoundry(state, systemId);
   const planet = foundryHostPlanet(state, systemId);
@@ -60,9 +60,9 @@ export function foundryAnchor(state, systemId) {
     return { x: 0, y: 0, ringR: 0, planetId: null, planetX: 0, planetY: 0, foundryId: null };
   }
 
-  const pp = planetPosition(planet, state.time);
+  const pp = planetPosition(planet, time);
   const ringR = computeFoundryRingRadius(planet);
-  const { dockAngle } = foundryRingMotion(foundry.id, state.time);
+  const { dockAngle } = foundryRingMotion(foundry.id, time);
   return {
     x: pp.x + Math.cos(dockAngle) * ringR,
     y: pp.y + Math.sin(dockAngle) * ringR,
@@ -75,25 +75,47 @@ export function foundryAnchor(state, systemId) {
   };
 }
 
-function launcherDock(state, systemId, launcherId) {
-  const site = launcherSiteById(state, systemId, launcherId);
+function launcherDock(state, systemId, launcherId, time = state.time) {
+  const site = launcherSiteById(state, systemId, launcherId, time);
   if (!site) return null;
   return { x: site.dockX, y: site.dockY };
 }
 
+/** Phase 0→0.5 outbound (foundry→launcher); 0.5→1 return. Shared by render + sim. */
+export function sailShuttlePhase(launcherIndex, launcherCount, time) {
+  return ((time / SAIL_SHUTTLE_TRIP_MS) + launcherIndex / Math.max(1, launcherCount)) % 1;
+}
+
+/** Count shuttle dockings at launcher between two timestamps (deterministic). */
+export function sailShuttleLauncherArrivals(prevTime, nowTime, launcherIndex, launcherCount) {
+  if (nowTime <= prevTime) return 0;
+  const period = SAIL_SHUTTLE_TRIP_MS;
+  const offset = launcherIndex / Math.max(1, launcherCount);
+  const t0 = (0.5 - offset) * period;
+  const nMin = Math.ceil((prevTime - t0) / period);
+  const nMax = Math.floor((nowTime - t0) / period);
+  if (nMax < nMin) return 0;
+  let count = 0;
+  for (let n = nMin; n <= nMax; n++) {
+    const t = t0 + n * period;
+    if (t > prevTime && t <= nowTime) count++;
+  }
+  return count;
+}
+
 /** One shuttle sprite per active launcher route. */
-export function sailShuttlePositions(state, systemId) {
+export function sailShuttlePositions(state, systemId, time = state.time) {
   const result = [];
   const system = systemById(state, systemId);
   if (!system || !hasFoundry(state, systemId)) return result;
 
-  const from = foundryAnchor(state, systemId);
+  const from = foundryAnchor(state, systemId, time);
   const launchers = dysonLaunchers(state, systemId);
   launchers.forEach((launcher, idx) => {
-    const to = launcherDock(state, systemId, launcher.id);
+    const to = launcherDock(state, systemId, launcher.id, time);
     if (!to || !from.foundryId) return;
     const ringFrom = foundryRingClosestPoint(from.planetX, from.planetY, from.ringR, to.x, to.y);
-    const phase = ((state.time / SAIL_SHUTTLE_TRIP_MS) + idx / Math.max(1, launchers.length)) % 1;
+    const phase = sailShuttlePhase(idx, launchers.length, time);
     const t = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
     result.push({
       x: ringFrom.x + (to.x - ringFrom.x) * t,

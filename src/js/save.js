@@ -2,9 +2,18 @@
 // Pure serialize/deserialize plus I/O calls; holds no live state references.
 
 import { SAVE_VERSION } from './constants.js';
-import { createNewGame, seedNeutralStructuresForGalaxy, createDefaultDyson } from './state.js';
+import { createNewGame, seedNeutralStructuresForGalaxy, createDefaultDyson, hashSeed, createRng } from './state.js';
 import { backfillStarTypes } from './star-types.js';
 import { spawnPirateFleets } from './pirates.js';
+import { generateGalaxy } from './galaxy.js';
+import { createDefaultAbstract } from './abstract-galaxy.js';
+import {
+  galaxyDisplayName,
+  wormholeIdForGalaxy,
+  getGalaxyCount,
+} from './galaxy-scope.js';
+import { generateGalaxySystems } from './hydration.js';
+import { seedAiFaction } from './ai-faction.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -51,7 +60,37 @@ function migrateSave(envelope) {
   if (e.saveVersion === 2) e = migrateV2toV3(e);
   if (e.saveVersion === 3) e = migrateV3toV4(e);
   if (e.saveVersion === 4) e = migrateV4toV5(e);
+  if (e.saveVersion === 5) e = migrateV5toV6(e);
+  if (e.saveVersion === 6) e = migrateV6toV7(e);
   return e;
+}
+
+// --- Legacy save helpers (v1–v5 flat layout vs v6 galaxies) ---
+
+function legacyGraph(state) {
+  return state.galaxies?.['gal-0']?.graph ?? state.galaxy;
+}
+
+function legacySystems(state) {
+  return state.galaxies?.['gal-0']?.systems ?? state.systems;
+}
+
+function legacyIntel(state) {
+  if (state.galaxies?.['gal-0']) {
+    if (!state.galaxies['gal-0'].intel) state.galaxies['gal-0'].intel = {};
+    return state.galaxies['gal-0'].intel;
+  }
+  if (!state.intel) state.intel = {};
+  return state.intel;
+}
+
+function legacyCapture(state) {
+  if (state.galaxies?.['gal-0']) {
+    if (!state.galaxies['gal-0'].capture) state.galaxies['gal-0'].capture = {};
+    return state.galaxies['gal-0'].capture;
+  }
+  if (!state.capture) state.capture = {};
+  return state.capture;
 }
 
 // v0 (single home system) -> v1 (galaxy + multi-system + flagship).
@@ -68,12 +107,12 @@ function migrateV0toV1(envelope) {
   const oldSystem = old.system;
   oldSystem.id = strongholdId;
   oldSystem.owner = 'player';
-  fresh.systems[strongholdId] = oldSystem;
-  fresh.galaxy.stars.find((s) => s.id === strongholdId).name = oldSystem.name;
+  fresh.galaxies['gal-0'].systems[strongholdId] = oldSystem;
+  fresh.galaxies['gal-0'].graph.stars.find((s) => s.id === strongholdId).name = oldSystem.name;
+  fresh.galaxies['gal-0'].intel = { [strongholdId]: { gatheredAt: 0 } };
 
-  fresh.intel = { [strongholdId]: { gatheredAt: 0 } };
   fresh.scouts = [];
-  fresh.capture = {};
+  fresh.galaxies['gal-0'].capture = {};
 
   const stateJson = JSON.stringify(fresh);
   return {
@@ -87,26 +126,27 @@ function migrateV0toV1(envelope) {
 // v1 -> v2 (ownership, scouts, intel, capture, neutral seeding, shipyard build slots).
 function migrateV1toV2(envelope) {
   const state = envelope.state;
+  const graph = legacyGraph(state);
+  const systems = legacySystems(state);
+  const intel = legacyIntel(state);
+  const capture = legacyCapture(state);
 
-  for (const star of state.galaxy.stars) {
-    const system = state.systems[star.id];
+  for (const star of graph.stars) {
+    const system = systems[star.id];
     if (!system) continue;
     system.owner = star.id === state.stronghold ? 'player' : 'neutral';
     for (const s of system.structures) {
       if (s.type === 'shipyard' && s.build === undefined) s.build = null;
     }
   }
-  const core = state.systems[state.galaxy.blackHole.id];
+  const core = systems[graph.blackHole.id];
   if (core) core.owner = 'neutral';
 
   state.scouts = state.scouts ?? [];
-  state.intel = state.intel ?? { [state.stronghold]: { gatheredAt: 0 } };
-  if (!state.intel[state.stronghold]) {
-    state.intel[state.stronghold] = { gatheredAt: 0 };
-  }
-  state.capture = state.capture ?? {};
+  if (!intel[state.stronghold]) intel[state.stronghold] = { gatheredAt: 0 };
+  if (!capture) { /* capture initialized by legacyCapture */ }
 
-  seedNeutralStructuresForGalaxy(state);
+  seedNeutralStructuresForGalaxy(state, state.galaxies ? 'gal-0' : state.activeGalaxyId ?? 'gal-0');
 
   const stateJson = JSON.stringify(state);
   return {
@@ -161,7 +201,7 @@ function migrateV4toV5(envelope) {
   state.solarii = state.solarii ?? 0;
   state.solariiUnlocked = state.solariiUnlocked ?? false;
 
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(legacySystems(state))) {
     if (!system.dyson) system.dyson = createDefaultDyson();
     else {
       system.dyson.launcherStock = system.dyson.launcherStock ?? {};
@@ -176,6 +216,158 @@ function migrateV4toV5(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 5,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v5 -> v6 (multi-galaxy, wormholes, abstract galaxies).
+function migrateV5toV6(envelope) {
+  const state = envelope.state;
+  if (state.galaxies && state.wormholes && state.activeGalaxyId) {
+    const stateJson = JSON.stringify(state);
+    return {
+      saveVersion: 6,
+      checksum: crc32(stateJson),
+      savedAt: envelope.savedAt,
+      state,
+    };
+  }
+
+  const metaSeed = state.meta.seed;
+  const galaxyCount = getGalaxyCount();
+  const galaxies = {};
+  const wormholes = {};
+
+  galaxies['gal-0'] = {
+    id: 'gal-0',
+    name: galaxyDisplayName(0),
+    status: 'active',
+    graph: state.galaxy,
+    systems: state.systems,
+    intel: state.intel ?? { [state.stronghold]: { gatheredAt: 0 } },
+    capture: state.capture ?? {},
+    abstract: null,
+    strongholdStarId: state.stronghold,
+    discovered: true,
+  };
+
+  for (let g = 1; g < galaxyCount; g++) {
+    const galId = `gal-${g}`;
+    const gSeed = hashSeed(metaSeed, `galaxy:${galId}`);
+    const graphRng = createRng(hashSeed(gSeed, 'graph'));
+    const pickRng = createRng(hashSeed(gSeed, 'stronghold'));
+    const abstractRng = createRng(hashSeed(gSeed, 'abstract-init'));
+    const graph = generateGalaxy(graphRng);
+    galaxies[galId] = {
+      id: galId,
+      name: galaxyDisplayName(g),
+      status: 'abstract',
+      graph,
+      systems: {},
+      intel: {},
+      capture: {},
+      abstract: createDefaultAbstract(abstractRng),
+      strongholdStarId: graph.stars[Math.floor(pickRng() * graph.stars.length)].id,
+      discovered: false,
+    };
+  }
+
+  for (let g = 0; g < galaxyCount; g++) {
+    const galId = `gal-${g}`;
+    wormholes[wormholeIdForGalaxy(galId)] = {
+      galaxyId: galId,
+      anchor: null,
+      anchorOwner: null,
+      discovered: g === 0,
+    };
+  }
+
+  state.activeGalaxyId = 'gal-0';
+  state.homeGalaxyId = 'gal-0';
+  state.galaxies = galaxies;
+  state.wormholes = wormholes;
+  delete state.galaxy;
+  delete state.systems;
+  delete state.intel;
+  delete state.capture;
+
+  state.flagship.galaxyId = state.flagship.galaxyId ?? 'gal-0';
+  state.flagship.wormholeTransit = state.flagship.wormholeTransit ?? null;
+
+  for (const scout of state.scouts ?? []) {
+    scout.galaxyId = scout.galaxyId ?? 'gal-0';
+  }
+  for (const ship of state.playerShips ?? []) {
+    ship.galaxyId = ship.galaxyId ?? 'gal-0';
+  }
+  for (const fleet of state.pirates?.fleets ?? []) {
+    fleet.galaxyId = fleet.galaxyId ?? 'gal-0';
+  }
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 6,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+function initPhase5State(state) {
+  state.empireQueue = state.empireQueue ?? [];
+  state.research = state.research ?? {
+    activeNodeId: null,
+    progress: 0,
+    unlocked: ['eco_baseline'],
+    queue: [],
+  };
+  if (!state.research.unlocked?.includes('eco_baseline')) {
+    state.research.unlocked = ['eco_baseline', ...(state.research.unlocked ?? [])];
+  }
+  state.factions = state.factions ?? {
+    ai: {
+      id: 'ai-0',
+      name: 'Dominion of Helix',
+      personality: 'expansionist',
+      homeSystemId: null,
+      credits: 1200,
+      lastActionTick: 0,
+    },
+  };
+  state.aiShips = state.aiShips ?? [];
+}
+
+function migrateShipyardsOnLoad(state) {
+  for (const gal of Object.values(state.galaxies ?? {})) {
+    for (const system of Object.values(gal.systems ?? {})) {
+      for (const s of system.structures ?? []) {
+        if (s.type === 'shipyard' && s.build && !s.builds) {
+          s.builds = [s.build];
+          delete s.build;
+        }
+        if (s.type === 'shipyard' && !s.builds) s.builds = [];
+      }
+    }
+  }
+}
+
+// v6 -> v7 (Phase 5 empire layer).
+function migrateV6toV7(envelope) {
+  const state = envelope.state;
+  initPhase5State(state);
+  migrateShipyardsOnLoad(state);
+
+  const homeGal = state.galaxies?.[state.homeGalaxyId ?? 'gal-0'];
+  const hasAi = homeGal?.systems && Object.values(homeGal.systems).some((s) => s.owner === 'ai');
+  if (!hasAi && homeGal?.status === 'active' && homeGal.systems) {
+    seedAiFaction(state, state.homeGalaxyId ?? 'gal-0');
+  }
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 7,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,
@@ -215,6 +407,9 @@ export function deserialize(envelopeJson) {
       }
     }
   }
+
+  initPhase5State(envelope.state);
+  migrateShipyardsOnLoad(envelope.state);
 
   return { ok: true, state: envelope.state };
 }

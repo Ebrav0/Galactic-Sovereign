@@ -65,6 +65,15 @@
             <span class="chip__value"><span id="solarii-value">0</span> · <span id="solarii-rate">0</span>/s</span>
           </span>
         </div>
+        <div class="chip chip--green hidden" id="trade-chip">
+          <span class="chip__icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v2H2V3zm0 4h8v2H2V7zm0 4h10v2H2v-2z"/></svg>
+          </span>
+          <span class="chip__body">
+            <span class="chip__label">Trade</span>
+            <span class="chip__value"><span id="trade-income-value">0</span>/s</span>
+          </span>
+        </div>
         <div class="chip chip--cyan chip--wide">
           <span class="chip__icon" aria-hidden="true">
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M15 8L1 1l3.5 7L1 15l14-7zM4.8 7L3.2 3.6 12 8l-8.8 4.4L4.8 9H9V7H4.8z"/></svg>
@@ -103,6 +112,17 @@
     </header>
 
     <aside id="left-rail" class="hud-rail hud-rail--left">
+      <div id="fleet-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Fleet Command</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body" id="fleet-panel-body">
+          <p class="empty-state">Ships and scouts appear here.</p>
+        </div>
+      </div>
+
       <div id="scout-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -113,6 +133,18 @@
           <div id="scout-roster" class="list"></div>
         </div>
         <div id="selected-scout-line" class="panel__footer panel-note"></div>
+      </div>
+
+      <div id="empire-queue-panel" class="panel">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Empire Build Queue</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body">
+          <div id="empire-queue-list" class="list"></div>
+          <div id="empire-queue-actions" class="panel__actions"></div>
+        </div>
       </div>
 
       <div id="intel-panel" class="panel hidden">
@@ -151,8 +183,26 @@
           <button id="build-shipyard-btn" type="button" class="btn btn--primary btn--block hidden">Build Shipyard</button>
           <button id="build-foundry-btn" type="button" class="btn btn--primary btn--block hidden">Build Sail Foundry</button>
           <button id="build-launcher-btn" type="button" class="btn btn--primary btn--block hidden">Build Dyson Launcher</button>
-          <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Build Scout</button>
+          <button id="build-trade-btn" type="button" class="btn btn--primary btn--block hidden">Build Trade Station</button>
+          <button id="build-research-btn" type="button" class="btn btn--primary btn--block hidden">Build Research Station</button>
+          <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Add Scout to Empire Queue</button>
           <div id="build-panel-note" class="panel-note"></div>
+        </div>
+      </div>
+
+      <div id="wormhole-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Galactic Core Wormhole</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body">
+          <p class="panel-note">Unanchored travel exits at a random wormhole. Build an anchor for stable pairs.</p>
+        </div>
+        <div class="panel__footer panel__actions">
+          <button id="enter-wormhole-btn" type="button" class="btn btn--primary btn--block">Enter Wormhole</button>
+          <select id="anchor-target-select" class="btn btn--ghost btn--block" style="margin-bottom:8px"></select>
+          <button id="build-anchor-btn" type="button" class="btn btn--primary btn--block">Build Wormhole Anchor</button>
         </div>
       </div>
 
@@ -162,6 +212,15 @@
         </div>
         <div class="panel__body" id="dyson-panel-body">
           <p class="empty-state">Select a system to view Dyson progress.</p>
+        </div>
+      </div>
+
+      <div id="tech-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Technology Web</span>
+        </div>
+        <div class="panel__body" id="tech-panel-body">
+          <p class="empty-state">Research nodes appear here.</p>
         </div>
       </div>
 
@@ -182,8 +241,8 @@
       <nav id="tab-bar" class="tab-bar" aria-label="View navigation">
         <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
-        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Fleet</button>
-        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Tech</button>
+        <button type="button" class="tab" data-panel="fleet" id="tab-fleet">Fleet</button>
+        <button type="button" class="tab" data-panel="tech" id="tab-tech">Tech</button>
         <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
       </nav>
     </footer>
@@ -238,12 +297,16 @@
               <div class="dev-row">
                 <button id="dev-unlock-solarii" type="button" class="btn btn--ghost btn--sm">Unlock Solarii</button>
                 <button id="dev-reveal-intel" type="button" class="btn btn--ghost btn--sm">Reveal Intel</button>
+                <button id="dev-reveal-all-intel" type="button" class="btn btn--ghost btn--sm">Reveal All</button>
+              </div>
+              <div class="dev-row">
                 <button id="dev-force-capture" type="button" class="btn btn--ghost btn--sm">Force Capture</button>
+                <button id="dev-force-ai-capture" type="button" class="btn btn--ghost btn--sm">AI Capture System</button>
               </div>
               <div class="dev-row">
                 <button id="dev-advance-60" type="button" class="btn btn--ghost btn--sm">+60s</button>
                 <button id="dev-advance-300" type="button" class="btn btn--ghost btn--sm">+300s</button>
-                <button id="dev-force-shell" type="button" class="btn btn--ghost btn--sm">Force Shell</button>
+                <button id="dev-force-shell" type="button" class="btn btn--ghost btn--sm">Complete Shell</button>
               </div>
               <div class="dev-row">
                 <label class="dev-label" for="dev-stance-select">Stance</label>
@@ -257,17 +320,37 @@
           </details>
 
           <details class="dev-section" open>
+            <summary class="dev-section__title">Empire &amp; Tech</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-unlock-all-tech" type="button" class="btn btn--primary btn--sm">Unlock All Tech</button>
+                <button id="dev-complete-research" type="button" class="btn btn--ghost btn--sm">Complete Research</button>
+              </div>
+              <div class="dev-row">
+                <label class="dev-label" for="dev-tech-select">Tech node</label>
+                <select id="dev-tech-select" class="dev-select dev-select--wide"></select>
+                <button id="dev-unlock-tech" type="button" class="btn btn--ghost btn--sm">Unlock</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
             <summary class="dev-section__title">Autobuild</summary>
             <div class="dev-section__body">
               <div class="dev-row">
                 <button id="dev-build-outpost" type="button" class="btn btn--primary btn--sm">Outpost</button>
                 <button id="dev-build-shipyard" type="button" class="btn btn--primary btn--sm">Shipyard</button>
-                <button id="dev-build-foundry" type="button" class="btn btn--primary btn--sm">Foundry</button>
-                <button id="dev-build-launcher" type="button" class="btn btn--primary btn--sm">Launcher</button>
+                <button id="dev-build-foundry" type="button" class="btn btn--ghost btn--sm">Sail Foundry</button>
+                <button id="dev-build-launcher" type="button" class="btn btn--ghost btn--sm">Dyson Launcher</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-build-research" type="button" class="btn btn--ghost btn--sm">Research Station</button>
+                <button id="dev-build-trade" type="button" class="btn btn--ghost btn--sm">Trade Station</button>
               </div>
               <div class="dev-row">
                 <button id="dev-planet-kit" type="button" class="btn btn--ghost btn--sm">Planet Kit</button>
                 <button id="dev-system-kit" type="button" class="btn btn--ghost btn--sm">System Kit</button>
+                <button id="dev-empire-kit" type="button" class="btn btn--ghost btn--sm">Empire Kit</button>
                 <button id="dev-dyson-kit" type="button" class="btn btn--ghost btn--sm">Dyson Kit</button>
               </div>
               <div class="dev-row">
@@ -281,12 +364,7 @@
             <div class="dev-section__body">
               <div class="dev-row">
                 <label class="dev-label" for="dev-friendly-hull">Hull</label>
-                <select id="dev-friendly-hull" class="dev-select">
-                  <option value="corvette">corvette</option>
-                  <option value="frigate">frigate</option>
-                  <option value="destroyer">destroyer</option>
-                  <option value="healer">healer</option>
-                </select>
+                <select id="dev-friendly-hull" class="dev-select dev-select--wide"></select>
                 <label class="dev-label" for="dev-spawn-count">Count</label>
                 <input id="dev-spawn-count" type="number" class="dev-input" min="1" max="20" step="1" value="1" />
               </div>
@@ -295,12 +373,16 @@
                 <button id="dev-spawn-scouts" type="button" class="btn btn--ghost btn--sm">Spawn Scouts</button>
               </div>
               <div class="dev-row">
-                <button id="dev-spawn-enemy" type="button" class="btn btn--ghost btn--sm">Spawn Enemy Fleet</button>
+                <button id="dev-spawn-enemy" type="button" class="btn btn--ghost btn--sm">Spawn Pirate Fleet</button>
                 <button id="dev-teleport-pirate" type="button" class="btn btn--ghost btn--sm">Teleport Pirate Here</button>
               </div>
             </div>
           </details>
         </div>
+      </div>
+
+      <div id="tech-screen" class="tech-screen hidden">
+        <div id="tech-screen-body" class="tech-screen__body"></div>
       </div>
 
       <div id="toast-container"></div>

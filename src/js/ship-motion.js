@@ -96,19 +96,19 @@ function addStarRepulsion(ax, ay, x, y, system, strength) {
 }
 
 /** Soft radial push away from stars/planets/moons (accel units for physics, or displacement scale for nudge). */
-export function keepOutRepulsion(state, system, x, y, strength = KEEP_OUT_REPULSION) {
+export function keepOutRepulsion(state, system, x, y, strength = KEEP_OUT_REPULSION, time = state.time) {
   let ax = 0;
   let ay = 0;
 
   ({ ax, ay } = addStarRepulsion(ax, ay, x, y, system, strength));
 
   for (const planet of system.bodies) {
-    const pp = planetPosition(planet, state.time);
+    const pp = planetPosition(planet, time);
     const pKeep = planet.radius + PLANET_KEEP_OUT_PAD;
     ({ ax, ay } = addRepulsion(ax, ay, x, y, pp.x, pp.y, pKeep, strength));
 
     for (const moon of planet.moons) {
-      const mp = moonPosition(planet, moon, state.time);
+      const mp = moonPosition(planet, moon, time);
       const mKeep = moon.radius + MOON_KEEP_OUT_PAD;
       ({ ax, ay } = addRepulsion(ax, ay, x, y, mp.x, mp.y, mKeep, strength));
     }
@@ -118,27 +118,27 @@ export function keepOutRepulsion(state, system, x, y, strength = KEEP_OUT_REPULS
 }
 
 /** Integrate soft repulsion for render-only / kinematic poses. */
-export function softKeepOut(state, system, x, y, passes = 10) {
+export function softKeepOut(state, system, x, y, passes = 10, time = state.time) {
   let px = x;
   let py = y;
   const step = TICK_MS / 1000;
   for (let i = 0; i < passes; i++) {
-    const { ax, ay } = keepOutRepulsion(state, system, px, py, KEEP_OUT_NUDGE_STRENGTH);
+    const { ax, ay } = keepOutRepulsion(state, system, px, py, KEEP_OUT_NUDGE_STRENGTH, time);
     px += ax * step;
     py += ay * step;
   }
   return { x: px, y: py };
 }
 
-export function ambientShipPose(state, system, ship, idx, total) {
-  const base = stationedShipPose(state, system, ship, idx, total);
-  const patrol = patrolOffset(state.time, ship.id, 1);
+export function ambientShipPose(state, system, ship, idx, total, time = state.time) {
+  const base = stationedShipPose(state, system, ship, idx, total, time);
+  const patrol = patrolOffset(time, ship.id, 1);
   const raw = {
     x: base.x + patrol.cx,
     y: base.y + patrol.cy,
     heading: patrol.heading,
   };
-  const safe = softKeepOut(state, system, raw.x, raw.y);
+  const safe = softKeepOut(state, system, raw.x, raw.y, 10, time);
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 
@@ -153,15 +153,15 @@ export function pirateStationPose(state, system, idx, total) {
   };
 }
 
-export function ambientPiratePose(state, system, ship, fleetId, idx, total) {
+export function ambientPiratePose(state, system, ship, fleetId, idx, total, time = state.time) {
   const base = pirateStationPose(state, system, idx, total);
-  const patrol = patrolOffset(state.time, `${fleetId}:${ship.id}`, 1.15);
+  const patrol = patrolOffset(time, `${fleetId}:${ship.id}`, 1.15);
   const raw = {
     x: base.x + patrol.cx,
     y: base.y + patrol.cy,
     heading: patrol.heading,
   };
-  const safe = softKeepOut(state, system, raw.x, raw.y);
+  const safe = softKeepOut(state, system, raw.x, raw.y, 10, time);
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 

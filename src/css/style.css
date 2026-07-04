@@ -97,7 +97,8 @@ html, body {
 
 #hud-overlays > .modal-backdrop:not(.hidden),
 #hud-overlays > .panel--modal:not(.hidden),
-#hud-overlays > .pause-overlay:not(.hidden) {
+#hud-overlays > .pause-overlay:not(.hidden),
+#hud-overlays > .tech-screen:not(.hidden) {
   pointer-events: auto;
 }
 
@@ -1177,6 +1178,7 @@ button {
   #notification-log { display: none; }
 }
 
+
 /* ===================== DEV PANEL ===================== */
 
 .dev-badge {
@@ -1291,9 +1293,299 @@ button {
 
 .dev-input { width: 56px; }
 
+.dev-select--wide {
+  min-width: 140px;
+  flex: 1;
+}
+
+.dev-context__line {
+  display: block;
+}
+
 .dev-select:focus,
 .dev-input:focus {
   outline: none;
   border-color: rgba(255, 207, 122, 0.5);
+}
+
+/* Technology web graph — DSP-style horizontal tree */
+.tech-web-stats,
+.fleet-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.tech-web-stats strong,
+.fleet-stats strong {
+  color: var(--text-secondary);
+}
+
+.tech-web-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: var(--space-2) 0;
+}
+
+.tech-web-legend__chip {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  clip-path: var(--clip-btn);
+  background: rgba(8, 12, 22, 0.6);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.tech-web-legend__chip:hover {
+  background: rgba(20, 28, 44, 0.8);
+  color: var(--text-secondary);
+}
+
+.tech-web-legend__chip--active {
+  background: rgba(255, 154, 74, 0.15);
+  border-color: #ff9a4a;
+  color: #ffb86a;
+}
+
+.tech-web-band-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.tech-web-edge {
+  fill: none;
+  stroke: rgba(60, 75, 100, 0.45);
+  stroke-width: 2;
+}
+
+.tech-web-edge--lit {
+  stroke: rgba(90, 110, 140, 0.55);
+}
+
+.tech-web-edge--path {
+  stroke: #ff9a4a;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 4px rgba(255, 154, 74, 0.5));
+}
+
+.tech-web-node__tile {
+  transition: stroke-width 0.15s ease, filter 0.15s ease;
+}
+
+.tech-web-node__icon {
+  font-size: 18px;
+  font-weight: 700;
+  pointer-events: none;
+  fill: #9fc7ff;
+}
+
+.tech-web-node__pct {
+  font-size: 9px;
+  font-weight: 800;
+  fill: #7ad0ff;
+  pointer-events: none;
+}
+
+.tech-web-node__progress {
+  pointer-events: none;
+}
+
+.tech-web-node__name {
+  font-size: 9px;
+  fill: var(--text-muted);
+  pointer-events: none;
+}
+
+.tech-web-node--available .tech-web-node__tile {
+  cursor: pointer;
+}
+
+.tech-web-node--available:hover .tech-web-node__tile {
+  stroke-width: 3;
+  filter: url(#tech-glow);
+}
+
+.tech-web-node--unlocked .tech-web-node__name,
+.tech-web-node--path .tech-web-node__name {
+  fill: #ffb86a;
+}
+
+.tech-web-node--active .tech-web-node__name {
+  fill: #7ad0ff;
+}
+
+.tech-web-node--locked .tech-web-node__icon,
+.tech-web-node--locked .tech-web-node__name {
+  opacity: 0.4;
+}
+
+.tech-web-node--hidden .tech-web-node__icon {
+  fill: #5a6070;
+  opacity: 0.7;
+}
+
+.tech-web-node--hidden .tech-web-node__name {
+  opacity: 0.35;
+}
+
+.tech-web-node--filtered {
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.tech-web-node--path .tech-web-node__icon {
+  fill: #ffb86a;
+}
+
+.fleet-ship-row {
+  pointer-events: none;
+}
+
+#tech-panel .panel__body,
+#fleet-panel .panel__body {
+  padding-bottom: var(--space-3);
+}
+
+/* Full-screen technology web */
+.tech-screen {
+  position: absolute;
+  top: var(--header-height);
+  left: 0;
+  right: 0;
+  bottom: var(--footer-height);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(4, 8, 16, 0.97), rgba(8, 12, 22, 0.95));
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.tech-screen__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow: hidden;
+}
+
+.tech-screen__chrome {
+  flex-shrink: 0;
+}
+
+.tech-screen__graph-wrap {
+  flex: 1;
+  min-height: 0;
+  margin-top: var(--space-2);
+}
+
+.tech-screen .tech-web-mount,
+.tech-screen .tech-web-graph-host {
+  height: 100%;
+}
+
+.tech-screen .tech-web-viewport {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  border: 1px solid var(--border-subtle);
+  background: rgba(6, 10, 18, 0.65);
+  clip-path: var(--clip-panel);
+  overflow: hidden;
+}
+
+.tech-screen .tech-web-viewport--panning {
+  cursor: grabbing;
+}
+
+.tech-screen .tech-web-graph {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.tech-screen .tech-web-node__name {
+  font-size: 10px;
+}
+
+.tech-screen .tech-web-band-label {
+  font-size: 11px;
+}
+
+.tech-screen__hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+}
+
+.tech-screen__detail {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  min-height: 1.4em;
+  margin-top: var(--space-1);
+}
+
+.tech-screen__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* Grouped empire queue hull buttons */
+.queue-category {
+  margin-bottom: var(--space-2);
+}
+
+.queue-category__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.queue-category__toggle:hover {
+  color: var(--text-secondary);
+}
+
+.queue-category__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.queue-category--collapsed .queue-category__buttons {
+  display: none;
+}
+
+.queue-category__buttons .btn {
+  font-size: var(--text-xs);
+  padding: 6px 10px;
 }
 

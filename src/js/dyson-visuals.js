@@ -63,13 +63,13 @@ export function sailDotDrawStride(settledCount, zoom) {
   return Math.max(1, Math.ceil(settledCount / SAIL_DOT_DRAW_MAX));
 }
 
-export function foundryLauncherSupplyLines(state, systemId) {
-  const fa = foundryAnchor(state, systemId);
+export function foundryLauncherSupplyLines(state, systemId, time = state.time) {
+  const fa = foundryAnchor(state, systemId, time);
   if (!fa.foundryId || !fa.planetId) return [];
 
   const launchers = dysonLaunchers(state, systemId);
   return launchers.map((launcher) => {
-    const site = launcherSiteById(state, systemId, launcher.id);
+    const site = launcherSiteById(state, systemId, launcher.id, time);
     if (!site) return null;
     const from = foundryRingClosestPoint(fa.planetX, fa.planetY, fa.ringR, site.dockX, site.dockY);
     return {
@@ -98,7 +98,7 @@ export function settledInProgressDots(state, systemId, starRadius) {
   return dots;
 }
 
-export function inFlightSailDots(state, systemId, starRadius) {
+export function inFlightSailDots(state, systemId, starRadius, time = state.time) {
   const system = systemById(state, systemId);
   if (!system || !hasFoundry(state, systemId)) return [];
 
@@ -110,10 +110,10 @@ export function inFlightSailDots(state, systemId, starRadius) {
   const sailsNow = Math.floor(dyson.shellSails);
 
   for (const launcher of launchers) {
-    const site = launcherSiteById(state, systemId, launcher.id);
+    const site = launcherSiteById(state, systemId, launcher.id, time);
     if (!site) continue;
 
-    const age = state.time - (dyson.launcherLastFireAt?.[launcher.id] ?? -1e9);
+    const age = time - (dyson.launcherLastFireAt?.[launcher.id] ?? -1e9);
     if (age < 0 || age >= SAIL_LAUNCH_FLIGHT_MS + LAUNCHER_BATCH_SIZE * SAIL_LAUNCH_STAGGER_MS) {
       continue;
     }
