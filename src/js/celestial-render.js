@@ -34,9 +34,79 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** Future Dyson shell ring overlays attach here. */
-export function drawStarOverlays(_ctx, _opts) {
-  // no-op — megastructure visuals in a later phase
+/** Dyson shell ring overlays on the star (Phase 3). */
+export function drawStarOverlays(ctx, opts) {
+  const {
+    completedShells = 0,
+    shellSails = 0,
+    time = 0,
+    starRadius = 40,
+    x = 0,
+    y = 0,
+    zoom = 1,
+    lastShellCompletedAt = null,
+  } = opts;
+  if (completedShells <= 0 && shellSails <= 0) return;
+
+  const r = starRadius * zoom;
+  const partial = shellSails > 0 ? Math.min(1, shellSails / 5000) : 0;
+  const pulse = lastShellCompletedAt != null && time - lastShellCompletedAt < 1000
+    ? 1 + 0.15 * (1 - (time - lastShellCompletedAt) / 1000)
+    : 1;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  const tiers = Math.min(8, completedShells);
+  for (let tier = 1; tier <= tiers; tier++) {
+    const tierR = r * (1.08 + tier * 0.06) * pulse;
+    const alpha = 0.12 + tier * 0.04;
+    ctx.strokeStyle = `rgba(255, 210, 120, ${Math.min(0.85, alpha)})`;
+    ctx.lineWidth = Math.max(1, (1 + tier * 0.15) * zoom);
+    ctx.setLineDash(tier <= 3 ? [6 * zoom, 8 * zoom] : []);
+    ctx.beginPath();
+    const arcSpan = tier >= 8 ? Math.PI * 2 : Math.PI * (0.35 + tier * 0.08);
+    ctx.arc(0, 0, tierR, -Math.PI / 2, -Math.PI / 2 + arcSpan);
+    ctx.stroke();
+    if (tier >= 4) {
+      ctx.strokeStyle = `rgba(255, 180, 80, ${0.08 + tier * 0.03})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, tierR * 0.98, Math.PI * 0.2, Math.PI * 1.1);
+      ctx.stroke();
+    }
+  }
+
+  if (completedShells < 8 && partial > 0) {
+    const nextR = r * (1.08 + (completedShells + 1) * 0.06);
+    ctx.strokeStyle = `rgba(180, 220, 255, ${0.25 + partial * 0.35})`;
+    ctx.lineWidth = Math.max(1, 1.5 * zoom);
+    ctx.setLineDash([4 * zoom, 6 * zoom]);
+    ctx.beginPath();
+    ctx.arc(0, 0, nextR, -Math.PI / 2, -Math.PI / 2 + partial * Math.PI * 0.6);
+    ctx.stroke();
+  }
+
+  if (completedShells >= 4) {
+    const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.6);
+    glow.addColorStop(0, `rgba(255, 200, 100, ${0.05 + completedShells * 0.015})`);
+    glow.addColorStop(1, 'rgba(255, 160, 60, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (completedShells >= 8) {
+    ctx.strokeStyle = 'rgba(255, 230, 160, 0.75)';
+    ctx.lineWidth = Math.max(2, 2.5 * zoom);
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.55, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 export function drawBlackHole(ctx, x, y, r, time, large) {

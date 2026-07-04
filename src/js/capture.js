@@ -5,6 +5,7 @@ import {
   CAPTURE_PER_PLANET,
   CAPTURE_PER_MOON,
   CAPTURE_STRUCTURE_WEIGHT,
+  CAPTURE_DYSON_SHELL_WEIGHT,
   CAPTURE_FLAGSHIP_FORCE,
   CAPTURE_HOLD_MS,
   TICK_MS,
@@ -26,6 +27,8 @@ export function captureRequirement(state, systemId) {
   for (const s of system.structures) {
     req += CAPTURE_STRUCTURE_WEIGHT[s.type] ?? 1;
   }
+  const shells = system.dyson?.completedShells ?? 0;
+  req += shells * CAPTURE_DYSON_SHELL_WEIGHT;
   return Math.ceil(req);
 }
 

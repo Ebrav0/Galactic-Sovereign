@@ -2,7 +2,7 @@
 // Pure serialize/deserialize plus I/O calls; holds no live state references.
 
 import { SAVE_VERSION } from './constants.js';
-import { createNewGame, seedNeutralStructuresForGalaxy } from './state.js';
+import { createNewGame, seedNeutralStructuresForGalaxy, createDefaultDyson } from './state.js';
 import { backfillStarTypes } from './star-types.js';
 import { spawnPirateFleets } from './pirates.js';
 
@@ -50,6 +50,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 1) e = migrateV1toV2(e);
   if (e.saveVersion === 2) e = migrateV2toV3(e);
   if (e.saveVersion === 3) e = migrateV3toV4(e);
+  if (e.saveVersion === 4) e = migrateV4toV5(e);
   return e;
 }
 
@@ -147,6 +148,34 @@ function migrateV3toV4(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 4,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v4 -> v5 (Dyson loop: solarii, per-system dyson state).
+function migrateV4toV5(envelope) {
+  const state = envelope.state;
+
+  state.solarii = state.solarii ?? 0;
+  state.solariiUnlocked = state.solariiUnlocked ?? false;
+
+  for (const system of Object.values(state.systems)) {
+    if (!system.dyson) system.dyson = createDefaultDyson();
+    else {
+      system.dyson.launcherStock = system.dyson.launcherStock ?? {};
+      system.dyson.launcherLastFireAt = system.dyson.launcherLastFireAt ?? {};
+      system.dyson.completedShells = system.dyson.completedShells ?? 0;
+      system.dyson.shellSails = system.dyson.shellSails ?? 0;
+      system.dyson.foundryStock = system.dyson.foundryStock ?? 0;
+      system.dyson.lastShellCompletedAt = system.dyson.lastShellCompletedAt ?? null;
+    }
+  }
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 5,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,

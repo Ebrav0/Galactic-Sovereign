@@ -126,4 +126,36 @@ Never delete prior entries.
 - `__setEnemyPresence` removed; tests use `__forcePirateIntoSystem`
 
 ### Suggested next
-- Phase 3: Dyson loop (sail foundry, shuttles, launchers, 8 shells, Solarii)
+- Phase 4: 400-star generation, wormholes, abstract inactive galaxies
+
+---
+
+## Session 2026-07-03 — Phase 3 Dyson loop complete
+
+**Task claimed:** Phase 3 tasks 3.1–3.11 (full phase)
+**Status:** complete
+
+### Done
+- `src/js/dyson.js` — foundry/launcher build, production tick, shell completion, Solarii rates, bonus hooks
+- `src/js/sail-shuttles.js` — deterministic foundry↔launcher visual convoys
+- `src/js/constants.js` — Dyson balance numbers; `SAVE_VERSION` 5; capture weights for foundry/launcher
+- `src/js/state.js` — `createDefaultDyson()`, per-system `dyson`, `solarii`/`solariiUnlocked`, lookup helpers
+- `src/js/save.js`, `docs/schemas/save-v5.json` — v4→v5 migration
+- `src/js/economy.js` — Shell #2 credit multiplier on outpost income
+- `src/js/simulation.js`, `src/js/capture.js` — Dyson tick wiring + capture weight
+- `src/js/celestial-render.js`, `src/js/render.js` — 8-tier shell overlays, sail shuttles, launch bursts
+- `src/js/ui.js`, `src/index.html` — Solarii chip, Dyson tab, foundry/launcher build buttons
+- `src/js/main.js` — dyson observables in `render_game_to_text()`, shell completion toasts, test hooks
+- `output/verify_phase3.mjs` — 34/34 pass; `verify_phase2.mjs` 24/24 regression pass
+- `docs/IMPLEMENTATION_PLAN.md` §8 Phase 3 numbered task table
+
+### Decisions
+- Launcher `launcherLastFireAt` serialized for deterministic launch bursts and tick firing
+- Shell bonuses #4–7 exported as 1.0 hooks until Phases 5–6 wire trade/research/shield
+- Foundry is system-scoped structure (`bodyId: null`); launchers on planets and moons
+
+### Known issues
+- `verify_phase1.mjs` flagship physics checks (heading/drag/determinism) occasionally flaky (~74/77); unrelated to Dyson changes
+
+### Suggested next
+- Phase 4: 400-star generation, anchored + unanchored wormholes, abstract inactive galaxies

@@ -10,10 +10,11 @@ import {
   GALAXY_CAMERA_MIN_ZOOM,
   GALAXY_CAMERA_MAX_ZOOM,
   SHUTTLE_SIZE,
+  SAIL_SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
   CAPTURE_HOLD_MS,
 } from './constants.js';
-import { drawStar, drawPlanet, drawMoon, drawBlackHole } from './celestial-render.js';
+import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { typeSizeBonus } from './star-types.js';
 import {
@@ -23,9 +24,12 @@ import {
   moonPosition,
   hasOutpost,
   hasShipyard,
+  hasFoundry,
+  ensureDyson,
   isPlayerOwned,
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
+import { sailShuttlePositions, foundryAnchor, launchBurstOrigins } from './sail-shuttles.js';
 import { getFlagshipInput, getFlagshipDisplayPose, transitStatus } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
@@ -194,6 +198,25 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   flushStars(ctx, 'core');
 
+  const dyson = ensureDyson(system);
+  drawStarOverlays(ctx, {
+    completedShells: dyson.completedShells,
+    shellSails: dyson.shellSails,
+    time: state.time,
+    starRadius: system.star.radius,
+    x: starScreen.x,
+    y: starScreen.y,
+    zoom: z,
+    lastShellCompletedAt: dyson.lastShellCompletedAt,
+  });
+
+  if (intel && hasFoundry(state, systemId)) {
+    const fa = foundryAnchor(system);
+    const fs = worldToScreen(camera, fa.x, fa.y, canvas);
+    drawGlowRing(ctx, fs.x, fs.y, 14 * z, THEME.accentGold, Math.max(1, 2 * z), 0.85);
+    labelText(ctx, 'Sail Foundry', fs.x, fs.y - 18 * z, Math.max(9, 10 * z), THEME.accentGold);
+  }
+
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
 
   for (const planet of sortedPlanets) {
@@ -299,6 +322,29 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     ctx.arc(ss.x, ss.y, Math.max(1, SHUTTLE_SIZE * z), 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
+  }
+
+  ctx.fillStyle = THEME.accentGold;
+  for (const sh of sailShuttlePositions(state, systemId)) {
+    const ss = worldToScreen(camera, sh.x, sh.y, canvas);
+    ctx.shadowColor = THEME.accentGold;
+    ctx.shadowBlur = 5;
+    ctx.beginPath();
+    ctx.arc(ss.x, ss.y, Math.max(1.2, SAIL_SHUTTLE_SIZE * z), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  for (const burst of launchBurstOrigins(state, systemId)) {
+    const bs = worldToScreen(camera, burst.x, burst.y, canvas);
+    const fade = 1 - burst.age / 600;
+    ctx.strokeStyle = `rgba(255, 220, 140, ${0.6 * fade})`;
+    ctx.lineWidth = Math.max(1, 2 * z);
+    ctx.beginPath();
+    ctx.moveTo(bs.x, bs.y);
+    const angle = (state.time / 400 + burst.launcherId.length) % (Math.PI * 2);
+    ctx.lineTo(bs.x + Math.cos(angle) * 30 * z * fade, bs.y + Math.sin(angle) * 30 * z * fade);
+    ctx.stroke();
   }
 
   const f = state.flagship;

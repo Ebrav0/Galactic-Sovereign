@@ -31,6 +31,10 @@
           <span class="chip__label">Income</span>
           <span class="chip__value"><span id="income-value">0</span>/s</span>
         </div>
+        <div class="chip hidden" id="solarii-chip">
+          <span class="chip__label">Solarii</span>
+          <span class="chip__value"><span id="solarii-value">0</span> · <span id="solarii-rate">0</span>/s</span>
+        </div>
         <div class="chip chip--wide">
           <span class="chip__label">Flagship</span>
           <span class="chip__value chip__value--truncate" id="flagship-loc">—</span>
@@ -98,8 +102,19 @@
         <div class="panel__footer panel__actions">
           <button id="build-outpost-btn" type="button" class="btn btn--primary btn--block">Build Outpost</button>
           <button id="build-shipyard-btn" type="button" class="btn btn--primary btn--block hidden">Build Shipyard</button>
+          <button id="build-foundry-btn" type="button" class="btn btn--primary btn--block hidden">Build Sail Foundry</button>
+          <button id="build-launcher-btn" type="button" class="btn btn--primary btn--block hidden">Build Dyson Launcher</button>
           <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Build Scout</button>
           <div id="build-panel-note" class="panel-note"></div>
+        </div>
+      </div>
+
+      <div id="dyson-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Dyson Project</span>
+        </div>
+        <div class="panel__body" id="dyson-panel-body">
+          <p class="empty-state">Select a system to view Dyson progress.</p>
         </div>
       </div>
 
@@ -121,7 +136,7 @@
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
         <button type="button" class="tab tab--disabled" disabled title="Coming soon">Fleet</button>
         <button type="button" class="tab tab--disabled" disabled title="Coming soon">Tech</button>
-        <button type="button" class="tab tab--disabled" disabled title="Coming soon">Dyson</button>
+        <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
       </nav>
     </footer>
 

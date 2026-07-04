@@ -343,7 +343,22 @@ gives an unanchored exit nowhere to go).
 **Phase 2 exit criteria:** hybrid combat works with wandering pirates; fleet-based capture; all verify sections pass.
 
 ### Phase 3 — Dyson loop
-Sail foundry (1/system), auto sail shuttles, launchers (≤3/body), 8 shell tiers with Solarii scaling and visuals; dual currency.
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 3.1 | Constants + state + save-v5 | `solarii`, `solariiUnlocked`, per-system `dyson`; v4→v5 migration; `docs/schemas/save-v5.json` |
+| 3.2 | Foundry + launcher build | 1 foundry/system, ≤3 launchers/body; flagship gate; test hooks |
+| 3.3 | Production tick | foundry → auto logistics → launchers → shell progress; pause-safe; deterministic |
+| 3.4 | Solarii + shell bonuses | Shell #1 unlocks Solarii; Shell #2 credit bonus; Shell #3 sail efficiency |
+| 3.5 | Capture weight + persistence | Dyson structures/shells increase capture req; progress survives conquest |
+| 3.6 | Sail shuttle visuals | Deterministic foundry↔launcher sprites; `sailShuttles.count` observable |
+| 3.7 | Shell tier visuals | `drawStarOverlays` tiers 1–8 + launch bursts |
+| 3.8 | Dyson UI | Solarii top bar, build buttons, Dyson tab panel, shell toasts |
+| 3.9 | Test hooks | Full `render_game_to_text()` dyson block; `__buildFoundry`, `__buildLauncher`, etc. |
+| 3.10 | Verification | `output/verify_phase3.mjs`; phase1/2 regression |
+| 3.11 | Docs + handoff | This table + `progress.md` entry |
+
+**Phase 3 exit criteria:** full production chain; Solarii after Shell #1; shell visuals; save-v5; verify scripts pass.
 
 ### Phase 4 — Scale & wormholes
 400-star generation; black hole node; anchored + unanchored wormholes; abstract simulation of inactive galaxies; hydration on entry.

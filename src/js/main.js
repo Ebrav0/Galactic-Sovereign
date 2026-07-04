@@ -1,6 +1,6 @@
 // Boot + loop wiring + test hooks. Wiring only — no balance or game logic here.
 
-import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS, CAMERA_DEFAULT_ZOOM, HULL_STATS, PIRATE_FLEET_COUNT, PIRATE_WANDER_MS } from './constants.js';
+import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS, CAMERA_DEFAULT_ZOOM, HULL_STATS, PIRATE_FLEET_COUNT, PIRATE_WANDER_MS, SAVE_VERSION, SHELL_SAILS_REQUIRED } from './constants.js';
 import {
   createNewGame,
   systemById,
@@ -9,9 +9,13 @@ import {
   hasShipyard,
   findShipyardOnPlanet,
   isPlayerOwned,
+  hasFoundry,
+  launcherCountOnBody,
+  dysonSummary,
+  ensureDyson,
 } from './state.js';
 import { step, advance, togglePaused } from './simulation.js';
-import { buildOutpost, canBuildOutpost, incomePerSecond, resetStructureIds } from './economy.js';
+import { buildOutpost, canBuildOutpost, incomePerSecond, incomePerSecondInSystem, resetStructureIds } from './economy.js';
 import {
   buildShipyard,
   queueScout,
@@ -43,6 +47,16 @@ import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, re
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { activeShuttleCount } from './shuttles.js';
+import { activeSailShuttleCount } from './sail-shuttles.js';
+import {
+  buildFoundry,
+  buildLauncher,
+  canBuildFoundry,
+  canBuildLauncher,
+  solariiPerSecond,
+  solariiPerSecondInSystem,
+  forceShellProgress,
+} from './dyson.js';
 import {
   drawSystem,
   drawGalaxy,
@@ -199,6 +213,20 @@ function doDispatchShip(shipId, starId) {
   return res;
 }
 
+function doBuildFoundry() {
+  const res = buildFoundry(state, viewedSystemId);
+  if (res.ok) toast(`Sail foundry established in ${systemById(state, viewedSystemId)?.name}`, 'ok');
+  else toast(res.reason, 'error');
+  return res;
+}
+
+function doBuildLauncher(bodyId) {
+  const res = buildLauncher(state, viewedSystemId, bodyId);
+  if (res.ok) toast('Dyson launcher deployed', 'ok');
+  else toast(res.reason, 'error');
+  return res;
+}
+
 async function doSaveSlot(slot) {
   const res = await writeSlot(slot, state);
   toast(res.ok ? `Saved to ${slot}` : `Save failed: ${res.error}`, res.ok ? 'ok' : 'error');
@@ -262,6 +290,8 @@ const updateUi = initUi({
   doSelectScout,
   doBuildOutpost,
   doBuildShipyard,
+  doBuildFoundry,
+  doBuildLauncher,
   doQueueScout,
   doQueueHull,
   doTogglePause,
@@ -340,6 +370,17 @@ function frame(now) {
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
     toast(`Captured: ${name}`, 'ok');
   }
+  for (const ev of tickEvents.dysonEvents ?? []) {
+    if (ev.shellCompleted) {
+      const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+      const msg = ev.shellNumber === 1
+        ? `Shell #1 complete at ${name} — Solarii online!`
+        : ev.shellNumber >= 8
+          ? `Dyson sphere complete at ${name}!`
+          : `Shell #${ev.shellNumber} complete at ${name}`;
+      toast(msg, 'ok');
+    }
+  }
 
   checkFlagshipArrival();
   ensureSelectedScout();
@@ -392,10 +433,17 @@ window.render_game_to_text = () => {
     .slice(0, 3)
     .map((star) => ({ id: star.id, hasIntel: hasIntel(state, star.id) }));
 
+  const dyson = viewedSystem ? ensureDyson(viewedSystem) : null;
+  const summary = dysonSummary(state, viewedSystemId);
+
   return JSON.stringify({
+    saveVersion: SAVE_VERSION,
     time: state.time,
     paused: state.paused,
     credits: state.credits,
+    solarii: state.solarii ?? 0,
+    solariiUnlocked: !!state.solariiUnlocked,
+    solariiPerSec: solariiPerSecond(state),
     view,
     currentSystem: viewedSystemId,
     systemName: viewedSystem?.name ?? null,
@@ -404,6 +452,7 @@ window.render_game_to_text = () => {
     selection,
     selectedScoutId,
     incomePerSec: incomePerSecond(state),
+    incomePerSecInViewedSystem: incomePerSecondInSystem(state, viewedSystemId),
     flagship: {
       systemId: f.systemId,
       x: Math.round(f.x * 100) / 100,
@@ -483,6 +532,8 @@ window.render_game_to_text = () => {
       hasShipyard: hasShipyard(state, viewedSystemId, b.id),
       canBuildOutpost: canBuildOutpost(state, viewedSystemId, b.id).ok,
       canBuildShipyard: canBuildShipyard(state, viewedSystemId, b.id).ok,
+      launcherCount: launcherCountOnBody(state, viewedSystemId, b.id),
+      canBuildLauncher: canBuildLauncher(state, viewedSystemId, b.id).ok,
       shipyardId: findShipyardOnPlanet(state, viewedSystemId, b.id)?.id ?? null,
       canQueueScout: (() => {
         const sy = findShipyardOnPlanet(state, viewedSystemId, b.id);
@@ -500,6 +551,20 @@ window.render_game_to_text = () => {
       active: activeShuttleCount(state, viewedSystemId) > 0,
       count: activeShuttleCount(state, viewedSystemId),
     },
+    sailShuttles: {
+      active: activeSailShuttleCount(state, viewedSystemId) > 0,
+      count: activeSailShuttleCount(state, viewedSystemId),
+    },
+    dyson: summary && dyson ? {
+      ...summary,
+      shellProgress: summary.completedShells >= 8
+        ? 1
+        : Math.round((dyson.shellSails / SHELL_SAILS_REQUIRED) * 1000) / 1000,
+      solariiPerSec: solariiPerSecondInSystem(state, viewedSystemId),
+      solariiUnlocked: !!state.solariiUnlocked,
+      nextShell: Math.min(8, summary.completedShells + 1),
+      canBuildFoundry: canBuildFoundry(state, viewedSystemId).ok,
+    } : null,
     tickMs: TICK_MS,
   });
 };
@@ -509,6 +574,11 @@ window.getGameState = () => state;
 window.__selectPlanet = (id) => { selection = id; };
 window.__buildOutpost = (id) => doBuildOutpost(id);
 window.__buildShipyard = (id) => doBuildShipyard(id);
+window.__buildFoundry = () => doBuildFoundry();
+window.__buildLauncher = (bodyId) => doBuildLauncher(bodyId ?? selection);
+window.__grantCredits = (n) => { state.credits += n; return state.credits; };
+window.__forceShellProgress = (systemId, sails) => forceShellProgress(state, systemId, sails);
+window.__fastForwardDyson = (ms) => window.advanceTime(ms);
 window.__queueScout = (shipyardId) => doQueueScout(shipyardId);
 window.__queueHull = (shipyardId, hull) => doQueueHull(shipyardId, hull);
 window.__dispatchShip = (shipId, starId) => doDispatchShip(shipId, starId);
