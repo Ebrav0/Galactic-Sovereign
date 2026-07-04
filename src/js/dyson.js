@@ -30,9 +30,12 @@ import {
   ensureDyson,
 } from './state.js';
 import { allocateStructureId } from './economy.js';
+import { getSystems } from './galaxy-scope.js';
 
 function flagshipInSystem(state, systemId) {
-  return state.flagship.systemId === systemId && !state.flagship.transit;
+  const f = state.flagship;
+  return f.galaxyId === state.activeGalaxyId
+    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
 // --- Build validation ---
@@ -133,7 +136,7 @@ export function shellRepairBonus(_system) {
 
 export function solariiPerSecond(state) {
   let total = 0;
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     if (!isPlayerOwned(state, system.id)) continue;
     const shells = system.dyson?.completedShells ?? 0;
     if (shells < 1) continue;
@@ -221,7 +224,7 @@ function tickSystemDyson(state, system) {
 
 export function tickDyson(state) {
   const events = [];
-  for (const system of Object.values(state.systems)) {
+  for (const system of Object.values(getSystems(state))) {
     events.push(...tickSystemDyson(state, system));
   }
   return events;

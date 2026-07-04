@@ -9,6 +9,7 @@ import {
   CAMERA_FOLLOW_RATE,
   GALAXY_CAMERA_MIN_ZOOM,
   GALAXY_CAMERA_MAX_ZOOM,
+  GALAXY_LOD_ZOOM,
   SHUTTLE_SIZE,
   SAIL_SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
@@ -50,6 +51,7 @@ import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
 import { laneBulge, laneControlPoint } from './galaxy.js';
+import { getGraph, getActiveGalaxy, wormholeIdForGalaxy } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
 import { playerShipsAtSystem } from './fleets.js';
 import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
@@ -587,8 +589,16 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   drawStarfield(ctx, galaxyCamera, canvas, state.time);
 
   const z = galaxyCamera.zoom;
-  const galaxy = state.galaxy;
+  const galaxy = getGraph(state);
   const transit = transitStatus(state);
+  const lod = z < GALAXY_LOD_ZOOM;
+  const whId = wormholeIdForGalaxy(state.activeGalaxyId);
+  const wh = state.wormholes?.[whId];
+  const whLabel = state.flagship.wormholeTransit
+    ? 'Wormhole — in transit'
+    : wh?.anchor
+      ? 'Wormhole — anchored'
+      : 'Wormhole — active';
 
   let routeLanes = null;
   if (transit) {
@@ -618,6 +628,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const b = nodePos(galaxy, bId);
     const sa = worldToScreen(galaxyCamera, a.x, a.y, canvas);
     const sb = worldToScreen(galaxyCamera, b.x, b.y, canvas);
+    if (!screenInView(sa, canvas) && !screenInView(sb, canvas)) continue;
 
     const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
     const onFlagshipRoute = routeLanes?.has(key);
@@ -639,27 +650,30 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     drawQuadraticCurve(ctx, sa.x, sa.y, sc.x, sc.y, sb.x, sb.y);
     ctx.setLineDash([]);
 
-    for (let k = 0; k < 2; k++) {
-      const t = ((state.time / 6000) + k * 0.5 + i * 0.13) % 1;
-      const pt = bezierPoint(sa.x, sa.y, sc.x, sc.y, sb.x, sb.y, t);
-      ctx.globalAlpha = 0.55;
-      ctx.shadowColor = THEME.trafficPulse;
-      ctx.shadowBlur = 4;
-      ctx.fillStyle = THEME.trafficPulse;
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, Math.max(1.2, 2.5 * z), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 1;
+    if (!lod) {
+      for (let k = 0; k < 2; k++) {
+        const t = ((state.time / 6000) + k * 0.5 + i * 0.13) % 1;
+        const pt = bezierPoint(sa.x, sa.y, sc.x, sc.y, sb.x, sb.y, t);
+        ctx.globalAlpha = 0.55;
+        ctx.shadowColor = THEME.trafficPulse;
+        ctx.shadowBlur = 4;
+        ctx.fillStyle = THEME.trafficPulse;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, Math.max(1.2, 2.5 * z), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
   const bhScreen = worldToScreen(galaxyCamera, galaxy.blackHole.x, galaxy.blackHole.y, canvas);
-  drawBlackHole(ctx, bhScreen.x, bhScreen.y, BLACK_HOLE_NODE_RADIUS * z, state.time, false);
+  drawBlackHole(ctx, bhScreen.x, bhScreen.y, BLACK_HOLE_NODE_RADIUS * z, state.time, !!wh?.anchor || !!state.flagship.wormholeTransit);
 
   for (const star of galaxy.stars) {
     const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
+    if (!screenInView(s, canvas, 40)) continue;
     const nodeR = starNodeRadius(state, star.id) * z;
     const intel = hasIntel(state, star.id);
 
@@ -687,12 +701,14 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
 
   flushStars(ctx, 'core');
 
+  labelText(ctx, getActiveGalaxy(state)?.name ?? 'Galaxy', bhScreen.x, bhScreen.y - (BLACK_HOLE_NODE_RADIUS + 52) * z, Math.max(9, 11 * z), THEME.accentCyan);
   labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
-  labelText(ctx, 'Wormhole — dormant', bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.75)');
+  labelText(ctx, whLabel, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.85)');
 
   for (const star of galaxy.stars) {
     const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
+    if (!screenInView(s, canvas, 40)) continue;
     const nodeR = starNodeRadius(state, star.id) * z;
     const intel = hasIntel(state, star.id);
     const owned = isPlayerOwned(state, star.id);
@@ -765,7 +781,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       );
     }
 
-    if (state.flagship.systemId === star.id) {
+    if (state.flagship.galaxyId === state.activeGalaxyId && state.flagship.systemId === star.id) {
       drawFlagshipSprite(ctx, s.x + nodeR + 14 * z, s.y - nodeR - 12 * z, -Math.PI / 4, Math.max(3, 5.5 * z), false);
     }
 
@@ -815,6 +831,11 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   flushStars(ctx, 'bloom');
 }
 
+function screenInView(s, canvas, margin = 60) {
+  return s.x >= -margin && s.y >= -margin
+    && s.x <= canvas.width + margin && s.y <= canvas.height + margin;
+}
+
 function nodePos(galaxy, id) {
   if (id === galaxy.blackHole.id) return galaxy.blackHole;
   return galaxy.stars.find((s) => s.id === id);
@@ -837,14 +858,15 @@ export function hitTestPlanet(state, systemId, wx, wy) {
 }
 
 export function hitTestStar(state, wx, wy) {
+  const galaxy = getGraph(state);
   const halo = 14 / galaxyCamera.zoom;
-  for (const star of state.galaxy.stars) {
+  for (const star of galaxy.stars) {
     const hitR = starNodeRadius(state, star.id) + halo;
     const dx = wx - star.x;
     const dy = wy - star.y;
     if (dx * dx + dy * dy <= hitR * hitR) return star.id;
   }
-  const bh = state.galaxy.blackHole;
+  const bh = galaxy.blackHole;
   const bhR = BLACK_HOLE_NODE_RADIUS + halo;
   if ((wx - bh.x) ** 2 + (wy - bh.y) ** 2 <= bhR * bhR) return bh.id;
   return null;
@@ -857,7 +879,8 @@ export function hitTestScout(state, wx, wy) {
     const dy = wy - entry.y;
     if (dx * dx + dy * dy <= halo * halo) return entry.scout.id;
   }
-  for (const star of state.galaxy.stars) {
+  const galaxy = getGraph(state);
+  for (const star of galaxy.stars) {
     const stationed = scoutsAtSystem(state, star.id);
     const nodeR = starNodeRadius(state, star.id);
     for (let idx = 0; idx < stationed.length; idx++) {

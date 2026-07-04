@@ -50,9 +50,9 @@ const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()))
 
 // --- 1. Galaxy generation ---
 let s = await text();
-check('20 stars generated', s.galaxy.starCount === 20, `stars=${s.galaxy.starCount}`);
+check('400 stars generated', s.galaxy.starCount === 400, `stars=${s.galaxy.starCount}`);
 check('black hole node present', s.galaxy.blackHole === 'core');
-check('lane count >= spanning tree size', s.galaxy.laneCount >= 20, `lanes=${s.galaxy.laneCount}`);
+check('lane count >= spanning tree size', s.galaxy.laneCount >= 400, `lanes=${s.galaxy.laneCount}`);
 check('flagship starts at stronghold', s.flagship.systemId === s.strongholdSystem);
 check('starts in system view of stronghold', s.view === 'system' && s.currentSystem === s.strongholdSystem);
 

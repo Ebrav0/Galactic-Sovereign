@@ -75,6 +75,20 @@ import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
 import { initUi, toast } from './ui.js';
 import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
+import { getGraph, getActiveGalaxy, getGalaxyCount, hydratedGalaxyCount, setGalaxyCountForTests, getSystems } from './galaxy-scope.js';
+import { graphStats, galaxyGraphFingerprint, setGalaxyStarCountForTests } from './galaxy.js';
+import { abstractGalaxySummaries, wormholeSummary } from './abstract-galaxy.js';
+import { dehydrateGalaxy, hydrateGalaxy } from './hydration.js';
+import {
+  orderWormholeTravel,
+  buildWormholeAnchor,
+  canEnterWormhole,
+  wormholeTransitStatus,
+  tickWormholeTransit,
+  strongholdComposition,
+  resetWormholeJumpCounter,
+} from './wormholes.js';
+import { BLACK_HOLE_ID } from './galaxy.js';
 
 let state = createNewGame(DEFAULT_SEED);
 state.pirates = spawnPirateFleets(state);
@@ -262,6 +276,20 @@ function doBuildLauncher(bodyId) {
   return res;
 }
 
+function doEnterWormhole(opts = {}) {
+  const res = orderWormholeTravel(state, opts);
+  if (res.ok) toast(`Wormhole transit — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
+  else toast(res.reason, 'error');
+  return res;
+}
+
+function doBuildWormholeAnchor(targetGalaxyId) {
+  const res = buildWormholeAnchor(state, targetGalaxyId);
+  if (res.ok) toast(`Wormhole anchored to ${state.galaxies[targetGalaxyId]?.name ?? targetGalaxyId}`, 'ok');
+  else toast(res.reason, 'error');
+  return res;
+}
+
 async function doSaveSlot(slot) {
   const res = await writeSlot(slot, state);
   toast(res.ok ? `Saved to ${slot}` : `Save failed: ${res.error}`, res.ok ? 'ok' : 'error');
@@ -292,6 +320,8 @@ function doImportState(newState) {
   if (!newState.pirates?.fleets?.length) {
     newState.pirates = spawnPirateFleets(newState);
   }
+  if (!newState.activeGalaxyId) newState.activeGalaxyId = 'gal-0';
+  if (!newState.homeGalaxyId) newState.homeGalaxyId = 'gal-0';
   ensureSelectedScout();
   const f = state.flagship;
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
@@ -327,6 +357,8 @@ const updateUi = initUi({
   doBuildShipyard,
   doBuildFoundry,
   doBuildLauncher,
+  doEnterWormhole,
+  doBuildWormholeAnchor,
   doQueueScout,
   doQueueHull,
   doTogglePause,
@@ -418,6 +450,15 @@ function frame(now) {
     }
   }
 
+  for (const wh of tickEvents.wormholeArrivals ?? []) {
+    const destGal = getActiveGalaxy(state);
+    toast(`Arrived in ${destGal?.name ?? wh.toGalaxyId} via wormhole`, 'ok');
+    viewedSystemId = BLACK_HOLE_ID;
+    view = 'system';
+    follow.enabled = true;
+    snapCameraTo(0, 0);
+  }
+
   checkFlagshipArrival();
   ensureSelectedScout();
 
@@ -441,6 +482,10 @@ requestAnimationFrame(frame);
 
 window.advanceTime = (ms) => {
   const events = advance(state, ms);
+  for (const wh of events.wormholeArrivals ?? []) {
+    viewedSystemId = BLACK_HOLE_ID;
+    view = 'system';
+  }
   checkFlagshipArrival();
   ensureSelectedScout();
   for (const ready of events.prodReady ?? []) {
@@ -452,25 +497,31 @@ window.advanceTime = (ms) => {
 window.render_game_to_text = () => {
   const f = state.flagship;
   const transit = transitStatus(state);
+  const whTransit = wormholeTransitStatus(state);
   const viewedSystem = systemById(state, viewedSystemId);
-  const scoutSummaries = state.scouts.map((scout) => {
-    const st = scout.transit ? scoutStatus(scout, state.galaxy, state.time) : null;
-    return {
-      id: scout.id,
-      systemId: scout.systemId,
-      inTransit: !!scout.transit,
-      destination: st?.destId ?? null,
-      etaMs: scout.transit ? scoutEtaMs(state, scout) : null,
-    };
-  });
+  const graph = getGraph(state);
+  const activeGal = getActiveGalaxy(state);
+  const scoutSummaries = state.scouts
+    .filter((s) => s.galaxyId === state.activeGalaxyId)
+    .map((scout) => {
+      const st = scout.transit ? scoutStatus(scout, graph, state.time) : null;
+      return {
+        id: scout.id,
+        systemId: scout.systemId,
+        inTransit: !!scout.transit,
+        destination: st?.destId ?? null,
+        etaMs: scout.transit ? scoutEtaMs(state, scout) : null,
+      };
+    });
 
-  const neighborFog = state.galaxy.stars
+  const neighborFog = graph.stars
     .filter((star) => star.id !== state.stronghold)
     .slice(0, 3)
     .map((star) => ({ id: star.id, hasIntel: hasIntel(state, star.id) }));
 
   const dyson = viewedSystem ? ensureDyson(viewedSystem) : null;
   const summary = dysonSummary(state, viewedSystemId);
+  const shComp = strongholdComposition(state);
   const foundryPlanet = foundryHostPlanet(state, viewedSystemId);
   const foundryPose = foundryAnchor(state, viewedSystemId);
   const orbitTarget = orbitTargetLabel(state);
@@ -488,11 +539,21 @@ window.render_game_to_text = () => {
     systemName: viewedSystem?.name ?? null,
     strongholdSystem: state.stronghold,
     systemOwner: viewedSystem?.owner ?? null,
+    metaGalaxy: {
+      activeGalaxyId: state.activeGalaxyId,
+      homeGalaxyId: state.homeGalaxyId,
+      galaxyCount: Object.keys(state.galaxies ?? {}).length,
+      hydratedCount: hydratedGalaxyCount(state),
+    },
+    stronghold: shComp,
+    abstractGalaxies: abstractGalaxySummaries(state),
+    wormholes: wormholeSummary(state),
     selection,
     selectedScoutId,
     incomePerSec: incomePerSecond(state),
     incomePerSecInViewedSystem: incomePerSecondInSystem(state, viewedSystemId),
     flagship: {
+      galaxyId: f.galaxyId,
       systemId: f.systemId,
       x: Math.round(f.x * 100) / 100,
       y: Math.round(f.y * 100) / 100,
@@ -505,6 +566,14 @@ window.render_game_to_text = () => {
       destination: transit?.destId ?? null,
       transitProgress: transit ? Math.round(transit.progress * 1000) / 1000 : null,
       etaMs: f.transit ? transitEtaMs(state) : null,
+      wormholeTransit: whTransit ? {
+        fromWh: whTransit.fromWh,
+        toWh: whTransit.toWh,
+        progress: Math.round(whTransit.progress * 1000) / 1000,
+        etaMs: whTransit.etaMs,
+      } : null,
+      atCore: f.systemId === BLACK_HOLE_ID && !f.transit && !f.wormholeTransit,
+      canEnterWormhole: canEnterWormhole(state).ok,
     },
     scouts: scoutSummaries,
     scoutCount: state.scouts.length,
@@ -526,17 +595,19 @@ window.render_game_to_text = () => {
       contested: enemyCombatPresence(state, viewedSystemId) > 0,
     },
     production: {
-      shipyardCount: Object.values(state.systems).reduce(
+      shipyardCount: Object.values(getSystems(state)).reduce(
         (n, sys) => n + sys.structures.filter((s) => s.type === 'shipyard').length,
         0,
       ),
-      buildingScout: Object.values(state.systems).some(
+      buildingScout: Object.values(getSystems(state)).some(
         (sys) => sys.structures.some((s) => s.type === 'shipyard' && s.build?.hull === 'scout'),
       ),
-      scoutCount: state.scouts.length,
+      scoutCount: state.scouts.filter((s) => s.galaxyId === state.activeGalaxyId).length,
       combatQueues: activeCombatQueues(state),
     },
-    playerShips: (state.playerShips ?? []).map((ship) => ({
+    playerShips: (state.playerShips ?? [])
+      .filter((ship) => ship.galaxyId === state.activeGalaxyId)
+      .map((ship) => ({
       id: ship.id,
       hull: ship.hull,
       systemId: ship.systemId,
@@ -559,9 +630,11 @@ window.render_game_to_text = () => {
     battle: battleSummaryForSystem(state, viewedSystemId),
     hullStats: Object.keys(HULL_STATS),
     galaxy: {
-      starCount: state.galaxy.stars.length,
-      laneCount: state.galaxy.lanes.length,
-      blackHole: state.galaxy.blackHole.id,
+      starCount: graph.stars.length,
+      laneCount: graph.lanes.length,
+      blackHole: graph.blackHole.id,
+      galaxyId: state.activeGalaxyId,
+      galaxyName: activeGal?.name ?? null,
     },
     bodies: (viewedSystem?.bodies ?? []).map((b) => ({
       id: b.id,
@@ -679,6 +752,7 @@ window.__forcePirateIntoSystem = (systemId) => {
 window.__getBattleState = (systemId) => getBattleState(state, systemId);
 window.__getHullStats = () => ({ ...HULL_STATS });
 window.__newGame = (seed = DEFAULT_SEED) => {
+  resetWormholeJumpCounter(0);
   state = createNewGame(seed);
   state.pirates = spawnPirateFleets(state);
   doImportState(state);
@@ -713,3 +787,28 @@ window.__planetPos = (systemId, planetId) => {
 window.__shuttleInfo = (systemId) => shuttlePositions(state, systemId ?? viewedSystemId);
 window.__sailShuttleInfo = (systemId) => sailShuttlePositions(state, systemId ?? viewedSystemId);
 window.__pointNearSupplySegment = pointNearSupplySegment;
+
+window.__setGalaxyScaleForTests = ({ stars, galaxies }) => {
+  if (stars != null) setGalaxyStarCountForTests(stars);
+  if (galaxies != null) setGalaxyCountForTests(galaxies);
+};
+window.__enterWormhole = (opts = {}) => doEnterWormhole(opts);
+window.__buildWormholeAnchor = (targetGalaxyId) => doBuildWormholeAnchor(targetGalaxyId);
+window.__hydrateGalaxy = (galaxyId) => hydrateGalaxy(state, galaxyId);
+window.__dehydrateGalaxy = (galaxyId) => dehydrateGalaxy(state, galaxyId);
+window.__getGraphStats = () => graphStats(getGraph(state));
+window.__getAbstractGalaxy = (galaxyId) => state.galaxies?.[galaxyId]?.abstract ?? null;
+window.__getGalaxyFingerprint = (galaxyId) => {
+  const g = state.galaxies?.[galaxyId]?.graph;
+  return g ? galaxyGraphFingerprint(g) : null;
+};
+window.__getStrongholdComposition = () => strongholdComposition(state);
+window.__resetWormholeJumpCounter = (n = 0) => resetWormholeJumpCounter(n);
+window.__completeWormholeTransit = () => {
+  const wt = state.flagship?.wormholeTransit;
+  if (!wt) return { ok: false, reason: 'No wormhole transit' };
+  state.time = wt.startTime + wt.durationMs;
+  const arrival = tickWormholeTransit(state);
+  return arrival ? { ok: true, ...arrival } : { ok: false, reason: 'Transit incomplete' };
+};
+window.__listGalaxyIds = () => Object.keys(state.galaxies ?? {});

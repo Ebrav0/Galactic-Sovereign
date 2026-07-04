@@ -38,6 +38,10 @@ import {
 import { transitStatus, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
 import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
+import { getActiveGalaxy } from './galaxy-scope.js';
+import { canEnterWormhole, canBuildWormholeAnchor } from './wormholes.js';
+import { WORMHOLE_ANCHOR_COST } from './constants.js';
+import { BLACK_HOLE_ID } from './galaxy.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -445,6 +449,8 @@ export function initUi(ctx) {
     canQueueHull,
     doBuildFoundry,
     doBuildLauncher,
+    doEnterWormhole,
+    doBuildWormholeAnchor,
   } = ctx;
 
   let sidePanel = null;
@@ -640,7 +646,9 @@ export function initUi(ctx) {
       dysonPanel.classList.add('hidden');
     }
 
-    el('system-name').textContent = view === 'galaxy' ? 'Galaxy Map' : (viewedSystem?.name ?? '—');
+    el('system-name').textContent = view === 'galaxy'
+      ? `${getActiveGalaxy(state)?.name ?? 'Galaxy Map'}`
+      : (viewedSystem?.name ?? '—');
     el('stronghold-badge').classList.toggle(
       'hidden',
       view !== 'system' || state.stronghold !== viewedSystemId,
@@ -762,6 +770,39 @@ export function initUi(ctx) {
     }
 
     const panel = el('build-panel');
+    const wormholePanel = el('wormhole-panel');
+
+    if (view === 'system' && viewedSystemId === BLACK_HOLE_ID && sidePanel !== 'dyson') {
+      panel.classList.add('hidden');
+      wormholePanel?.classList.remove('hidden');
+      const enterBtn = el('enter-wormhole-btn');
+      const anchorBtn = el('build-anchor-btn');
+      const anchorSelect = el('anchor-target-select');
+      if (enterBtn) {
+        enterBtn.disabled = !canEnterWormhole(state).ok;
+        enterBtn.onclick = () => doEnterWormhole({});
+      }
+      if (anchorSelect) {
+        anchorSelect.innerHTML = '';
+        for (const [gid, gal] of Object.entries(state.galaxies ?? {})) {
+          if (gid === state.activeGalaxyId) continue;
+          const opt = document.createElement('option');
+          opt.value = gid;
+          opt.textContent = gal.name;
+          anchorSelect.appendChild(opt);
+        }
+      }
+      if (anchorBtn) {
+        const target = anchorSelect?.value;
+        const canAnchor = canBuildWormholeAnchor(state).ok && target;
+        anchorBtn.disabled = !canAnchor;
+        anchorBtn.textContent = `Build Anchor (${WORMHOLE_ANCHOR_COST} cr)`;
+        anchorBtn.onclick = () => doBuildWormholeAnchor(target);
+      }
+      return;
+    }
+    wormholePanel?.classList.add('hidden');
+
     if (view !== 'system' || sidePanel === 'dyson' || !selection) {
       panel.classList.add('hidden');
       return;

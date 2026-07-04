@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -99,17 +99,39 @@ export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
 export const CAPTURE_HOLD_MS = 20000;
 
-// --- Galaxy generation (GDD §4–5) ---
-export const GALAXY_STAR_COUNT = 20;
-export const GALAXY_RADIUS = 950;                // max star distance from the galactic core
-export const GALAXY_INNER_RADIUS = 260;          // keep stars clear of the black hole
-export const GALAXY_MIN_STAR_SPACING = 190;      // rejection-sampling minimum distance
-export const GALAXY_EXTRA_LANE_MAX_DIST = 430;   // non-MST lanes must be shorter than this
-export const GALAXY_TARGET_AVG_DEGREE = 2.6;     // stop adding extra lanes past this
+// --- Galaxy generation (GDD §4–5, Phase 4) ---
+export const GALAXY_STAR_COUNT = 400;
+export const GALAXY_COUNT = 10;
+export const GALAXY_RADIUS = 4250;               // scaled ~4.5× for 400-star density
+export const GALAXY_INNER_RADIUS = 420;          // keep stars clear of the black hole
+export const GALAXY_MIN_STAR_SPACING = 85;       // rejection-sampling minimum distance
+export const GALAXY_EXTRA_LANE_MAX_DIST = 720;   // non-MST lanes must be shorter than this
+export const GALAXY_TARGET_AVG_DEGREE = 3.35;    // stop adding extra lanes past this
 export const GALAXY_MAX_DEGREE = 4;              // per-node lane cap
-export const BLACK_HOLE_MIN_LANES = 2;           // the core is a reachable travel node
+export const GALAXY_BACKBONE_SPOKE_COUNT = 18; // long-range shortcuts around the rim
+export const GALAXY_SMALL_WORLD_LANES = 96;    // random chords to keep diameter low
+export const BLACK_HOLE_MIN_LANES = 12;          // core hub keeps travel diameter low
 export const DEAD_STAR_CHANCE = 0.18;            // probability a non-home star has 0 planets
 export const OTHER_PLANET_COUNT_RANGE = [1, 5];  // planet roll for non-home stars
+
+// --- Stronghold system (fixed roster, Phase 4) ---
+export const STRONGHOLD_HABITABLE_COUNT = 5;
+export const STRONGHOLD_BARREN_COUNT = 1;
+export const STRONGHOLD_GAS_COUNT = 2;
+export const STRONGHOLD_MOON_COUNT_RANGE = [1, 4];           // per habitable planet
+export const STRONGHOLD_SECONDARY_MOON_COUNT_RANGE = [0, 2]; // barren + gas
+
+// --- Wormholes (Phase 4) ---
+export const WORMHOLE_TRANSIT_MS = 8000;
+export const WORMHOLE_HAZARD_CREDIT_COST = 50;
+export const WORMHOLE_ANCHOR_COST = 2000;
+export const WORMHOLE_ANCHOR_BUILD_MS = 30000;
+
+// --- Abstract galaxy simulation (Phase 4) ---
+export const ABSTRACT_TICK_CREDITS_RATE = 0.15;   // aiCredits per tick
+export const ABSTRACT_TICK_SOLARII_RATE = 0.002;  // aiSolarii per tick
+export const ABSTRACT_TICK_DYSON_RATE = 0.0004;   // shell progress per tick
+export const ABSTRACT_TICK_FLEET_RATE = 0.08;     // fleetPower per tick
 
 // --- Flagship (GDD §8) ---
 export const FLAGSHIP_ACCEL = 420;         // world units / s^2 while thrusting
@@ -133,7 +155,7 @@ export const LANE_MIN_LEG_MS = 2500;       // floor so short lanes still read as
 // --- Home system generation ---
 export const HOME_SYSTEM_NAME = 'Solara Prime';
 export const STAR_RADIUS = 200;
-export const PLANET_COUNT_RANGE = [2, 3];        // min, max (inclusive)
+export const PLANET_COUNT_RANGE = [2, 3];        // legacy; stronghold uses fixed roster
 export const PLANET_ORBIT_BASE = 1100;           // world units, first orbit
 export const PLANET_ORBIT_SPACING = 720;         // gap between orbits
 export const PLANET_RADIUS_RANGE = [22, 38];
@@ -198,8 +220,9 @@ export const CAMERA_MAX_ZOOM = 3.5;
 export const CAMERA_DEFAULT_ZOOM = 0.38;
 export const CAMERA_ZOOM_STEP = 1.1;   // per wheel notch
 export const CAMERA_FOLLOW_RATE = 6;   // 1/s exponential approach toward the flagship
-export const GALAXY_CAMERA_MIN_ZOOM = 0.22;
+export const GALAXY_CAMERA_MIN_ZOOM = 0.04;
 export const GALAXY_CAMERA_MAX_ZOOM = 2.2;
+export const GALAXY_LOD_ZOOM = 0.12;             // below this: simplified lane pulses
 
 // --- Rendering ---
 export const STARFIELD_COUNT = 320;
