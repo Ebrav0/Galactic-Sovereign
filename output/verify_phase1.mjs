@@ -151,9 +151,10 @@ s = await text();
 check('returned to stronghold', s.flagship.systemId === home);
 res = await page.evaluate((id) => window.__buildOutpost(id), habitable.id);
 check('build succeeds with flagship present', res.ok === true, res.reason ?? '');
+await page.evaluate(() => window.advanceTime(20000));
 s = await text();
 check('outpost recorded + income flows',
-  s.structures.some((st) => st.bodyId === habitable.id) && s.incomePerSec > 0);
+  s.structures.some((st) => st.bodyId === habitable.id && !st.underConstruction) && s.incomePerSec > 0);
 
 // --- 7. Multi-hop routing ---
 const hops = new Map([[home, 0]]);

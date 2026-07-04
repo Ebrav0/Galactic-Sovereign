@@ -46,7 +46,7 @@ await page.evaluate(() => window.__newGame(42));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 7', s.saveVersion === 7);
+check('1.1 saveVersion is 8', s.saveVersion === 8);
 check('1.2 empireQueue array', Array.isArray(s.empireQueue));
 check('1.3 research defaults', s.research?.unlocked?.includes('eco_baseline'));
 check('1.4 factions.ai present', s.factions?.ai?.homeSystemId != null);
@@ -82,7 +82,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-2', 
 await page.evaluate(() => window.__loadSlot('slot-2'));
 await page.waitForFunction(() => typeof window.render_game_to_text === 'function');
 s = await text();
-check('1.7 v6 migrates to v7', s.saveVersion === 7 && s.research?.unlocked?.includes('eco_baseline'));
+check('1.7 v6 migrates to v8', s.saveVersion === 8 && s.research?.unlocked?.includes('eco_baseline'));
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => { window.getGameState().credits = 5000; });
@@ -121,8 +121,11 @@ await page.evaluate(() => {
   window.getGameState().research.unlocked.push('res_lab_1', 'res_station_protocol');
 });
 await page.evaluate(() => window.__buildResearchStation());
+await page.evaluate(() => window.advanceTime(30000));
 await page.evaluate(() => window.__buildResearchStation());
+await page.evaluate(() => window.advanceTime(30000));
 await page.evaluate(() => window.__buildResearchStation());
+await page.evaluate(() => window.advanceTime(30000));
 const r3 = await page.evaluate(() => window.__buildResearchStation());
 check('5.1 cap at 3', !r3.ok);
 check('5.2 station count', (await text()).research.stationCount === 3);

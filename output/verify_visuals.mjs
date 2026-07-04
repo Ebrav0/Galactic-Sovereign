@@ -53,7 +53,9 @@ const setup = await page.evaluate(() => {
   if (!planet) return { ok: false };
   state.credits = 5000;
   const res = window.__buildOutpost(planet.id);
-  return { ok: res.ok, planetId: planet.id, moons: planet.moons.length, home };
+  if (!res.ok) return { ok: false, reason: res.reason };
+  window.advanceTime(20000);
+  return { ok: true, planetId: planet.id, moons: planet.moons.length, home };
 });
 check('outpost built for shuttles', setup.ok, `${setup.planetId} (${setup.moons} moons)`);
 

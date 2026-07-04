@@ -6,6 +6,7 @@ import {
   RESEARCH_STATION_BONUS,
   RESEARCH_BASE_MS,
   TICK_MS,
+  STRUCTURE_BUILD_MS,
 } from './constants.js';
 import { shellResearchBonus } from './dyson.js';
 import {
@@ -15,6 +16,7 @@ import {
   ensureDyson,
   findPlanet,
   isPlayerOwned,
+  isStructureActive,
   systemById,
 } from './state.js';
 import { getSystems } from './galaxy-scope.js';
@@ -27,12 +29,8 @@ import {
   applyTechEffect,
   techEffects,
 } from './tech-web.js';
-
-function flagshipInSystem(state, systemId) {
-  const f = state.flagship;
-  return f.galaxyId === state.activeGalaxyId
-    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
-}
+import { flagshipInSystem } from './flagship-presence.js';
+import { hasPendingResearchJob, queueConstructionJob } from './drones.js';
 
 export function ensureResearchState(state) {
   if (!state.research) {
@@ -50,8 +48,12 @@ export function ensureResearchState(state) {
 export function researchStationCount(state, systemId) {
   const system = systemById(state, systemId);
   if (!system) return 0;
-  if (system.researchStationCount != null) return system.researchStationCount;
-  return system.structures.filter((s) => s.type === 'research_station').length;
+  if (system.researchStationCount != null) {
+    return system.researchStationCount;
+  }
+  return system.structures.filter(
+    (s) => s.type === 'research_station' && isStructureActive(s),
+  ).length;
 }
 
 export function canBuildResearchStation(state, systemId) {
@@ -63,6 +65,9 @@ export function canBuildResearchStation(state, systemId) {
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
   if (researchStationCount(state, systemId) >= RESEARCH_STATION_CAP) {
     return { ok: false, reason: `Research station cap (${RESEARCH_STATION_CAP}/system)` };
+  }
+  if (hasPendingResearchJob(state, systemId)) {
+    return { ok: false, reason: 'Research station construction already in progress' };
   }
   const host = system.bodies.find((b) => b.type === 'habitable') ?? system.bodies[0];
   if (!host) return { ok: false, reason: 'No anchor body for research station' };
@@ -79,18 +84,19 @@ export function buildResearchStation(state, systemId) {
   const check = canBuildResearchStation(state, systemId);
   if (!check.ok) return check;
 
-  state.credits -= RESEARCH_STATION_COST;
-  const system = systemById(state, systemId);
-  const orbitIndex = researchStationCount(state, systemId);
-  system.structures.push({
-    id: allocateStructureId(),
-    type: 'research_station',
+  const orbitIndex = researchStationCount(state, systemId)
+    + (systemById(state, systemId)?.structures.filter(
+      (s) => s.type === 'research_station' && s.construction,
+    ).length ?? 0);
+
+  return queueConstructionJob(state, {
+    systemId,
+    structureType: 'research_station',
     bodyId: check.anchorBodyId,
+    creditCost: RESEARCH_STATION_COST,
+    durationMs: STRUCTURE_BUILD_MS.research_station,
     orbitIndex,
-    builtAtTime: state.time,
   });
-  system.researchStationCount = researchStationCount(state, systemId) + 1;
-  return { ok: true };
 }
 
 export function totalResearchStationBonus(state) {

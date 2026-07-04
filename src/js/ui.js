@@ -33,6 +33,12 @@ import {
 import { canBuildOutpost, incomePerSecond, incomePerSecondInSystem } from './economy.js';
 import { canBuildShipyard, canQueueScout, canQueueHull } from './production.js';
 import {
+  activeJobsInSystem,
+  droneSummaryForSystem,
+  jobEtaMs,
+  jobProgress,
+} from './drones.js';
+import {
   canBuildFoundry,
   canBuildLauncher,
   solariiPerSecond,
@@ -1102,6 +1108,15 @@ export function initUi(ctx) {
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
     el('income-value').textContent = incomePerSecond(state).toFixed(1);
 
+    const droneStrip = el('view-hint');
+    if (view === 'system' && viewedSystemId && isPlayerOwned(state, viewedSystemId)) {
+      const ds = droneSummaryForSystem(state, viewedSystemId);
+      const jobs = activeJobsInSystem(state, viewedSystemId);
+      droneStrip.textContent = `Drones: ${ds.active}/${ds.capacity} active · ${jobs.length} job${jobs.length === 1 ? '' : 's'}`;
+    } else if (view === 'system') {
+      droneStrip.textContent = '';
+    }
+
     const solariiChip = el('solarii-chip');
     if (state.solariiUnlocked) {
       solariiChip.classList.remove('hidden');
@@ -1331,7 +1346,11 @@ export function initUi(ctx) {
 
     const outpostCheck = canBuildOutpost(state, viewedSystemId, planet.id);
     const shipyardCheck = canBuildShipyard(state, viewedSystemId, planet.id);
-    const shipyard = findShipyardOnPlanet(state, viewedSystemId, planet.id);
+    const shipyard = findShipyardOnPlanet(state, viewedSystemId, planet.id)
+      ?? systemById(state, viewedSystemId)?.structures.find(
+        (s) => s.type === 'shipyard' && s.bodyId === planet.id,
+      )
+      ?? null;
     const scoutCheck = shipyard ? canQueueScout(state, shipyard.id, viewedSystemId) : { ok: false };
 
     const foundryCheck = canBuildFoundry(state, viewedSystemId, planet.id);
@@ -1395,7 +1414,17 @@ export function initUi(ctx) {
     }
 
     const activeBuild = shipyard?.builds?.[0] ?? shipyard?.build;
-    if (activeBuild) {
+    const bodyJobs = activeJobsInSystem(state, viewedSystemId).filter((j) => j.bodyId === planet.id);
+    const constructionJob = bodyJobs[0] ?? null;
+
+    if (constructionJob) {
+      const prog = jobProgress(constructionJob);
+      const eta = jobEtaMs(constructionJob, state);
+      setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', prog, true);
+      const etaLabel = eta != null ? ` · ${Math.ceil(eta / 1000)}s` : '';
+      el('build-progress').querySelector('.progress-block__label').textContent =
+        `Building ${constructionJob.structureType.replace(/_/g, ' ')} (${Math.round(prog * 100)}%)${etaLabel}`;
+    } else if (activeBuild) {
       normalizeShipyardBuilds(shipyard);
       const prog = shipyardBuildProgress(shipyard, state.time, 0);
       setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', prog, true);

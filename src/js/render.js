@@ -47,6 +47,8 @@ import { drawLandingPad, drawMiningRig } from './surface-structures-render.js';
 import { structureSites } from './structure-sites.js';
 import { drawShipyardStation, drawSailLauncher, drawLaunchMuzzleFlash } from './structure-render.js';
 import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
+import { dronePoses } from './drone-motion.js';
+import { drawConstructionDrone, drawDroneTrail } from './drone-render.js';
 import { drawSailFoundryRingStation, drawSailFoundryLabel, sailFoundryLabelAnchor } from './foundry-render.js';
 import {
   drawResearchStation,
@@ -456,7 +458,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     }
   }
 
-  if (intel && hasFoundry(state, systemId)) {
+  if (intel && (hasFoundry(state, systemId) || system.structures.some((s) => s.type === 'sail_foundry'))) {
     const fa = foundryAnchor(state, systemId, t);
     if (fa.planetId && fa.foundryId) {
       const ps = worldToScreen(camera, fa.planetX, fa.planetY, canvas);
@@ -496,6 +498,17 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     ctx.arc(ss.x, ss.y, Math.max(1.2, SAIL_SHUTTLE_SIZE * z), 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
+  }
+
+  for (const dp of dronePoses(state, systemId, t)) {
+    const ds = worldToScreen(camera, dp.x, dp.y, canvas);
+    drawDroneTrail(ctx, ds.x, ds.y, dp.heading, z, dp.phase);
+    drawConstructionDrone(ctx, ds.x, ds.y, dp.heading, z, {
+      phase: dp.phase,
+      working: dp.working,
+      time: t,
+      seed: dp.drone.slotIndex,
+    });
   }
 
   for (const st of orbitalStructures) {

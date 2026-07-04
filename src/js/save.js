@@ -62,6 +62,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 4) e = migrateV4toV5(e);
   if (e.saveVersion === 5) e = migrateV5toV6(e);
   if (e.saveVersion === 6) e = migrateV6toV7(e);
+  if (e.saveVersion === 7) e = migrateV7toV8(e);
   return e;
 }
 
@@ -374,6 +375,22 @@ function migrateV6toV7(envelope) {
   };
 }
 
+// v7 -> v8 (Phase 6 construction drones).
+function migrateV7toV8(envelope) {
+  const state = envelope.state;
+  state.constructionJobs = state.constructionJobs ?? [];
+  state.drones = state.drones ?? [];
+  migrateShipyardsOnLoad(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 8,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -410,6 +427,8 @@ export function deserialize(envelopeJson) {
 
   initPhase5State(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
+  envelope.state.constructionJobs = envelope.state.constructionJobs ?? [];
+  envelope.state.drones = envelope.state.drones ?? [];
 
   return { ok: true, state: envelope.state };
 }

@@ -14,13 +14,14 @@ import {
   systemById,
   planetPosition,
   moonPosition,
-  findShipyardOnPlanet,
   findBody,
   dysonLaunchers,
   hashSeed,
+  structuresOn,
 } from './state.js';
 import { shipyardBuildProgress } from './production.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
+import { jobProgress } from './drones.js';
 
 const STAR_X = 0;
 const STAR_Y = 0;
@@ -75,15 +76,24 @@ export function computeShipyardOrbitRadius(planet) {
   return planet.radius * CELESTIAL_VISUAL_SCALE + SHIPYARD_ORBIT_PAD;
 }
 
+function structureConstructionProgress(state, structure) {
+  if (!structure?.construction) return 0;
+  const job = (state.constructionJobs ?? []).find((j) => j.id === structure.construction.jobId);
+  if (job) return jobProgress(job);
+  const elapsed = state.time - (structure.construction.startedAt ?? 0);
+  return Math.min(1, elapsed / (structure.construction.durationMs || 1));
+}
+
 function shipyardSite(state, systemId, planet, time = state.time) {
-  const shipyard = findShipyardOnPlanet(state, systemId, planet.id);
+  const shipyard = structuresOn(state, systemId, planet.id).find((s) => s.type === 'shipyard');
   if (!shipyard) return null;
 
   normalizeShipyardBuilds(shipyard);
   const bodyPos = planetPosition(planet, time);
   const slotAngle = fixedSlotAngle(shipyard.id, 0x73);
   const orbitR = computeShipyardOrbitRadius(planet);
-  const building = shipyard.builds.length > 0;
+  const hullBuilding = shipyard.builds.length > 0;
+  const underConstruction = !!shipyard.construction;
 
   return {
     kind: 'shipyard',
@@ -94,8 +104,10 @@ function shipyardSite(state, systemId, planet, time = state.time) {
     orbitR,
     slotAngle,
     hubHeading: slotAngle + Math.PI / 2,
-    building,
-    buildProgress: building ? shipyardBuildProgress(shipyard, state.time, 0) : 0,
+    building: hullBuilding || underConstruction,
+    buildProgress: underConstruction
+      ? structureConstructionProgress(state, shipyard)
+      : (hullBuilding ? shipyardBuildProgress(shipyard, state.time, 0) : 0),
     buildHull: shipyard.builds[0]?.hull ?? null,
     seed: hashSeed(0x9e3779b9, shipyard.id) % 97,
     shipyardId: shipyard.id,
@@ -121,6 +133,7 @@ function researchStationSites(state, systemId, planet, time = state.time) {
     const orbitIndex = station.orbitIndex ?? 0;
     const slotAngle = fixedSlotAngle(station.id, 0x4a) + orbitIndex * RESEARCH_ORBIT_SPREAD;
     const orbitR = baseOrbit + orbitIndex * (RESEARCH_ORBIT_PAD * 0.55);
+    const underConstruction = !!station.construction;
     return {
       kind: 'research_station',
       planetId: planet.id,
@@ -132,6 +145,8 @@ function researchStationSites(state, systemId, planet, time = state.time) {
       slotAngle,
       hubHeading: slotAngle + Math.PI / 2,
       orbitIndex,
+      building: underConstruction,
+      buildProgress: underConstruction ? structureConstructionProgress(state, station) : 0,
       seed: hashSeed(0xcafebabe, station.id) % 97,
     };
   });
@@ -141,7 +156,8 @@ function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
   const world = bodyWorldPos(state, systemId, bodyId, time);
   if (!world) return [];
 
-  const launchers = dysonLaunchers(state, systemId).filter((l) => l.bodyId === bodyId);
+  const launchers = (systemById(state, systemId)?.structures ?? [])
+    .filter((l) => l.type === 'dyson_launcher' && l.bodyId === bodyId);
   const dyson = systemById(state, systemId)?.dyson;
   const sites = [];
 
@@ -155,7 +171,8 @@ function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
     const dockY = anchor.y - Math.sin(heading) * 4;
     const lastFire = dyson?.launcherLastFireAt?.[launcher.id] ?? 0;
     const fireAge = time - lastFire;
-    const firing = fireAge >= 0 && fireAge < LAUNCHER_BURST_MS;
+    const firing = !launcher.construction && fireAge >= 0 && fireAge < LAUNCHER_BURST_MS;
+    const underConstruction = !!launcher.construction;
 
     sites.push({
       kind: 'launcher',
@@ -170,6 +187,8 @@ function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
       dockY,
       firing,
       fireAge,
+      building: underConstruction,
+      buildProgress: underConstruction ? structureConstructionProgress(state, launcher) : 0,
       seed: hashSeed(0xdeadbeef, launcher.id) % 97,
     });
   });

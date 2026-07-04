@@ -20,6 +20,7 @@ import {
   SHELL_TRADE_BONUS,
   SHELL_RESEARCH_BONUS,
   TICK_MS,
+  STRUCTURE_BUILD_MS,
 } from './constants.js';
 import { isTechUnlocked } from './tech-web.js';
 import {
@@ -31,16 +32,16 @@ import {
   launcherCountOnBody,
   dysonLaunchers,
   ensureDyson,
+  pendingStructureOnBody,
 } from './state.js';
-import { allocateStructureId } from './economy.js';
 import { getSystems } from './galaxy-scope.js';
 import { sailShuttleLauncherArrivals } from './sail-shuttles.js';
-
-function flagshipInSystem(state, systemId) {
-  const f = state.flagship;
-  return f.galaxyId === state.activeGalaxyId
-    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
-}
+import { flagshipInSystem } from './flagship-presence.js';
+import {
+  canUseBuilderTech,
+  hasPendingJob,
+  queueConstructionJob,
+} from './drones.js';
 
 // --- Build validation ---
 
@@ -55,6 +56,11 @@ export function canBuildFoundry(state, systemId, bodyId) {
   if (!bodyId) return { ok: false, reason: 'Select a planet to anchor the foundry ring' };
   if (!findPlanet(state, systemId, bodyId)) return { ok: false, reason: 'No such planet' };
   if (hasFoundry(state, systemId)) return { ok: false, reason: 'Sail foundry already built in this system' };
+  if (system.structures.some((s) => s.type === 'sail_foundry' && s.construction)) {
+    return { ok: false, reason: 'Sail foundry construction already in progress' };
+  }
+  const builderCheck = canUseBuilderTech(state, 'sail_foundry');
+  if (!builderCheck.ok) return builderCheck;
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
@@ -66,14 +72,13 @@ export function buildFoundry(state, systemId, bodyId) {
   const check = canBuildFoundry(state, systemId, bodyId);
   if (!check.ok) return check;
 
-  state.credits -= FOUNDRY_COST;
-  systemById(state, systemId).structures.push({
-    id: allocateStructureId(),
-    type: 'sail_foundry',
+  return queueConstructionJob(state, {
+    systemId,
+    structureType: 'sail_foundry',
     bodyId,
-    builtAtTime: state.time,
+    creditCost: FOUNDRY_COST,
+    durationMs: STRUCTURE_BUILD_MS.sail_foundry,
   });
-  return { ok: true };
 }
 
 export function canBuildLauncher(state, systemId, bodyId) {
@@ -92,6 +97,14 @@ export function canBuildLauncher(state, systemId, bodyId) {
   if (launcherCountOnBody(state, systemId, bodyId) >= LAUNCHERS_PER_BODY_MAX) {
     return { ok: false, reason: `Maximum ${LAUNCHERS_PER_BODY_MAX} launchers per body` };
   }
+  const pendingLaunchers = system.structures.filter(
+    (s) => s.type === 'dyson_launcher' && s.bodyId === bodyId && s.construction,
+  ).length;
+  if (launcherCountOnBody(state, systemId, bodyId) + pendingLaunchers >= LAUNCHERS_PER_BODY_MAX) {
+    return { ok: false, reason: `Maximum ${LAUNCHERS_PER_BODY_MAX} launchers per body` };
+  }
+  const builderCheck = canUseBuilderTech(state, 'dyson_launcher');
+  if (!builderCheck.ok) return builderCheck;
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
@@ -103,17 +116,19 @@ export function buildLauncher(state, systemId, bodyId) {
   const check = canBuildLauncher(state, systemId, bodyId);
   if (!check.ok) return check;
 
-  state.credits -= LAUNCHER_COST;
-  const id = allocateStructureId();
-  systemById(state, systemId).structures.push({
-    id,
-    type: 'dyson_launcher',
+  const launcherIndex = launcherCountOnBody(state, systemId, bodyId)
+    + (systemById(state, systemId)?.structures.filter(
+      (s) => s.type === 'dyson_launcher' && s.bodyId === bodyId && s.construction,
+    ).length ?? 0);
+
+  return queueConstructionJob(state, {
+    systemId,
+    structureType: 'dyson_launcher',
     bodyId,
-    builtAtTime: state.time,
+    creditCost: LAUNCHER_COST,
+    durationMs: STRUCTURE_BUILD_MS.dyson_launcher,
+    launcherIndex,
   });
-  ensureDyson(systemById(state, systemId)).launcherStock[id] = 0;
-  ensureDyson(systemById(state, systemId)).launcherLastFireAt[id] = state.time;
-  return { ok: true };
 }
 
 // --- Shell bonus hooks (Phase 5–6 features return 1.0 until wired) ---

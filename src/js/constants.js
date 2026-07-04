@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -19,6 +19,31 @@ export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the sam
 // --- Structures ---
 export const SHIPYARD_COST = 400;
 export const SCOUT_HULL_COST = 120;
+
+// --- Construction drones (Phase 6) ---
+export const DRONE_BASE_CAPACITY = 2;
+export const DRONE_BUILDER_SHIP_BONUS = 1;
+export const DRONE_MIL_BUILDER_BONUS = 2;
+export const DRONE_MAX_PER_SYSTEM = 8;
+export const DRONE_MAX_PER_JOB = 2;
+export const DRONE_WORK_PER_TICK = 50;           // work-ms added per tick per working drone
+export const DRONE_SURVEYOR_SPEED_BONUS = 1.15;  // eco_surveyor researched
+export const DRONE_TRIP_MS_MIN = 1200;
+export const DRONE_TRIP_MS_MAX = 4800;
+export const DRONE_TRIP_MS_PER_UNIT = 0.35;      // scales with flagship↔site distance
+export const DRONE_WORK_DWELL_MS = 800;          // dwell at site per trip cycle
+export const DRONE_CYCLE_MS = 6000;              // full outbound+work+return cycle for motion
+export const DRONE_PATROL_RADIUS = 42;
+export const DRONE_SIZE = 4.5;
+
+export const STRUCTURE_BUILD_MS = {
+  outpost: 18000,
+  shipyard: 30000,
+  trade_station: 24000,
+  research_station: 28000,
+  sail_foundry: 45000,
+  dyson_launcher: 36000,
+};
 
 // --- Combat hulls (Phase 2 + GDD roster) ---
 export const HULL_STATS = {

@@ -311,3 +311,32 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 6 tasks: Superweapon cradle, hero flagships, diplomacy unlock
+
+---
+
+## Session 2026-07-04 — Construction drones (Phase 6)
+
+**Task claimed:** System construction drones — timed builds, flying drone visuals, save-v8
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=8`; `docs/schemas/save-v8.json`; `migrateV7toV8`
+- New modules: `drones.js`, `drone-motion.js`, `drone-render.js`, `flagship-presence.js`
+- Structure builds (outpost, shipyard, foundry, launcher, trade, research) queue construction jobs; credits spent upfront; drones complete work while flagship is in-system
+- Hybrid drone capacity: base 2 + builder ships + `mil_builder_ship` tech bonus; `eco_surveyor` build speed bonus
+- Scaffolding on orbital structures under construction; drone sprites in system view
+- HUD drone strip + build progress/ETA; completion toasts
+- Test hooks: `__queueOutpost`, `__droneSummary`, `__forceResearch`, `__spawnBuilderShip`
+- `output/verify_drones.mjs` — 22/22; phase0/3/4/5 verify scripts updated for timed builds + save-v8
+
+### Decisions
+- Sim work rate uses assigned drone count per tick (visual working phase is render-only)
+- Jobs pause when flagship leaves the system; resume on return
+- Foundry/launcher require `mil_builder_ship` researched (GDD site prep)
+
+### Known issues
+- None blocking
+
+### Suggested next
+- Dehydration overlay for pending construction jobs in abstract galaxies
+- Combat repair drone streams (healer tactical — GDD §2.7)
