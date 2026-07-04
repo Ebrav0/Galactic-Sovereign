@@ -7,6 +7,7 @@ import {
   techNode,
   techPrereqsMet,
 } from './tech-web.js';
+import { attachTechWebViewport, GRAPH_WIDTH, GRAPH_HEIGHT } from './tech-web-viewport.js';
 
 export const TECH_CLUSTERS = {
   economy: { label: 'Economy', color: '#ffd27a' },
@@ -96,26 +97,13 @@ function costLabel(node) {
   return parts.length ? parts.join(' + ') : 'Free';
 }
 
-/**
- * Mount an SVG tech web into `container`.
- * @param {HTMLElement} container
- * @param {object} state
- * @param {{ onResearch?: (nodeId: string) => void, summary?: object }} opts
- */
-export function mountTechWebGraph(container, state, opts = {}) {
-  const summary = opts.summary ?? { activeNodeId: null, queue: [], progress: 0 };
+function buildSvgGraph(state, summary) {
   const nodes = allTechNodes();
   const positions = layoutByCluster(nodes);
 
-  container.innerHTML = '';
-  container.className = 'tech-web-mount';
-
-  const wrap = document.createElement('div');
-  wrap.className = 'tech-web-scroll';
-
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', 'tech-web-graph');
-  svg.setAttribute('viewBox', '0 0 1200 720');
+  svg.setAttribute('viewBox', `0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}`);
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', 'Technology web');
 
@@ -126,7 +114,6 @@ export function mountTechWebGraph(container, state, opts = {}) {
   defs.appendChild(glow);
   svg.appendChild(defs);
 
-  // Cluster region labels
   for (const [clusterId, meta] of Object.entries(TECH_CLUSTERS)) {
     const anchor = CLUSTER_ANCHORS[clusterId];
     if (!anchor) continue;
@@ -149,13 +136,14 @@ export function mountTechWebGraph(container, state, opts = {}) {
     for (const prereqId of node.prereqs) {
       const from = positions.get(prereqId);
       if (!from) continue;
-      const unlocked = isTechUnlocked(state, node.id) && isTechUnlocked(state, prereqId);
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       line.setAttribute('x1', String(from.x));
       line.setAttribute('y1', String(from.y));
       line.setAttribute('x2', String(to.x));
       line.setAttribute('y2', String(to.y));
-      line.setAttribute('class', `tech-web-edge${unlocked ? ' tech-web-edge--lit' : ''}`);
+      line.setAttribute('class', 'tech-web-edge');
+      line.dataset.fromId = prereqId;
+      line.dataset.toId = node.id;
       edgesG.appendChild(line);
     }
   }
@@ -168,19 +156,17 @@ export function mountTechWebGraph(container, state, opts = {}) {
     const pos = positions.get(node.id);
     if (!pos) continue;
     const cluster = TECH_CLUSTERS[node.cluster] ?? TECH_CLUSTERS.economy;
-    const status = nodeState(state, node.id, summary);
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', `tech-web-node tech-web-node--${status}`);
+    g.setAttribute('class', 'tech-web-node tech-web-node--locked');
     g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
     g.dataset.nodeId = node.id;
 
     const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     circle.setAttribute('r', String(NODE_R));
     circle.setAttribute('class', 'tech-web-node__circle');
-    circle.setAttribute('fill', status === 'locked' ? 'rgba(18, 24, 38, 0.92)' : `${cluster.color}22`);
+    circle.setAttribute('fill', 'rgba(18, 24, 38, 0.92)');
     circle.setAttribute('stroke', cluster.color);
-    circle.setAttribute('stroke-width', status === 'active' ? '3' : '2');
-    if (status === 'active') circle.setAttribute('filter', 'url(#tech-glow)');
+    circle.setAttribute('stroke-width', '2');
     g.appendChild(circle);
 
     const tier = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -198,20 +184,6 @@ export function mountTechWebGraph(container, state, opts = {}) {
     name.textContent = shortName;
     g.appendChild(name);
 
-    if (status === 'unlocked') {
-      const mark = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      mark.setAttribute('class', 'tech-web-node__done');
-      mark.setAttribute('y', '22');
-      mark.setAttribute('text-anchor', 'middle');
-      mark.textContent = '✓';
-      g.appendChild(mark);
-    }
-
-    if (status === 'available' && opts.onResearch) {
-      g.style.cursor = 'pointer';
-      g.addEventListener('click', () => opts.onResearch(node.id));
-    }
-
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
     title.textContent = `${node.name} · Tier ${tierRoman(node.id)} · ${costLabel(node)}`;
     g.appendChild(title);
@@ -220,8 +192,85 @@ export function mountTechWebGraph(container, state, opts = {}) {
   }
   svg.appendChild(nodesG);
 
-  wrap.appendChild(svg);
-  container.appendChild(wrap);
+  updateTechWebGraph(svg, state, summary);
+  return { svg, positions };
+}
 
-  return { positions, svg };
+/**
+ * Patch node/edge visual state on an existing SVG graph.
+ */
+export function updateTechWebGraph(svg, state, summary) {
+  const nodes = allTechNodes();
+  const summarySafe = summary ?? { activeNodeId: null, queue: [], progress: 0 };
+
+  for (const node of nodes) {
+    const g = svg.querySelector(`.tech-web-node[data-node-id="${node.id}"]`);
+    if (!g) continue;
+    const cluster = TECH_CLUSTERS[node.cluster] ?? TECH_CLUSTERS.economy;
+    const status = nodeState(state, node.id, summarySafe);
+    g.setAttribute('class', `tech-web-node tech-web-node--${status}`);
+
+    const circle = g.querySelector('.tech-web-node__circle');
+    if (circle) {
+      circle.setAttribute('fill', status === 'locked' ? 'rgba(18, 24, 38, 0.92)' : `${cluster.color}22`);
+      circle.setAttribute('stroke', cluster.color);
+      circle.setAttribute('stroke-width', status === 'active' ? '3' : '2');
+      if (status === 'active') circle.setAttribute('filter', 'url(#tech-glow)');
+      else circle.removeAttribute('filter');
+    }
+
+    let mark = g.querySelector('.tech-web-node__done');
+    if (status === 'unlocked') {
+      if (!mark) {
+        mark = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        mark.setAttribute('class', 'tech-web-node__done');
+        mark.setAttribute('y', '22');
+        mark.setAttribute('text-anchor', 'middle');
+        mark.textContent = '✓';
+        g.appendChild(mark);
+      }
+    } else if (mark) {
+      mark.remove();
+    }
+
+    if (status === 'available') g.style.cursor = 'pointer';
+    else g.style.cursor = '';
+  }
+
+  for (const line of svg.querySelectorAll('.tech-web-edge')) {
+    const fromId = line.dataset.fromId;
+    const toId = line.dataset.toId;
+    const lit = isTechUnlocked(state, fromId) && isTechUnlocked(state, toId);
+    line.setAttribute('class', `tech-web-edge${lit ? ' tech-web-edge--lit' : ''}`);
+  }
+}
+
+export function researchSnapshotKey(summary) {
+  const unlocked = (summary.unlocked ?? []).slice().sort().join(',');
+  const queue = (summary.queue ?? []).slice().join(',');
+  return `${unlocked}|${summary.activeNodeId ?? ''}|${queue}|${Math.round((summary.progress ?? 0) * 1000)}`;
+}
+
+/**
+ * Mount an SVG tech web into `container` with pan/zoom viewport.
+ * @param {HTMLElement} container
+ * @param {object} state
+ * @param {{ onResearch?: (nodeId: string) => void, onHoverNode?: (nodeId: string | null) => void, summary?: object }} opts
+ */
+export function mountTechWebGraph(container, state, opts = {}) {
+  const summary = opts.summary ?? { activeNodeId: null, queue: [], progress: 0 };
+  container.innerHTML = '';
+  container.className = 'tech-web-mount';
+
+  const graphHost = document.createElement('div');
+  graphHost.className = 'tech-web-graph-host';
+  container.appendChild(graphHost);
+
+  const { svg, positions } = buildSvgGraph(state, summary);
+  const viewport = attachTechWebViewport(graphHost, svg, {
+    onResearch: opts.onResearch,
+    onHoverNode: opts.onHoverNode,
+  });
+
+  return { positions, svg, viewport, fitView: viewport.fitView };
 }

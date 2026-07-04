@@ -369,7 +369,7 @@ function checkFlagshipArrival() {
 
 // --- UI + input wiring ---
 
-const updateUi = initUi({
+const { updateUi, closeSidePanel } = initUi({
   getState: () => state,
   getSelection: () => selection,
   setSelection: (id) => { selection = id; },
@@ -407,6 +407,7 @@ attachInput(canvas, {
   getViewedSystemId: () => viewedSystemId,
   getSelectedScoutId: () => selectedScoutId,
   onSelect: (id) => { selection = id; },
+  onCloseSidePanel: closeSidePanel,
   onTogglePause: doTogglePause,
   onToggleView: doToggleView,
   onFlagshipInput: doFlagshipInput,

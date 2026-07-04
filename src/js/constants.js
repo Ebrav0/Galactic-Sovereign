@@ -20,21 +20,54 @@ export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the sam
 export const SHIPYARD_COST = 400;
 export const SCOUT_HULL_COST = 120;
 
-// --- Combat hulls (Phase 2) ---
+// --- Combat hulls (Phase 2 + GDD roster) ---
 export const HULL_STATS = {
   scout: { hp: 50, dps: 0, captureForce: 0, cost: 120, buildMs: 18000, laneSpeed: 140, healRate: 0 },
   corvette: { hp: 120, dps: 8, captureForce: 1, cost: 180, buildMs: 22000, laneSpeed: 120, healRate: 0 },
+  patrol_cutter: { hp: 90, dps: 6, captureForce: 1, cost: 150, buildMs: 20000, laneSpeed: 130, healRate: 0 },
   frigate: { hp: 200, dps: 12, captureForce: 2, cost: 280, buildMs: 30000, laneSpeed: 110, healRate: 0 },
   destroyer: { hp: 350, dps: 18, captureForce: 3, cost: 450, buildMs: 40000, laneSpeed: 100, healRate: 0 },
   cruiser: { hp: 500, dps: 22, captureForce: 4, cost: 650, buildMs: 55000, laneSpeed: 95, healRate: 0 },
+  battleship: { hp: 750, dps: 28, captureForce: 5, cost: 900, buildMs: 70000, laneSpeed: 90, healRate: 0 },
+  dreadnought: { hp: 1000, dps: 35, captureForce: 6, cost: 1200, buildMs: 85000, laneSpeed: 85, healRate: 0 },
   light_carrier: { hp: 400, dps: 5, captureForce: 2, cost: 550, buildMs: 50000, laneSpeed: 90, healRate: 0 },
+  fleet_carrier: { hp: 550, dps: 7, captureForce: 3, cost: 750, buildMs: 62000, laneSpeed: 88, healRate: 0 },
+  super_carrier: { hp: 700, dps: 10, captureForce: 4, cost: 950, buildMs: 75000, laneSpeed: 85, healRate: 0 },
+  light_hauler: { hp: 180, dps: 2, captureForce: 0, cost: 200, buildMs: 25000, laneSpeed: 100, healRate: 0 },
+  bulk_freighter: { hp: 280, dps: 2, captureForce: 0, cost: 320, buildMs: 32000, laneSpeed: 85, healRate: 0 },
+  armored_convoy: { hp: 400, dps: 5, captureForce: 1, cost: 480, buildMs: 38000, laneSpeed: 80, healRate: 0 },
   fighter: { hp: 30, dps: 6, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 140, healRate: 0 },
+  interceptor: { hp: 25, dps: 7, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 150, healRate: 0 },
+  heavy_fighter: { hp: 45, dps: 12, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 125, healRate: 0 },
   bomber: { hp: 40, dps: 10, captureForce: 0, cost: 0, buildMs: 0, laneSpeed: 120, healRate: 0 },
   healer: { hp: 150, dps: 0, captureForce: 1, cost: 320, buildMs: 35000, laneSpeed: 105, healRate: 15 },
+  sensor_ship: { hp: 120, dps: 0, captureForce: 0, cost: 260, buildMs: 28000, laneSpeed: 115, healRate: 0 },
+  builder_ship: { hp: 200, dps: 0, captureForce: 1, cost: 380, buildMs: 42000, laneSpeed: 95, healRate: 0 },
+  command_cruiser: { hp: 450, dps: 14, captureForce: 3, cost: 720, buildMs: 58000, laneSpeed: 95, healRate: 0 },
+  miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
 };
 
-export const COMBAT_HULL_TYPES = ['corvette', 'frigate', 'destroyer', 'cruiser', 'light_carrier', 'healer'];
-export const SHIPYARD_COMBAT_HULLS = ['corvette', 'frigate', 'destroyer', 'healer'];
+/** Carrier-supplied wing craft — not built at shipyards. */
+export const CARRIER_WING_HULLS = ['fighter', 'interceptor', 'heavy_fighter', 'bomber'];
+
+export const COMBAT_HULL_TYPES = [
+  'corvette', 'patrol_cutter', 'frigate', 'destroyer', 'cruiser', 'battleship', 'dreadnought',
+  'light_carrier', 'fleet_carrier', 'super_carrier', 'healer', 'sensor_ship', 'builder_ship',
+  'command_cruiser', 'light_hauler', 'bulk_freighter', 'armored_convoy', 'miner',
+];
+
+export const SHIPYARD_COMBAT_HULLS = COMBAT_HULL_TYPES.filter((h) => !CARRIER_WING_HULLS.includes(h));
+
+/** UI grouping for empire build queue buttons. */
+export const SHIP_HULL_CATEGORIES = {
+  scout: { label: 'Scout', hulls: ['scout'] },
+  escorts: { label: 'Escorts', hulls: ['corvette', 'frigate', 'patrol_cutter'] },
+  line: { label: 'Line Warships', hulls: ['destroyer', 'cruiser', 'battleship', 'dreadnought'] },
+  carriers: { label: 'Carriers', hulls: ['light_carrier', 'fleet_carrier', 'super_carrier'] },
+  transports: { label: 'Transports', hulls: ['light_hauler', 'bulk_freighter', 'armored_convoy'] },
+  support: { label: 'Support', hulls: ['healer', 'sensor_ship', 'builder_ship'] },
+  special: { label: 'Special', hulls: ['miner', 'command_cruiser'] },
+};
 
 export const SHIP_LANE_SPEED = 100;
 export const FLEET_STATION_ORBIT_PAD = 300;   // min distance beyond star edge for idle formation

@@ -86,6 +86,7 @@ check('1.7 v6 migrates to v7', s.saveVersion === 7 && s.research?.unlocked?.incl
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => { window.getGameState().credits = 5000; });
+await page.evaluate(() => window.__seedTestShipyards());
 const creditsBefore = (await text()).credits;
 const enq = await page.evaluate(() => window.__enqueueHull('corvette'));
 check('2.1 enqueue ok', enq.ok);

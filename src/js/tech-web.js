@@ -81,6 +81,116 @@ export const TECH_NODES = {
     researchMs: 45000,
     effect: 'healer_repair_10',
   },
+  mil_patrol_cutter: {
+    id: 'mil_patrol_cutter',
+    cluster: 'military',
+    name: 'Patrol Cutters',
+    prereqs: ['mil_corvette_2'],
+    creditCost: 400,
+    solariiCost: 0,
+    researchMs: 45000,
+    effect: 'unlock_patrol_cutter',
+  },
+  mil_cruiser_unlock: {
+    id: 'mil_cruiser_unlock',
+    cluster: 'military',
+    name: 'Cruiser Blueprints',
+    prereqs: ['mil_frigate_unlock'],
+    creditCost: 1500,
+    solariiCost: 2,
+    researchMs: 78750,
+    effect: 'unlock_cruiser_queue',
+  },
+  mil_battleship_unlock: {
+    id: 'mil_battleship_unlock',
+    cluster: 'military',
+    name: 'Battleship Hulls',
+    prereqs: ['mil_cruiser_unlock'],
+    creditCost: 2000,
+    solariiCost: 3,
+    researchMs: 90000,
+    effect: 'unlock_battleship_queue',
+  },
+  mil_dreadnought_unlock: {
+    id: 'mil_dreadnought_unlock',
+    cluster: 'military',
+    name: 'Dreadnought Class',
+    prereqs: ['mil_battleship_unlock'],
+    creditCost: 2800,
+    solariiCost: 5,
+    researchMs: 112500,
+    effect: 'unlock_dreadnought_queue',
+  },
+  mil_light_carrier: {
+    id: 'mil_light_carrier',
+    cluster: 'military',
+    name: 'Light Carrier',
+    prereqs: ['mil_parallel_dock'],
+    creditCost: 1400,
+    solariiCost: 2,
+    researchMs: 78750,
+    effect: 'unlock_light_carrier_queue',
+  },
+  mil_fleet_carrier: {
+    id: 'mil_fleet_carrier',
+    cluster: 'military',
+    name: 'Fleet Carrier',
+    prereqs: ['mil_light_carrier'],
+    creditCost: 2200,
+    solariiCost: 3,
+    researchMs: 90000,
+    effect: 'unlock_fleet_carrier_queue',
+  },
+  mil_super_carrier: {
+    id: 'mil_super_carrier',
+    cluster: 'military',
+    name: 'Super Carrier',
+    prereqs: ['mil_fleet_carrier'],
+    creditCost: 3200,
+    solariiCost: 5,
+    researchMs: 112500,
+    effect: 'unlock_super_carrier_queue',
+  },
+  mil_sensor_ship: {
+    id: 'mil_sensor_ship',
+    cluster: 'military',
+    name: 'Sensor Arrays',
+    prereqs: ['mil_healer_tech'],
+    creditCost: 600,
+    solariiCost: 1,
+    researchMs: 56250,
+    effect: 'unlock_sensor_ship',
+  },
+  mil_builder_ship: {
+    id: 'mil_builder_ship',
+    cluster: 'military',
+    name: 'Builder Drones',
+    prereqs: ['mil_sensor_ship'],
+    creditCost: 900,
+    solariiCost: 1,
+    researchMs: 67500,
+    effect: 'unlock_builder_ship',
+  },
+  mil_command_cruiser: {
+    id: 'mil_command_cruiser',
+    cluster: 'military',
+    name: 'Command Cruiser',
+    prereqs: ['mil_cruiser_unlock'],
+    creditCost: 1800,
+    solariiCost: 3,
+    researchMs: 90000,
+    effect: 'unlock_command_cruiser',
+  },
+  eco_miner_hull: {
+    id: 'eco_miner_hull',
+    cluster: 'economy',
+    name: 'Orbital Miners',
+    prereqs: ['eco_outpost_2'],
+    creditCost: 450,
+    solariiCost: 0,
+    researchMs: 45000,
+    effect: 'unlock_miner_hull',
+  },
   mega_foundry_2: {
     id: 'mega_foundry_2',
     cluster: 'megastructure',
@@ -130,6 +240,36 @@ export const TECH_NODES = {
     solariiCost: 1,
     researchMs: 67500,
     effect: 'trade_neutral_bridge',
+  },
+  trade_light_hauler: {
+    id: 'trade_light_hauler',
+    cluster: 'trade',
+    name: 'Light Haulers',
+    prereqs: ['trade_route_opt'],
+    creditCost: 400,
+    solariiCost: 0,
+    researchMs: 45000,
+    effect: 'unlock_light_hauler',
+  },
+  trade_bulk_freighter: {
+    id: 'trade_bulk_freighter',
+    cluster: 'trade',
+    name: 'Bulk Freighters',
+    prereqs: ['trade_light_hauler'],
+    creditCost: 700,
+    solariiCost: 1,
+    researchMs: 56250,
+    effect: 'unlock_bulk_freighter',
+  },
+  trade_armored_convoy: {
+    id: 'trade_armored_convoy',
+    cluster: 'trade',
+    name: 'Armored Convoys',
+    prereqs: ['trade_bulk_freighter'],
+    creditCost: 1100,
+    solariiCost: 2,
+    researchMs: 67500,
+    effect: 'unlock_armored_convoy',
   },
   wh_scout_range: {
     id: 'wh_scout_range',
@@ -217,6 +357,20 @@ export function techEffects(state) {
     shipyardSlots: 1,
     unlockTradeStation: false,
     unlockFrigateQueue: false,
+    unlockPatrolCutter: false,
+    unlockCruiserQueue: false,
+    unlockBattleshipQueue: false,
+    unlockDreadnoughtQueue: false,
+    unlockLightCarrierQueue: false,
+    unlockFleetCarrierQueue: false,
+    unlockSuperCarrierQueue: false,
+    unlockSensorShip: false,
+    unlockBuilderShip: false,
+    unlockCommandCruiser: false,
+    unlockMinerHull: false,
+    unlockLightHauler: false,
+    unlockBulkFreighter: false,
+    unlockArmoredConvoy: false,
     outpostIncomeMult: 1,
     creditIncomeMult: 1,
     tradeIncomeMult: 1,
@@ -241,6 +395,20 @@ export function techEffects(state) {
       case 'credit_income_15': effects.creditIncomeMult = 1.15; break;
       case 'shipyard_slots_2': effects.shipyardSlots = 2; break;
       case 'unlock_frigate_queue': effects.unlockFrigateQueue = true; break;
+      case 'unlock_patrol_cutter': effects.unlockPatrolCutter = true; break;
+      case 'unlock_cruiser_queue': effects.unlockCruiserQueue = true; break;
+      case 'unlock_battleship_queue': effects.unlockBattleshipQueue = true; break;
+      case 'unlock_dreadnought_queue': effects.unlockDreadnoughtQueue = true; break;
+      case 'unlock_light_carrier_queue': effects.unlockLightCarrierQueue = true; break;
+      case 'unlock_fleet_carrier_queue': effects.unlockFleetCarrierQueue = true; break;
+      case 'unlock_super_carrier_queue': effects.unlockSuperCarrierQueue = true; break;
+      case 'unlock_sensor_ship': effects.unlockSensorShip = true; break;
+      case 'unlock_builder_ship': effects.unlockBuilderShip = true; break;
+      case 'unlock_command_cruiser': effects.unlockCommandCruiser = true; break;
+      case 'unlock_miner_hull': effects.unlockMinerHull = true; break;
+      case 'unlock_light_hauler': effects.unlockLightHauler = true; break;
+      case 'unlock_bulk_freighter': effects.unlockBulkFreighter = true; break;
+      case 'unlock_armored_convoy': effects.unlockArmoredConvoy = true; break;
       case 'corvette_hp_15': effects.corvetteHpMult = 1.15; break;
       case 'healer_repair_10': effects.healerRepairMult = 1.1; break;
       case 'foundry_output_10': effects.foundryOutputMult = 1.1; break;
@@ -264,10 +432,24 @@ export function shipyardSlots(state) {
 }
 
 export function empireQueueHulls(state) {
-  const base = ['scout', 'corvette', 'destroyer', 'healer'];
   const effects = techEffects(state);
-  if (effects.unlockFrigateQueue) base.push('frigate');
-  return base;
+  const hulls = ['scout', 'corvette', 'destroyer', 'healer'];
+  if (effects.unlockPatrolCutter) hulls.push('patrol_cutter');
+  if (effects.unlockFrigateQueue) hulls.push('frigate');
+  if (effects.unlockCruiserQueue) hulls.push('cruiser');
+  if (effects.unlockBattleshipQueue) hulls.push('battleship');
+  if (effects.unlockDreadnoughtQueue) hulls.push('dreadnought');
+  if (effects.unlockLightCarrierQueue) hulls.push('light_carrier');
+  if (effects.unlockFleetCarrierQueue) hulls.push('fleet_carrier');
+  if (effects.unlockSuperCarrierQueue) hulls.push('super_carrier');
+  if (effects.unlockLightHauler) hulls.push('light_hauler');
+  if (effects.unlockBulkFreighter) hulls.push('bulk_freighter');
+  if (effects.unlockArmoredConvoy) hulls.push('armored_convoy');
+  if (effects.unlockSensorShip) hulls.push('sensor_ship');
+  if (effects.unlockBuilderShip) hulls.push('builder_ship');
+  if (effects.unlockCommandCruiser) hulls.push('command_cruiser');
+  if (effects.unlockMinerHull) hulls.push('miner');
+  return hulls;
 }
 
 export function applyTechEffect(state, nodeId) {

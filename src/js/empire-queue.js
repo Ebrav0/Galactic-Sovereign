@@ -129,6 +129,9 @@ function canBuildHullAtShipyard(state, hull, shipyardId, systemId) {
 }
 
 export function enqueueHull(state, hull) {
+  if (listPlayerShipyards(state).length === 0) {
+    return { ok: false, reason: 'No shipyard built yet' };
+  }
   if (!empireQueueHulls(state).includes(hull)) {
     return { ok: false, reason: 'Hull not unlocked in empire queue' };
   }
