@@ -9,8 +9,8 @@ import {
   PIRATE_SHIPS,
   TICK_MS,
 } from './constants.js';
-import { createRng, hashSeed } from './state.js';
-import { createShipInstance } from './hull.js';
+import { createRng, hashSeed, systemById } from './state.js';
+import { createShipInstance, hullStats } from './hull.js';
 import { BLACK_HOLE_ID, findPath, neighborsOf } from './galaxy.js';
 import { getGraph } from './galaxy-scope.js';
 import {
@@ -265,4 +265,91 @@ export function removePirateShip(state, fleetId, shipId) {
     state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleetId);
     scheduleRespawn(state, fleetId);
   }
+}
+
+export function ensurePiratesState(state) {
+  if (!state.pirates) {
+    state.pirates = { fleets: [], pendingRespawn: [] };
+  } else {
+    state.pirates.fleets = state.pirates.fleets ?? [];
+    state.pirates.pendingRespawn = state.pirates.pendingRespawn ?? [];
+  }
+}
+
+function validateComposition(composition) {
+  if (!Array.isArray(composition) || !composition.length) {
+    return { ok: false, reason: 'Composition must be a non-empty array' };
+  }
+  for (const entry of composition) {
+    if (!entry?.hull || !Number.isFinite(entry.count) || entry.count < 1) {
+      return { ok: false, reason: 'Each composition entry needs hull and count >= 1' };
+    }
+    if (!hullStats(entry.hull)) {
+      return { ok: false, reason: `Unknown hull in composition: ${entry.hull}` };
+    }
+  }
+  return { ok: true };
+}
+
+function buildFleetShipsFromComposition(composition) {
+  const ships = [];
+  for (const entry of composition) {
+    for (let i = 0; i < entry.count; i++) {
+      ships.push(createShipInstance(`ps-${nextPirateShipId++}`, entry.hull));
+    }
+  }
+  return ships;
+}
+
+/** Dev: spawn a new pirate fleet at a system. */
+export function devSpawnEnemyFleetAtSystem(state, systemId, composition = PIRATE_SHIPS) {
+  ensurePiratesState(state);
+  if (!systemById(state, systemId)) {
+    return { ok: false, code: 'INVALID_SYSTEM', reason: 'No such system' };
+  }
+  const compCheck = validateComposition(composition);
+  if (!compCheck.ok) {
+    return { ok: false, code: 'INVALID_HULL', reason: compCheck.reason };
+  }
+
+  const seed = state.meta?.seed ?? 1;
+  const fleetId = `pirate-${nextFleetId++}`;
+  const fleet = {
+    id: fleetId,
+    galaxyId: state.activeGalaxyId,
+    systemId,
+    transit: null,
+    ships: buildFleetShipsFromComposition(composition),
+    wanderCooldownMs: PIRATE_WANDER_MS,
+  };
+  state.pirates.fleets.push(fleet);
+  return {
+    ok: true,
+    details: {
+      fleetId,
+      systemId,
+      shipCount: fleet.ships.length,
+      seed,
+    },
+  };
+}
+
+/** Dev: teleport an existing fleet to a system. */
+export function devTeleportPirateFleet(state, systemId, fleetIndex = 0) {
+  ensurePiratesState(state);
+  if (!systemById(state, systemId)) {
+    return { ok: false, code: 'INVALID_SYSTEM', reason: 'No such system' };
+  }
+  if (!state.pirates.fleets.length) {
+    return { ok: false, code: 'NO_FLEET', reason: 'No pirate fleets available' };
+  }
+  const fleet = state.pirates.fleets[fleetIndex];
+  if (!fleet) {
+    return { ok: false, code: 'NO_FLEET', reason: `No fleet at index ${fleetIndex}` };
+  }
+  fleet.transit = null;
+  fleet.systemId = systemId;
+  fleet.galaxyId = state.activeGalaxyId;
+  fleet.wanderCooldownMs = PIRATE_WANDER_MS;
+  return { ok: true, details: { fleetId: fleet.id, systemId } };
 }

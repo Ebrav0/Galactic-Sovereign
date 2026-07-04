@@ -107,6 +107,7 @@
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h8l2 2v10H3V2zm1 1v10h8V4h-2V3H4zm2 0h4v2H6V3zm0 4h4v4H6V7z"/></svg>
           Saves
         </button>
+        <span id="dev-badge" class="dev-badge hidden" aria-hidden="true">DEV</span>
       </div>
     </header>
 
@@ -272,6 +273,112 @@
           <span class="pause-overlay__sub">Simulation suspended — press Space to resume</span>
         </div>
         <div class="pause-overlay__bar pause-overlay__bar--bottom" aria-hidden="true"></div>
+      </div>
+
+      <div id="dev-panel-backdrop" class="modal-backdrop hidden"></div>
+      <div id="dev-panel" class="panel panel--modal panel--dev hidden" role="dialog" aria-modal="true" aria-labelledby="dev-panel-title">
+        <div class="panel__header">
+          <span class="panel__marker panel__marker--dev" aria-hidden="true"></span>
+          <span class="panel__title" id="dev-panel-title">Dev Panel</span>
+          <button id="dev-close-btn" type="button" class="btn btn--ghost btn--xs" aria-label="Close dev panel">×</button>
+        </div>
+        <div class="panel__body dev-panel__body">
+          <div id="dev-context" class="dev-context">—</div>
+          <div id="dev-status" class="dev-status dev-status--muted">Ready</div>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Cheats</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-grant-1k" type="button" class="btn btn--ghost btn--sm">+1k cr</button>
+                <button id="dev-grant-10k" type="button" class="btn btn--ghost btn--sm">+10k cr</button>
+                <button id="dev-grant-solarii" type="button" class="btn btn--ghost btn--sm">+100 Solarii</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-unlock-solarii" type="button" class="btn btn--ghost btn--sm">Unlock Solarii</button>
+                <button id="dev-reveal-intel" type="button" class="btn btn--ghost btn--sm">Reveal Intel</button>
+                <button id="dev-reveal-all-intel" type="button" class="btn btn--ghost btn--sm">Reveal All</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-force-capture" type="button" class="btn btn--ghost btn--sm">Force Capture</button>
+                <button id="dev-force-ai-capture" type="button" class="btn btn--ghost btn--sm">AI Capture System</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-advance-60" type="button" class="btn btn--ghost btn--sm">+60s</button>
+                <button id="dev-advance-300" type="button" class="btn btn--ghost btn--sm">+300s</button>
+                <button id="dev-force-shell" type="button" class="btn btn--ghost btn--sm">Complete Shell</button>
+              </div>
+              <div class="dev-row">
+                <label class="dev-label" for="dev-stance-select">Stance</label>
+                <select id="dev-stance-select" class="dev-select">
+                  <option value="balanced">balanced</option>
+                  <option value="aggressive">aggressive</option>
+                  <option value="defensive">defensive</option>
+                </select>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Empire &amp; Tech</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-unlock-all-tech" type="button" class="btn btn--primary btn--sm">Unlock All Tech</button>
+                <button id="dev-complete-research" type="button" class="btn btn--ghost btn--sm">Complete Research</button>
+              </div>
+              <div class="dev-row">
+                <label class="dev-label" for="dev-tech-select">Tech node</label>
+                <select id="dev-tech-select" class="dev-select dev-select--wide"></select>
+                <button id="dev-unlock-tech" type="button" class="btn btn--ghost btn--sm">Unlock</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Autobuild</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-build-outpost" type="button" class="btn btn--primary btn--sm">Outpost</button>
+                <button id="dev-build-shipyard" type="button" class="btn btn--primary btn--sm">Shipyard</button>
+                <button id="dev-build-foundry" type="button" class="btn btn--ghost btn--sm">Sail Foundry</button>
+                <button id="dev-build-launcher" type="button" class="btn btn--ghost btn--sm">Dyson Launcher</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-build-research" type="button" class="btn btn--ghost btn--sm">Research Station</button>
+                <button id="dev-build-trade" type="button" class="btn btn--ghost btn--sm">Trade Station</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-planet-kit" type="button" class="btn btn--ghost btn--sm">Planet Kit</button>
+                <button id="dev-system-kit" type="button" class="btn btn--ghost btn--sm">System Kit</button>
+                <button id="dev-empire-kit" type="button" class="btn btn--ghost btn--sm">Empire Kit</button>
+                <button id="dev-dyson-kit" type="button" class="btn btn--ghost btn--sm">Dyson Kit</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-instant-spawn" type="button" class="btn btn--ghost btn--sm">Instant Shipyard Spawn</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Spawn Ships</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <label class="dev-label" for="dev-friendly-hull">Hull</label>
+                <select id="dev-friendly-hull" class="dev-select dev-select--wide"></select>
+                <label class="dev-label" for="dev-spawn-count">Count</label>
+                <input id="dev-spawn-count" type="number" class="dev-input" min="1" max="20" step="1" value="1" />
+              </div>
+              <div class="dev-row">
+                <button id="dev-spawn-friendly" type="button" class="btn btn--primary btn--sm">Spawn Friendly</button>
+                <button id="dev-spawn-scouts" type="button" class="btn btn--ghost btn--sm">Spawn Scouts</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-spawn-enemy" type="button" class="btn btn--ghost btn--sm">Spawn Pirate Fleet</button>
+                <button id="dev-teleport-pirate" type="button" class="btn btn--ghost btn--sm">Teleport Pirate Here</button>
+              </div>
+            </div>
+          </details>
+        </div>
       </div>
 
       <div id="tech-screen" class="tech-screen hidden">

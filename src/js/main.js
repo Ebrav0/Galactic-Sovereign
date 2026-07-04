@@ -75,6 +75,14 @@ import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
 import { initUi, toast } from './ui.js';
 import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
+import {
+  devAction,
+  devGrantCredits,
+  devForceShellProgress as devForceShell,
+  devSpawnFriendlyShips,
+  devSpawnEnemyFleet,
+} from './dev.js';
+import { initDevPanel } from './dev-panel.js';
 import { getGraph, getActiveGalaxy, getGalaxyCount, hydratedGalaxyCount, setGalaxyCountForTests, getSystems } from './galaxy-scope.js';
 import { graphStats, galaxyGraphFingerprint, setGalaxyStarCountForTests } from './galaxy.js';
 import { abstractGalaxySummaries, wormholeSummary } from './abstract-galaxy.js';
@@ -419,6 +427,50 @@ attachInput(canvas, {
   onToggleOrbit: doToggleOrbit,
 });
 
+window.__devLastResult = null;
+let devPanel = null;
+
+function runDevAction(action, params = {}) {
+  const result = devAction(state, action, {
+    ...params,
+    systemId: params.systemId ?? viewedSystemId,
+    planetId: params.planetId ?? selection,
+  });
+  window.__devLastResult = result;
+  if (result.ok) {
+    checkFlagshipArrival();
+    ensureSelectedScout();
+  }
+  return result;
+}
+
+if (import.meta.env.DEV) {
+  devPanel = initDevPanel({
+    getState: () => state,
+    getViewedSystemId: () => viewedSystemId,
+    getSelection: () => selection,
+    getView: () => view,
+    toast,
+    runAction: runDevAction,
+    onResult: (result) => { window.__devLastResult = result; },
+  });
+
+  window.__toggleDevPanel = () => devPanel.toggle();
+  window.__devAction = (action, params) => runDevAction(action, params);
+
+  window.addEventListener('keydown', (e) => {
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === '`' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      devPanel.toggle();
+    }
+    if (e.key === 'Escape' && devPanel.isOpen()) {
+      devPanel.toggle(false);
+    }
+  });
+}
+
 if (window.gameSave?.onExitSaveRequest) {
   window.gameSave.onExitSaveRequest(() => writeSlot('exit-save', state));
 } else {
@@ -499,6 +551,7 @@ function frame(now) {
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator);
   }
   updateUi();
+  if (devPanel?.isOpen()) devPanel.updateDevPanel();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -769,8 +822,15 @@ window.__buildShipyard = (id) => doBuildShipyard(id);
 window.__buildFoundry = (planetId) => doBuildFoundry(planetId ?? selection);
 window.__toggleOrbit = (planetId) => toggleFlagshipOrbit(state, planetId ?? selection);
 window.__buildLauncher = (bodyId) => doBuildLauncher(bodyId ?? selection);
-window.__grantCredits = (n) => { state.credits += n; return state.credits; };
-window.__forceShellProgress = (systemId, sails) => forceShellProgress(state, systemId, sails);
+window.__grantCredits = (n) => {
+  const res = devGrantCredits(state, n);
+  return res.ok ? res.details.after : state.credits;
+};
+window.__forceShellProgress = (systemId, sails) => devForceShell(state, systemId ?? viewedSystemId, sails);
+window.__spawnFriendlyShip = (hull, count = 1) =>
+  devSpawnFriendlyShips(state, viewedSystemId, hull, count, selection);
+window.__spawnEnemyFleet = (systemId) =>
+  devSpawnEnemyFleet(state, systemId ?? viewedSystemId);
 window.__fastForwardDyson = (ms) => window.advanceTime(ms);
 window.__queueScout = (shipyardId) => doQueueScout(shipyardId);
 window.__queueHull = (shipyardId, hull) => doQueueHull(shipyardId, hull);
