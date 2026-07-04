@@ -22,6 +22,7 @@ import {
 import {
   systemById,
   findBody,
+  findPlanet,
   isPlayerOwned,
   hasFoundry,
   launcherCountOnBody,
@@ -36,11 +37,13 @@ function flagshipInSystem(state, systemId) {
 
 // --- Build validation ---
 
-export function canBuildFoundry(state, systemId) {
+export function canBuildFoundry(state, systemId, bodyId) {
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
+  if (!bodyId) return { ok: false, reason: 'Select a planet to anchor the foundry ring' };
+  if (!findPlanet(state, systemId, bodyId)) return { ok: false, reason: 'No such planet' };
   if (hasFoundry(state, systemId)) return { ok: false, reason: 'Sail foundry already built in this system' };
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
@@ -49,15 +52,15 @@ export function canBuildFoundry(state, systemId) {
   return { ok: true };
 }
 
-export function buildFoundry(state, systemId) {
-  const check = canBuildFoundry(state, systemId);
+export function buildFoundry(state, systemId, bodyId) {
+  const check = canBuildFoundry(state, systemId, bodyId);
   if (!check.ok) return check;
 
   state.credits -= FOUNDRY_COST;
   systemById(state, systemId).structures.push({
     id: allocateStructureId(),
     type: 'sail_foundry',
-    bodyId: null,
+    bodyId,
     builtAtTime: state.time,
   });
   return { ok: true };

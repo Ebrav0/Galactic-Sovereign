@@ -1,19 +1,78 @@
 // Sail shuttles — visual foundry ↔ launcher logistics (Phase 3, GDD §6).
 // Positions derive from state.time; never serialized.
 
-import { SAIL_SHUTTLE_TRIP_MS, FOUNDRY_ORBIT_OFFSET } from './constants.js';
+import {
+  SAIL_SHUTTLE_TRIP_MS,
+  CELESTIAL_VISUAL_SCALE,
+  MOON_ORBIT_BASE,
+  FOUNDRY_PLANET_PAD,
+  FOUNDRY_RING_BAND_HALF,
+  FOUNDRY_MOON_ORBIT_FRACTION,
+  FOUNDRY_CAGE_SPIN_OMEGA,
+  FOUNDRY_RING_SPIN_OMEGA,
+} from './constants.js';
 import {
   systemById,
   planetPosition,
   moonPosition,
   hasFoundry,
+  findFoundry,
+  foundryHostPlanet,
   dysonLaunchers,
   findBody,
+  hashSeed,
 } from './state.js';
 
-export function foundryAnchor(system) {
-  const r = system.star?.radius ?? 40;
-  return { x: 0, y: -(r + FOUNDRY_ORBIT_OFFSET) };
+/** Ring center radius: inside innermost moon orbit, outside planet + band thickness. */
+export function computeFoundryRingRadius(planet) {
+  const surfaceR = planet.radius * CELESTIAL_VISUAL_SCALE;
+  const minCenter = surfaceR + FOUNDRY_PLANET_PAD + FOUNDRY_RING_BAND_HALF;
+  const firstMoonOrbit = planet.moons?.[0]?.orbitRadius ?? MOON_ORBIT_BASE;
+  const maxCenter = firstMoonOrbit * FOUNDRY_MOON_ORBIT_FRACTION - FOUNDRY_RING_BAND_HALF;
+  if (maxCenter <= minCenter) return minCenter;
+  return minCenter + (maxCenter - minCenter) * 0.5;
+}
+
+/** Deterministic spin phases for the three-ring cage (render + shuttle dock). */
+export function foundryRingMotion(foundryId, time) {
+  const seed = (hashSeed(0xf047d000, foundryId) % 10000) / 10000;
+  const dir = seed > 0.5 ? 1 : -1;
+  const t = time / 1000;
+  const cageSpin = t * FOUNDRY_CAGE_SPIN_OMEGA * dir + seed * Math.PI * 2;
+  const ringOffsets = [
+    t * FOUNDRY_RING_SPIN_OMEGA * dir,
+    t * FOUNDRY_RING_SPIN_OMEGA * -dir * 1.12,
+    0,
+  ];
+  return {
+    cageSpin,
+    ringOffsets,
+    dockAngle: cageSpin + Math.PI * 0.28,
+  };
+}
+
+/** Sail foundry — animated orbital ring station around its host planet. */
+export function foundryAnchor(state, systemId) {
+  const system = systemById(state, systemId);
+  const foundry = findFoundry(state, systemId);
+  const planet = foundryHostPlanet(state, systemId);
+  if (!system || !foundry || !planet) {
+    return { x: 0, y: 0, ringR: 0, planetId: null, planetX: 0, planetY: 0, foundryId: null };
+  }
+
+  const pp = planetPosition(planet, state.time);
+  const ringR = computeFoundryRingRadius(planet);
+  const { dockAngle } = foundryRingMotion(foundry.id, state.time);
+  return {
+    x: pp.x + Math.cos(dockAngle) * ringR,
+    y: pp.y + Math.sin(dockAngle) * ringR,
+    ringR,
+    planetId: planet.id,
+    planetX: pp.x,
+    planetY: pp.y,
+    foundryId: foundry.id,
+    dockAngle,
+  };
 }
 
 function launcherPosition(state, systemId, bodyId) {
@@ -35,7 +94,7 @@ export function sailShuttlePositions(state, systemId) {
   const system = systemById(state, systemId);
   if (!system || !hasFoundry(state, systemId)) return result;
 
-  const from = foundryAnchor(system);
+  const from = foundryAnchor(state, systemId);
   const launchers = dysonLaunchers(state, systemId);
   launchers.forEach((launcher, idx) => {
     const to = launcherPosition(state, systemId, launcher.bodyId);

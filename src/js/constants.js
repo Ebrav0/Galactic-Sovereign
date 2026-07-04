@@ -119,6 +119,12 @@ export const FLAGSHIP_RADIUS = 9;          // draw radius (world units)
 export const FLAGSHIP_SPAWN_ORBIT = 580;   // spawn distance from the home star
 export const FLAGSHIP_ENTRY_MARGIN = 280;  // arrival distance beyond the outermost orbit
 export const FLAGSHIP_ENTRY_MIN_RADIUS = 1400;
+export const FLAGSHIP_ORBIT_OMEGA = 0.07;           // rad/s — slow lazy local orbit
+export const FLAGSHIP_ORBIT_PAD_STAR = 220;           // min radius beyond star corona
+export const FLAGSHIP_ORBIT_PAD_PLANET = 70;          // min radius beyond planet surface
+export const FLAGSHIP_ORBIT_PAD_MOON = 40;            // min radius beyond moon surface
+export const FLAGSHIP_ORBIT_MAX_DISTANCE = 520;       // engage planet/moon orbit within this range
+export const FLAGSHIP_ORBIT_STAR_MAX_DISTANCE = 920;    // engage star orbit within this range
 
 // --- Lane transit ---
 export const LANE_SPEED = 90;              // galaxy-map units per second
@@ -165,7 +171,11 @@ export const SHELL_BONUS_CREDIT_MULT = [1, 1, 1.1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.
 export const SHELL_BONUS_SAIL_EFFICIENCY = [1, 1, 1, 1.15, 1.15, 1.2, 1.25, 1.3, 1.35];
 export const SAIL_SHUTTLE_TRIP_MS = 6000;
 export const SAIL_SHUTTLE_SIZE = 2.8;
-export const FOUNDRY_ORBIT_OFFSET = 80;            // world units beyond star edge
+export const FOUNDRY_PLANET_PAD = 16;                // clearance beyond planet visual radius
+export const FOUNDRY_RING_BAND_HALF = 9;           // half-thickness for planet/moon clearance checks
+export const FOUNDRY_MOON_ORBIT_FRACTION = 0.68;   // ring center stays within this fraction of innermost moon orbit
+export const FOUNDRY_CAGE_SPIN_OMEGA = 0.042;      // rad/s — whole megastructure rotation
+export const FOUNDRY_RING_SPIN_OMEGA = 0.031;      // rad/s — extra spin on tilted rings
 
 // --- Camera ---
 export const CAMERA_MIN_ZOOM = 0.15;

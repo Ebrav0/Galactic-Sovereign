@@ -204,6 +204,18 @@ export function deserialize(envelopeJson) {
     envelope = migrateSave(envelope);
   }
 
+  if (envelope.state?.flagship) {
+    envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;
+  }
+
+  for (const system of Object.values(envelope.state?.systems ?? {})) {
+    for (const structure of system.structures ?? []) {
+      if (structure.type === 'sail_foundry' && !structure.bodyId && system.bodies?.length) {
+        structure.bodyId = system.bodies.find((p) => p.type === 'habitable')?.id ?? system.bodies[0].id;
+      }
+    }
+  }
+
   return { ok: true, state: envelope.state };
 }
 

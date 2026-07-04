@@ -159,3 +159,34 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 4: 400-star generation, anchored + unanchored wormholes, abstract inactive galaxies
+
+---
+
+## Session 2026-07-04 — Flagship orbit + Sail Foundry ring station
+
+**Task claimed:** Stable flagship orbit (O key); Sail Foundry as animated three-ring megastructure on host planet; develop-web-game verification
+**Status:** complete
+
+### Done
+- `src/js/flagship.js` — stable orbit mode (`toggleFlagshipOrbit`, keep-out disabled while orbiting, heading follows velocity); orbit state serialized on `flagship.orbit`
+- `src/js/foundry-render.js` — three intersecting solid rings with amber emissive edges
+- `src/js/sail-shuttles.js` — foundry anchored to host planet `bodyId`; ring radius computed inside innermost moon orbit with planet clearance; lazy cage + counter-rotating ring animation
+- `src/js/dyson.js` — foundry build requires planet selection (`bodyId` on structure)
+- `src/js/ui.js` — foundry lore notes in build + Dyson panels
+- `src/js/main.js` — orbit/foundry observables in `render_game_to_text()`; hooks `__toggleOrbit`, `__buildFoundry(planetId)`
+- `output/verify_foundry_orbit.mjs` — 12/12 pass (orbit enter/move/heading/exit, foundry sizing, animation, KeyO, zero console errors)
+- Screenshots inspected: `output/web-game/foundry-orbit/` (rings inside moon orbit on Boreas; UI notes visible)
+
+### Decisions
+- Foundry is one per system but **orbits the planet it was built on** (not the star)
+- Ring center radius = midpoint of `[planetSurface + pad, firstMoonOrbit × 0.68 − bandHalf]`
+- Orbit keep-out fully off while `flagship.orbit` set (manual flight unchanged)
+- Playwright client + `advanceTime` used for deterministic verification per develop-web-game skill
+
+### Known issues
+- Planets with zero moons use `MOON_ORBIT_BASE` as outer sizing reference (still safe, less precise)
+- `progress.md` Phase 3 note says foundry `bodyId: null` — superseded by this session
+
+### Suggested next
+- Optional: draw foundry only when intel + zoom threshold; moon collision pass for shuttles through ring band
+- Phase 4 per prior roadmap

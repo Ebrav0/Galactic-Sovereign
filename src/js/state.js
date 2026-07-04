@@ -233,6 +233,7 @@ export function createNewGame(seed) {
       vy: 0,
       heading: 0,
       transit: null,
+      orbit: null,
     },
     scouts: [],
     intel: { [strongholdId]: { gatheredAt: 0 } },
@@ -339,6 +340,17 @@ export function hasFoundry(state, systemId) {
 export function findFoundry(state, systemId) {
   const system = systemById(state, systemId);
   return system?.structures.find((s) => s.type === 'sail_foundry') ?? null;
+}
+
+/** Planet the sail foundry ring orbits (legacy saves without bodyId use the first habitable world). */
+export function foundryHostPlanet(state, systemId) {
+  const foundry = findFoundry(state, systemId);
+  const system = systemById(state, systemId);
+  if (!foundry || !system) return null;
+  if (foundry.bodyId) {
+    return findPlanet(state, systemId, foundry.bodyId);
+  }
+  return system.bodies.find((p) => p.type === 'habitable') ?? system.bodies[0] ?? null;
 }
 
 export function launcherCountOnBody(state, systemId, bodyId) {

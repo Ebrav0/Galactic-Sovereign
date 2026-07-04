@@ -30,7 +30,8 @@ import {
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
 import { sailShuttlePositions, foundryAnchor, launchBurstOrigins } from './sail-shuttles.js';
-import { getFlagshipInput, getFlagshipDisplayPose, transitStatus } from './flagship.js';
+import { drawSailFoundryRingStation, drawSailFoundryLabel, sailFoundryLabelAnchor } from './foundry-render.js';
+import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
@@ -280,13 +281,6 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     lastShellCompletedAt: dyson.lastShellCompletedAt,
   });
 
-  if (intel && hasFoundry(state, systemId)) {
-    const fa = foundryAnchor(system);
-    const fs = worldToScreen(camera, fa.x, fa.y, canvas);
-    drawGlowRing(ctx, fs.x, fs.y, 14 * z, THEME.accentGold, Math.max(1, 2 * z), 0.85);
-    labelText(ctx, 'Sail Foundry', fs.x, fs.y - 18 * z, Math.max(9, 10 * z), THEME.accentGold);
-  }
-
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
 
   for (const planet of sortedPlanets) {
@@ -383,6 +377,17 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     }
   }
 
+  if (intel && hasFoundry(state, systemId)) {
+    const fa = foundryAnchor(state, systemId);
+    if (fa.planetId && fa.foundryId) {
+      const ps = worldToScreen(camera, fa.planetX, fa.planetY, canvas);
+      const ringScreenR = fa.ringR * z;
+      drawSailFoundryRingStation(ctx, ps.x, ps.y, ringScreenR, z, state.time, fa.foundryId);
+      const label = sailFoundryLabelAnchor(ps.x, ps.y, ringScreenR, fa.dockAngle);
+      drawSailFoundryLabel(ctx, label, z);
+    }
+  }
+
   for (const sh of shuttlePositions(state, systemId)) {
     const ss = worldToScreen(camera, sh.x, sh.y, canvas);
     drawShuttleSprite(ctx, ss.x, ss.y, sh.heading, Math.max(2.5, SHUTTLE_SIZE * z), {
@@ -417,10 +422,17 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit) {
+    const orbitVisual = getFlagshipOrbitVisual(state);
+    if (orbitVisual) {
+      const os = worldToScreen(camera, orbitVisual.cx, orbitVisual.cy, canvas);
+      drawOrbitRing(ctx, os.x, os.y, orbitVisual.radius * z, 0.32);
+    }
+
     const pose = getFlagshipDisplayPose(state, accumulatorMs);
     const fs = worldToScreen(camera, pose.x, pose.y, canvas);
     const inp = getFlagshipInput();
-    const thrusting = !state.paused && (inp.x !== 0 || inp.y !== 0);
+    const orbiting = isFlagshipOrbiting(state);
+    const thrusting = !state.paused && !orbiting && (inp.x !== 0 || inp.y !== 0);
     drawFlagshipSprite(ctx, fs.x, fs.y, pose.heading, FLAGSHIP_RADIUS * z, thrusting);
   }
 

@@ -24,6 +24,7 @@ import {
   launcherCountOnBody,
   ensureDyson,
   dysonLaunchers,
+  foundryHostPlanet,
 } from './state.js';
 import { canBuildOutpost, incomePerSecond, incomePerSecondInSystem } from './economy.js';
 import { canBuildShipyard, canQueueScout, canQueueHull } from './production.js';
@@ -34,14 +35,14 @@ import {
   solariiPerSecondInSystem,
   activeShellBonuses,
 } from './dyson.js';
-import { transitStatus } from './flagship.js';
+import { transitStatus, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
 import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
 
 const el = (id) => document.getElementById(id);
 
 const HINTS = {
-  system: 'WASD / arrows: fly flagship · F: follow · drag: pan · M: galaxy map',
+  system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
   galaxy: 'Click star: travel · Shift+click: send scout · double-click: view system · M: system view',
 };
 
@@ -228,6 +229,10 @@ function renderBuildBody(container, planet, state, systemId) {
       label: 'Shipyard',
       built: hasShipyard(state, systemId, planet.id),
     },
+    {
+      label: 'Sail Foundry',
+      built: hasFoundry(state, systemId) && foundryHostPlanet(state, systemId)?.id === planet.id,
+    },
   ];
 
   for (const row of rows) {
@@ -247,6 +252,25 @@ function renderBuildBody(container, planet, state, systemId) {
     r.appendChild(label);
     r.appendChild(val);
     container.appendChild(r);
+  }
+
+  if (isPlayerOwned(state, systemId) && !hasFoundry(state, systemId)) {
+    const foundryNote = document.createElement('p');
+    foundryNote.className = 'panel-note panel-note--muted';
+    foundryNote.style.marginTop = '10px';
+    foundryNote.textContent =
+      'Sail Foundry — an orbital ring station that produces Dyson sails in a fixed ring orbit around this planet.';
+    container.appendChild(foundryNote);
+  } else if (
+    hasFoundry(state, systemId) &&
+    foundryHostPlanet(state, systemId)?.id === planet.id
+  ) {
+    const foundryNote = document.createElement('p');
+    foundryNote.className = 'panel-note panel-note--muted';
+    foundryNote.style.marginTop = '10px';
+    foundryNote.textContent =
+      'Sail Foundry ring online — feeds sail shuttles to launchers across this system.';
+    container.appendChild(foundryNote);
   }
 }
 
@@ -269,6 +293,7 @@ function renderDysonPanel(container, state, systemId) {
 
   const dyson = ensureDyson(system);
   const launchers = dysonLaunchers(state, systemId);
+  const hostPlanet = foundryHostPlanet(state, systemId);
 
   const header = document.createElement('div');
   header.className = 'intel-header';
@@ -278,8 +303,21 @@ function renderDysonPanel(container, state, systemId) {
   header.appendChild(name);
   container.appendChild(header);
 
+  const dysonNote = document.createElement('p');
+  dysonNote.className = 'panel-note panel-note--muted';
+  dysonNote.style.marginTop = '8px';
+  dysonNote.textContent = hasFoundry(state, systemId)
+    ? 'The Sail Foundry is an orbital ring station around its host planet; it produces sails for every launcher in this system.'
+    : 'Build a Sail Foundry from a planet panel — one orbital ring station per system, anchored to that world.';
+  container.appendChild(dysonNote);
+
   const rows = [
-    { label: 'Foundry', value: hasFoundry(state, systemId) ? 'Online' : 'Not built' },
+    {
+      label: 'Foundry',
+      value: hasFoundry(state, systemId)
+        ? (hostPlanet ? `Ring at ${hostPlanet.name}` : 'Online')
+        : 'Not built',
+    },
     { label: 'Launchers', value: String(launchers.length) },
     { label: 'Shells', value: `${dyson.completedShells} / ${SHELL_COUNT}` },
     { label: 'Sails to next shell', value: `${Math.floor(dyson.shellSails)} / ${SHELL_SAILS_REQUIRED}` },
@@ -613,6 +651,10 @@ export function initUi(ctx) {
       const dest = systemById(state, transit.destId);
       el('flagship-loc').textContent =
         `→ ${dest?.name ?? transit.destId} (${Math.ceil(transit.etaMs / 1000)}s)`;
+    } else if (isFlagshipOrbiting(state)) {
+      const target = orbitTargetLabel(state);
+      el('flagship-loc').textContent =
+        `${systemById(state, state.flagship.systemId)?.name ?? '—'} · orbiting ${target ?? 'body'}`;
     } else {
       el('flagship-loc').textContent = systemById(state, state.flagship.systemId)?.name ?? '—';
     }
@@ -740,14 +782,14 @@ export function initUi(ctx) {
     const shipyard = findShipyardOnPlanet(state, viewedSystemId, planet.id);
     const scoutCheck = shipyard ? canQueueScout(state, shipyard.id, viewedSystemId) : { ok: false };
 
-    const foundryCheck = canBuildFoundry(state, viewedSystemId);
+    const foundryCheck = canBuildFoundry(state, viewedSystemId, planet.id);
     const launcherCheck = canBuildLauncher(state, viewedSystemId, planet.id);
     const launcherCount = launcherCountOnBody(state, viewedSystemId, planet.id);
 
     const foundryBtn = el('build-foundry-btn');
     foundryBtn.classList.toggle('hidden', hasFoundry(state, viewedSystemId));
     foundryBtn.disabled = !foundryCheck.ok;
-    foundryBtn.textContent = `Build Sail Foundry (${FOUNDRY_COST} cr)`;
+    foundryBtn.textContent = `Build Sail Foundry ring (${FOUNDRY_COST} cr)`;
 
     const launcherBtn = el('build-launcher-btn');
     const showLauncher = hasFoundry(state, viewedSystemId) && launcherCount < LAUNCHERS_PER_BODY_MAX;
