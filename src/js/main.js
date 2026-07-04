@@ -787,6 +787,10 @@ window.__planetPos = (systemId, planetId) => {
 window.__shuttleInfo = (systemId) => shuttlePositions(state, systemId ?? viewedSystemId);
 window.__sailShuttleInfo = (systemId) => sailShuttlePositions(state, systemId ?? viewedSystemId);
 window.__pointNearSupplySegment = pointNearSupplySegment;
+window.__getDyson = (systemId) => {
+  const sys = systemById(state, systemId ?? viewedSystemId ?? state.stronghold);
+  return sys ? ensureDyson(sys) : null;
+};
 
 window.__setGalaxyScaleForTests = ({ stars, galaxies }) => {
   if (stars != null) setGalaxyStarCountForTests(stars);

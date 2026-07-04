@@ -12,7 +12,7 @@ import {
   FOUNDRY_SAIL_RATE,
   LAUNCHER_BATCH_SIZE,
   LAUNCHER_LAUNCH_INTERVAL_MS,
-  SHUTTLE_TRANSFER_RATE,
+  SAIL_SHUTTLE_CAPACITY,
   SOLARII_BASE_RATE,
   SOLARII_SHELL_MULTIPLIERS,
   SHELL_BONUS_CREDIT_MULT,
@@ -31,6 +31,7 @@ import {
 } from './state.js';
 import { allocateStructureId } from './economy.js';
 import { getSystems } from './galaxy-scope.js';
+import { sailShuttleLauncherArrivals } from './sail-shuttles.js';
 
 function flagshipInSystem(state, systemId) {
   const f = state.flagship;
@@ -178,6 +179,7 @@ function tickSystemDyson(state, system) {
 
   const launchers = dysonLaunchers(state, system.id);
   const dt = TICK_MS / 1000;
+  const prevTime = state.time - TICK_MS;
 
   // 1. Foundry production
   const sailRate = FOUNDRY_SAIL_RATE * shellSailEfficiencyBonus(system);
@@ -190,15 +192,17 @@ function tickSystemDyson(state, system) {
     }
   }
 
-  // 2. Auto logistics: foundry -> launcher stocks
+  // 2. Trip logistics: one shuttle per launcher; deliver capacity on each docking
   if (launchers.length > 0 && dyson.foundryStock > 0) {
-    const transferCap = SHUTTLE_TRANSFER_RATE * launchers.length * dt;
-    const toTransfer = Math.min(dyson.foundryStock, transferCap);
-    const perLauncher = toTransfer / launchers.length;
-    dyson.foundryStock -= toTransfer;
-    for (const launcher of launchers) {
-      dyson.launcherStock[launcher.id] = (dyson.launcherStock[launcher.id] ?? 0) + perLauncher;
-    }
+    launchers.forEach((launcher, idx) => {
+      const arrivals = sailShuttleLauncherArrivals(prevTime, state.time, idx, launchers.length);
+      if (arrivals <= 0) return;
+      const wanted = SAIL_SHUTTLE_CAPACITY * arrivals;
+      const deliver = Math.min(dyson.foundryStock, wanted);
+      if (deliver <= 0) return;
+      dyson.foundryStock -= deliver;
+      dyson.launcherStock[launcher.id] = (dyson.launcherStock[launcher.id] ?? 0) + deliver;
+    });
   }
 
   // 3. Launcher firing

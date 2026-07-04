@@ -102,11 +102,10 @@ check('B1 before fire no in-flight dots', s.dysonVisuals.inFlightDots === 0);
 const launcherId = s.dysonVisuals.supplyLines[0].launcherId;
 await page.evaluate(
   (id) => {
-    const st = window.getGameState();
-    const dyson = st.systems[st.stronghold].dyson;
+    const dyson = window.__getDyson();
     dyson.launcherStock[id] = 50;
     dyson.shellSails = 4;
-    dyson.launcherLastFireAt[id] = st.time - 100;
+    dyson.launcherLastFireAt[id] = window.getGameState().time - 100;
   },
   launcherId,
 );
@@ -120,8 +119,7 @@ check(
 
 await page.evaluate(
   (id) => {
-    const st = window.getGameState();
-    st.systems[st.stronghold].dyson.launcherStock[id] = 0;
+    window.__getDyson().launcherStock[id] = 0;
   },
   launcherId,
 );
@@ -135,10 +133,9 @@ const beforeSettled = s.dysonVisuals.inProgressSettledDots;
 const fireLauncherId = s.dysonVisuals.supplyLines[0].launcherId;
 await page.evaluate(
   (args) => {
-    const st = window.getGameState();
-    const dyson = st.systems[st.stronghold].dyson;
+    const dyson = window.__getDyson();
     dyson.shellSails = args.before + 4;
-    dyson.launcherLastFireAt[args.id] = st.time - 100;
+    dyson.launcherLastFireAt[args.id] = window.getGameState().time - 100;
   },
   { id: fireLauncherId, before: beforeSettled },
 );
@@ -151,10 +148,9 @@ check(
 
 await page.evaluate(
   (id) => {
-    const st = window.getGameState();
-    const dyson = st.systems[st.stronghold].dyson;
+    const dyson = window.__getDyson();
     dyson.shellSails = 8;
-    dyson.launcherLastFireAt[id] = st.time - 50;
+    dyson.launcherLastFireAt[id] = window.getGameState().time - 50;
   },
   launcherId,
 );
