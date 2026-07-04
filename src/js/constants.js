@@ -159,8 +159,8 @@ export const SHELL_SAILS_REQUIRED = 5000;
 export const SHELL_COUNT = 8;
 export const SAIL_CREDIT_COST = 3.0;
 export const FOUNDRY_SAIL_RATE = 0.4;              // sails per second at base
-export const LAUNCHER_BATCH_SIZE = 8;
-export const LAUNCHER_LAUNCH_INTERVAL_MS = 2000;
+export const LAUNCHER_BATCH_SIZE = 4;
+export const LAUNCHER_LAUNCH_INTERVAL_MS = 500;
 export const SHUTTLE_TRANSFER_RATE = 0.6;          // sails/s per launcher route
 export const SOLARII_BASE_RATE = 0.08;             // per second at Shell #1, one system
 // Index = completedShells (0 = none, 1–8 = active tier).
@@ -176,6 +176,21 @@ export const FOUNDRY_RING_BAND_HALF = 9;           // half-thickness for planet/
 export const FOUNDRY_MOON_ORBIT_FRACTION = 0.68;   // ring center stays within this fraction of innermost moon orbit
 export const FOUNDRY_CAGE_SPIN_OMEGA = 0.042;      // rad/s — whole megastructure rotation
 export const FOUNDRY_RING_SPIN_OMEGA = 0.031;      // rad/s — extra spin on tilted rings
+export const SHIPYARD_WORLD_RADIUS = 36;           // world units — scales with camera zoom
+export const SHIPYARD_ORBIT_PAD = 32;              // fallback orbit pad when planet has no moons
+export const SHIPYARD_MOON_CLEARANCE = 14;         // gap beyond moon orbit ring
+export const SHIPYARD_SPIN_OMEGA = 0;              // hub mesh spin disabled (fixed orientation)
+export const LAUNCHER_WORLD_RADIUS = 32;           // world units — scales with camera zoom
+export const LAUNCHER_ORBIT_PAD = 48;              // orbital radius pad for sail launcher platforms
+export const LAUNCHER_ORBIT_SPREAD = 0.52;         // rad — angular offset per launcher index on same body
+export const LAUNCHER_RAIL_LENGTH = LAUNCHER_WORLD_RADIUS; // muzzle at end of visual rail
+export const LAUNCHER_BURST_MS = 600;              // muzzle flash duration after fire
+export const SAIL_LAUNCH_FLIGHT_MS = 900;          // sail particle flight launcher → star
+export const SAIL_LAUNCH_STAGGER_MS = 35;          // stagger within one 4-sail batch
+export const SAIL_DOT_SIZE = 0.8;                  // world units
+export const SAIL_DOT_LOD_ZOOM = 0.35;             // full in-progress dot field above this zoom
+export const SAIL_DOT_DRAW_MAX = 6000;             // hard cap with stride
+export const SAIL_DOT_LOD_STRIDE_TARGET = 400;     // visible settled dots when zoomed out
 
 // --- Camera ---
 export const CAMERA_MIN_ZOOM = 0.15;

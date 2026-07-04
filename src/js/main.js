@@ -49,7 +49,10 @@ import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, re
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
-import { activeSailShuttleCount, foundryAnchor, computeFoundryRingRadius } from './sail-shuttles.js';
+import { outpostSurfaceSites } from './surface-structures.js';
+import { structureSites } from './structure-sites.js';
+import { activeSailShuttleCount, foundryAnchor, computeFoundryRingRadius, sailShuttlePositions } from './sail-shuttles.js';
+import { dysonVisualSummary, pointNearSupplySegment } from './dyson-visuals.js';
 import {
   buildFoundry,
   buildLauncher,
@@ -589,6 +592,44 @@ window.render_game_to_text = () => {
       active: activeShuttleCount(state, viewedSystemId) > 0,
       count: activeShuttleCount(state, viewedSystemId),
     },
+    surfaceSites: (() => {
+      const sites = hasIntel(state, viewedSystemId) ? outpostSurfaceSites(state, viewedSystemId) : [];
+      return {
+        count: sites.length,
+        pads: sites.filter((s) => s.kind.endsWith('-pad')).length,
+        rigs: sites.filter((s) => s.kind === 'moon-rig').length,
+        active: sites.filter((s) => s.active).length,
+      };
+    })(),
+    structureVisuals: (() => {
+      const sites = hasIntel(state, viewedSystemId) ? structureSites(state, viewedSystemId) : [];
+      const round = (n) => Math.round(n * 10) / 10;
+      return {
+        shipyards: sites
+          .filter((s) => s.kind === 'shipyard')
+          .map((s) => ({
+            planetId: s.planetId,
+            x: round(s.x),
+            y: round(s.y),
+            orbitR: round(s.orbitR),
+            slotAngle: round(s.slotAngle * 1000) / 1000,
+            building: s.building,
+            buildProgress: round(s.buildProgress),
+          })),
+        launchers: sites
+          .filter((s) => s.kind === 'launcher')
+          .map((s) => ({
+            bodyId: s.bodyId,
+            x: round(s.x),
+            y: round(s.y),
+            heading: round(s.heading * 1000) / 1000,
+            muzzleX: round(s.muzzleX),
+            muzzleY: round(s.muzzleY),
+            slotAngle: round(s.slotAngle * 1000) / 1000,
+            firing: s.firing,
+          })),
+      };
+    })(),
     sailShuttles: {
       active: activeSailShuttleCount(state, viewedSystemId) > 0,
       count: activeSailShuttleCount(state, viewedSystemId),
@@ -609,6 +650,9 @@ window.render_game_to_text = () => {
       nextShell: Math.min(8, summary.completedShells + 1),
       canBuildFoundry: canBuildFoundry(state, viewedSystemId, selection).ok,
     } : null,
+    dysonVisuals: viewedSystem && hasIntel(state, viewedSystemId)
+      ? dysonVisualSummary(state, viewedSystemId, viewedSystem.star.radius, camera.zoom)
+      : null,
     tickMs: TICK_MS,
   });
 };
@@ -667,3 +711,5 @@ window.__planetPos = (systemId, planetId) => {
   return planet ? planetPosition(planet, state.time) : null;
 };
 window.__shuttleInfo = (systemId) => shuttlePositions(state, systemId ?? viewedSystemId);
+window.__sailShuttleInfo = (systemId) => sailShuttlePositions(state, systemId ?? viewedSystemId);
+window.__pointNearSupplySegment = pointNearSupplySegment;

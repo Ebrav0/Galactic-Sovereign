@@ -190,3 +190,61 @@ Never delete prior entries.
 ### Suggested next
 - Optional: draw foundry only when intel + zoom threshold; moon collision pass for shuttles through ring band
 - Phase 4 per prior roadmap
+
+## Session 2026-07-04 — Outpost landing pads & moon mining rigs
+
+**Task claimed:** Physical landing pads on shuttle route endpoints; mining rigs on moons with outposts
+**Status:** complete
+
+### Done
+- `src/js/surface-structures.js` — shared `surfacePoint()`; `outpostSurfaceSites()` for planet pads, moon pads, and rigs (active flags tied to shuttle cycle)
+- `src/js/surface-structures-render.js` — `drawLandingPad()` (octagonal pad, cyan when active) and `drawMiningRig()` (drill tower + spark when active)
+- `src/js/shuttles.js` — imports shared `surfacePoint` (same touchdown coords as visuals)
+- `src/js/render.js` — draws moon pads/rigs after moons, planet pad after planet disk
+- `src/js/main.js` — `surfaceSites` counts in `render_game_to_text()`
+- `output/verify_foundry_orbit.mjs` — 20/20 pass including outpost pad/rig checks; screenshot `04-surface-pads-rigs.png`
+
+### Decisions
+- Pads/rigs only appear when intel + outpost on a planet with moons (same gate as shuttle traffic)
+- Rig placed offset from moon landing pad; animates drill + spark while shuttle is on moon or in flight
+- Planet pad lights during dwell/outbound; moon pad during dwell/inbound
+
+## Session 2026-07-04 — Orbital shipyard + sail launcher models
+
+**Task claimed:** Physical structure models for shipyard (ring station) and sail launcher (orbital rail); both in fixed orbit around host body; launcher always faces star
+**Status:** complete
+
+### Done
+- `src/js/structure-sites.js` — fixed orbital slots from structure id; star-facing launcher heading; dock/muzzle positions
+- `src/js/structure-render.js` — `drawShipyardStation`, `drawSailLauncher`, `drawLaunchMuzzleFlash`
+- `src/js/render.js` — orbital draw order; softened shipyard glow ring; rail-aligned launch flashes
+- `src/js/sail-shuttles.js` — convoys dock at orbital launcher platforms
+- `src/js/constants.js` — `SHIPYARD_ORBIT_PAD`, `LAUNCHER_ORBIT_PAD`, rail/burst tuning
+- `src/js/main.js` — `structureVisuals` in `render_game_to_text()`
+- `output/verify_foundry_orbit.mjs` — 35/35 pass; screenshot `05-shipyard-launcher.png`
+
+### Decisions
+- Shipyard: cyan tiered ring hub + drydock arms; scaffold + hull silhouette while `shipyard.build` active; hub mesh spin only
+- Launcher: fixed orbital slot; heading `atan2(-y,-x)` toward star; no platform rotation
+- Launch bursts originate at rail muzzle along star heading
+
+## Session 2026-07-04 — Dyson sail particles + foundry supply ties
+
+**Task claimed:** Foundry-to-launcher supply ties, sail launch particles, hybrid Dyson rendering (dots while building, solid rings when complete)
+**Status:** complete
+
+### Done
+- `src/js/constants.js` — `SAIL_LAUNCH_FLIGHT_MS`, `SAIL_LAUNCH_STAGGER_MS`, `SAIL_DOT_*` LOD tuning
+- `src/js/dyson-visuals.js` — `foundryRingClosestPoint`, supply lines, settled/in-flight sail dot derivation, `dysonVisualSummary`
+- `src/js/dyson-render.js` — `drawFoundrySupplyTie`, `drawCompletedShellRings`, `drawInProgressSailDots` with zoom LOD
+- `src/js/sail-shuttles.js` — shuttles route from closest foundry ring point to launcher dock
+- `src/js/render.js` — hybrid star draw after GL pass; supply ties after foundry rings; trimmed `drawStarOverlays` tier arcs
+- `src/js/celestial-render.js` — completed-shell arcs removed (radial glow + shell-8 stroke only)
+- `src/js/main.js` — `dysonVisuals` observables; `__sailShuttleInfo`, `__pointNearSupplySegment` test hooks
+- `output/verify_dyson_sails.mjs` — 27/27 checks + foundry orbit regression; screenshot `06-hybrid-rings-dots.png`
+
+### Decisions
+- **In-progress shell only:** up to 5000 gold dots on the next ring radius; completed shells 1..8 render as solid amber rings (no per-sail dots)
+- In-flight particles: 8 per launcher fire, staggered 35 ms, 900 ms flight from muzzle to target slot; all derived from `state.time` + dyson counters (never serialized)
+- Supply tie: dashed amber line from closest equatorial foundry ring point to each launcher dock
+- Zoom LOD: stride to ~400 visible settled dots below `SAIL_DOT_LOD_ZOOM` (0.35); always draw all in-flight sparks
