@@ -19,6 +19,7 @@ import {
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
 import { aiShipsInSystem } from './ai-ships.js';
 import { playerCombatShipsAtSystem, stationedShipPose } from './fleets.js';
+import { pruneBattleGroups } from './battle-groups.js';
 import { softKeepOut, nudgeUnitKeepOut } from './ship-motion.js';
 import { getSystems, getGraph } from './galaxy-scope.js';
 
@@ -201,6 +202,7 @@ function endBattle(state, systemId, winner) {
     applyCasualtiesToState(state, systemId, battle);
   }
   delete state.systemBattles[systemId];
+  pruneBattleGroups(state);
 }
 
 function totalPower(units) {

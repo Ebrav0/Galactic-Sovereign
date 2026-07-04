@@ -47,6 +47,15 @@ import {
 } from './capture.js';
 import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, resetPirateIds, pirateFleetAtSystem } from './pirates.js';
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
+import {
+  createBattleGroup,
+  deleteBattleGroup,
+  assignShipToGroup,
+  orderBattleGroupTravel,
+  resetBattleGroupIds,
+  battleGroupsForGalaxy,
+  formatFleetName,
+} from './battle-groups.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
@@ -122,6 +131,7 @@ let view = 'system';
 let viewedSystemId = state.stronghold;
 let lastFlagshipSystemId = state.flagship.systemId;
 let selectedScoutId = null;
+let selectedBattleGroupId = null;
 
 const canvas = document.getElementById('game-canvas');
 const ctx2d = canvas.getContext('2d');
@@ -150,6 +160,23 @@ function ensureSelectedScout() {
 function doSelectScout(scoutId) {
   if (scoutId && !findScout(state, scoutId)) return;
   selectedScoutId = scoutId;
+  selectedBattleGroupId = null;
+}
+
+function doSelectBattleGroup(groupId) {
+  if (groupId && !battleGroupsForGalaxy(state).some((g) => g.id === groupId)) return;
+  selectedBattleGroupId = groupId;
+  selectedScoutId = null;
+}
+
+function doDeleteBattleGroup(groupId) {
+  const res = deleteBattleGroup(state, groupId);
+  if (!res.ok) {
+    toast(res.reason, 'error');
+    return res;
+  }
+  if (selectedBattleGroupId === groupId) selectedBattleGroupId = null;
+  return res;
 }
 
 // --- Actions ---
@@ -227,6 +254,23 @@ function doOrderScoutTravel(targetId) {
   if (res.ok) {
     const dest = systemById(state, targetId);
     toast(`Scout dispatched to ${dest.name} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+  return res;
+}
+
+function doOrderBattleGroupTravel(targetId) {
+  if (!selectedBattleGroupId) {
+    toast('Select a fleet in Fleet Command first', 'error');
+    return { ok: false, reason: 'Select a fleet in Fleet Command first' };
+  }
+  const res = orderBattleGroupTravel(state, selectedBattleGroupId, targetId);
+  const dest = systemById(state, targetId);
+  const destName = dest?.name ?? targetId;
+  if (res.ok) {
+    const skipNote = res.skipped > 0 ? ` · ${res.skipped} skipped` : '';
+    toast(`${res.fleetName}: ${res.dispatched} dispatched to ${destName}${skipNote}`, 'ok');
   } else {
     toast(res.reason, 'error');
   }
@@ -341,6 +385,7 @@ function doImportState(newState) {
   resetStructureIds(state);
   resetScoutIds(state);
   resetShipIds(state);
+  resetBattleGroupIds(state);
   resetPirateIds(state);
   resetQueueIds(state);
   resetAiShipIds(state);
@@ -354,6 +399,7 @@ function doImportState(newState) {
   }
   if (!newState.activeGalaxyId) newState.activeGalaxyId = 'gal-0';
   if (!newState.homeGalaxyId) newState.homeGalaxyId = 'gal-0';
+  if (!newState.battleGroups) newState.battleGroups = [];
   ensureSelectedScout();
   const f = state.flagship;
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
@@ -385,6 +431,11 @@ const { updateUi, closeSidePanel } = initUi({
   getViewedSystemId: () => viewedSystemId,
   getSelectedScoutId: () => selectedScoutId,
   doSelectScout,
+  getSelectedBattleGroupId: () => selectedBattleGroupId,
+  doSelectBattleGroup,
+  createBattleGroup: () => createBattleGroup(state),
+  deleteBattleGroup: doDeleteBattleGroup,
+  assignShipToGroup: (shipId, groupId) => assignShipToGroup(state, shipId, groupId),
   doBuildOutpost,
   doBuildShipyard,
   doBuildFoundry,
@@ -421,6 +472,7 @@ attachInput(canvas, {
   onFlagshipInput: doFlagshipInput,
   onStarTravel: doOrderTravel,
   onScoutTravel: doOrderScoutTravel,
+  onBattleGroupTravel: doOrderBattleGroupTravel,
   onStarView: doViewSystem,
   onScoutSelect: doSelectScout,
   onFollowRequest: () => { follow.enabled = true; },
@@ -699,6 +751,12 @@ window.render_game_to_text = () => {
       hp: ship.hp,
       maxHp: ship.maxHp,
     })),
+    battleGroups: battleGroupsForGalaxy(state).map((g) => ({
+      id: g.id,
+      name: formatFleetName(g.ordinal),
+      ordinal: g.ordinal,
+      shipIds: [...g.shipIds],
+    })),
     pirates: {
       fleetCount: state.pirates?.fleets?.length ?? 0,
       inViewedSystem: pirateFleetAtSystem(state, viewedSystemId).length > 0,
@@ -884,6 +942,18 @@ window.__seedTestShipyards = () => {
   return { ok: true, near, far };
 };
 window.__dispatchShip = (shipId, starId) => doDispatchShip(shipId, starId);
+window.__createBattleGroup = () => createBattleGroup(state);
+window.__selectBattleGroup = (groupId) => { doSelectBattleGroup(groupId); return selectedBattleGroupId; };
+window.__assignShipToGroup = (shipId, groupId) => assignShipToGroup(state, shipId, groupId);
+window.__orderBattleGroup = (starId) => doOrderBattleGroupTravel(starId);
+window.__deleteBattleGroup = (groupId) => doDeleteBattleGroup(groupId);
+window.__listBattleGroups = () => battleGroupsForGalaxy(state).map((g) => ({
+  id: g.id,
+  name: formatFleetName(g.ordinal),
+  ordinal: g.ordinal,
+  shipIds: [...g.shipIds],
+}));
+window.__formatFleetName = (ordinal) => formatFleetName(ordinal);
 window.__setBattleStance = (stance) => setBattleStance(state, stance);
 window.__forcePirateIntoSystem = (systemId) => {
   forcePirateIntoSystem(state, systemId);

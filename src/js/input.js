@@ -35,6 +35,7 @@ export function attachInput(canvas, ctx) {
     onFlagshipInput,
     onStarTravel,
     onScoutTravel,
+    onBattleGroupTravel,
     onStarView,
     onScoutSelect,
     onFollowRequest,
@@ -162,6 +163,11 @@ export function attachInput(canvas, ctx) {
 
     const starId = hitTestStar(getState(), w.x, w.y);
     if (!starId) return;
+
+    if (e.altKey && onBattleGroupTravel) {
+      onBattleGroupTravel(starId);
+      return;
+    }
 
     if (e.shiftKey || shiftHeld) {
       onScoutTravel(starId);

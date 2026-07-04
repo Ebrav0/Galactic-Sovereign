@@ -55,15 +55,20 @@ import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
   playerShipEtaMs,
-  playerShipStatus,
 } from './fleets.js';
+import {
+  formatFleetName,
+  battleGroupsForGalaxy,
+  unassignedPlayerShips,
+  fleetLocationSummary,
+} from './battle-groups.js';
 import { getGraph } from './galaxy-scope.js';
 
 const el = (id) => document.getElementById(id);
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Shift+click: send scout · double-click: view system · M: system view',
+  galaxy: 'Click star: travel · Alt+click: send fleet · Shift+click: send scout · double-click: view system · M: system view',
 };
 
 const PLANET_DOT = {
@@ -416,7 +421,35 @@ function hullLabel(hull) {
   return hull.replace(/_/g, ' ');
 }
 
-function renderGroupedHullButtons(container, state, onQueue) {
+function empireQueueListSnapshot(state) {
+  const yards = listPlayerShipyards(state).map((y) => y.shipyardId).sort().join(',');
+  const items = empireQueueSummary(state).map((q) => ({
+    id: q.id,
+    hull: q.hull,
+    status: q.status,
+    pin: q.pinnedShipyardId ?? null,
+  }));
+  return JSON.stringify({ yards, items });
+}
+
+function empireQueueActionsSnapshot(state) {
+  const yards = listPlayerShipyards(state);
+  if (yards.length === 0) return 'no-yards';
+  return empireQueueHulls(state).join(',');
+}
+
+function scoutRosterStructureSnapshot(state, selectedScoutId) {
+  return JSON.stringify(
+    state.scouts.map((s) => ({
+      id: s.id,
+      selected: s.id === selectedScoutId,
+      loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+      transit: !!s.transit,
+    })),
+  );
+}
+
+function renderGroupedHullButtons(container, state) {
   clearChildren(container);
   const unlocked = new Set(empireQueueHulls(state));
   let anyVisible = false;
@@ -429,17 +462,12 @@ function renderGroupedHullButtons(container, state, onQueue) {
     const section = document.createElement('div');
     section.className = 'queue-category';
     section.dataset.category = catId;
+    section.dataset.categoryLabel = cat.label;
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'queue-category__toggle';
     toggle.textContent = `▾ ${cat.label}`;
-    toggle.onclick = () => {
-      section.classList.toggle('queue-category--collapsed');
-      toggle.textContent = section.classList.contains('queue-category--collapsed')
-        ? `▸ ${cat.label}`
-        : `▾ ${cat.label}`;
-    };
     section.appendChild(toggle);
 
     const btns = document.createElement('div');
@@ -448,9 +476,9 @@ function renderGroupedHullButtons(container, state, onQueue) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn--primary btn--block';
+      btn.dataset.queueHull = hull;
       const cost = HULL_STATS[hull]?.cost ?? 0;
       btn.textContent = `Queue ${hullLabel(hull)} (${cost} cr)`;
-      btn.onclick = () => onQueue(hull);
       btns.appendChild(btn);
     }
     section.appendChild(btns);
@@ -460,12 +488,10 @@ function renderGroupedHullButtons(container, state, onQueue) {
   return anyVisible;
 }
 
-function renderEmpireQueuePanel(state) {
+function renderEmpireQueueList(state) {
   const list = el('empire-queue-list');
-  const actions = el('empire-queue-actions');
-  if (!list || !actions) return;
+  if (!list) return;
   clearChildren(list);
-  clearChildren(actions);
 
   const queue = empireQueueSummary(state);
   if (queue.length === 0) {
@@ -473,133 +499,336 @@ function renderEmpireQueuePanel(state) {
     empty.className = 'empty-state';
     empty.textContent = 'No ships queued.';
     list.appendChild(empty);
-  } else {
-    const yards = listPlayerShipyards(state);
-    for (const item of queue) {
-      const row = document.createElement('div');
-      row.className = 'planet-row';
-      const title = document.createElement('div');
-      title.className = 'planet-row__name';
-      title.textContent = `${item.hull} · ${item.status}`;
-      row.appendChild(title);
-      if (item.status === 'pending') {
-        const pin = document.createElement('select');
-        pin.className = 'btn btn--ghost btn--sm';
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'Auto route';
-        pin.appendChild(opt);
-        for (const y of yards) {
-          const o = document.createElement('option');
-          o.value = y.shipyardId;
-          o.textContent = `${y.systemId.slice(-6)} / ${y.shipyardId}`;
-          if (item.pinnedShipyardId === y.shipyardId) o.selected = true;
-          pin.appendChild(o);
-        }
-        pin.onchange = () => pinQueueItem(state, item.id, pin.value || null);
-        row.appendChild(pin);
-        const cancel = document.createElement('button');
-        cancel.type = 'button';
-        cancel.className = 'btn btn--ghost btn--xs';
-        cancel.textContent = 'Cancel';
-        cancel.onclick = () => {
-          const res = cancelQueueItem(state, item.id);
-          if (!res.ok) toast(res.reason, 'error');
-        };
-        row.appendChild(cancel);
-      }
-      list.appendChild(row);
-    }
+    return;
   }
 
   const yards = listPlayerShipyards(state);
-  if (yards.length === 0) {
+  for (const item of queue) {
+    const row = document.createElement('div');
+    row.className = 'planet-row';
+    const title = document.createElement('div');
+    title.className = 'planet-row__name';
+    title.textContent = `${item.hull} · ${item.status}`;
+    row.appendChild(title);
+    if (item.status === 'pending') {
+      const pin = document.createElement('select');
+      pin.className = 'btn btn--ghost btn--sm';
+      pin.dataset.queuePin = item.id;
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Auto route';
+      pin.appendChild(opt);
+      for (const y of yards) {
+        const o = document.createElement('option');
+        o.value = y.shipyardId;
+        o.textContent = `${y.systemId.slice(-6)} / ${y.shipyardId}`;
+        if (item.pinnedShipyardId === y.shipyardId) o.selected = true;
+        pin.appendChild(o);
+      }
+      row.appendChild(pin);
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn btn--ghost btn--xs';
+      cancel.dataset.queueCancel = item.id;
+      cancel.textContent = 'Cancel';
+      row.appendChild(cancel);
+    }
+    list.appendChild(row);
+  }
+}
+
+function renderEmpireQueueActions(state) {
+  const actions = el('empire-queue-actions');
+  if (!actions) return;
+  clearChildren(actions);
+
+  if (listPlayerShipyards(state).length === 0) {
     const note = document.createElement('p');
     note.className = 'panel-note panel-note--muted';
     note.textContent = 'Build a shipyard to queue ships.';
     actions.appendChild(note);
-  } else {
-    renderGroupedHullButtons(actions, state, (hull) => {
-      const res = enqueueHull(state, hull);
-      if (!res.ok) toast(res.reason, 'error');
-      else toast(`Queued ${hull}`, 'ok');
-    });
+    return;
+  }
+
+  renderGroupedHullButtons(actions, state);
+}
+
+function renderScoutRoster(state, selectedScoutId) {
+  const roster = el('scout-roster');
+  if (!roster) return;
+  clearChildren(roster);
+
+  for (const scout of state.scouts) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.scoutId = scout.id;
+    const selected = scout.id === selectedScoutId;
+    btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
+
+    const icon = document.createElement('span');
+    icon.className = 'list-row__icon';
+    icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+    const main = document.createElement('span');
+    main.className = 'list-row__main';
+    const title = document.createElement('div');
+    title.className = 'list-row__title';
+    title.textContent = scout.id;
+    const sub = document.createElement('div');
+    sub.className = 'list-row__sub';
+
+    if (scout.transit) {
+      const st = scout.transit;
+      const dest = systemById(state, st.path[st.path.length - 1]);
+      sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+    } else {
+      const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+      sub.textContent = `@ ${loc}`;
+    }
+
+    main.appendChild(title);
+    main.appendChild(sub);
+    btn.appendChild(icon);
+    btn.appendChild(main);
+    roster.appendChild(btn);
   }
 }
 
+function updateSelectedScoutLine(state, selectedScoutId) {
+  const sel = selectedScoutId ? findScout(state, selectedScoutId) : null;
+  const line = el('selected-scout-line');
+  if (!line) return;
+  if (sel?.transit) {
+    const dest = systemById(state, sel.transit.path[sel.transit.path.length - 1]);
+    line.textContent =
+      `Selected: ${sel.id} → ${dest?.name ?? '?'} (${Math.ceil(scoutEtaMs(state, sel) / 1000)}s)`;
+    line.className = 'panel__footer panel-note panel-note--muted';
+  } else if (sel) {
+    line.textContent =
+      `Selected: ${sel.id} @ ${systemById(state, sel.systemId)?.name ?? sel.systemId}`;
+    line.className = 'panel__footer panel-note panel-note--muted';
+  } else {
+    line.textContent = 'Shift+click a star on the galaxy map to dispatch';
+    line.className = 'panel__footer panel-note panel-note--muted';
+  }
+}
+
+function updateScoutRosterLabels(state, selectedScoutId) {
+  const roster = el('scout-roster');
+  if (!roster) return;
+  for (const btn of roster.querySelectorAll('.scout-select-btn')) {
+    const scout = findScout(state, btn.dataset.scoutId);
+    if (!scout) continue;
+    btn.classList.toggle('list-row--selected', scout.id === selectedScoutId);
+    const icon = btn.querySelector('.list-row__icon');
+    if (icon) icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+    const sub = btn.querySelector('.list-row__sub');
+    if (!sub) continue;
+    if (scout.transit) {
+      const st = scout.transit;
+      const dest = systemById(state, st.path[st.path.length - 1]);
+      sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+    } else {
+      const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+      sub.textContent = `@ ${loc}`;
+    }
+  }
+  updateSelectedScoutLine(state, selectedScoutId);
+}
+
+function wireQueueCategoryToggle(container, e) {
+  const toggle = e.target.closest('.queue-category__toggle');
+  if (!toggle) return false;
+  const section = toggle.closest('.queue-category');
+  if (!section) return true;
+  section.classList.toggle('queue-category--collapsed');
+  const label = section.dataset.categoryLabel ?? '';
+  toggle.textContent = section.classList.contains('queue-category--collapsed')
+    ? `▸ ${label}`
+    : `▾ ${label}`;
+  return true;
+}
+
+function renderFleetShipRow(ship, galaxy, state) {
+  const row = document.createElement('div');
+  row.className = 'list-row fleet-ship-row';
+  row.draggable = true;
+  row.dataset.shipId = ship.id;
+
+  const icon = document.createElement('span');
+  icon.className = 'list-row__icon';
+  icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+  const main = document.createElement('span');
+  main.className = 'list-row__main';
+  const title = document.createElement('div');
+  title.className = 'list-row__title';
+  title.textContent = `${ship.id} · ${ship.hull}`;
+  const sub = document.createElement('div');
+  sub.className = 'list-row__sub';
+
+  if (ship.transit) {
+    const destId = ship.transit.path[ship.transit.path.length - 1];
+    const dest = systemById(state, destId);
+    sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
+  } else {
+    const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
+    sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+  }
+
+  main.appendChild(title);
+  main.appendChild(sub);
+  row.appendChild(icon);
+  row.appendChild(main);
+  return row;
+}
+
 function renderFleetPanel(container, state, ctx) {
-  const { getSelectedScoutId, doSelectScout } = ctx;
+  const {
+    getSelectedScoutId,
+    doSelectScout,
+    getSelectedBattleGroupId,
+    doSelectBattleGroup,
+    createBattleGroup,
+    deleteBattleGroup,
+  } = ctx;
   clearChildren(container);
   const galaxy = getGraph(state);
   const selectedScoutId = getSelectedScoutId();
+  const selectedBattleGroupId = getSelectedBattleGroupId?.() ?? null;
 
-  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId);
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
   const scouts = state.scouts ?? [];
   const yards = listPlayerShipyards(state);
   const queue = empireQueueSummary(state);
+  const battleGroups = battleGroupsForGalaxy(state);
+  const unassigned = unassignedPlayerShips(state);
 
   const stats = document.createElement('div');
   stats.className = 'fleet-stats';
-  const readyShips = playerShips.filter((s) => !s.transit && s.hp > 0).length;
+  const readyShips = playerShips.filter((s) => !s.transit).length;
   const transitShips = playerShips.filter((s) => s.transit).length;
   stats.innerHTML = `
     <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
+    <span>Fleets: <strong>${battleGroups.length}</strong></span>
     <span>Scouts: <strong>${scouts.length}</strong></span>
     <span>Shipyards: <strong>${yards.length}</strong></span>
     <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
   `;
   container.appendChild(stats);
 
-  const shipsTitle = document.createElement('div');
-  shipsTitle.className = 'intel-section-title';
-  shipsTitle.textContent = 'Combat Fleet';
-  container.appendChild(shipsTitle);
+  const groupsTitle = document.createElement('div');
+  groupsTitle.className = 'intel-section-title fleet-section-header';
+  groupsTitle.textContent = 'Battle Groups';
+  container.appendChild(groupsTitle);
 
-  if (playerShips.length === 0) {
+  const createBtn = document.createElement('button');
+  createBtn.type = 'button';
+  createBtn.className = 'btn btn--ghost btn--sm fleet-create-btn';
+  createBtn.dataset.fleetCreate = '1';
+  createBtn.textContent = 'Create Fleet';
+  container.appendChild(createBtn);
+
+  if (battleGroups.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'panel-note panel-note--muted';
-    empty.textContent = 'No ships deployed — queue hulls from the Empire Build Queue.';
+    empty.textContent = 'No battle groups — create a fleet and drag ships into it.';
     container.appendChild(empty);
+  }
+
+  for (const group of battleGroups) {
+    const block = document.createElement('div');
+    block.className = 'fleet-group-block';
+    block.dataset.groupId = group.id;
+
+    const header = document.createElement('button');
+    header.type = 'button';
+    const selected = group.id === selectedBattleGroupId;
+    header.className = `list-row fleet-group-header${selected ? ' list-row--selected' : ''}`;
+    header.dataset.fleetSelect = group.id;
+
+    const icon = document.createElement('span');
+    icon.className = 'list-row__icon';
+    icon.style.background = 'var(--accent-green)';
+
+    const main = document.createElement('span');
+    main.className = 'list-row__main';
+    const title = document.createElement('div');
+    title.className = 'list-row__title';
+    title.textContent = formatFleetName(group.ordinal);
+    const sub = document.createElement('div');
+    sub.className = 'list-row__sub';
+    const shipCount = group.shipIds.length;
+    sub.textContent = `${shipCount} ship${shipCount === 1 ? '' : 's'} · ${fleetLocationSummary(state, group.id)}`;
+    main.appendChild(title);
+    main.appendChild(sub);
+
+    const del = document.createElement('span');
+    del.className = 'fleet-group-delete';
+    del.dataset.fleetDelete = group.id;
+    del.title = 'Delete fleet';
+    del.textContent = '×';
+    del.setAttribute('role', 'button');
+    del.setAttribute('aria-label', `Delete ${formatFleetName(group.ordinal)}`);
+
+    header.appendChild(icon);
+    header.appendChild(main);
+    header.appendChild(del);
+    block.appendChild(header);
+
+    const drop = document.createElement('div');
+    drop.className = 'fleet-drop-zone';
+    drop.dataset.dropTarget = group.id;
+    if (shipCount === 0) {
+      const hint = document.createElement('p');
+      hint.className = 'panel-note panel-note--muted fleet-drop-hint';
+      hint.textContent = 'Drop ships here';
+      drop.appendChild(hint);
+    } else {
+      const list = document.createElement('div');
+      list.className = 'list fleet-ship-list';
+      for (const shipId of group.shipIds) {
+        const ship = playerShips.find((s) => s.id === shipId);
+        if (ship) list.appendChild(renderFleetShipRow(ship, galaxy, state));
+      }
+      drop.appendChild(list);
+    }
+    block.appendChild(drop);
+    container.appendChild(block);
+  }
+
+  const fleetHint = document.createElement('p');
+  fleetHint.className = 'panel-note panel-note--muted';
+  fleetHint.style.marginTop = '8px';
+  fleetHint.textContent = 'Alt+click a star on the galaxy map to dispatch the selected fleet. Shift+click still sends scouts.';
+  container.appendChild(fleetHint);
+
+  const unassignedTitle = document.createElement('div');
+  unassignedTitle.className = 'intel-section-title';
+  unassignedTitle.style.marginTop = '12px';
+  unassignedTitle.textContent = 'Unassigned Ships';
+  container.appendChild(unassignedTitle);
+
+  const unassignedDrop = document.createElement('div');
+  unassignedDrop.className = 'fleet-drop-zone fleet-drop-zone--unassigned';
+  unassignedDrop.dataset.dropTarget = 'unassigned';
+
+  if (unassigned.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = playerShips.length === 0
+      ? 'No ships deployed — queue hulls from the Empire Build Queue.'
+      : 'All ships are assigned to battle groups.';
+    unassignedDrop.appendChild(empty);
   } else {
     const list = document.createElement('div');
     list.className = 'list';
-    for (const ship of playerShips) {
-      const row = document.createElement('div');
-      row.className = 'list-row fleet-ship-row';
-
-      const icon = document.createElement('span');
-      icon.className = 'list-row__icon';
-      icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
-
-      const main = document.createElement('span');
-      main.className = 'list-row__main';
-      const title = document.createElement('div');
-      title.className = 'list-row__title';
-      title.textContent = `${ship.id} · ${ship.hull}`;
-      const sub = document.createElement('div');
-      sub.className = 'list-row__sub';
-
-      if (ship.transit) {
-        const st = playerShipStatus(ship, galaxy, state.time);
-        const destId = ship.transit.path[ship.transit.path.length - 1];
-        const dest = systemById(state, destId);
-        sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
-        if (st?.x != null) {
-          sub.textContent += ` · leg ${(ship.transit.legIndex ?? 0) + 1}`;
-        }
-      } else {
-        const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
-        sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
-      }
-
-      main.appendChild(title);
-      main.appendChild(sub);
-      row.appendChild(icon);
-      row.appendChild(main);
-      list.appendChild(row);
+    for (const ship of unassigned) {
+      list.appendChild(renderFleetShipRow(ship, galaxy, state));
     }
-    container.appendChild(list);
+    unassignedDrop.appendChild(list);
   }
+  container.appendChild(unassignedDrop);
 
   const scoutTitle = document.createElement('div');
   scoutTitle.className = 'intel-section-title';
@@ -883,6 +1112,11 @@ export function initUi(ctx) {
     getViewedSystemId,
     getSelectedScoutId,
     doSelectScout,
+    getSelectedBattleGroupId,
+    doSelectBattleGroup,
+    createBattleGroup,
+    deleteBattleGroup,
+    assignShipToGroup,
     doBuildOutpost,
     doBuildShipyard,
     doQueueScout,
@@ -933,6 +1167,135 @@ export function initUi(ctx) {
     hullBtnContainer.className = 'panel__actions';
     el('queue-scout-btn').after(hullBtnContainer);
   }
+
+  const uiSnapshots = {
+    empireQueueList: '',
+    empireQueueActions: '',
+    scoutRoster: '',
+    buildHullActions: '',
+  };
+
+  function queueHullFromUi(hull) {
+    const res = enqueueHull(getState(), hull);
+    if (!res.ok) toast(res.reason, 'error');
+    else toast(`Queued ${hull}`, 'ok');
+  }
+
+  function wireInteractivePanels() {
+    const onQueueMouseDown = (e) => {
+      if (e.button !== 0) return;
+      if (wireQueueCategoryToggle(e.currentTarget, e)) return;
+      const btn = e.target.closest('[data-queue-hull]');
+      if (!btn) return;
+      e.preventDefault();
+      queueHullFromUi(btn.dataset.queueHull);
+    };
+
+    el('empire-queue-actions')?.addEventListener('mousedown', onQueueMouseDown);
+    hullBtnContainer.addEventListener('mousedown', onQueueMouseDown);
+
+    el('empire-queue-list')?.addEventListener('change', (e) => {
+      const sel = e.target.closest('[data-queue-pin]');
+      if (!sel) return;
+      const res = pinQueueItem(getState(), sel.dataset.queuePin, sel.value || null);
+      if (!res.ok) toast(res.reason, 'error');
+    });
+    el('empire-queue-list')?.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const btn = e.target.closest('[data-queue-cancel]');
+      if (!btn) return;
+      e.preventDefault();
+      const res = cancelQueueItem(getState(), btn.dataset.queueCancel);
+      if (!res.ok) toast(res.reason, 'error');
+    });
+
+    el('scout-roster')?.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const btn = e.target.closest('.scout-select-btn');
+      if (!btn?.dataset.scoutId) return;
+      e.preventDefault();
+      doSelectScout(btn.dataset.scoutId);
+    });
+
+    let fleetDragShipId = null;
+    let fleetDidDrag = false;
+    const fleetPanelBody = el('fleet-panel-body');
+
+    fleetPanelBody?.addEventListener('click', (e) => {
+      if (fleetDidDrag) {
+        fleetDidDrag = false;
+        return;
+      }
+      const createTarget = e.target.closest('[data-fleet-create]');
+      if (createTarget) {
+        e.preventDefault();
+        const group = createBattleGroup(getState());
+        doSelectBattleGroup(group.id);
+        return;
+      }
+      const deleteTarget = e.target.closest('[data-fleet-delete]');
+      if (deleteTarget?.dataset.fleetDelete) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteBattleGroup(deleteTarget.dataset.fleetDelete);
+        return;
+      }
+      const selectTarget = e.target.closest('[data-fleet-select]');
+      if (selectTarget?.dataset.fleetSelect) {
+        e.preventDefault();
+        doSelectBattleGroup(selectTarget.dataset.fleetSelect);
+      }
+    });
+
+    fleetPanelBody?.addEventListener('dragstart', (e) => {
+      const row = e.target.closest('.fleet-ship-row');
+      if (!row?.dataset.shipId) return;
+      fleetDragShipId = row.dataset.shipId;
+      fleetDidDrag = false;
+      row.classList.add('list-row--dragging');
+      e.dataTransfer.setData('text/plain', fleetDragShipId);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    fleetPanelBody?.addEventListener('dragend', (e) => {
+      e.target.closest('.fleet-ship-row')?.classList.remove('list-row--dragging');
+      fleetPanelBody.querySelectorAll('.fleet-drop-zone--active').forEach((el) => {
+        el.classList.remove('fleet-drop-zone--active');
+      });
+      fleetDragShipId = null;
+    });
+
+    fleetPanelBody?.addEventListener('dragover', (e) => {
+      const zone = e.target.closest('.fleet-drop-zone');
+      if (!zone) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('fleet-drop-zone--active');
+    });
+
+    fleetPanelBody?.addEventListener('dragleave', (e) => {
+      const zone = e.target.closest('.fleet-drop-zone');
+      if (zone && !zone.contains(e.relatedTarget)) {
+        zone.classList.remove('fleet-drop-zone--active');
+      }
+    });
+
+    fleetPanelBody?.addEventListener('drop', (e) => {
+      const zone = e.target.closest('.fleet-drop-zone');
+      if (!zone) return;
+      e.preventDefault();
+      fleetDidDrag = true;
+      zone.classList.remove('fleet-drop-zone--active');
+      const shipId = e.dataTransfer.getData('text/plain') || fleetDragShipId;
+      if (!shipId) return;
+      const target = zone.dataset.dropTarget;
+      const groupId = target === 'unassigned' ? null : target;
+      const res = assignShipToGroup(getState(), shipId, groupId);
+      if (!res.ok) toast(res.reason, 'error');
+    });
+  }
+
+  wireInteractivePanels();
 
   el('pause-btn').addEventListener('click', doTogglePause);
   el('view-toggle-btn').addEventListener('click', doToggleView);
@@ -1120,7 +1483,17 @@ export function initUi(ctx) {
       tradeChip.classList.add('hidden');
     }
 
-    renderEmpireQueuePanel(state);
+    const listSnap = empireQueueListSnapshot(state);
+    if (listSnap !== uiSnapshots.empireQueueList) {
+      uiSnapshots.empireQueueList = listSnap;
+      renderEmpireQueueList(state);
+    }
+
+    const actionsSnap = empireQueueActionsSnapshot(state);
+    if (actionsSnap !== uiSnapshots.empireQueueActions) {
+      uiSnapshots.empireQueueActions = actionsSnap;
+      renderEmpireQueueActions(state);
+    }
 
     const techScreen = el('tech-screen');
     el('tech-panel')?.classList.add('hidden');
@@ -1137,6 +1510,10 @@ export function initUi(ctx) {
       renderFleetPanel(el('fleet-panel-body'), state, {
         getSelectedScoutId,
         doSelectScout,
+        getSelectedBattleGroupId,
+        doSelectBattleGroup,
+        createBattleGroup,
+        deleteBattleGroup,
       });
     } else {
       fleetPanel?.classList.add('hidden');
@@ -1188,60 +1565,17 @@ export function initUi(ctx) {
     const scoutPanel = el('scout-panel');
     if (state.scouts.length > 0 && sidePanel !== 'fleet') {
       scoutPanel.classList.remove('hidden');
-      const roster = el('scout-roster');
-      roster.innerHTML = '';
-      for (const scout of state.scouts) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        const selected = scout.id === selectedScoutId;
-        btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
-
-        const icon = document.createElement('span');
-        icon.className = 'list-row__icon';
-        icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
-
-        const main = document.createElement('span');
-        main.className = 'list-row__main';
-        const title = document.createElement('div');
-        title.className = 'list-row__title';
-        title.textContent = scout.id;
-        const sub = document.createElement('div');
-        sub.className = 'list-row__sub';
-
-        if (scout.transit) {
-          const st = scout.transit;
-          const dest = systemById(state, st.path[st.path.length - 1]);
-          sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
-        } else {
-          const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
-          sub.textContent = `@ ${loc}`;
-        }
-
-        main.appendChild(title);
-        main.appendChild(sub);
-        btn.appendChild(icon);
-        btn.appendChild(main);
-        btn.addEventListener('click', () => doSelectScout(scout.id));
-        roster.appendChild(btn);
-      }
-
-      const sel = selectedScoutId ? findScout(state, selectedScoutId) : null;
-      const line = el('selected-scout-line');
-      if (sel?.transit) {
-        const dest = systemById(state, sel.transit.path[sel.transit.path.length - 1]);
-        line.textContent =
-          `Selected: ${sel.id} → ${dest?.name ?? '?'} (${Math.ceil(scoutEtaMs(state, sel) / 1000)}s)`;
-        line.className = 'panel__footer panel-note panel-note--muted';
-      } else if (sel) {
-        line.textContent =
-          `Selected: ${sel.id} @ ${systemById(state, sel.systemId)?.name ?? sel.systemId}`;
-        line.className = 'panel__footer panel-note panel-note--muted';
+      const rosterSnap = scoutRosterStructureSnapshot(state, selectedScoutId);
+      if (rosterSnap !== uiSnapshots.scoutRoster) {
+        uiSnapshots.scoutRoster = rosterSnap;
+        renderScoutRoster(state, selectedScoutId);
+        updateSelectedScoutLine(state, selectedScoutId);
       } else {
-        line.textContent = 'Shift+click a star on the galaxy map to dispatch';
-        line.className = 'panel__footer panel-note panel-note--muted';
+        updateScoutRosterLabels(state, selectedScoutId);
       }
     } else {
       scoutPanel.classList.add('hidden');
+      uiSnapshots.scoutRoster = '';
     }
 
     const intelPanel = el('intel-panel');
@@ -1385,12 +1719,13 @@ export function initUi(ctx) {
 
     hullBtnContainer.classList.toggle('hidden', !showQueueBtns);
     if (showQueueBtns) {
-      renderGroupedHullButtons(hullBtnContainer, state, (hull) => {
-        const res = enqueueHull(state, hull);
-        if (!res.ok) toast(res.reason, 'error');
-        else toast(`Queued ${hull}`, 'ok');
-      });
+      const hullSnap = empireQueueActionsSnapshot(state);
+      if (hullSnap !== uiSnapshots.buildHullActions) {
+        uiSnapshots.buildHullActions = hullSnap;
+        renderGroupedHullButtons(hullBtnContainer, state);
+      }
     } else {
+      uiSnapshots.buildHullActions = '';
       clearChildren(hullBtnContainer);
     }
 

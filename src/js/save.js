@@ -62,6 +62,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 4) e = migrateV4toV5(e);
   if (e.saveVersion === 5) e = migrateV5toV6(e);
   if (e.saveVersion === 6) e = migrateV6toV7(e);
+  if (e.saveVersion === 7) e = migrateV7toV8(e);
   return e;
 }
 
@@ -368,6 +369,20 @@ function migrateV6toV7(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 7,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v7 -> v8 (player battle groups).
+function migrateV7toV8(envelope) {
+  const state = envelope.state;
+  state.battleGroups = state.battleGroups ?? [];
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 8,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,

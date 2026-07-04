@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 8",
+  "description": "Player battle groups for fleet command (manual groups + group dispatch).",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 8 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "battleGroups", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked",
+        "empireQueue", "research", "factions", "aiShips"
+      ],
+      "properties": {
+        "battleGroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "galaxyId", "ordinal", "shipIds"],
+            "properties": {
+              "id": { "type": "string" },
+              "galaxyId": { "type": "string" },
+              "ordinal": { "type": "integer", "minimum": 1 },
+              "shipIds": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "empireQueue": { "type": "array" },
+        "research": { "type": "object" },
+        "factions": { "type": "object" },
+        "aiShips": { "type": "array" }
+      }
+    }
+  }
+}

@@ -340,6 +340,7 @@ export function createNewGame(seed) {
     },
     scouts: [],
     playerShips: [],
+    battleGroups: [],
     pirates: { fleets: [], pendingRespawn: [] },
     systemBattles: {},
     battleStance: 'balanced',
