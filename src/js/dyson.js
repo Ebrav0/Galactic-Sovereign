@@ -21,6 +21,7 @@ import {
   SHELL_RESEARCH_BONUS,
   TICK_MS,
 } from './constants.js';
+import { isTechUnlocked } from './tech-web.js';
 import {
   systemById,
   findBody,
@@ -44,6 +45,9 @@ function flagshipInSystem(state, systemId) {
 // --- Build validation ---
 
 export function canBuildFoundry(state, systemId, bodyId) {
+  if (!isTechUnlocked(state, 'mega_foundry_unlock')) {
+    return { ok: false, reason: 'Research Sail Foundry first' };
+  }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };
@@ -73,6 +77,9 @@ export function buildFoundry(state, systemId, bodyId) {
 }
 
 export function canBuildLauncher(state, systemId, bodyId) {
+  if (!isTechUnlocked(state, 'mega_launcher_unlock')) {
+    return { ok: false, reason: 'Research Dyson Launcher first' };
+  }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };

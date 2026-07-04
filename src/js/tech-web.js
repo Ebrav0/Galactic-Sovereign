@@ -1,327 +1,8 @@
-// Static tech web definition (Phase 5, GDD §10).
+// Tech web logic — effects, unlocks, and queries (GDD §10).
 
-export const TECH_NODES = {
-  eco_baseline: {
-    id: 'eco_baseline',
-    cluster: 'economy',
-    name: 'Baseline Economics',
-    prereqs: [],
-    creditCost: 0,
-    solariiCost: 0,
-    researchMs: 0,
-    effect: 'seed',
-  },
-  eco_outpost_2: {
-    id: 'eco_outpost_2',
-    cluster: 'economy',
-    name: 'Outpost Efficiency I',
-    prereqs: ['eco_baseline'],
-    creditCost: 400,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'outpost_income_10',
-  },
-  eco_trade_hub: {
-    id: 'eco_trade_hub',
-    cluster: 'economy',
-    name: 'Trade Hub Protocol',
-    prereqs: ['eco_outpost_2'],
-    creditCost: 600,
-    solariiCost: 0,
-    researchMs: 54000,
-    effect: 'unlock_trade_station',
-  },
-  eco_credits_surge: {
-    id: 'eco_credits_surge',
-    cluster: 'economy',
-    name: 'Credit Surge',
-    prereqs: ['eco_trade_hub'],
-    creditCost: 900,
-    solariiCost: 2,
-    researchMs: 67500,
-    effect: 'credit_income_15',
-  },
-  mil_corvette_2: {
-    id: 'mil_corvette_2',
-    cluster: 'military',
-    name: 'Corvette Hardening',
-    prereqs: ['eco_baseline'],
-    creditCost: 350,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'corvette_hp_15',
-  },
-  mil_parallel_dock: {
-    id: 'mil_parallel_dock',
-    cluster: 'military',
-    name: 'Parallel Docking',
-    prereqs: ['mil_corvette_2'],
-    creditCost: 800,
-    solariiCost: 0,
-    researchMs: 56250,
-    effect: 'shipyard_slots_2',
-  },
-  mil_frigate_unlock: {
-    id: 'mil_frigate_unlock',
-    cluster: 'military',
-    name: 'Frigate Blueprints',
-    prereqs: ['mil_parallel_dock'],
-    creditCost: 1200,
-    solariiCost: 1,
-    researchMs: 67500,
-    effect: 'unlock_frigate_queue',
-  },
-  mil_healer_tech: {
-    id: 'mil_healer_tech',
-    cluster: 'military',
-    name: 'Field Medics',
-    prereqs: ['mil_corvette_2'],
-    creditCost: 500,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'healer_repair_10',
-  },
-  mil_patrol_cutter: {
-    id: 'mil_patrol_cutter',
-    cluster: 'military',
-    name: 'Patrol Cutters',
-    prereqs: ['mil_corvette_2'],
-    creditCost: 400,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'unlock_patrol_cutter',
-  },
-  mil_cruiser_unlock: {
-    id: 'mil_cruiser_unlock',
-    cluster: 'military',
-    name: 'Cruiser Blueprints',
-    prereqs: ['mil_frigate_unlock'],
-    creditCost: 1500,
-    solariiCost: 2,
-    researchMs: 78750,
-    effect: 'unlock_cruiser_queue',
-  },
-  mil_battleship_unlock: {
-    id: 'mil_battleship_unlock',
-    cluster: 'military',
-    name: 'Battleship Hulls',
-    prereqs: ['mil_cruiser_unlock'],
-    creditCost: 2000,
-    solariiCost: 3,
-    researchMs: 90000,
-    effect: 'unlock_battleship_queue',
-  },
-  mil_dreadnought_unlock: {
-    id: 'mil_dreadnought_unlock',
-    cluster: 'military',
-    name: 'Dreadnought Class',
-    prereqs: ['mil_battleship_unlock'],
-    creditCost: 2800,
-    solariiCost: 5,
-    researchMs: 112500,
-    effect: 'unlock_dreadnought_queue',
-  },
-  mil_light_carrier: {
-    id: 'mil_light_carrier',
-    cluster: 'military',
-    name: 'Light Carrier',
-    prereqs: ['mil_parallel_dock'],
-    creditCost: 1400,
-    solariiCost: 2,
-    researchMs: 78750,
-    effect: 'unlock_light_carrier_queue',
-  },
-  mil_fleet_carrier: {
-    id: 'mil_fleet_carrier',
-    cluster: 'military',
-    name: 'Fleet Carrier',
-    prereqs: ['mil_light_carrier'],
-    creditCost: 2200,
-    solariiCost: 3,
-    researchMs: 90000,
-    effect: 'unlock_fleet_carrier_queue',
-  },
-  mil_super_carrier: {
-    id: 'mil_super_carrier',
-    cluster: 'military',
-    name: 'Super Carrier',
-    prereqs: ['mil_fleet_carrier'],
-    creditCost: 3200,
-    solariiCost: 5,
-    researchMs: 112500,
-    effect: 'unlock_super_carrier_queue',
-  },
-  mil_sensor_ship: {
-    id: 'mil_sensor_ship',
-    cluster: 'military',
-    name: 'Sensor Arrays',
-    prereqs: ['mil_healer_tech'],
-    creditCost: 600,
-    solariiCost: 1,
-    researchMs: 56250,
-    effect: 'unlock_sensor_ship',
-  },
-  mil_builder_ship: {
-    id: 'mil_builder_ship',
-    cluster: 'military',
-    name: 'Builder Drones',
-    prereqs: ['mil_sensor_ship'],
-    creditCost: 900,
-    solariiCost: 1,
-    researchMs: 67500,
-    effect: 'unlock_builder_ship',
-  },
-  mil_command_cruiser: {
-    id: 'mil_command_cruiser',
-    cluster: 'military',
-    name: 'Command Cruiser',
-    prereqs: ['mil_cruiser_unlock'],
-    creditCost: 1800,
-    solariiCost: 3,
-    researchMs: 90000,
-    effect: 'unlock_command_cruiser',
-  },
-  eco_miner_hull: {
-    id: 'eco_miner_hull',
-    cluster: 'economy',
-    name: 'Orbital Miners',
-    prereqs: ['eco_outpost_2'],
-    creditCost: 450,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'unlock_miner_hull',
-  },
-  mega_foundry_2: {
-    id: 'mega_foundry_2',
-    cluster: 'megastructure',
-    name: 'Foundry Output I',
-    prereqs: ['eco_baseline'],
-    creditCost: 700,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'foundry_output_10',
-  },
-  mega_launcher_rate: {
-    id: 'mega_launcher_rate',
-    cluster: 'megastructure',
-    name: 'Launcher Cadence',
-    prereqs: ['mega_foundry_2'],
-    creditCost: 900,
-    solariiCost: 1,
-    researchMs: 56250,
-    effect: 'launcher_rate_10',
-  },
-  mega_solarii_boost: {
-    id: 'mega_solarii_boost',
-    cluster: 'megastructure',
-    name: 'Solarii Amplifier',
-    prereqs: ['mega_launcher_rate'],
-    creditCost: 0,
-    solariiCost: 5,
-    researchMs: 90000,
-    effect: 'solarii_income_10',
-  },
-  trade_route_opt: {
-    id: 'trade_route_opt',
-    cluster: 'trade',
-    name: 'Route Optimization',
-    prereqs: ['eco_trade_hub'],
-    creditCost: 500,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'trade_income_20',
-  },
-  trade_lane_secured: {
-    id: 'trade_lane_secured',
-    cluster: 'trade',
-    name: 'Secured Lanes',
-    prereqs: ['trade_route_opt'],
-    creditCost: 800,
-    solariiCost: 1,
-    researchMs: 67500,
-    effect: 'trade_neutral_bridge',
-  },
-  trade_light_hauler: {
-    id: 'trade_light_hauler',
-    cluster: 'trade',
-    name: 'Light Haulers',
-    prereqs: ['trade_route_opt'],
-    creditCost: 400,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'unlock_light_hauler',
-  },
-  trade_bulk_freighter: {
-    id: 'trade_bulk_freighter',
-    cluster: 'trade',
-    name: 'Bulk Freighters',
-    prereqs: ['trade_light_hauler'],
-    creditCost: 700,
-    solariiCost: 1,
-    researchMs: 56250,
-    effect: 'unlock_bulk_freighter',
-  },
-  trade_armored_convoy: {
-    id: 'trade_armored_convoy',
-    cluster: 'trade',
-    name: 'Armored Convoys',
-    prereqs: ['trade_bulk_freighter'],
-    creditCost: 1100,
-    solariiCost: 2,
-    researchMs: 67500,
-    effect: 'unlock_armored_convoy',
-  },
-  wh_scout_range: {
-    id: 'wh_scout_range',
-    cluster: 'wormhole',
-    name: 'Extended Sensors',
-    prereqs: ['eco_baseline'],
-    creditCost: 600,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'intel_hop_1',
-  },
-  wh_anchor_discount: {
-    id: 'wh_anchor_discount',
-    cluster: 'wormhole',
-    name: 'Anchor Engineering',
-    prereqs: ['wh_scout_range'],
-    creditCost: 1000,
-    solariiCost: 2,
-    researchMs: 67500,
-    effect: 'anchor_cost_15',
-  },
-  res_lab_1: {
-    id: 'res_lab_1',
-    cluster: 'research',
-    name: 'Lab Protocols I',
-    prereqs: ['eco_baseline'],
-    creditCost: 300,
-    solariiCost: 0,
-    researchMs: 45000,
-    effect: 'research_speed_5',
-  },
-  res_lab_2: {
-    id: 'res_lab_2',
-    cluster: 'research',
-    name: 'Lab Protocols II',
-    prereqs: ['res_lab_1'],
-    creditCost: 600,
-    solariiCost: 1,
-    researchMs: 56250,
-    effect: 'research_speed_10',
-  },
-  res_dual_core: {
-    id: 'res_dual_core',
-    cluster: 'research',
-    name: 'Dual Research Core',
-    prereqs: ['res_lab_2', 'mega_solarii_boost'],
-    creditCost: 1200,
-    solariiCost: 4,
-    researchMs: 112500,
-    effect: 'research_queue_2',
-  },
-};
+import { TECH_NODES } from './tech-nodes.js';
+
+export { TECH_NODES };
 
 export function techNode(nodeId) {
   return TECH_NODES[nodeId] ?? null;
@@ -356,6 +37,7 @@ export function techEffects(state) {
   const effects = {
     shipyardSlots: 1,
     unlockTradeStation: false,
+    unlockDestroyerQueue: false,
     unlockFrigateQueue: false,
     unlockPatrolCutter: false,
     unlockCruiserQueue: false,
@@ -371,6 +53,13 @@ export function techEffects(state) {
     unlockLightHauler: false,
     unlockBulkFreighter: false,
     unlockArmoredConvoy: false,
+    unlockFoundry: false,
+    unlockLauncher: false,
+    unlockResearchStation: false,
+    dysonShellSync: false,
+    dysonShellBonus: false,
+    dysonShield: false,
+    tradeHubTier2: false,
     outpostIncomeMult: 1,
     creditIncomeMult: 1,
     tradeIncomeMult: 1,
@@ -380,20 +69,45 @@ export function techEffects(state) {
     launcherRateMult: 1,
     solariiIncomeMult: 1,
     corvetteHpMult: 1,
+    frigateHpMult: 1,
+    destroyerDpsMult: 1,
+    battleshipDpsMult: 1,
+    carrierDpsMult: 1,
     healerRepairMult: 1,
+    scoutCostMult: 1,
+    shipyardCostMult: 1,
+    sailCostMult: 1,
+    moonYieldMult: 1,
+    captureForceBonus: 0,
     tradeNeutralBridge: false,
     anchorCostMult: 1,
     intelHopBonus: 0,
+    wormholeTransitMult: 1,
   };
 
   for (const id of unlocked) {
     const node = techNode(id);
     if (!node) continue;
     switch (node.effect) {
-      case 'outpost_income_10': effects.outpostIncomeMult = 1.1; break;
+      case 'outpost_income_10': effects.outpostIncomeMult *= 1.1; break;
+      case 'outpost_income_15': effects.outpostIncomeMult *= 1.15; break;
+      case 'moon_yield_10': effects.moonYieldMult *= 1.1; break;
+      case 'credit_income_5': effects.creditIncomeMult *= 1.05; break;
+      case 'credit_income_10': effects.creditIncomeMult *= 1.1; break;
+      case 'credit_income_15': effects.creditIncomeMult *= 1.15; break;
+      case 'credit_income_20': effects.creditIncomeMult *= 1.2; break;
       case 'unlock_trade_station': effects.unlockTradeStation = true; break;
-      case 'credit_income_15': effects.creditIncomeMult = 1.15; break;
-      case 'shipyard_slots_2': effects.shipyardSlots = 2; break;
+      case 'trade_hub_2': effects.tradeHubTier2 = true; break;
+      case 'trade_income_10': effects.tradeIncomeMult *= 1.1; break;
+      case 'trade_income_20': effects.tradeIncomeMult *= 1.2; break;
+      case 'trade_income_25': effects.tradeIncomeMult *= 1.25; break;
+      case 'trade_income_30': effects.tradeIncomeMult *= 1.3; break;
+      case 'trade_neutral_bridge': effects.tradeNeutralBridge = true; break;
+      case 'shipyard_slots_2': effects.shipyardSlots = Math.max(effects.shipyardSlots, 2); break;
+      case 'shipyard_slots_3': effects.shipyardSlots = Math.max(effects.shipyardSlots, 3); break;
+      case 'shipyard_cost_10': effects.shipyardCostMult *= 0.9; break;
+      case 'scout_cost_15': effects.scoutCostMult *= 0.85; break;
+      case 'unlock_destroyer_queue': effects.unlockDestroyerQueue = true; break;
       case 'unlock_frigate_queue': effects.unlockFrigateQueue = true; break;
       case 'unlock_patrol_cutter': effects.unlockPatrolCutter = true; break;
       case 'unlock_cruiser_queue': effects.unlockCruiserQueue = true; break;
@@ -409,18 +123,42 @@ export function techEffects(state) {
       case 'unlock_light_hauler': effects.unlockLightHauler = true; break;
       case 'unlock_bulk_freighter': effects.unlockBulkFreighter = true; break;
       case 'unlock_armored_convoy': effects.unlockArmoredConvoy = true; break;
-      case 'corvette_hp_15': effects.corvetteHpMult = 1.15; break;
-      case 'healer_repair_10': effects.healerRepairMult = 1.1; break;
-      case 'foundry_output_10': effects.foundryOutputMult = 1.1; break;
-      case 'launcher_rate_10': effects.launcherRateMult = 1.1; break;
-      case 'solarii_income_10': effects.solariiIncomeMult = 1.1; break;
-      case 'trade_income_20': effects.tradeIncomeMult = 1.2; break;
-      case 'trade_neutral_bridge': effects.tradeNeutralBridge = true; break;
-      case 'intel_hop_1': effects.intelHopBonus = 1; break;
-      case 'anchor_cost_15': effects.anchorCostMult = 0.85; break;
+      case 'unlock_foundry': effects.unlockFoundry = true; break;
+      case 'unlock_launcher': effects.unlockLauncher = true; break;
+      case 'unlock_research_station': effects.unlockResearchStation = true; break;
+      case 'sail_cost_10': effects.sailCostMult *= 0.9; break;
+      case 'foundry_output_10': effects.foundryOutputMult *= 1.1; break;
+      case 'foundry_output_15': effects.foundryOutputMult *= 1.15; break;
+      case 'foundry_output_20': effects.foundryOutputMult *= 1.2; break;
+      case 'launcher_rate_10': effects.launcherRateMult *= 1.1; break;
+      case 'launcher_rate_15': effects.launcherRateMult *= 1.15; break;
+      case 'launcher_rate_20': effects.launcherRateMult *= 1.2; break;
+      case 'dyson_shell_sync': effects.dysonShellSync = true; break;
+      case 'dyson_shell_bonus': effects.dysonShellBonus = true; break;
+      case 'dyson_shield': effects.dysonShield = true; break;
+      case 'solarii_income_10': effects.solariiIncomeMult *= 1.1; break;
+      case 'solarii_income_15': effects.solariiIncomeMult *= 1.15; break;
+      case 'solarii_income_20': effects.solariiIncomeMult *= 1.2; break;
+      case 'corvette_hp_15': effects.corvetteHpMult *= 1.15; break;
+      case 'frigate_hp_10': effects.frigateHpMult *= 1.1; break;
+      case 'destroyer_dps_10': effects.destroyerDpsMult *= 1.1; break;
+      case 'battleship_dps_10': effects.battleshipDpsMult *= 1.1; break;
+      case 'carrier_dps_10': effects.carrierDpsMult *= 1.1; break;
+      case 'healer_repair_10': effects.healerRepairMult *= 1.1; break;
+      case 'healer_repair_15': effects.healerRepairMult *= 1.15; break;
+      case 'capture_force_1': effects.captureForceBonus += 1; break;
+      case 'intel_hop_1': effects.intelHopBonus += 1; break;
+      case 'intel_hop_2': effects.intelHopBonus += 2; break;
+      case 'intel_hop_3': effects.intelHopBonus += 3; break;
+      case 'anchor_cost_15': effects.anchorCostMult *= 0.85; break;
+      case 'anchor_cost_25': effects.anchorCostMult *= 0.75; break;
+      case 'wormhole_transit_10': effects.wormholeTransitMult *= 1.1; break;
       case 'research_speed_5': effects.researchSpeedMult *= 1.05; break;
       case 'research_speed_10': effects.researchSpeedMult *= 1.1; break;
-      case 'research_queue_2': effects.researchQueueDepth = 2; break;
+      case 'research_speed_15': effects.researchSpeedMult *= 1.15; break;
+      case 'research_speed_20': effects.researchSpeedMult *= 1.2; break;
+      case 'research_queue_2': effects.researchQueueDepth = Math.max(effects.researchQueueDepth, 2); break;
+      case 'research_queue_3': effects.researchQueueDepth = Math.max(effects.researchQueueDepth, 3); break;
       default: break;
     }
   }
@@ -433,7 +171,8 @@ export function shipyardSlots(state) {
 
 export function empireQueueHulls(state) {
   const effects = techEffects(state);
-  const hulls = ['scout', 'corvette', 'destroyer', 'healer'];
+  const hulls = ['scout', 'corvette', 'healer'];
+  if (effects.unlockDestroyerQueue) hulls.push('destroyer');
   if (effects.unlockPatrolCutter) hulls.push('patrol_cutter');
   if (effects.unlockFrigateQueue) hulls.push('frigate');
   if (effects.unlockCruiserQueue) hulls.push('cruiser');
@@ -453,10 +192,13 @@ export function empireQueueHulls(state) {
 }
 
 export function applyTechEffect(state, nodeId) {
-  // Effects are derived from unlocked list; nothing extra to mutate.
   return { ok: true, nodeId };
 }
 
 export function allTechNodes() {
   return Object.values(TECH_NODES);
+}
+
+export function techNodeCount() {
+  return Object.keys(TECH_NODES).length;
 }

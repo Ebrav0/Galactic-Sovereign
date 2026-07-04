@@ -10,6 +10,7 @@ import {
   FOUNDRY_COST,
   LAUNCHER_COST,
   LAUNCHERS_PER_BODY_MAX,
+  SHELL_COUNT,
   SHELL_SAILS_REQUIRED,
   TRADE_STATION_COST,
   RESEARCH_STATION_COST,
@@ -50,7 +51,7 @@ import { startResearch, canBuildResearchStation, buildResearchStation, researchS
 import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.js';
 import { allTechNodes, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
-import { mountTechWebGraph, updateTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
+import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
   playerShipEtaMs,
@@ -703,6 +704,11 @@ function renderTechScreen(container, state, techUiState) {
     techUiState.svg = null;
     techUiState.mounted = false;
     techUiState.lastSnapshot = '';
+    techUiState.clusterFilter = null;
+    techUiState.graphHandle = null;
+  } else if (!techUiState.graphWrap) {
+    techUiState.graphWrap = container.querySelector('#tech-screen-graph-wrap')
+      ?? container.querySelector('.tech-screen__graph-wrap');
   }
 
   const savedDetail = techUiState.detailEl?.textContent ?? 'Hover a node for details';
@@ -741,12 +747,26 @@ function renderTechScreen(container, state, techUiState) {
 
   const legend = document.createElement('div');
   legend.className = 'tech-web-legend';
-  for (const meta of Object.values(TECH_CLUSTERS)) {
-    const chip = document.createElement('span');
-    chip.className = 'tech-web-legend__chip';
+  const allChip = document.createElement('button');
+  allChip.type = 'button';
+  allChip.className = `tech-web-legend__chip${!techUiState.clusterFilter ? ' tech-web-legend__chip--active' : ''}`;
+  allChip.textContent = 'All';
+  allChip.onclick = () => {
+    techUiState.clusterFilter = null;
+    techUiState.graphHandle?.setClusterFilter(null);
+  };
+  legend.appendChild(allChip);
+  for (const [clusterId, meta] of Object.entries(TECH_CLUSTERS)) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = `tech-web-legend__chip${techUiState.clusterFilter === clusterId ? ' tech-web-legend__chip--active' : ''}`;
     chip.style.borderColor = meta.color;
     chip.style.color = meta.color;
     chip.textContent = meta.label;
+    chip.onclick = () => {
+      techUiState.clusterFilter = clusterId;
+      techUiState.graphHandle?.setClusterFilter(clusterId);
+    };
     legend.appendChild(chip);
   }
   chrome.appendChild(legend);
@@ -799,15 +819,17 @@ function renderTechScreen(container, state, techUiState) {
     techUiState.graphWrap.appendChild(mount);
     const handle = mountTechWebGraph(mount, state, {
       summary,
+      clusterFilter: techUiState.clusterFilter,
       onResearch,
       onHoverNode,
     });
     techUiState.svg = handle.svg;
     techUiState.fitView = handle.fitView;
+    techUiState.graphHandle = handle;
     techUiState.mounted = true;
     techUiState.lastSnapshot = snapshot;
   } else if (techUiState.lastSnapshot !== snapshot && techUiState.svg) {
-    updateTechWebGraph(techUiState.svg, state, summary);
+    techUiState.graphHandle?.refresh(state, summary);
     techUiState.lastSnapshot = snapshot;
   }
 }

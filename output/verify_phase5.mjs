@@ -116,7 +116,10 @@ await page.evaluate(() => {
 check('4.1 parallel slots', (await text()).production?.shipyardSlots === 2);
 
 await page.evaluate(() => window.__newGame(42));
-await page.evaluate(() => { window.getGameState().credits = 10000; });
+await page.evaluate(() => {
+  window.getGameState().credits = 10000;
+  window.getGameState().research.unlocked.push('res_lab_1', 'res_station_protocol');
+});
 await page.evaluate(() => window.__buildResearchStation());
 await page.evaluate(() => window.__buildResearchStation());
 await page.evaluate(() => window.__buildResearchStation());

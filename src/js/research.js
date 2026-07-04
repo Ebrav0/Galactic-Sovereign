@@ -55,6 +55,9 @@ export function researchStationCount(state, systemId) {
 }
 
 export function canBuildResearchStation(state, systemId) {
+  if (!isTechUnlocked(state, 'res_station_protocol')) {
+    return { ok: false, reason: 'Research Research Station protocol first' };
+  }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };

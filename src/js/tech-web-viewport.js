@@ -1,9 +1,6 @@
 // Pan/zoom viewport for the full-screen technology web SVG.
 
-export const GRAPH_WIDTH = 1200;
-export const GRAPH_HEIGHT = 720;
-
-const MIN_ZOOM = 0.35;
+const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 2.5;
 const ZOOM_STEP = 1.12;
 const DRAG_THRESHOLD_PX = 5;
@@ -16,9 +13,11 @@ function clampZoom(z) {
  * Attach pan/zoom interaction to an SVG inside `container`.
  * @param {HTMLElement} container
  * @param {SVGSVGElement} svg
- * @param {{ onResearch?: (nodeId: string) => void, onHoverNode?: (nodeId: string | null) => void }} opts
+ * @param {{ graphWidth?: number, graphHeight?: number, onResearch?: (nodeId: string) => void, onHoverNode?: (nodeId: string | null) => void }} opts
  */
 export function attachTechWebViewport(container, svg, opts = {}) {
+  const graphWidth = opts.graphWidth ?? (Number(svg.dataset.graphWidth) || 1200);
+  const graphHeight = opts.graphHeight ?? (Number(svg.dataset.graphHeight) || 720);
   const viewport = document.createElement('div');
   viewport.className = 'tech-web-viewport';
   container.innerHTML = '';
@@ -38,8 +37,8 @@ export function attachTechWebViewport(container, svg, opts = {}) {
   let pendingNodeId = null;
 
   function applyViewBox() {
-    const w = GRAPH_WIDTH / zoom;
-    const h = GRAPH_HEIGHT / zoom;
+    const w = graphWidth / zoom;
+    const h = graphHeight / zoom;
     svg.setAttribute('viewBox', `${panX} ${panY} ${w} ${h}`);
   }
 
@@ -52,8 +51,8 @@ export function attachTechWebViewport(container, svg, opts = {}) {
 
   function clientToGraph(clientX, clientY) {
     const rect = svg.getBoundingClientRect();
-    const w = GRAPH_WIDTH / zoom;
-    const h = GRAPH_HEIGHT / zoom;
+    const w = graphWidth / zoom;
+    const h = graphHeight / zoom;
     const gx = panX + ((clientX - rect.left) / rect.width) * w;
     const gy = panY + ((clientY - rect.top) / rect.height) * h;
     return { gx, gy };
@@ -90,8 +89,8 @@ export function attachTechWebViewport(container, svg, opts = {}) {
     }
     if (dragging) {
       const rect = svg.getBoundingClientRect();
-      const w = GRAPH_WIDTH / zoom;
-      const h = GRAPH_HEIGHT / zoom;
+      const w = graphWidth / zoom;
+      const h = graphHeight / zoom;
       panX -= (dx / rect.width) * w;
       panY -= (dy / rect.height) * h;
       applyViewBox();
@@ -129,14 +128,14 @@ export function attachTechWebViewport(container, svg, opts = {}) {
     if (nextZoom === zoom) return;
 
     const rect = svg.getBoundingClientRect();
-    const w = GRAPH_WIDTH / zoom;
-    const h = GRAPH_HEIGHT / zoom;
+    const w = graphWidth / zoom;
+    const h = graphHeight / zoom;
     const mx = panX + ((e.clientX - rect.left) / rect.width) * w;
     const my = panY + ((e.clientY - rect.top) / rect.height) * h;
 
     zoom = nextZoom;
-    const nw = GRAPH_WIDTH / zoom;
-    const nh = GRAPH_HEIGHT / zoom;
+    const nw = graphWidth / zoom;
+    const nh = graphHeight / zoom;
     panX = mx - ((e.clientX - rect.left) / rect.width) * nw;
     panY = my - ((e.clientY - rect.top) / rect.height) * nh;
     applyViewBox();
