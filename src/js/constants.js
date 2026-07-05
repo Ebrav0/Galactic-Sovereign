@@ -249,6 +249,11 @@ export const SAIL_DOT_SIZE = 0.8;                  // world units
 export const SAIL_DOT_LOD_ZOOM = 0.35;             // full in-progress dot field above this zoom
 export const SAIL_DOT_DRAW_MAX = 6000;             // hard cap with stride
 export const SAIL_DOT_LOD_STRIDE_TARGET = 400;     // visible settled dots when zoomed out
+export const DYSON_MESH_LOD_ZOOM = 0.28;           // below: simplified rings + node dots only
+export const DYSON_CAGE_ROTATION_SPEED = 0.018;    // rad/s — geodesic cage spin (shell 5+)
+export const DYSON_LATTICE_BLEND_PROGRESS = 0.6;   // shell progress fraction → lattice snap
+export const DYSON_CONSTRUCTION_LATTICE_SLOTS = 800; // edge midpoints used for high-progress weave
+export const DYSON_MAX_MESH_EDGES = 280;           // hard cap for Canvas draw cost
 
 // --- Camera ---
 export const CAMERA_MIN_ZOOM = 0.15;
