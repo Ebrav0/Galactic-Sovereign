@@ -19,9 +19,12 @@ import {
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
 import { aiShipsInSystem } from './ai-ships.js';
 import { playerCombatShipsAtSystem, stationedShipPose } from './fleets.js';
+import { heroInSystem } from './hero-flagships.js';
+import { shellRepairBonus } from './dyson.js';
 import { pruneBattleGroups } from './battle-groups.js';
 import { softKeepOut, nudgeUnitKeepOut } from './ship-motion.js';
 import { getSystems, getGraph } from './galaxy-scope.js';
+import { systemById } from './state.js';
 
 function seededEntryVector(seed, systemId, time) {
   let h = (seed ^ systemId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) >>> 0;
@@ -33,6 +36,10 @@ function flagshipInSystem(state, systemId) {
   const f = state.flagship;
   return f.galaxyId === state.activeGalaxyId
     && f.systemId === systemId && !f.transit && !f.wormholeTransit;
+}
+
+function tacticalAnchorInSystem(state, systemId) {
+  return flagshipInSystem(state, systemId) || heroInSystem(state, systemId);
 }
 
 function playerForcesInSystem(state, systemId) {
@@ -47,7 +54,7 @@ function shouldBattle(state, systemId) {
   const system = getSystems(state)[systemId];
   if (!pirates.length && !aiShips.length) return false;
   const { ships, hasFlagship } = playerForcesInSystem(state, systemId);
-  if (ships.length > 0 || hasFlagship) return true;
+  if (ships.length > 0 || hasFlagship || heroInSystem(state, systemId)) return true;
   if (system?.owner === 'player' || system?.owner === 'ai') return true;
   return false;
 }
@@ -150,7 +157,7 @@ function initTacticalUnits(state, systemId, battle) {
 }
 
 function startBattle(state, systemId) {
-  const tactical = flagshipInSystem(state, systemId);
+  const tactical = tacticalAnchorInSystem(state, systemId);
   const battle = {
     active: true,
     mode: tactical ? 'tactical' : 'auto',
@@ -290,11 +297,13 @@ function tickTacticalBattle(state, systemId, battle) {
     }
 
     const healRate = healRateForShip(unit);
+    const sys = systemById(state, systemId);
+    const repairMult = sys ? shellRepairBonus(sys) : 1;
     if (healRate > 0) {
       const allies = battle.units.filter((u) => u.hp > 0 && u.side === unit.side && u.id !== unit.id);
       for (const ally of allies) {
         if (ally.hp < ally.maxHp) {
-          ally.hp = Math.min(ally.maxHp, ally.hp + (healRate * TICK_MS) / 1000);
+          ally.hp = Math.min(ally.maxHp, ally.hp + (healRate * repairMult * TICK_MS) / 1000);
         }
       }
     } else {

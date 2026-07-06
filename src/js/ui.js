@@ -49,6 +49,18 @@ import { BLACK_HOLE_ID } from './galaxy.js';
 import { enqueueHull, cancelQueueItem, pinQueueItem, empireQueueSummary, listPlayerShipyards } from './empire-queue.js';
 import { startResearch, canBuildResearchStation, buildResearchStation, researchSummary, researchStationCount } from './research.js';
 import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.js';
+import { diplomacySummary, offerTreaty } from './diplomacy.js';
+import { campaignSummary } from './campaign.js';
+import { listMissions, startMission } from './missions.js';
+import { initTutorial } from './tutorial.js';
+import { milestonesSummary } from './milestones.js';
+import {
+  superweaponCreate,
+  superweaponDestroy,
+  superweaponJump,
+  superweaponSummary,
+} from './superweapon.js';
+import { buildHeroFlagship } from './hero-flagships.js';
 import { allTechNodes, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
@@ -313,6 +325,104 @@ function updateTabBar(view, sidePanel) {
   el('tab-dyson').classList.toggle('tab--active', sidePanel === 'dyson');
   el('tab-tech').classList.toggle('tab--active', sidePanel === 'tech');
   el('tab-fleet')?.classList.toggle('tab--active', sidePanel === 'fleet');
+  el('tab-diplomacy')?.classList.toggle('tab--active', sidePanel === 'diplomacy');
+  el('tab-campaign')?.classList.toggle('tab--active', sidePanel === 'campaign');
+}
+
+function renderDiplomacyPanel(container, state) {
+  clearChildren(container);
+  const summary = diplomacySummary(state);
+  if (!summary.unlocked) {
+    const locked = document.createElement('p');
+    locked.className = 'empty-state';
+    locked.textContent = 'Complete a Dyson sphere (Shell #8) to unlock diplomacy.';
+    container.appendChild(locked);
+    return;
+  }
+  for (const f of summary.factions) {
+    const row = document.createElement('div');
+    row.className = 'intel-row';
+    row.innerHTML = `<span>${f.name}</span><span>${f.status}</span>`;
+    container.appendChild(row);
+    const actions = document.createElement('div');
+    actions.className = 'dev-row';
+    for (const [type, label] of [['truce', 'Truce'], ['trade', 'Trade'], ['alliance', 'Alliance']]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--xs';
+      btn.textContent = label;
+      btn.onclick = () => {
+        const res = offerTreaty(state, f.id, type);
+        toast(res.ok ? `${label} with ${f.name}` : res.reason, res.ok ? 'ok' : 'error');
+      };
+      actions.appendChild(btn);
+    }
+    container.appendChild(actions);
+  }
+}
+
+function renderCampaignPanel(container, state) {
+  clearChildren(container);
+  const camp = campaignSummary(state);
+  const ms = milestonesSummary(state);
+  const intro = document.createElement('p');
+  intro.className = 'panel-note';
+  intro.textContent = `Mode: ${camp.mode} · Victory: ${camp.victoryType}${camp.won ? ' · WON' : ''}${camp.defeated ? ' · DEFEATED' : ''}`;
+  container.appendChild(intro);
+  const mile = document.createElement('p');
+  mile.className = 'panel-note panel-note--muted';
+  mile.textContent = `Completed Dysons: ${ms.completedDysonCount} · Diplomacy: ${ms.diplomacyUnlocked ? 'yes' : 'no'} · Superweapon: ${ms.superweaponUnlocked ? 'yes' : 'no'}`;
+  container.appendChild(mile);
+  const sw = superweaponSummary(state);
+  if (sw.online) {
+    const swRow = document.createElement('div');
+    swRow.className = 'dev-row';
+    for (const [label, fn] of [
+      ['Create Star', () => superweaponCreate(state, state.stronghold)],
+      ['Destroy Viewed', () => superweaponDestroy(state, getViewedSystemId())],
+      ['Jump Home', () => superweaponJump(state, state.stronghold)],
+    ]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--sm';
+      btn.textContent = label;
+      btn.onclick = () => {
+        const res = fn();
+        toast(res.ok ? label : res.reason, res.ok ? 'ok' : 'error');
+      };
+      swRow.appendChild(btn);
+    }
+    container.appendChild(swRow);
+    const heroBtn = document.createElement('button');
+    heroBtn.type = 'button';
+    heroBtn.className = 'btn btn--primary btn--sm';
+    heroBtn.textContent = 'Build Hero Flagship';
+    heroBtn.onclick = () => {
+      const res = buildHeroFlagship(state);
+      toast(res.ok ? 'Hero flagship queued' : res.reason, res.ok ? 'ok' : 'error');
+    };
+    container.appendChild(heroBtn);
+  }
+  const tutBtn = document.createElement('button');
+  tutBtn.type = 'button';
+  tutBtn.className = 'btn btn--ghost btn--sm';
+  tutBtn.textContent = 'Start Tutorial';
+  tutBtn.onclick = () => {
+    initTutorial(state);
+    toast('Tutorial started', 'ok');
+  };
+  container.appendChild(tutBtn);
+  for (const m of listMissions()) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--xs';
+    btn.textContent = m.name;
+    btn.onclick = () => {
+      const res = startMission(state, m.id);
+      toast(res.ok ? `Mission: ${m.name}` : res.reason, res.ok ? 'ok' : 'error');
+    };
+    container.appendChild(btn);
+  }
 }
 
 function renderDysonPanel(container, state, systemId) {
@@ -1422,6 +1532,14 @@ export function initUi(ctx) {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'fleet' ? null : 'fleet';
   });
+  el('tab-diplomacy')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'diplomacy' ? null : 'diplomacy';
+  });
+  el('tab-campaign')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'campaign' ? null : 'campaign';
+  });
 
   el('build-trade-btn')?.addEventListener('click', () => {
     const sel = getSelection();
@@ -1595,12 +1713,26 @@ export function initUi(ctx) {
     }
 
     const techScreen = el('tech-screen');
+    const diploScreen = el('diplomacy-screen');
+    const campScreen = el('campaign-screen');
     el('tech-panel')?.classList.add('hidden');
     if (sidePanel === 'tech') {
       techScreen?.classList.remove('hidden');
       renderTechScreen(el('tech-screen-body'), state, techUiState);
     } else {
       techScreen?.classList.add('hidden');
+    }
+    if (sidePanel === 'diplomacy') {
+      diploScreen?.classList.remove('hidden');
+      renderDiplomacyPanel(el('diplomacy-screen-body'), state);
+    } else {
+      diploScreen?.classList.add('hidden');
+    }
+    if (sidePanel === 'campaign') {
+      campScreen?.classList.remove('hidden');
+      renderCampaignPanel(el('campaign-screen-body'), state);
+    } else {
+      campScreen?.classList.add('hidden');
     }
 
     const fleetPanel = el('fleet-panel');

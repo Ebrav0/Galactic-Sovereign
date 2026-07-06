@@ -311,3 +311,39 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 6 tasks: Superweapon cradle, hero flagships, diplomacy unlock
+
+---
+
+## Session 2026-07-05 — Phase 6 late game complete
+
+**Task claimed:** Phase 6 tasks 6.0–6.50
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=9`; `docs/schemas/save-v9.json`; `migrateV8toV9`
+- New modules: `milestones.js`, `superweapon.js`, `hero-flagships.js`, `diplomacy.js`, `trade-routes.js`, `campaign.js`, `missions.js`, `tutorial.js`, `strategic-structures.js`
+- Milestone gates: diplomacy at 1× Shell #8, superweapon at 3× distinct completed spheres
+- Wired shell #4 shield and #7 repair bonuses in `dyson.js`
+- 14 Phase 6 tech nodes (diplomacy, superweapon, flagship clusters) + UI cluster labels
+- Superweapon cradle, create/destroy/jump, Dyson shield counterplay, graph mutation
+- Hero flagships: build at cradle, lane transit, tactical anchor via `heroInSystem`
+- Diplomacy: truce/trade/alliance treaties; 3 AI factions; superweapon panic
+- Manual trade routes with income bonus; campaign victory/defeat; 6 missions; 8-step tutorial
+- Strategic structures module (listening post, lane relay, blockade fort, forward base, supply cache, command post)
+- UI: Diplomacy + Campaign tabs; extended `render_game_to_text()` Phase 6 blocks
+- `output/verify_phase6.mjs` — 28/28 pass; phase3/4/5/battle_groups regression updated for save-v9
+- `docs/IMPLEMENTATION_PLAN.md` §8 Phase 6 task table populated
+
+### Decisions
+- `factions.list[]` array for multi-AI with `factions.ai` alias to primary
+- Diplomacy trade bonus stacks with manual route bonus
+- Superweapon destroy triggers diplomacy panic (war with non-allies)
+- Campaign defeat on flagship HP = 0 via `__destroyFlagship` test hook
+
+### Known issues
+- Strategic structure build buttons not yet in planet panel (available via test hooks + Campaign tab for superweapon/hero)
+- Manual trade route galaxy-map drawing UI deferred (data model + hooks complete)
+- Phase 5 verify section 6 research checks may be timing-sensitive on slow runs
+
+### Suggested next
+- Post–Phase 6 polish: manual trade route map UI, strategic structure build panel, hero flagship sprites

@@ -22,6 +22,9 @@ export const TECH_CLUSTERS = {
   trade: { label: 'Trade', color: '#7aff9e', icon: '⇄' },
   wormhole: { label: 'Wormhole', color: '#b07adb', icon: '◎' },
   research: { label: 'Research', color: '#7ad0ff', icon: '⚗' },
+  diplomacy: { label: 'Diplomacy', color: '#9ae6ff', icon: '☮' },
+  superweapon: { label: 'Superweapon', color: '#ff4a6a', icon: '✸' },
+  flagship: { label: 'Flagship', color: '#ffe08a', icon: '★' },
 };
 
 /** Infer display icon from node effect/category. */

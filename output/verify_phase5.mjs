@@ -46,7 +46,8 @@ await page.evaluate(() => window.__newGame(42));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 7', s.saveVersion === 7);
+check('1.1 saveVersion is 9', s.saveVersion === 9);
+check('1.1b battleGroups array', Array.isArray(s.battleGroups));
 check('1.2 empireQueue array', Array.isArray(s.empireQueue));
 check('1.3 research defaults', s.research?.unlocked?.includes('eco_baseline'));
 check('1.4 factions.ai present', s.factions?.ai?.homeSystemId != null);
@@ -82,22 +83,29 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-2', 
 await page.evaluate(() => window.__loadSlot('slot-2'));
 await page.waitForFunction(() => typeof window.render_game_to_text === 'function');
 s = await text();
-check('1.7 v6 migrates to v7', s.saveVersion === 7 && s.research?.unlocked?.includes('eco_baseline'));
+check('1.7 v6 migrates to v9', s.saveVersion === 9 && s.research?.unlocked?.includes('eco_baseline'));
 
 await page.evaluate(() => window.__newGame(42));
-await page.evaluate(() => { window.getGameState().credits = 5000; });
+await page.evaluate(() => {
+  window.getGameState().credits = 5000;
+  window.getGameState().research.unlocked.push('mil_corvette_2');
+});
 await page.evaluate(() => window.__seedTestShipyards());
 const creditsBefore = (await text()).credits;
-const enq = await page.evaluate(() => window.__enqueueHull('corvette'));
-check('2.1 enqueue ok', enq.ok);
-s = await text();
-check('2.2 credits deducted', s.credits < creditsBefore);
-check('2.3 queue length 1', s.empireQueue.length >= 1);
-const cancel = await page.evaluate(() => {
+const enqCancel = await page.evaluate(() => {
+  window.getGameState().paused = true;
+  const enq = window.__enqueueHull('corvette');
+  const creditsAfterEnq = window.getGameState().credits;
   const q = window.__getEmpireQueue().find((x) => x.status === 'pending');
-  return q ? window.__cancelQueueItem(q.id) : { ok: false };
+  const cancel = q ? window.__cancelQueueItem(q.id) : { ok: false, reason: 'no pending' };
+  window.getGameState().paused = false;
+  return { enq, cancel, creditsAfterEnq };
 });
-check('2.4 cancel refunds', cancel.ok && cancel.refunded > 0);
+check('2.1 enqueue ok', enqCancel.enq.ok);
+check('2.2 credits deducted', enqCancel.creditsAfterEnq < creditsBefore);
+check('2.4 cancel refunds', enqCancel.cancel.ok && enqCancel.cancel.refunded > 0, enqCancel.cancel.reason ?? '');
+s = await text();
+check('2.3 queue length after cancel', s.empireQueue.length === 0);
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => { window.getGameState().credits = 20000; });
@@ -130,9 +138,9 @@ check('5.2 station count', (await text()).research.stationCount === 3);
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => { window.getGameState().credits = 5000; });
 check('6.1 prereq gate', !(await page.evaluate(() => window.__startResearch('eco_trade_hub'))).ok);
-check('6.2 start research', (await page.evaluate(() => window.__startResearch('eco_outpost_2'))).ok);
+check('6.2 start research', (await page.evaluate(() => window.__startResearch('eco_surveyor'))).ok);
 await page.evaluate(() => window.advanceTime(120000));
-check('6.3 unlock after progress', (await text()).research.unlocked.includes('eco_outpost_2'));
+check('6.3 unlock after progress', (await text()).research.unlocked.includes('eco_surveyor'));
 
 await page.evaluate(() => window.__newGame(42));
 s = await text();

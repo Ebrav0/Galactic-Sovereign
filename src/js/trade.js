@@ -7,6 +7,8 @@ import {
   TICK_MS,
 } from './constants.js';
 import { shellTradeBonus } from './dyson.js';
+import { diplomaticTradeBonus } from './diplomacy.js';
+import { manualRouteBonus } from './trade-routes.js';
 import { allocateStructureId } from './economy.js';
 import {
   findPlanet,
@@ -141,7 +143,8 @@ export function tradeIncomePerSecondSync(state) {
     if (stationCount === 0) continue;
     const connectivity = 1 + TRADE_CONNECTIVITY_BONUS * Math.max(0, component.length - 1);
     const avgShell = shellMultSum / stationCount;
-    total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult;
+    total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult
+      * manualRouteBonus(state) * diplomaticTradeBonus(state);
   }
   return total;
 }

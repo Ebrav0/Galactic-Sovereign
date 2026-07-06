@@ -289,7 +289,7 @@ const after = JSON.parse(window.render_game_to_text()).credits;
 
 Phases follow GDD §19. One task per agent session; do not skip phases.
 
-### Phase 0 — Foundation (current)
+### Phase 0 — Foundation
 
 | # | Task | Acceptance criteria |
 |---|------|---------------------|
@@ -399,7 +399,21 @@ gives an unanchored exit nowhere to go).
 **Phase 5 exit criteria:** empire queue routes ships; research/trade/AI loops work; save-v7; `verify_phase5.mjs` pass; phase3/4 regression updated.
 
 ### Phase 6 — Late game
-Superweapon (3 completed spheres); hero flagships; diplomacy; 5–6 missions; tutorial; content roster completion.
+
+| # | Task | Acceptance criteria |
+|---|------|---------------------|
+| 6.0 | save-v8 docs + verify baseline | `docs/schemas/save-v8.json`; `verify_phase5.mjs` accepts v8 |
+| 6.1–6.5 | save-v9 + milestones + shell bonuses | `milestones.js`; shell #4/#7 wired; notifications |
+| 6.6–6.9 | Tech clusters | Diplomacy, Superweapon, Flagship nodes + UI labels |
+| 6.10–6.17 | Superweapon | cradle, create/destroy/jump, shield counterplay, hooks |
+| 6.18–6.22 | Hero flagships | build, transit, tactical anchor, UI |
+| 6.23–6.28 | Diplomacy + multi-AI | treaties, 3 factions, panic, Diplomacy tab |
+| 6.29–6.32 | Manual trade routes | CRUD, income bonus, hooks |
+| 6.33–6.40 | Campaign layer | victory/defeat, 6 missions, tutorial, Campaign tab |
+| 6.41–6.45 | Strategic structures | listening post, lane relay, blockade fort, etc. |
+| 6.46–6.50 | Integration + verify | `verify_phase6.mjs` 40+ checks; docs + `progress.md` |
+
+**Phase 6 exit criteria:** superweapon loop, hero flagships, diplomacy, campaign/missions/tutorial, save-v9, `verify_phase6.mjs` pass, regression updated.
 
 ---
 

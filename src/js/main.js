@@ -122,6 +122,35 @@ import { aiFactionSummary, forceAiCapture } from './ai-faction.js';
 import { resetAiShipIds, aiShipsSummary } from './ai-ships.js';
 import { productionSlotSummary } from './production.js';
 import { allTechNodes, isTechUnlocked, techPrereqsMet } from './tech-web.js';
+import { milestonesSummary, setCompletedDysonsForTest } from './milestones.js';
+import {
+  buildSuperweaponCradle,
+  superweaponCreate,
+  superweaponDestroy,
+  superweaponJump,
+  superweaponSummary,
+  completeDysonShellForTest,
+  resetSuperweaponIds,
+} from './superweapon.js';
+import {
+  buildHeroFlagship,
+  spawnHeroFlagshipForTest,
+  setHeroRally,
+  orderHeroTravel,
+  heroFlagshipsSummary,
+  resetHeroFlagshipIds,
+} from './hero-flagships.js';
+import {
+  offerTreaty,
+  setRelation,
+  diplomacySummary,
+} from './diplomacy.js';
+import { addTradeRoute, clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
+import { setVictoryType, checkVictory, checkDefeat, campaignSummary } from './campaign.js';
+import { startMission, completeMissionForTest, advanceMissionObjective, missionsSummary } from './missions.js';
+import { getTutorialState, setTutorialStep, initTutorial } from './tutorial.js';
+import { buildStrategicStructure, strategicStructuresSummary } from './strategic-structures.js';
+import { shellShieldBonus, shellRepairBonus } from './dyson.js';
 
 let state = createNewGame(DEFAULT_SEED);
 state.pirates = spawnPirateFleets(state);
@@ -386,6 +415,8 @@ function doImportState(newState) {
   resetScoutIds(state);
   resetShipIds(state);
   resetBattleGroupIds(state);
+  resetSuperweaponIds(state);
+  resetHeroFlagshipIds(state);
   resetPirateIds(state);
   resetQueueIds(state);
   resetAiShipIds(state);
@@ -576,7 +607,16 @@ function frame(now) {
           ? `Dyson sphere complete at ${name}!`
           : `Shell #${ev.shellNumber} complete at ${name}`;
       toast(msg, 'ok');
+      for (const me of ev.milestoneEvents ?? []) {
+        if (me.milestone === 'diplomacy') toast('Diplomacy unlocked — treaties now available', 'ok');
+        if (me.milestone === 'superweapon') toast('Superweapon unlocked — build the cradle at your Stronghold', 'ok');
+      }
     }
+  }
+
+  for (const ev of tickEvents.campaignEvents ?? []) {
+    if (ev.type === 'victory') toast(`Victory: ${ev.victoryType}`, 'ok');
+    if (ev.type === 'defeat') toast(`Defeat: ${ev.reason}`, 'error');
   }
 
   for (const wh of tickEvents.wormholeArrivals ?? []) {
@@ -868,6 +908,19 @@ window.render_game_to_text = () => {
     dysonVisuals: viewedSystem && hasIntel(state, viewedSystemId)
       ? dysonVisualSummary(state, viewedSystemId, viewedSystem.star.radius, camera.zoom)
       : null,
+    milestones: milestonesSummary(state),
+    diplomacy: diplomacySummary(state),
+    superweapon: superweaponSummary(state),
+    heroFlagships: heroFlagshipsSummary(state),
+    campaign: campaignSummary(state),
+    missions: missionsSummary(state),
+    tutorial: getTutorialState(state),
+    manualTradeRoutes: tradeRoutesSummary(state),
+    strategicStructures: strategicStructuresSummary(state),
+    shellBonuses: viewedSystem ? {
+      shield: shellShieldBonus(viewedSystem, state),
+      repair: shellRepairBonus(viewedSystem),
+    } : null,
     tickMs: TICK_MS,
   });
 };
@@ -1027,3 +1080,34 @@ window.__completeWormholeTransit = () => {
   return arrival ? { ok: true, ...arrival } : { ok: false, reason: 'Transit incomplete' };
 };
 window.__listGalaxyIds = () => Object.keys(state.galaxies ?? {});
+
+// --- Phase 6 test hooks ---
+window.__completeDysonShell = (systemId, shellNum) =>
+  completeDysonShellForTest(state, systemId ?? viewedSystemId, shellNum);
+window.__setCompletedDysons = (n) => setCompletedDysonsForTest(state, n);
+window.__buildSuperweaponCradle = () => buildSuperweaponCradle(state);
+window.__superweaponCreate = (anchorId) => superweaponCreate(state, anchorId ?? state.stronghold);
+window.__superweaponDestroy = (systemId) => superweaponDestroy(state, systemId);
+window.__superweaponJump = (starId) => superweaponJump(state, starId ?? state.stronghold);
+window.__buildHeroFlagship = (rallyStarId) => buildHeroFlagship(state, rallyStarId);
+window.__spawnHeroFlagship = (systemId) => spawnHeroFlagshipForTest(state, systemId ?? viewedSystemId);
+window.__setRelation = (factionId, status) => setRelation(state, factionId, status);
+window.__offerTreaty = (factionId, type) => offerTreaty(state, factionId, type);
+window.__addTradeRoute = (from, to) => addTradeRoute(state, from, to);
+window.__clearTradeRoutes = () => clearTradeRoutes(state);
+window.__startMission = (id) => startMission(state, id);
+window.__advanceMissionObjective = (missionId, objectiveId) =>
+  advanceMissionObjective(state, missionId, objectiveId);
+window.__completeMission = (id) => completeMissionForTest(state, id);
+window.__setTutorialStep = (n) => setTutorialStep(state, n);
+window.__getTutorialState = () => getTutorialState(state);
+window.__initTutorial = () => initTutorial(state);
+window.__setVictoryType = (type, mode) => setVictoryType(state, type, mode);
+window.__checkVictory = () => checkVictory(state);
+window.__checkDefeat = () => checkDefeat(state);
+window.__buildStrategicStructure = (type, planetId) =>
+  buildStrategicStructure(state, viewedSystemId, type, planetId ?? selection);
+window.__destroyFlagship = () => {
+  state.flagship.hp = 0;
+  return { ok: true };
+};

@@ -320,4 +320,65 @@ export const TECH_NODES = {
     id: 'res_ai_core', cluster: 'research', name: 'AI Research Core',
     prereqs: ['res_lab_3', 'wh_empire_relay'], creditCost: 2500, solariiCost: 6, researchMs: 135000, effect: 'research_speed_20',
   },
+
+  // ─── Diplomacy (Phase 6) ───
+  dip_truce_protocol: {
+    id: 'dip_truce_protocol', cluster: 'diplomacy', name: 'Truce Protocol',
+    prereqs: ['mega_shell_matrix'], creditCost: 800, solariiCost: 2, researchMs: 72000, effect: 'unlock_diplomacy',
+    requiresDiplomacy: true,
+  },
+  dip_trade_charter: {
+    id: 'dip_trade_charter', cluster: 'diplomacy', name: 'Trade Charter',
+    prereqs: ['dip_truce_protocol', 'trade_galactic_net'], creditCost: 1000, solariiCost: 2, researchMs: 80000, effect: 'diplomacy_trade',
+    requiresDiplomacy: true,
+  },
+  dip_alliance_pact: {
+    id: 'dip_alliance_pact', cluster: 'diplomacy', name: 'Alliance Pact',
+    prereqs: ['dip_trade_charter', 'mil_war_doctrine'], creditCost: 1500, solariiCost: 4, researchMs: 90000, effect: 'diplomacy_alliance',
+    requiresDiplomacy: true,
+  },
+  dip_embassy_network: {
+    id: 'dip_embassy_network', cluster: 'diplomacy', name: 'Embassy Network',
+    prereqs: ['dip_trade_charter'], creditCost: 1200, solariiCost: 3, researchMs: 85000, effect: 'diplomacy_trade_bonus',
+    requiresDiplomacy: true,
+  },
+
+  // ─── Superweapon (Phase 6) ───
+  sw_cradle_unlock: {
+    id: 'sw_cradle_unlock', cluster: 'superweapon', name: 'Superweapon Cradle',
+    prereqs: ['mega_dyson_overdrive', 'dip_truce_protocol'], creditCost: 3000, solariiCost: 8, researchMs: 120000, effect: 'unlock_superweapon_cradle',
+    requiresSuperweapon: true,
+  },
+  sw_create_star: {
+    id: 'sw_create_star', cluster: 'superweapon', name: 'Stellar Genesis',
+    prereqs: ['sw_cradle_unlock'], creditCost: 0, solariiCost: 10, researchMs: 100000, effect: 'superweapon_create',
+    requiresSuperweapon: true,
+  },
+  sw_destroy_star: {
+    id: 'sw_destroy_star', cluster: 'superweapon', name: 'Stellar Annihilation',
+    prereqs: ['sw_cradle_unlock', 'sw_create_star'], creditCost: 0, solariiCost: 12, researchMs: 110000, effect: 'superweapon_destroy',
+    requiresSuperweapon: true,
+  },
+  sw_jump_gate: {
+    id: 'sw_jump_gate', cluster: 'superweapon', name: 'Superweapon Jump',
+    prereqs: ['sw_cradle_unlock', 'wh_fleet_jump'], creditCost: 2000, solariiCost: 8, researchMs: 95000, effect: 'superweapon_jump',
+    requiresSuperweapon: true,
+  },
+
+  // ─── Hero / Flagship (Phase 6) ───
+  hero_hull_unlock: {
+    id: 'hero_hull_unlock', cluster: 'flagship', name: 'Hero Flagship Protocol',
+    prereqs: ['sw_cradle_unlock', 'mil_command_cruiser'], creditCost: 2500, solariiCost: 5, researchMs: 90000, effect: 'unlock_hero_flagship',
+    requiresSuperweapon: true,
+  },
+  hero_rally_doctrine: {
+    id: 'hero_rally_doctrine', cluster: 'flagship', name: 'Rally Doctrine',
+    prereqs: ['hero_hull_unlock'], creditCost: 1800, solariiCost: 4, researchMs: 80000, effect: 'hero_rally_bonus',
+    requiresSuperweapon: true,
+  },
+  hero_command_aura: {
+    id: 'hero_command_aura', cluster: 'flagship', name: 'Command Aura',
+    prereqs: ['hero_hull_unlock', 'mil_war_doctrine'], creditCost: 2200, solariiCost: 5, researchMs: 85000, effect: 'hero_combat_bonus',
+    requiresSuperweapon: true,
+  },
 };
