@@ -1603,6 +1603,30 @@ button {
   width: 100%;
   cursor: pointer;
   position: relative;
+  align-items: center;
+}
+
+.fleet-group-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-cyan);
+  filter: drop-shadow(0 0 4px rgba(111, 214, 255, 0.45));
+}
+
+.fleet-group-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.fleet-group-icon--selected,
+.list-row--selected .fleet-group-icon {
+  color: var(--accent-green);
+  filter: drop-shadow(0 0 6px rgba(125, 255, 168, 0.55));
 }
 
 .fleet-group-delete {

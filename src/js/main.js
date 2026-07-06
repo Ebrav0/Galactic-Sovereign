@@ -657,7 +657,7 @@ function frame(now) {
   }
 
   if (view === 'galaxy') {
-    drawGalaxy(ctx2d, state, selectedScoutId);
+    drawGalaxy(ctx2d, state, selectedScoutId, selectedBattleGroupId);
   } else {
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator);

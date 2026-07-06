@@ -641,6 +641,8 @@ function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId) {
     const group = battleGroups.find((g) => g.id === groupId);
     if (!group) continue;
     header.classList.toggle('list-row--selected', group.id === selectedBattleGroupId);
+    const fleetIcon = header.querySelector('.fleet-group-icon');
+    fleetIcon?.classList.toggle('fleet-group-icon--selected', group.id === selectedBattleGroupId);
     const sub = header.querySelector('.list-row__sub');
     if (!sub) continue;
     const shipCount = group.shipIds.length;
@@ -866,6 +868,23 @@ function wireQueueCategoryToggle(container, e) {
   return true;
 }
 
+function createFleetGroupIcon(selected = false) {
+  const wrap = document.createElement('span');
+  wrap.className = `fleet-group-icon${selected ? ' fleet-group-icon--selected' : ''}`;
+  wrap.setAttribute('aria-hidden', 'true');
+  wrap.innerHTML = `<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+    <g fill="currentColor">
+      <path opacity="0.7" d="M5.1 14.4 6.9 10.4 6 10 4.2 13.6z"/>
+      <path opacity="0.7" d="M14.9 14.4 13.1 10.4 14 10 15.8 13.6z"/>
+      <path d="M10 2.8 13.4 4.9 12.8 9.1 11.3 9.6 10.8 6.4 9.2 6.4 8.7 9.6 7.2 9.1 6.6 4.9z"/>
+      <rect x="9.05" y="5.15" width="1.9" height="2.05" rx="0.25"/>
+      <path fill="none" stroke="currentColor" stroke-width="0.55" opacity="0.35"
+        d="M10 10.6v4.2M7.4 13.8l2.6-1.3 2.6 1.3"/>
+    </g>
+  </svg>`;
+  return wrap;
+}
+
 function renderFleetShipRow(ship, galaxy, state) {
   const row = document.createElement('div');
   row.className = 'list-row fleet-ship-row';
@@ -998,9 +1017,7 @@ function renderFleetPanel(container, state, ctx) {
     header.className = `list-row fleet-group-header${selected ? ' list-row--selected' : ''}`;
     header.dataset.fleetSelect = group.id;
 
-    const icon = document.createElement('span');
-    icon.className = 'list-row__icon';
-    icon.style.background = 'var(--accent-green)';
+    const icon = createFleetGroupIcon(selected);
 
     const main = document.createElement('span');
     main.className = 'list-row__main';
@@ -1606,7 +1623,7 @@ export function initUi(ctx) {
       if (!shipId) return;
       const target = zone.dataset.dropTarget;
       const groupId = target === 'unassigned' ? null : target;
-      const res = assignShipToGroup(getState(), shipId, groupId);
+      const res = assignShipToGroup(shipId, groupId);
       if (!res.ok) toast(res.reason, 'error');
     });
   }

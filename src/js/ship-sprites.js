@@ -988,3 +988,94 @@ export function drawScoutSprite(ctx, x, y, angle, r, selected) {
   ctx.shadowBlur = 0;
   ctx.restore();
 }
+
+function drawFleetFormationGlyph(ctx, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = hexToRgba(color, 0.45);
+  ctx.lineWidth = 0.45;
+
+  ctx.beginPath();
+  ctx.moveTo(0, -5.5);
+  ctx.lineTo(2.8, -1.2);
+  ctx.lineTo(1.2, -0.4);
+  ctx.lineTo(0, -2.2);
+  ctx.lineTo(-1.2, -0.4);
+  ctx.lineTo(-2.8, -1.2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.globalAlpha = 0.75;
+  ctx.beginPath();
+  ctx.moveTo(-3.8, 2.8);
+  ctx.lineTo(-2.4, 0.2);
+  ctx.lineTo(-3.1, -0.2);
+  ctx.lineTo(-4.4, 2.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(3.8, 2.8);
+  ctx.lineTo(2.4, 0.2);
+  ctx.lineTo(3.1, -0.2);
+  ctx.lineTo(4.4, 2.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(0, 1.2);
+  ctx.lineTo(0, 5.5);
+  ctx.moveTo(-1.8, 4.6);
+  ctx.lineTo(0, 3.6);
+  ctx.lineTo(1.8, 4.6);
+  ctx.stroke();
+}
+
+/** Battle group marker for galaxy map — naval glyph + ship count badge. */
+export function drawFleetMarker(ctx, x, y, scale, opts = {}) {
+  const {
+    shipCount = 0,
+    power = 0,
+    selected = false,
+  } = opts;
+  const s = Math.max(0.55, Math.min(1.4, scale));
+  const accent = selected ? THEME.accentGreen : THEME.accentCyan;
+  const badgeW = Math.max(28, 34 * s);
+  const badgeH = Math.max(14, 16 * s);
+  const left = x - badgeW * 0.5;
+  const top = y - badgeH * 0.5;
+
+  ctx.save();
+  ctx.fillStyle = selected ? 'rgba(125, 255, 168, 0.18)' : 'rgba(111, 214, 255, 0.12)';
+  ctx.strokeStyle = hexToRgba(accent, selected ? 0.95 : 0.75);
+  ctx.lineWidth = Math.max(1, 1.1 * s);
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(left, top, badgeW, badgeH, Math.max(2, 3 * s));
+  } else {
+    ctx.rect(left, top, badgeW, badgeH);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  if (selected) {
+    ctx.shadowColor = hexToRgba(THEME.accentGreen, 0.55);
+    ctx.shadowBlur = 8 * s;
+    ctx.strokeStyle = hexToRgba(THEME.accentGreen, 0.45);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.translate(left + badgeW * 0.22, y);
+  ctx.scale(0.85 * s, 0.85 * s);
+  drawFleetFormationGlyph(ctx, accent);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const label = power > 0 ? `${shipCount} · ${power}` : String(shipCount);
+  ctx.font = `600 ${Math.max(7.5, 9 * s)}px "IBM Plex Mono", monospace`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = selected ? THEME.accentGreen : '#e8f4ff';
+  ctx.fillText(label, left + badgeW * 0.42, y + 0.5 * s);
+
+  ctx.restore();
+}

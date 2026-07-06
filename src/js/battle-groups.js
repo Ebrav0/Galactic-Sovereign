@@ -1,7 +1,9 @@
 // Player battle groups — manual fleet organization + group dispatch.
 
-import { findPlayerShip, orderShipTravel } from './fleets.js';
+import { getGraph } from './galaxy-scope.js';
+import { findPlayerShip, orderShipTravel, playerShipStatus } from './fleets.js';
 import { findHeroFlagship } from './hero-flagships.js';
+import { effectiveDps } from './hull.js';
 import { systemById } from './state.js';
 
 let nextBattleGroupId = 1;
@@ -200,4 +202,106 @@ export function setBattleGroupHeroAnchor(state, groupId, heroId) {
   }
   group.anchorHeroId = heroId;
   return { ok: true, groupId, anchorHeroId: heroId };
+}
+
+/** Galaxy-map markers: one entry per fleet per stationed system. */
+export function fleetMarkersForGalaxy(state, selectedBattleGroupId = null) {
+  const markers = new Map();
+  for (const group of battleGroupsForGalaxy(state)) {
+    for (const shipId of group.shipIds) {
+      const ship = findPlayerShip(state, shipId);
+      if (!ship || ship.galaxyId !== state.activeGalaxyId || ship.hp <= 0) continue;
+      if (ship.transit || !ship.systemId) continue;
+
+      const key = `${group.id}:${ship.systemId}`;
+      let marker = markers.get(key);
+      if (!marker) {
+        marker = {
+          groupId: group.id,
+          ordinal: group.ordinal,
+          name: formatFleetName(group.ordinal),
+          systemId: ship.systemId,
+          shipCount: 0,
+          power: 0,
+          selected: group.id === selectedBattleGroupId,
+        };
+        markers.set(key, marker);
+      }
+      marker.shipCount++;
+      marker.power += effectiveDps(ship) + ship.hp / 40;
+    }
+  }
+  return [...markers.values()].map((m) => ({
+    ...m,
+    power: Math.round(m.power),
+  }));
+}
+
+/** Lane keys (a|b) used by battle-group ships currently in transit. */
+export function fleetTransitLaneKeys(state, selectedBattleGroupId = null) {
+  const all = new Set();
+  const selected = new Set();
+  for (const group of battleGroupsForGalaxy(state)) {
+    for (const shipId of group.shipIds) {
+      const ship = findPlayerShip(state, shipId);
+      if (!ship?.transit || ship.galaxyId !== state.activeGalaxyId) continue;
+      const t = ship.transit;
+      for (let i = t.legIndex; i < t.path.length - 1; i++) {
+        const a = t.path[i];
+        const b = t.path[i + 1];
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        all.add(key);
+        if (group.id === selectedBattleGroupId) selected.add(key);
+      }
+    }
+  }
+  return { all, selected };
+}
+
+/** Moving fleet badges — centroid of each group's in-transit ships on the lane graph. */
+export function fleetTransitMarkersForGalaxy(state, selectedBattleGroupId = null) {
+  const galaxy = getGraph(state);
+  const out = [];
+  for (const group of battleGroupsForGalaxy(state)) {
+    const transiting = [];
+    for (const shipId of group.shipIds) {
+      const ship = findPlayerShip(state, shipId);
+      if (!ship || ship.galaxyId !== state.activeGalaxyId || ship.hp <= 0 || !ship.transit) continue;
+      transiting.push(ship);
+    }
+    if (transiting.length === 0) continue;
+
+    let x = 0;
+    let y = 0;
+    let angle = 0;
+    let power = 0;
+    let placed = 0;
+    let destId = null;
+    for (const ship of transiting) {
+      const status = playerShipStatus(ship, galaxy, state.time);
+      if (!status) continue;
+      x += status.x;
+      y += status.y;
+      angle += status.angle;
+      power += effectiveDps(ship) + ship.hp / 40;
+      destId = ship.transit.path[ship.transit.path.length - 1];
+      placed++;
+    }
+    if (placed === 0) continue;
+
+    out.push({
+      groupId: group.id,
+      ordinal: group.ordinal,
+      name: formatFleetName(group.ordinal),
+      x: x / placed,
+      y: y / placed,
+      angle: angle / placed,
+      destId,
+      shipCount: placed,
+      power: Math.round(power),
+      selected: group.id === selectedBattleGroupId,
+      inTransit: true,
+    });
+  }
+  return out;
 }

@@ -69,7 +69,9 @@ import {
   drawHeroFlagshipSprite,
   drawScoutSprite,
   drawShuttleSprite,
+  drawFleetMarker,
 } from './ship-sprites.js';
+import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
 import {
   THEME,
@@ -608,7 +610,7 @@ function starNodeRadius(state, starId) {
 
 const BLACK_HOLE_NODE_RADIUS = 26;
 
-export function drawGalaxy(ctx, state, selectedScoutId = null) {
+export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGroupId = null) {
   const canvas = ctx.canvas;
   ctx.fillStyle = THEME.bgGalaxy;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -657,6 +659,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const b = route.toSystemId;
     manualRoutes.add(a < b ? `${a}|${b}` : `${b}|${a}`);
   }
+  const fleetRoutes = fleetTransitLaneKeys(state, selectedBattleGroupId);
 
   for (let i = 0; i < galaxy.lanes.length; i++) {
     const [aId, bId] = galaxy.lanes[i];
@@ -670,6 +673,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const onFlagshipRoute = routeLanes?.has(key);
     const onScoutRoute = scoutRoutes.has(key);
     const onManualRoute = manualRoutes.has(key);
+    const onFleetRoute = fleetRoutes.all.has(key);
+    const onFleetSelectedRoute = fleetRoutes.selected.has(key);
 
     if (onManualRoute) {
       ctx.setLineDash([8 * z, 6 * z]);
@@ -679,6 +684,14 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       ctx.setLineDash([6 * z, 4 * z]);
       ctx.strokeStyle = THEME.laneScout;
       ctx.lineWidth = Math.max(1, 1.8 * z);
+    } else if (onFleetSelectedRoute) {
+      ctx.setLineDash([7 * z, 3 * z]);
+      ctx.strokeStyle = THEME.laneFleetSelected;
+      ctx.lineWidth = Math.max(1, 2.2 * z);
+    } else if (onFleetRoute) {
+      ctx.setLineDash([6 * z, 4 * z]);
+      ctx.strokeStyle = THEME.laneFleet;
+      ctx.lineWidth = Math.max(1, 1.9 * z);
     } else {
       ctx.setLineDash([]);
       ctx.strokeStyle = onFlagshipRoute ? THEME.laneRoute : THEME.lane;
@@ -745,6 +758,13 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   labelText(ctx, getActiveGalaxy(state)?.name ?? 'Galaxy', bhScreen.x, bhScreen.y - (BLACK_HOLE_NODE_RADIUS + 52) * z, Math.max(9, 11 * z), THEME.accentCyan);
   labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
   labelText(ctx, whLabel, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.85)');
+
+  const fleetMarkersBySystem = new Map();
+  for (const marker of fleetMarkersForGalaxy(state, selectedBattleGroupId)) {
+    const list = fleetMarkersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    fleetMarkersBySystem.set(marker.systemId, list);
+  }
 
   for (const star of galaxy.stars) {
     const system = systemById(state, star.id);
@@ -861,6 +881,17 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
         scout.id === selectedScoutId,
       );
     });
+
+    const fleetAtStar = fleetMarkersBySystem.get(star.id) ?? [];
+    fleetAtStar.forEach((marker, idx) => {
+      drawFleetMarker(
+        ctx,
+        s.x - nodeR - 12 * z - idx * 22 * z,
+        s.y + nodeR + 12 * z,
+        z,
+        marker,
+      );
+    });
   }
 
   if (transit) {
@@ -891,6 +922,26 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       Math.max(2.5, 4.5 * z),
       entry.scout.id === selectedScoutId,
     );
+  }
+
+  for (const marker of fleetTransitMarkersForGalaxy(state, selectedBattleGroupId)) {
+    const s = worldToScreen(galaxyCamera, marker.x, marker.y, canvas);
+    drawFleetMarker(ctx, s.x, s.y, z, marker);
+
+    if (marker.selected && marker.destId) {
+      const dest = nodePos(galaxy, marker.destId);
+      const ds = worldToScreen(galaxyCamera, dest.x, dest.y, canvas);
+      const pulse = 0.5 + 0.5 * Math.sin((performance.now() / SELECTION_PULSE_MS) * Math.PI * 2);
+      drawGlowRing(
+        ctx,
+        ds.x,
+        ds.y,
+        (starNodeRadius(state, marker.destId) + (10 + 4 * pulse)) * z,
+        THEME.accentGreen,
+        Math.max(1, 1.6 * z),
+        0.35 + 0.4 * pulse,
+      );
+    }
   }
 
   flushStars(ctx, 'bloom');

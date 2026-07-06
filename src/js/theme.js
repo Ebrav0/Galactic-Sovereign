@@ -40,6 +40,8 @@ export const THEME = {
   lane: 'rgba(110, 150, 255, 0.22)',
   laneRoute: 'rgba(255, 210, 122, 0.55)',
   laneScout: 'rgba(122, 255, 158, 0.45)',
+  laneFleet: 'rgba(111, 214, 255, 0.5)',
+  laneFleetSelected: 'rgba(125, 255, 168, 0.65)',
 
   scout: { normal: '#9fc7ff', selected: '#b8ffb8' },
 
