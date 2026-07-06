@@ -32,6 +32,7 @@ const HULL_RENDER = {
   command_cruiser: { scale: 1.3 },
   miner: { scale: 0.95 },
   flagship: { scale: 1.5 },
+  hero_flagship: { scale: 1.25 },
 };
 
 function hullColors(hull, side) {
@@ -855,6 +856,28 @@ function drawMinerModel(ctx, r, c, time) {
   ctx.restore();
 }
 
+function drawHeroFlagshipModel(ctx, r, colors, time = performance.now()) {
+  const flicker = 0.85 + 0.15 * Math.sin(time / 55);
+  ctx.fillStyle = colors.hull;
+  ctx.strokeStyle = colors.stroke;
+  ctx.lineWidth = r * 0.08;
+  ctx.beginPath();
+  ctx.moveTo(r * 1.1, 0);
+  ctx.lineTo(-r * 0.35, r * 0.55);
+  ctx.lineTo(-r * 0.85, r * 0.35);
+  ctx.lineTo(-r * 1.0, 0);
+  ctx.lineTo(-r * 0.85, -r * 0.35);
+  ctx.lineTo(-r * 0.35, -r * 0.55);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = hexToRgba(THEME.accentGold, 0.35 + 0.2 * flicker);
+  ctx.beginPath();
+  ctx.arc(r * 0.15, 0, r * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  engineFlame(ctx, -r * 1.05, 0, r * 1.4, r * 0.28, colors.engine, flicker);
+}
+
 function drawHullShape(ctx, hull, r, colors, time) {
   switch (hull) {
     case 'patrol_cutter': drawPatrolCutterModel(ctx, r, colors); break;
@@ -879,6 +902,7 @@ function drawHullShape(ctx, hull, r, colors, time) {
     case 'command_cruiser': drawCommandCruiserModel(ctx, r, colors); break;
     case 'miner': drawMinerModel(ctx, r, colors, time); break;
     case 'flagship': drawFlagshipModel(ctx, r * 0.85, { time, side: 'player' }); break;
+    case 'hero_flagship': drawHeroFlagshipModel(ctx, r, colors, time); break;
     case 'corvette': drawCorvetteModel(ctx, r, colors); break;
     case 'scout':
     default:
@@ -926,6 +950,17 @@ export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
   ctx.rotate(heading);
   drawFlagshipModel(ctx, r, { thrusting, time: performance.now() });
   ctx.restore();
+}
+
+/** Hero flagship sprite (galaxy + system views). */
+export function drawHeroFlagshipSprite(ctx, x, y, heading, r, hp = 1, maxHp = 1) {
+  const colors = hullColors('hero_flagship', 'player');
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+  drawHeroFlagshipModel(ctx, r, colors, performance.now());
+  ctx.restore();
+  drawHpBar(ctx, x, y, r, hp, maxHp);
 }
 
 /** Whisper-ship shuttle sprite. */

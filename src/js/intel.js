@@ -1,11 +1,23 @@
 // Scout intel overlay (GDD §9). Intel map is serialized per galaxy; fog is derived.
 
-import { systemById } from './state.js';
-import { getGalaxyIntel, getGraph } from './galaxy-scope.js';
+import { neighborsOf } from './galaxy.js';
+import { systemById, isPlayerOwned } from './state.js';
+import { getGalaxyIntel, getGraph, getSystems } from './galaxy-scope.js';
+import { listeningPostCount } from './strategic-structures.js';
 
 export function hasIntel(state, systemId) {
   if (systemId === state.stronghold) return true;
-  return !!getGalaxyIntel(state)[systemId];
+  if (getGalaxyIntel(state)[systemId]) return true;
+
+  const graph = getGraph(state);
+  if (!graph) return false;
+
+  for (const system of Object.values(getSystems(state))) {
+    if (!isPlayerOwned(state, system.id)) continue;
+    if (listeningPostCount(state, system.id) <= 0) continue;
+    if (neighborsOf(graph, system.id).includes(systemId)) return true;
+  }
+  return false;
 }
 
 export function gatherIntel(state, systemId) {

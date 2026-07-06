@@ -12,6 +12,7 @@ import { hullStats } from './hull.js';
 import { neighborsOf } from './galaxy.js';
 import { getGraph } from './galaxy-scope.js';
 import { systemById } from './state.js';
+import { effectiveLegDurationMs } from './strategic-structures.js';
 
 let nextHeroId = 1;
 
@@ -132,7 +133,7 @@ export function orderHeroTravel(state, heroId, targetStarId) {
     return { ok: false, reason: 'Target not adjacent' };
   }
   const stats = hullStats('hero_flagship');
-  const legMs = Math.max(2000, Math.round(80000 / stats.laneSpeed * 100));
+  const legMs = effectiveLegDurationMs(state, graph, from, targetStarId, stats.laneSpeed, 2000);
   hero.transit = {
     fromId: from,
     destId: targetStarId,

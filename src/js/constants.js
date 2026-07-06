@@ -134,6 +134,12 @@ export const CAPTURE_STRUCTURE_WEIGHT = {
   dyson_launcher: 3,
   trade_station: 3,
   research_station: 4,
+  listening_post: 1,
+  lane_relay: 1,
+  blockade_fort: 2,
+  forward_base: 2,
+  supply_cache: 1,
+  command_post: 3,
 };
 export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
@@ -285,7 +291,7 @@ export const AI_PERSONALITY_NAMES = {
   megastructure: 'Solar Architects',
   wormhole: 'Void Runners',
 };
-export const AI_FACTION_COUNT = 3;
+export const AI_FACTION_COUNT = 4;
 export const AI_LANE_SPEED = 90;
 export const AI_LANE_MIN_LEG_MS = 2500;
 

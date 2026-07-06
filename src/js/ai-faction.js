@@ -22,8 +22,8 @@ import { captureRequirement } from './capture.js';
 import { spawnAiShip, aiShipsInSystem, aiCombatPresence, orderAiShipTravel, aiFleetPowerInSystem } from './ai-ships.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 
-function aiShouldContestPlayerLocal(state) {
-  const rel = state.diplomacy?.relations?.['ai-0'];
+function aiShouldContestPlayerLocal(state, factionId = 'ai-0') {
+  const rel = state.diplomacy?.relations?.[factionId];
   if (!rel) return true;
   return rel.status === 'war' || rel.status === 'neutral';
 }
@@ -342,7 +342,9 @@ function aiDispatchToNeutral(state, rng) {
 }
 
 function aiDispatchToPlayerBorder(state, rng) {
-  if (!aiShouldContestPlayerLocal(state) && !isSuperweaponPanicLocal(state)) return false;
+  const factions = state.factions?.list ?? [state.factions?.ai].filter(Boolean);
+  const anyHostile = factions.some((f) => aiShouldContestPlayerLocal(state, f.id));
+  if (!anyHostile && !isSuperweaponPanicLocal(state)) return false;
   const owned = aiOwnedSystems(state);
   for (const fromId of owned) {
     const borders = adjacentPlayer(state, fromId);

@@ -65,6 +65,7 @@ import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
 import {
   drawHullSprite,
   drawFlagshipSprite,
+  drawHeroFlagshipSprite,
   drawScoutSprite,
   drawShuttleSprite,
 } from './ship-sprites.js';
@@ -636,6 +637,13 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     }
   }
 
+  const manualRoutes = new Set();
+  for (const route of state.manualTradeRoutes ?? []) {
+    const a = route.fromSystemId;
+    const b = route.toSystemId;
+    manualRoutes.add(a < b ? `${a}|${b}` : `${b}|${a}`);
+  }
+
   for (let i = 0; i < galaxy.lanes.length; i++) {
     const [aId, bId] = galaxy.lanes[i];
     const a = nodePos(galaxy, aId);
@@ -647,8 +655,13 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
     const onFlagshipRoute = routeLanes?.has(key);
     const onScoutRoute = scoutRoutes.has(key);
+    const onManualRoute = manualRoutes.has(key);
 
-    if (onScoutRoute) {
+    if (onManualRoute) {
+      ctx.setLineDash([8 * z, 6 * z]);
+      ctx.strokeStyle = hexToRgba(THEME.accentGold, 0.85);
+      ctx.lineWidth = Math.max(1.5, 2.4 * z);
+    } else if (onScoutRoute) {
       ctx.setLineDash([6 * z, 4 * z]);
       ctx.strokeStyle = THEME.laneScout;
       ctx.lineWidth = Math.max(1, 1.8 * z);
@@ -807,6 +820,22 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       drawFlagshipSprite(ctx, s.x + nodeR + 14 * z, s.y - nodeR - 12 * z, -Math.PI / 4, Math.max(3, 5.5 * z), false);
     }
 
+    let heroIdx = 0;
+    for (const hero of state.heroFlagships ?? []) {
+      if (hero.galaxyId !== state.activeGalaxyId || hero.systemId !== star.id || hero.transit) continue;
+      if (state.time < (hero.buildCompleteAt ?? 0)) continue;
+      drawHeroFlagshipSprite(
+        ctx,
+        s.x - nodeR - 14 * z - heroIdx * 12 * z,
+        s.y + nodeR + 10 * z,
+        Math.PI / 5,
+        Math.max(2.5, 4.5 * z),
+        hero.hp,
+        hero.maxHp,
+      );
+      heroIdx++;
+    }
+
     const stationed = scoutsAtSystem(state, star.id);
     stationed.forEach((scout, idx) => {
       drawScoutSprite(
@@ -851,6 +880,17 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   }
 
   flushStars(ctx, 'bloom');
+
+  const swAction = state.superweapon?.lastAction;
+  if (swAction && state.time - swAction.at < 4000) {
+    const target = nodePos(galaxy, swAction.targetSystemId);
+    if (target) {
+      const ts = worldToScreen(galaxyCamera, target.x, target.y, canvas);
+      const pulse = 1 - (state.time - swAction.at) / 4000;
+      const color = swAction.type === 'destroy' ? '#ff4466' : swAction.type === 'create' ? '#66ffaa' : '#aa88ff';
+      drawGlowRing(ctx, ts.x, ts.y, (40 + 30 * pulse) * z, color, Math.max(2, 3 * z), 0.25 + 0.45 * pulse);
+    }
+  }
 }
 
 function screenInView(s, canvas, margin = 60) {

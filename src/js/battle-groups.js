@@ -1,6 +1,7 @@
 // Player battle groups — manual fleet organization + group dispatch.
 
 import { findPlayerShip, orderShipTravel } from './fleets.js';
+import { findHeroFlagship } from './hero-flagships.js';
 import { systemById } from './state.js';
 
 let nextBattleGroupId = 1;
@@ -66,6 +67,7 @@ export function createBattleGroup(state) {
     galaxyId: state.activeGalaxyId,
     ordinal,
     shipIds: [],
+    anchorHeroId: null,
   };
   groups.push(group);
   return group;
@@ -186,4 +188,16 @@ export function orderBattleGroupTravel(state, groupId, targetId) {
   }
 
   return { ok: true, dispatched, skipped, reasons, fleetName: formatFleetName(group.ordinal) };
+}
+
+export function setBattleGroupHeroAnchor(state, groupId, heroId) {
+  const group = findBattleGroup(state, groupId);
+  if (!group) return { ok: false, reason: 'No such fleet' };
+  if (heroId) {
+    const hero = findHeroFlagship(state, heroId);
+    if (!hero) return { ok: false, reason: 'No such hero flagship' };
+    if (hero.galaxyId !== group.galaxyId) return { ok: false, reason: 'Hero not in this galaxy' };
+  }
+  group.anchorHeroId = heroId;
+  return { ok: true, groupId, anchorHeroId: heroId };
 }

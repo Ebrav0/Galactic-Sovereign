@@ -18,9 +18,10 @@ import {
 } from './hull.js';
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
 import { aiShipsInSystem } from './ai-ships.js';
-import { playerCombatShipsAtSystem, stationedShipPose } from './fleets.js';
-import { heroInSystem } from './hero-flagships.js';
+import { playerCombatShipsAtSystem, stationedShipPose, anchoredCombatShipsAtSystem } from './fleets.js';
+import { heroInSystem, heroesInSystem } from './hero-flagships.js';
 import { shellRepairBonus } from './dyson.js';
+import { supplyCacheRepairMultiplier } from './strategic-structures.js';
 import { pruneBattleGroups } from './battle-groups.js';
 import { softKeepOut, nudgeUnitKeepOut } from './ship-motion.js';
 import { getSystems, getGraph } from './galaxy-scope.js';
@@ -43,7 +44,10 @@ function tacticalAnchorInSystem(state, systemId) {
 }
 
 function playerForcesInSystem(state, systemId) {
-  const ships = playerCombatShipsAtSystem(state, systemId);
+  const ships = [
+    ...playerCombatShipsAtSystem(state, systemId),
+    ...anchoredCombatShipsAtSystem(state, systemId),
+  ];
   const hasFlagship = flagshipInSystem(state, systemId);
   return { ships, hasFlagship };
 }
@@ -298,7 +302,7 @@ function tickTacticalBattle(state, systemId, battle) {
 
     const healRate = healRateForShip(unit);
     const sys = systemById(state, systemId);
-    const repairMult = sys ? shellRepairBonus(sys) : 1;
+    const repairMult = (sys ? shellRepairBonus(sys) : 1) * supplyCacheRepairMultiplier(state, systemId);
     if (healRate > 0) {
       const allies = battle.units.filter((u) => u.hp > 0 && u.side === unit.side && u.id !== unit.id);
       for (const ally of allies) {

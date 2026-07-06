@@ -178,7 +178,7 @@ export function techEffects(state) {
       case 'diplomacy_trade': break;
       case 'diplomacy_alliance': break;
       case 'diplomacy_trade_bonus': break;
-      case 'hero_rally_bonus': break;
+      case 'hero_rally_bonus': effects.captureForceBonus += 1; break;
       case 'hero_combat_bonus': break;
       default: break;
     }

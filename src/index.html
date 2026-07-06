@@ -147,6 +147,32 @@
         </div>
       </div>
 
+      <div id="superweapon-galaxy-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Superweapon</span>
+        </div>
+        <div class="panel__body" id="superweapon-galaxy-body">
+          <p class="panel-note">Select a target star on the map, then act.</p>
+        </div>
+        <div class="panel__footer panel__actions">
+          <button id="sw-create-btn" type="button" class="btn btn--primary btn--block">Create Star (adjacent)</button>
+          <button id="sw-destroy-btn" type="button" class="btn btn--primary btn--block">Destroy Target</button>
+          <button id="sw-jump-btn" type="button" class="btn btn--primary btn--block">Jump Flagship Here</button>
+        </div>
+      </div>
+
+      <div id="trade-routes-panel" class="panel hidden">
+        <div class="panel__header">
+          <span class="panel__title">Manual Trade Routes</span>
+        </div>
+        <div class="panel__body" id="trade-routes-body">
+          <p class="panel-note">Ctrl+click two trade-station systems to link them.</p>
+        </div>
+        <div class="panel__footer panel__actions">
+          <button id="clear-trade-routes-btn" type="button" class="btn btn--ghost btn--block">Clear All Routes</button>
+        </div>
+      </div>
+
       <div id="intel-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -185,6 +211,7 @@
           <button id="build-launcher-btn" type="button" class="btn btn--primary btn--block hidden">Build Dyson Launcher</button>
           <button id="build-trade-btn" type="button" class="btn btn--primary btn--block hidden">Build Trade Station</button>
           <button id="build-research-btn" type="button" class="btn btn--primary btn--block hidden">Build Research Station</button>
+          <div id="strategic-build-btns" class="panel__actions panel__actions--stack hidden"></div>
           <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Add Scout to Empire Queue</button>
           <div id="build-panel-note" class="panel-note"></div>
         </div>
@@ -251,6 +278,32 @@
 
     <div id="hud-overlays">
       <div id="save-menu-backdrop" class="modal-backdrop hidden"></div>
+      <div id="new-game-modal-backdrop" class="modal-backdrop hidden"></div>
+      <div id="new-game-modal" class="panel panel--modal hidden">
+        <div class="panel__header">
+          <span class="panel__title">New Campaign</span>
+        </div>
+        <div class="panel__body">
+          <p class="panel-note">Choose how to begin your reign.</p>
+          <label class="panel-note">Victory goal</label>
+          <select id="new-game-victory" class="btn btn--ghost btn--block">
+            <option value="sandbox">Sandbox (no victory)</option>
+            <option value="dominion">Dominion (35% systems)</option>
+            <option value="megastructure">Megastructure (3 Dysons + Superweapon)</option>
+            <option value="annihilation">Annihilation (eliminate AI)</option>
+            <option value="economic">Economic (50k cr + 50 Solarii)</option>
+            <option value="sculptor">Sculptor (3 superweapon actions)</option>
+          </select>
+          <div class="panel__actions panel__actions--stack" style="margin-top:12px">
+            <button id="new-game-sandbox-btn" type="button" class="btn btn--primary btn--block">Sandbox</button>
+            <button id="new-game-tutorial-btn" type="button" class="btn btn--ghost btn--block">Tutorial</button>
+            <button id="new-game-missions-btn" type="button" class="btn btn--ghost btn--block">Missions</button>
+          </div>
+        </div>
+        <div class="panel__footer save-menu-actions">
+          <button id="close-new-game-btn" type="button" class="btn btn--ghost btn--sm">Cancel</button>
+        </div>
+      </div>
       <div id="save-menu" class="panel panel--modal hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>

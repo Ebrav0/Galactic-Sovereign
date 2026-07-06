@@ -7,8 +7,14 @@ import {
   FORWARD_BASE_COST,
   SUPPLY_CACHE_COST,
   COMMAND_POST_COST,
+  LANE_RELAY_SPEED_BONUS,
+  BLOCKADE_TRADE_PENALTY,
+  FORWARD_BASE_CAPTURE_BONUS,
+  COMMAND_POST_CAPTURE_REDUCTION,
+  SUPPLY_CACHE_REPAIR_BONUS,
 } from './constants.js';
 import { allocateStructureId } from './economy.js';
+import { laneLength } from './galaxy.js';
 import {
   findPlanet,
   hasOutpost,
@@ -24,7 +30,7 @@ function flagshipInSystem(state, systemId) {
     && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
-const STRUCTURE_DEFS = {
+export const STRUCTURE_DEFS = {
   listening_post: {
     cost: LISTENING_POST_COST,
     tech: 'wh_scout_range',
@@ -150,4 +156,51 @@ export function strategicStructuresSummary(state) {
     }
   }
   return counts;
+}
+
+export function supplyCacheCount(state, systemId, bodyId = null) {
+  const system = systemById(state, systemId);
+  if (!system) return 0;
+  return system.structures.filter(
+    (s) => s.type === 'supply_cache' && (bodyId == null || s.bodyId === bodyId),
+  ).length;
+}
+
+/** Lane relay reduces transit time on legs touching a relay system. */
+export function laneRelayModifier(state, idA, idB) {
+  let mod = 1;
+  for (const sid of [idA, idB]) {
+    if (laneRelayCount(state, sid) > 0 && isPlayerOwned(state, sid)) {
+      mod -= LANE_RELAY_SPEED_BONUS;
+    }
+  }
+  return Math.max(0.55, mod);
+}
+
+export function effectiveLegDurationMs(state, galaxy, idA, idB, speed, minLegMs) {
+  const base = Math.max(minLegMs, Math.round((laneLength(galaxy, idA, idB) / speed) * 1000));
+  return Math.max(minLegMs, Math.round(base * laneRelayModifier(state, idA, idB)));
+}
+
+/** Blockade forts on either endpoint reduce trade throughput on that lane. */
+export function blockadeTradeMultiplier(state, idA, idB) {
+  let mult = 1;
+  for (const sid of [idA, idB]) {
+    if (blockadeFortCount(state, sid) > 0) mult *= (1 - BLOCKADE_TRADE_PENALTY);
+  }
+  return mult;
+}
+
+export function forwardBaseCaptureBonus(state, systemId) {
+  return forwardBaseCount(state, systemId) * FORWARD_BASE_CAPTURE_BONUS;
+}
+
+export function commandPostCaptureReduction(state, systemId) {
+  return commandPostCount(state, systemId) * COMMAND_POST_CAPTURE_REDUCTION;
+}
+
+export function supplyCacheRepairMultiplier(state, systemId) {
+  const system = systemById(state, systemId);
+  const caches = system?.structures?.filter((s) => s.type === 'supply_cache').length ?? 0;
+  return caches > 0 ? SUPPLY_CACHE_REPAIR_BONUS : 1;
 }

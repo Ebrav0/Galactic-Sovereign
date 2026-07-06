@@ -60,7 +60,17 @@ import {
   superweaponJump,
   superweaponSummary,
 } from './superweapon.js';
-import { buildHeroFlagship } from './hero-flagships.js';
+import {
+  buildHeroFlagship,
+  heroFlagshipsSummary,
+  setHeroRally,
+} from './hero-flagships.js';
+import { clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
+import {
+  canBuildStrategicStructure,
+  buildStrategicStructure,
+  STRUCTURE_DEFS,
+} from './strategic-structures.js';
 import { allTechNodes, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
@@ -74,6 +84,7 @@ import {
   battleGroupsForGalaxy,
   unassignedPlayerShips,
   fleetLocationSummary,
+  setBattleGroupHeroAnchor,
 } from './battle-groups.js';
 import { getGraph } from './galaxy-scope.js';
 
@@ -81,7 +92,7 @@ const el = (id) => document.getElementById(id);
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Alt+click: send fleet · Shift+click: send scout · double-click: view system · M: system view',
+  galaxy: 'Click star: travel · Alt+click: fleet · Shift+click: scout · Ctrl+click: trade route · double-click: view · M: system',
 };
 
 const PLANET_DOT = {
@@ -889,6 +900,40 @@ function renderFleetShipRow(ship, galaxy, state) {
   return row;
 }
 
+function renderStrategicBuildButtons(container, state, systemId, planetId) {
+  if (!container) return;
+  clearChildren(container);
+  if (!isPlayerOwned(state, systemId)) {
+    container.classList.add('hidden');
+    return;
+  }
+  container.classList.remove('hidden');
+  const labels = {
+    listening_post: 'Listening Post',
+    lane_relay: 'Lane Relay',
+    blockade_fort: 'Blockade Fort',
+    forward_base: 'Forward Base',
+    supply_cache: 'Supply Cache',
+    command_post: 'Command Post',
+  };
+  for (const type of Object.keys(STRUCTURE_DEFS)) {
+    const def = STRUCTURE_DEFS[type];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--block btn--sm';
+    const pid = def.perBody ? planetId : null;
+    const check = canBuildStrategicStructure(state, systemId, type, pid);
+    btn.disabled = !check.ok;
+    btn.textContent = `${labels[type] ?? type} (${def.cost} cr)`;
+    btn.onclick = () => {
+      const res = buildStrategicStructure(state, systemId, type, pid);
+      if (res.ok) toast(`${labels[type] ?? type} built`, 'ok');
+      else toast(res.reason, 'error');
+    };
+    container.appendChild(btn);
+  }
+}
+
 function renderFleetPanel(container, state, ctx) {
   const {
     getSelectedScoutId,
@@ -1000,7 +1045,67 @@ function renderFleetPanel(container, state, ctx) {
       drop.appendChild(list);
     }
     block.appendChild(drop);
+
+    const anchorRow = document.createElement('div');
+    anchorRow.className = 'dev-row';
+    anchorRow.style.marginTop = '6px';
+    const anchorLabel = document.createElement('span');
+    anchorLabel.className = 'panel-note';
+    anchorLabel.textContent = 'Anchor to hero:';
+    const anchorSel = document.createElement('select');
+    anchorSel.className = 'btn btn--ghost btn--sm';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'None';
+    anchorSel.appendChild(noneOpt);
+    for (const hero of heroFlagshipsSummary(state)) {
+      const opt = document.createElement('option');
+      opt.value = hero.id;
+      opt.textContent = `${hero.id} @ ${systemById(state, hero.systemId)?.name ?? hero.systemId}`;
+      if (group.anchorHeroId === hero.id) opt.selected = true;
+      anchorSel.appendChild(opt);
+    }
+    anchorSel.onchange = () => {
+      const res = setBattleGroupHeroAnchor(state, group.id, anchorSel.value || null);
+      if (!res.ok) toast(res.reason, 'error');
+    };
+    anchorRow.appendChild(anchorLabel);
+    anchorRow.appendChild(anchorSel);
+    block.appendChild(anchorRow);
+
     container.appendChild(block);
+  }
+
+  const heroes = heroFlagshipsSummary(state);
+  if (heroes.length > 0) {
+    const heroTitle = document.createElement('div');
+    heroTitle.className = 'intel-section-title fleet-section-header';
+    heroTitle.textContent = 'Hero Flagships';
+    container.appendChild(heroTitle);
+    for (const hero of heroes) {
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      main.innerHTML = `<div class="list-row__title">${hero.id}</div><div class="list-row__sub">${systemById(state, hero.systemId)?.name ?? hero.systemId} · HP ${Math.ceil(hero.hp)} · rally ${hero.rallyStarId ?? '—'}</div>`;
+      row.appendChild(main);
+      const rallySel = document.createElement('select');
+      rallySel.className = 'btn btn--ghost btn--xs';
+      const graph = getGraph(state);
+      for (const star of graph.stars) {
+        const opt = document.createElement('option');
+        opt.value = star.id;
+        opt.textContent = star.name;
+        if (hero.rallyStarId === star.id) opt.selected = true;
+        rallySel.appendChild(opt);
+      }
+      rallySel.onchange = () => {
+        const res = setHeroRally(state, hero.id, rallySel.value);
+        if (!res.ok) toast(res.reason, 'error');
+      };
+      row.appendChild(rallySel);
+      container.appendChild(row);
+    }
   }
 
   const fleetHint = document.createElement('p');
@@ -1346,6 +1451,8 @@ export function initUi(ctx) {
     doBuildLauncher,
     doEnterWormhole,
     doBuildWormholeAnchor,
+    getGalaxyTargetStar,
+    doStartNewGame,
   } = ctx;
 
   let sidePanel = null;
@@ -1574,6 +1681,56 @@ export function initUi(ctx) {
     else toast('Queued scout', 'ok');
   });
 
+  el('sw-create-btn')?.addEventListener('click', () => {
+    const st = getState();
+    const anchor = getGalaxyTargetStar?.() ?? st.stronghold;
+    const res = superweaponCreate(st, anchor);
+    toast(res.ok ? 'Star created' : res.reason, res.ok ? 'ok' : 'error');
+  });
+  el('sw-destroy-btn')?.addEventListener('click', () => {
+    const target = getGalaxyTargetStar?.();
+    if (!target) { toast('Click a target star on the map', 'error'); return; }
+    const res = superweaponDestroy(getState(), target);
+    toast(res.ok ? 'System destroyed' : res.reason, res.ok ? 'ok' : 'error');
+  });
+  el('sw-jump-btn')?.addEventListener('click', () => {
+    const target = getGalaxyTargetStar?.();
+    if (!target) { toast('Click a target star on the map', 'error'); return; }
+    const res = superweaponJump(getState(), target);
+    toast(res.ok ? 'Jump complete' : res.reason, res.ok ? 'ok' : 'error');
+  });
+  el('clear-trade-routes-btn')?.addEventListener('click', () => {
+    const res = clearTradeRoutes(getState());
+    toast(`Cleared ${res.cleared ?? 0} routes`, 'ok');
+  });
+
+  const newGameModal = el('new-game-modal');
+  const newGameBackdrop = el('new-game-modal-backdrop');
+  function openNewGameModal() {
+    newGameModal?.classList.remove('hidden');
+    newGameBackdrop?.classList.remove('hidden');
+  }
+  function closeNewGameModal() {
+    newGameModal?.classList.add('hidden');
+    newGameBackdrop?.classList.add('hidden');
+  }
+  el('close-new-game-btn')?.addEventListener('click', closeNewGameModal);
+  newGameBackdrop?.addEventListener('click', closeNewGameModal);
+  el('new-game-sandbox-btn')?.addEventListener('click', () => {
+    const vt = el('new-game-victory')?.value ?? 'sandbox';
+    doStartNewGame?.({ mode: 'sandbox', victoryType: vt });
+    closeNewGameModal();
+  });
+  el('new-game-tutorial-btn')?.addEventListener('click', () => {
+    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+    closeNewGameModal();
+  });
+  el('new-game-missions-btn')?.addEventListener('click', () => {
+    doStartNewGame?.({ mode: 'mission', victoryType: 'dominion' });
+    closeNewGameModal();
+  });
+  openNewGameModal();
+
   const saveMenu = el('save-menu');
   const saveBackdrop = el('save-menu-backdrop');
 
@@ -1763,6 +1920,30 @@ export function initUi(ctx) {
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
     el('view-hint').textContent = HINTS[view];
     updateTabBar(view, sidePanel);
+
+    const swGalaxyPanel = el('superweapon-galaxy-panel');
+    const tradeRoutesPanel = el('trade-routes-panel');
+    const ms = milestonesSummary(state);
+    if (view === 'galaxy' && ms.superweaponUnlocked) {
+      swGalaxyPanel?.classList.remove('hidden');
+      const sw = superweaponSummary(state);
+      const targetId = getGalaxyTargetStar?.() ?? null;
+      const targetName = targetId ? (systemById(state, targetId)?.name ?? targetId) : '—';
+      el('superweapon-galaxy-body').innerHTML =
+        `<p class="panel-note">Target: <strong>${targetName}</strong></p>`
+        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'} · CD ${Math.ceil(sw.cooldownMs / 1000)}s</p>`;
+    } else {
+      swGalaxyPanel?.classList.add('hidden');
+    }
+    if (view === 'galaxy' && ms.diplomacyUnlocked) {
+      tradeRoutesPanel?.classList.remove('hidden');
+      const tr = tradeRoutesSummary(state);
+      el('trade-routes-body').innerHTML =
+        `<p class="panel-note">${tr.count}/${tr.max} routes · bonus ×${tr.bonus?.toFixed?.(2) ?? tr.bonus}</p>`
+        + (tr.routes?.map((r) => `<div class="intel-row">${r.from} ↔ ${r.to}</div>`).join('') ?? '');
+    } else {
+      tradeRoutesPanel?.classList.add('hidden');
+    }
 
     const dysonPanel = el('dyson-panel');
     if (sidePanel === 'dyson' && view === 'system') {
@@ -1989,6 +2170,7 @@ export function initUi(ctx) {
     } else if (!tradeCheck.ok && hasOutpost(state, viewedSystemId, planet.id)) note = tradeCheck.reason;
     else if (!researchCheck.ok && isPlayerOwned(state, viewedSystemId)) note = researchCheck.reason;
     else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
+    renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id);
     el('build-panel-note').textContent = note;
   };
 

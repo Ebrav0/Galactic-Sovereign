@@ -340,10 +340,32 @@ Never delete prior entries.
 - Superweapon destroy triggers diplomacy panic (war with non-allies)
 - Campaign defeat on flagship HP = 0 via `__destroyFlagship` test hook
 
+### Suggested next
+- Post–Phase 6 polish: balance pass on strategic structure costs, additional mission chains
+
+---
+
+## Session 2026-07-06 — Phase 6 polish & complete plan
+
+**Task claimed:** Finish remaining Phase 6 gaps (UI wiring, strategic structure effects, hero anchoring, verify expansion)
+**Status:** complete
+
+### Done
+- `src/js/tips.js` — contextual milestone toasts (diplomacy, superweapon, manual trade routes)
+- Strategic structure effects wired: listening post intel extension, lane relay transit speed, blockade trade penalty, forward base/command post capture bonuses, supply cache repair multiplier
+- `trade.js` — `trade_lane_secured` bridge logic; blockade multiplier in trade graph
+- Hero battle-group anchoring: `anchorHeroId`, capture force from anchored groups, combat presence, fleet tab UI + rally picker
+- Galaxy UI: manual trade route drawing (Ctrl+click), superweapon panel, new-game modal, hero flagship sprites, superweapon cinematic glow placeholder
+- `constants.js` — `AI_FACTION_COUNT = 4`; per-faction AI diplomacy contest in `ai-faction.js`
+- `tutorial.js` — step 8 diplomacy beat; `output/verify_phase6.mjs` — **41/41** checks (jump, manual trade, treaties, tech gates, hero anchor, structures, missions, tutorial, 4 AI factions)
+
+### Decisions
+- New-game modal auto-shown on boot; `__newGame` closes it for headless verify
+- Strategic structure build buttons on planet panel when intel + selection present
+- Hero anchor contributes capture force via `captureForceFromAnchoredGroups` without duplicating hero tactical bonus
+
 ### Known issues
-- Strategic structure build buttons not yet in planet panel (available via test hooks + Campaign tab for superweapon/hero)
-- Manual trade route galaxy-map drawing UI deferred (data model + hooks complete)
-- Phase 5 verify section 6 research checks may be timing-sensitive on slow runs
+- Full regression suite (`verify_phase3`–`5`) is slow (~30+ min sequential); phase 6 verify is the Phase 6 exit gate
 
 ### Suggested next
-- Post–Phase 6 polish: manual trade route map UI, strategic structure build panel, hero flagship sprites
+- Electron packaging smoke test; optional Pixi migration if canvas profiling demands it

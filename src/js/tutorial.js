@@ -14,6 +14,7 @@ export const TUTORIAL_STEPS = [
   { id: 5, title: 'Capture', hint: 'Hold an uncontested system for 20 seconds with enough force.' },
   { id: 6, title: 'Dyson loop', hint: 'Build a sail foundry and complete Shell #1 for Solarii.' },
   { id: 7, title: 'Wormhole', hint: 'Visit the galactic core wormhole when ready.' },
+  { id: 8, title: 'Diplomacy', hint: 'Complete a Dyson sphere to unlock treaties with AI factions.' },
 ];
 
 export function getTutorialState(state) {
@@ -62,6 +63,7 @@ export function tryAdvanceTutorial(state) {
   }
   if (step === 6 && hasFoundry(state, sys)) advanced = true;
   if (step === 7 && state.flagship.systemId === 'core') advanced = true;
+  if (step === 8 && isDiplomacyUnlocked(state)) advanced = true;
 
   if (advanced && step < TUTORIAL_STEPS.length - 1) {
     state.campaign.tutorialStep = step + 1;
