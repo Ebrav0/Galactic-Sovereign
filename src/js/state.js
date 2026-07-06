@@ -354,16 +354,44 @@ export function createNewGame(seed) {
       queue: [],
     },
     factions: {
-      ai: {
+      list: [{
         id: 'ai-0',
         name: 'Dominion of Helix',
         personality: 'expansionist',
         homeSystemId: null,
         credits: 1200,
         lastActionTick: 0,
-      },
+      }],
+      ai: null,
     },
     aiShips: [],
+    milestones: {
+      completedDysonSystems: [],
+      diplomacyUnlocked: false,
+      superweaponUnlocked: false,
+    },
+    campaign: {
+      mode: 'sandbox',
+      victoryType: 'sandbox',
+      defeated: false,
+      won: false,
+      tutorialStep: null,
+      activeMissionId: null,
+      completedMissions: [],
+      missionProgress: {},
+    },
+    diplomacy: { relations: {} },
+    superweapon: {
+      cradleSystemId: null,
+      online: false,
+      cooldownUntil: 0,
+      jumpCooldownUntil: 0,
+      lastAction: null,
+      shieldCooldowns: {},
+      createCount: 0,
+    },
+    heroFlagships: [],
+    manualTradeRoutes: [],
   };
 
   hydrateGalaxy(state, homeGalaxyId);

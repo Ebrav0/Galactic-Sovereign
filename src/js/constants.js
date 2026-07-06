@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -44,6 +44,10 @@ export const HULL_STATS = {
   sensor_ship: { hp: 120, dps: 0, captureForce: 0, cost: 260, buildMs: 28000, laneSpeed: 115, healRate: 0 },
   builder_ship: { hp: 200, dps: 0, captureForce: 1, cost: 380, buildMs: 42000, laneSpeed: 95, healRate: 0 },
   command_cruiser: { hp: 450, dps: 14, captureForce: 3, cost: 720, buildMs: 58000, laneSpeed: 95, healRate: 0 },
+  hero_flagship: {
+    hp: 800, dps: 15, captureForce: 2,
+    cost: 2000, buildMs: 45000, laneSpeed: 110, healRate: 0,
+  },
   miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
 };
 
@@ -130,6 +134,12 @@ export const CAPTURE_STRUCTURE_WEIGHT = {
   dyson_launcher: 3,
   trade_station: 3,
   research_station: 4,
+  listening_post: 1,
+  lane_relay: 1,
+  blockade_fort: 2,
+  forward_base: 2,
+  supply_cache: 1,
+  command_post: 3,
 };
 export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
@@ -280,9 +290,59 @@ export const AI_STARTING_CREDITS = 1200;
 export const AI_STARTING_SYSTEMS = 4;
 export const AI_TICK_INTERVAL_TICKS = 20;
 export const AI_BUILD_OUTPOST_COST = 300;
-export const AI_PERSONALITY_NAMES = { expansionist: 'Dominion of Helix' };
+export const AI_PERSONALITY_NAMES = {
+  expansionist: 'Dominion of Helix',
+  economic: 'Veridian Compact',
+  megastructure: 'Solar Architects',
+  wormhole: 'Void Runners',
+};
+export const AI_FACTION_COUNT = 4;
 export const AI_LANE_SPEED = 90;
 export const AI_LANE_MIN_LEG_MS = 2500;
+
+// --- Phase 6: Late game ---
+export const SHELL_SHIELD_BONUS = 1.25;
+export const SHELL_REPAIR_BONUS = 1.2;
+export const DYSON_SHIELD_TECH_MULT = 1.15;
+export const DYSON_SHIELD_COOLDOWN_MS = 180000;
+export const SUPERWEAPON_CRADLE_COST = 5000;
+export const SUPERWEAPON_CRADLE_SOLARII = 10;
+export const SUPERWEAPON_CREATE_SOLARII = 25;
+export const SUPERWEAPON_DESTROY_SOLARII = 30;
+export const SUPERWEAPON_JUMP_SOLARII = 15;
+export const SUPERWEAPON_COOLDOWN_MS = 120000;
+export const SUPERWEAPON_JUMP_COOLDOWN_MS = 90000;
+export const HERO_FLAGSHIP_COST_CREDITS = 2000;
+export const HERO_FLAGSHIP_COST_SOLARII = 5;
+export const HERO_FLAGSHIP_HP = 800;
+export const HERO_FLAGSHIP_DPS = 15;
+export const HERO_FLAGSHIP_CAPTURE_FORCE = 2;
+export const HERO_FLAGSHIP_BUILD_MS = 45000;
+export const HERO_FLAGSHIP_LANE_SPEED = 110;
+export const MANUAL_TRADE_ROUTE_MAX = 12;
+export const MANUAL_TRADE_ROUTE_BONUS = 0.25;
+export const DIPLOMACY_TRUCE_COST = 500;
+export const DIPLOMACY_TRADE_TREATY_COST = 800;
+export const DIPLOMACY_ALLIANCE_COST = 1500;
+export const DIPLOMACY_ALLIANCE_SOLARII = 3;
+export const DIPLOMACY_TRADE_INCOME_BONUS = 0.2;
+export const AI_PANIC_DURATION_MS = 120000;
+export const LISTENING_POST_COST = 600;
+export const LANE_RELAY_COST = 750;
+export const BLOCKADE_FORT_COST = 900;
+export const FORWARD_BASE_COST = 700;
+export const SUPPLY_CACHE_COST = 500;
+export const COMMAND_POST_COST = 850;
+export const LANE_RELAY_SPEED_BONUS = 0.15;
+export const BLOCKADE_TRADE_PENALTY = 0.35;
+export const FORWARD_BASE_CAPTURE_BONUS = 1;
+export const SUPPLY_CACHE_REPAIR_BONUS = 1.15;
+export const COMMAND_POST_CAPTURE_REDUCTION = 1;
+export const LISTENING_POST_INTEL_BONUS = 1;
+export const VICTORY_DOMINION_THRESHOLD = 0.35;
+export const VICTORY_ECONOMIC_CREDITS = 50000;
+export const VICTORY_ECONOMIC_SOLARII = 50;
+export const VICTORY_SCULPTOR_ACTIONS = 3;
 
 // --- Rendering ---
 export const STARFIELD_COUNT = 320;

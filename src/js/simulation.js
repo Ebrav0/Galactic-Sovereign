@@ -17,6 +17,11 @@ import { tickResearch } from './research.js';
 import { dispatchEmpireQueue } from './empire-queue.js';
 import { tickAiFaction } from './ai-faction.js';
 import { tickAiShips } from './ai-ships.js';
+import { tickDiplomacy } from './diplomacy.js';
+import { tickSuperweapon } from './superweapon.js';
+import { tickHeroFlagships } from './hero-flagships.js';
+import { tickCampaign } from './campaign.js';
+import { tryAdvanceTutorial } from './tutorial.js';
 
 function handleArrival(state, systemId) {
   onForcesArrive(state, systemId);
@@ -24,16 +29,20 @@ function handleArrival(state, systemId) {
 
 function tickOnce(state) {
   state.time += TICK_MS;
-  // Phase 5 order: abstract → wormhole → income → trade → research → dispatch → production
-  // → AI faction → fleet transits → pirates → combat → dyson → capture
+  // Phase 6 order: abstract → wormhole → income → trade → research → diplomacy
+  // → superweapon cooldowns → dispatch → production → AI → hero flagships
+  // → fleet transits → pirates → combat → dyson → capture → campaign
   tickAbstractGalaxies(state);
   const wormholeArrival = tickWormholeTransit(state);
   applyIncomeTick(state);
   tickTrade(state);
   tickResearch(state);
+  tickDiplomacy(state);
+  tickSuperweapon(state);
   dispatchEmpireQueue(state);
   const prodReady = tickProduction(state);
   tickAiFaction(state);
+  tickHeroFlagships(state);
   const scoutArrivals = tickScouts(state);
   const shipArrivals = tickPlayerShips(state, (destId) => handleArrival(state, destId));
   const aiArrivals = tickAiShips(state, (destId) => handleArrival(state, destId));
@@ -43,9 +52,11 @@ function tickOnce(state) {
   const dysonEvents = tickDyson(state);
   applySolariiTick(state);
   const capture = tickCapture(state);
+  tryAdvanceTutorial(state);
+  const campaignEvents = tickCampaign(state);
   return {
     prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, battleEvents, dysonEvents, capture,
-    wormholeArrival,
+    wormholeArrival, campaignEvents,
   };
 }
 

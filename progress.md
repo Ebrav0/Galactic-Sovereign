@@ -311,3 +311,61 @@ Never delete prior entries.
 
 ### Suggested next
 - Phase 6 tasks: Superweapon cradle, hero flagships, diplomacy unlock
+
+---
+
+## Session 2026-07-05 — Phase 6 late game complete
+
+**Task claimed:** Phase 6 tasks 6.0–6.50
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=9`; `docs/schemas/save-v9.json`; `migrateV8toV9`
+- New modules: `milestones.js`, `superweapon.js`, `hero-flagships.js`, `diplomacy.js`, `trade-routes.js`, `campaign.js`, `missions.js`, `tutorial.js`, `strategic-structures.js`
+- Milestone gates: diplomacy at 1× Shell #8, superweapon at 3× distinct completed spheres
+- Wired shell #4 shield and #7 repair bonuses in `dyson.js`
+- 14 Phase 6 tech nodes (diplomacy, superweapon, flagship clusters) + UI cluster labels
+- Superweapon cradle, create/destroy/jump, Dyson shield counterplay, graph mutation
+- Hero flagships: build at cradle, lane transit, tactical anchor via `heroInSystem`
+- Diplomacy: truce/trade/alliance treaties; 3 AI factions; superweapon panic
+- Manual trade routes with income bonus; campaign victory/defeat; 6 missions; 8-step tutorial
+- Strategic structures module (listening post, lane relay, blockade fort, forward base, supply cache, command post)
+- UI: Diplomacy + Campaign tabs; extended `render_game_to_text()` Phase 6 blocks
+- `output/verify_phase6.mjs` — 28/28 pass; phase3/4/5/battle_groups regression updated for save-v9
+- `docs/IMPLEMENTATION_PLAN.md` §8 Phase 6 task table populated
+
+### Decisions
+- `factions.list[]` array for multi-AI with `factions.ai` alias to primary
+- Diplomacy trade bonus stacks with manual route bonus
+- Superweapon destroy triggers diplomacy panic (war with non-allies)
+- Campaign defeat on flagship HP = 0 via `__destroyFlagship` test hook
+
+### Suggested next
+- Post–Phase 6 polish: balance pass on strategic structure costs, additional mission chains
+
+---
+
+## Session 2026-07-06 — Phase 6 polish & complete plan
+
+**Task claimed:** Finish remaining Phase 6 gaps (UI wiring, strategic structure effects, hero anchoring, verify expansion)
+**Status:** complete
+
+### Done
+- `src/js/tips.js` — contextual milestone toasts (diplomacy, superweapon, manual trade routes)
+- Strategic structure effects wired: listening post intel extension, lane relay transit speed, blockade trade penalty, forward base/command post capture bonuses, supply cache repair multiplier
+- `trade.js` — `trade_lane_secured` bridge logic; blockade multiplier in trade graph
+- Hero battle-group anchoring: `anchorHeroId`, capture force from anchored groups, combat presence, fleet tab UI + rally picker
+- Galaxy UI: manual trade route drawing (Ctrl+click), superweapon panel, new-game modal, hero flagship sprites, superweapon cinematic glow placeholder
+- `constants.js` — `AI_FACTION_COUNT = 4`; per-faction AI diplomacy contest in `ai-faction.js`
+- `tutorial.js` — step 8 diplomacy beat; `output/verify_phase6.mjs` — **41/41** checks (jump, manual trade, treaties, tech gates, hero anchor, structures, missions, tutorial, 4 AI factions)
+
+### Decisions
+- New-game modal auto-shown on boot; `__newGame` closes it for headless verify
+- Strategic structure build buttons on planet panel when intel + selection present
+- Hero anchor contributes capture force via `captureForceFromAnchoredGroups` without duplicating hero tactical bonus
+
+### Known issues
+- Full regression suite (`verify_phase3`–`5`) is slow (~30+ min sequential); phase 6 verify is the Phase 6 exit gate
+
+### Suggested next
+- Electron packaging smoke test; optional Pixi migration if canvas profiling demands it

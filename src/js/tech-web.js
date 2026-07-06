@@ -1,6 +1,7 @@
 // Tech web logic — effects, unlocks, and queries (GDD §10).
 
 import { TECH_NODES } from './tech-nodes.js';
+import { refreshMilestones } from './milestones.js';
 
 export { TECH_NODES };
 
@@ -8,9 +9,18 @@ export function techNode(nodeId) {
   return TECH_NODES[nodeId] ?? null;
 }
 
+export function techMilestoneMet(state, node) {
+  if (!node) return true;
+  refreshMilestones(state);
+  if (node.requiresDiplomacy && !state.milestones?.diplomacyUnlocked) return false;
+  if (node.requiresSuperweapon && !state.milestones?.superweaponUnlocked) return false;
+  return true;
+}
+
 export function techPrereqsMet(state, nodeId) {
   const node = techNode(nodeId);
   if (!node) return false;
+  if (!techMilestoneMet(state, node)) return false;
   const unlocked = state.research?.unlocked ?? [];
   return node.prereqs.every((p) => unlocked.includes(p));
 }
@@ -159,6 +169,17 @@ export function techEffects(state) {
       case 'research_speed_20': effects.researchSpeedMult *= 1.2; break;
       case 'research_queue_2': effects.researchQueueDepth = Math.max(effects.researchQueueDepth, 2); break;
       case 'research_queue_3': effects.researchQueueDepth = Math.max(effects.researchQueueDepth, 3); break;
+      case 'unlock_hero_flagship': break;
+      case 'unlock_superweapon_cradle': break;
+      case 'superweapon_create': break;
+      case 'superweapon_destroy': break;
+      case 'superweapon_jump': break;
+      case 'unlock_diplomacy': break;
+      case 'diplomacy_trade': break;
+      case 'diplomacy_alliance': break;
+      case 'diplomacy_trade_bonus': break;
+      case 'hero_rally_bonus': effects.captureForceBonus += 1; break;
+      case 'hero_combat_bonus': break;
       default: break;
     }
   }
@@ -188,6 +209,7 @@ export function empireQueueHulls(state) {
   if (effects.unlockBuilderShip) hulls.push('builder_ship');
   if (effects.unlockCommandCruiser) hulls.push('command_cruiser');
   if (effects.unlockMinerHull) hulls.push('miner');
+  if (effects.unlockHeroFlagship) hulls.push('hero_flagship');
   return hulls;
 }
 

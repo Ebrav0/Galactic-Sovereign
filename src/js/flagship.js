@@ -23,6 +23,7 @@ import {
 import { findPath, nodeById } from './galaxy.js';
 import { systemById, findBody, bodyAngle, planetPosition, moonPosition } from './state.js';
 import { getGraph } from './galaxy-scope.js';
+import { effectiveLegDurationMs } from './strategic-structures.js';
 import { keepOutRepulsion } from './ship-motion.js';
 import { getStarVisualProfile } from './star-types.js';
 import {
@@ -335,11 +336,12 @@ export function orderTravel(state, targetId) {
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   clearOrbit(f);
+  const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, LANE_SPEED, LANE_MIN_LEG_MS);
   f.transit = {
     path,
     legIndex: 0,
     legStartTime: state.time,
-    legDurationMs: legDurationMs(galaxy, path[0], path[1], LANE_SPEED, LANE_MIN_LEG_MS),
+    legDurationMs: durFn(path[0], path[1]),
   };
   f.systemId = null;
   return { ok: true, path, etaMs: transitEtaMs(state) };
@@ -385,13 +387,16 @@ export function tickFlagship(state) {
   ensureOrbitField(f);
   if (!f.transit) syncPrevPose(f);
   if (f.transit) {
+    const galaxy = getGraph(state);
+    const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, LANE_SPEED, LANE_MIN_LEG_MS);
     advanceTransit(
       f.transit,
-      getGraph(state),
+      galaxy,
       state.time,
       LANE_SPEED,
       LANE_MIN_LEG_MS,
       (destId, fromId) => arrive(state, destId, fromId),
+      durFn,
     );
     return;
   }

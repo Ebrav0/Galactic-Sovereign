@@ -6,6 +6,7 @@ import {
   AI_TICK_INTERVAL_TICKS,
   AI_BUILD_OUTPOST_COST,
   AI_PERSONALITY_NAMES,
+  AI_FACTION_COUNT,
   SHIPYARD_COST,
   SCOUT_BUILD_MS,
   TICK_MS,
@@ -20,6 +21,16 @@ import {
 import { captureRequirement } from './capture.js';
 import { spawnAiShip, aiShipsInSystem, aiCombatPresence, orderAiShipTravel, aiFleetPowerInSystem } from './ai-ships.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
+
+function aiShouldContestPlayerLocal(state, factionId = 'ai-0') {
+  const rel = state.diplomacy?.relations?.[factionId];
+  if (!rel) return true;
+  return rel.status === 'war' || rel.status === 'neutral';
+}
+
+function isSuperweaponPanicLocal(state) {
+  return state.time < (state.diplomacy?.panicUntil ?? 0);
+}
 
 function aiRng(state, tickIndex) {
   return createRng(hashSeed(state.meta.seed, `ai-tick:${tickIndex}`));
@@ -47,20 +58,68 @@ function rimStars(state) {
     .map((s) => s.id);
 }
 
+export function listAiFactions(state) {
+  ensureFactions(state);
+  return state.factions.list ?? [state.factions.ai];
+}
+
 export function ensureFactions(state) {
   if (!state.factions) {
-    state.factions = {
-      ai: {
-        id: 'ai-0',
-        name: AI_PERSONALITY_NAMES.expansionist,
-        personality: 'expansionist',
-        homeSystemId: null,
-        credits: AI_STARTING_CREDITS,
-        lastActionTick: 0,
-      },
-    };
+    state.factions = { list: [], ai: null };
   }
+  if (!state.factions.list || state.factions.list.length === 0) {
+    state.factions.list = [{
+      id: 'ai-0',
+      name: AI_PERSONALITY_NAMES.expansionist,
+      personality: 'expansionist',
+      homeSystemId: null,
+      credits: AI_STARTING_CREDITS,
+      lastActionTick: 0,
+    }];
+  }
+  state.factions.ai = state.factions.list[0];
   if (!state.aiShips) state.aiShips = [];
+}
+
+const PERSONALITIES = ['expansionist', 'economic', 'megastructure', 'wormhole'];
+
+export function seedExtraAiFactions(state, galaxyId = state.homeGalaxyId) {
+  ensureFactions(state);
+  if (state.factions.list.length >= AI_FACTION_COUNT) return { ok: true, count: state.factions.list.length };
+  const graph = getGraph(state);
+  const rng = createRng(hashSeed(state.meta.seed, 'ai-multi-seed'));
+  const candidates = rimStars(state).filter((id) => {
+    return !state.factions.list.some((f) => f.homeSystemId === id);
+  });
+
+  while (state.factions.list.length < AI_FACTION_COUNT && candidates.length > 0) {
+    const idx = Math.floor(rng() * candidates.length);
+    const homeSystemId = candidates.splice(idx, 1)[0];
+    const personality = PERSONALITIES[state.factions.list.length % PERSONALITIES.length];
+    const faction = {
+      id: `ai-${state.factions.list.length}`,
+      name: AI_PERSONALITY_NAMES[personality] ?? `Faction ${state.factions.list.length}`,
+      personality,
+      homeSystemId,
+      credits: AI_STARTING_CREDITS,
+      lastActionTick: 0,
+    };
+    const system = systemById(state, homeSystemId, galaxyId);
+    if (system) {
+      system.owner = 'ai';
+      const planet = system.bodies.find((b) => b.type === 'habitable') ?? system.bodies[0];
+      if (planet && !system.structures.some((s) => s.type === 'outpost')) {
+        system.structures.push({
+          id: `ai-outpost-${homeSystemId}-${faction.id}`,
+          type: 'outpost',
+          bodyId: planet.id,
+          builtAtTime: 0,
+        });
+      }
+    }
+    state.factions.list.push(faction);
+  }
+  return { ok: true, count: state.factions.list.length };
 }
 
 export function seedAiFaction(state, galaxyId = state.homeGalaxyId) {
@@ -97,6 +156,11 @@ export function seedAiFaction(state, galaxyId = state.homeGalaxyId) {
 
   state.factions.ai.homeSystemId = homeSystemId;
   state.factions.ai.credits = AI_STARTING_CREDITS;
+  if (state.factions.list?.[0]) {
+    state.factions.list[0].homeSystemId = homeSystemId;
+    state.factions.list[0].credits = AI_STARTING_CREDITS;
+  }
+  seedExtraAiFactions(state, galaxyId);
 
   // Starting outpost + shipyard on home
   const home = systemById(state, homeSystemId, galaxyId);
@@ -278,6 +342,9 @@ function aiDispatchToNeutral(state, rng) {
 }
 
 function aiDispatchToPlayerBorder(state, rng) {
+  const factions = state.factions?.list ?? [state.factions?.ai].filter(Boolean);
+  const anyHostile = factions.some((f) => aiShouldContestPlayerLocal(state, f.id));
+  if (!anyHostile && !isSuperweaponPanicLocal(state)) return false;
   const owned = aiOwnedSystems(state);
   for (const fromId of owned) {
     const borders = adjacentPlayer(state, fromId);
@@ -341,15 +408,23 @@ export function tickAiFaction(state) {
 export function aiFactionSummary(state) {
   ensureFactions(state);
   const owned = aiOwnedSystems(state);
+  const primary = state.factions.ai;
   return {
-    id: state.factions.ai.id,
-    name: state.factions.ai.name,
-    personality: state.factions.ai.personality,
-    homeSystemId: state.factions.ai.homeSystemId,
-    credits: Math.round((state.factions.ai.credits ?? 0) * 100) / 100,
+    id: primary.id,
+    name: primary.name,
+    personality: primary.personality,
+    homeSystemId: primary.homeSystemId,
+    credits: Math.round((primary.credits ?? 0) * 100) / 100,
     ownedSystemCount: owned.length,
     ownedSystems: owned.slice(0, 12),
     fleetCount: (state.aiShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId).length,
+    factionCount: listAiFactions(state).length,
+    all: listAiFactions(state).map((f) => ({
+      id: f.id,
+      name: f.name,
+      personality: f.personality,
+      homeSystemId: f.homeSystemId,
+    })),
   };
 }
 

@@ -63,6 +63,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 5) e = migrateV5toV6(e);
   if (e.saveVersion === 6) e = migrateV6toV7(e);
   if (e.saveVersion === 7) e = migrateV7toV8(e);
+  if (e.saveVersion === 8) e = migrateV8toV9(e);
   return e;
 }
 
@@ -389,6 +390,66 @@ function migrateV7toV8(envelope) {
   };
 }
 
+function initPhase6State(state) {
+  state.milestones = state.milestones ?? {
+    completedDysonSystems: [],
+    diplomacyUnlocked: false,
+    superweaponUnlocked: false,
+  };
+  state.campaign = state.campaign ?? {
+    mode: 'sandbox',
+    victoryType: 'sandbox',
+    defeated: false,
+    won: false,
+    tutorialStep: null,
+    activeMissionId: null,
+    completedMissions: [],
+    missionProgress: {},
+  };
+  state.diplomacy = state.diplomacy ?? { relations: {} };
+  state.superweapon = state.superweapon ?? {
+    cradleSystemId: null,
+    online: false,
+    cooldownUntil: 0,
+    jumpCooldownUntil: 0,
+    lastAction: null,
+    shieldCooldowns: {},
+    createCount: 0,
+  };
+  state.heroFlagships = state.heroFlagships ?? [];
+  state.manualTradeRoutes = state.manualTradeRoutes ?? [];
+  if (!state.factions?.list) {
+    state.factions = state.factions ?? {};
+    if (state.factions.ai) {
+      state.factions.list = [state.factions.ai];
+    } else {
+      state.factions.list = [{
+        id: 'ai-0',
+        name: 'Dominion of Helix',
+        personality: 'expansionist',
+        homeSystemId: null,
+        credits: 1200,
+        lastActionTick: 0,
+      }];
+    }
+    state.factions.ai = state.factions.list[0];
+  }
+}
+
+// v8 -> v9 (Phase 6 late game).
+function migrateV8toV9(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 9,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -424,6 +485,7 @@ export function deserialize(envelopeJson) {
   }
 
   initPhase5State(envelope.state);
+  initPhase6State(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
 
   return { ok: true, state: envelope.state };

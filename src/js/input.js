@@ -41,6 +41,8 @@ export function attachInput(canvas, ctx) {
     onFollowRequest,
     onToggleOrbit,
     onCloseSidePanel,
+    onGalaxyStarClick,
+    onTradeRouteClick,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -164,6 +166,11 @@ export function attachInput(canvas, ctx) {
     const starId = hitTestStar(getState(), w.x, w.y);
     if (!starId) return;
 
+    if (e.ctrlKey && onTradeRouteClick) {
+      onTradeRouteClick(starId);
+      return;
+    }
+
     if (e.altKey && onBattleGroupTravel) {
       onBattleGroupTravel(starId);
       return;
@@ -181,6 +188,7 @@ export function attachInput(canvas, ctx) {
       return;
     }
     if (pendingStarClick) clearTimeout(pendingStarClick.timer);
+    if (onGalaxyStarClick) onGalaxyStarClick(starId);
     pendingStarClick = {
       id: starId,
       timer: setTimeout(() => {
