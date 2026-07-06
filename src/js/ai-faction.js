@@ -316,6 +316,16 @@ export function aiCaptureSystem(state, systemId) {
   return true;
 }
 
+function aiCaptureCandidateSystemIds(state) {
+  const ids = new Set();
+  for (const ship of state.aiShips ?? []) {
+    if (ship.galaxyId === state.activeGalaxyId && ship.systemId && !ship.transit && ship.hp > 0) {
+      ids.add(ship.systemId);
+    }
+  }
+  return ids;
+}
+
 export function forceAiCapture(state, systemId) {
   const system = systemById(state, systemId);
   if (!system || system.owner === 'player' || systemId === state.stronghold) {
@@ -365,8 +375,8 @@ export function tickAiFaction(state) {
 
   events.push(...aiTickShipyardBuilds(state).map((s) => ({ type: 'ai_ship_spawn', shipId: s.id })));
 
-  // Check arrivals for neutral capture
-  for (const sysId of Object.values(getSystems(state)).map((s) => s.id)) {
+  // Check only systems that contain AI ships; empty neutral stars cannot be captured.
+  for (const sysId of aiCaptureCandidateSystemIds(state)) {
     if (systemById(state, sysId)?.owner === 'neutral' && aiCombatPresence(state, sysId) > 0) {
       if (aiCaptureSystem(state, sysId)) {
         events.push({ type: 'ai_capture', systemId: sysId });

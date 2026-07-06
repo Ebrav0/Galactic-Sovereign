@@ -37,23 +37,24 @@ const HULL_RENDER = {
 
 function hullColors(hull, side) {
   const enemy = side === 'enemy';
+  const ai = side === 'ai';
   if (hull === 'healer') {
     return {
-      deck: enemy ? '#6a3a3a' : '#3a6a52',
-      hull: enemy ? '#4a2828' : '#24443a',
-      dark: enemy ? '#2a1616' : '#122420',
-      stroke: enemy ? '#ff8888' : '#7affb8',
-      glow: enemy ? '#ff5555' : '#7aff9e',
-      engine: enemy ? '#ff7755' : '#7ad0ff',
+      deck: enemy ? '#6a3a3a' : ai ? '#5a3f70' : '#3a6a52',
+      hull: enemy ? '#4a2828' : ai ? '#352348' : '#24443a',
+      dark: enemy ? '#2a1616' : ai ? '#1c132c' : '#122420',
+      stroke: enemy ? '#ff8888' : ai ? '#d194ff' : '#7affb8',
+      glow: enemy ? '#ff5555' : ai ? THEME.accentViolet : '#7aff9e',
+      engine: enemy ? '#ff7755' : ai ? '#c44dff' : '#7ad0ff',
     };
   }
   return {
-    deck: enemy ? '#5c3434' : '#3c4c66',
-    hull: enemy ? '#402424' : '#28344a',
-    dark: enemy ? '#241212' : '#141c2e',
-    stroke: enemy ? '#ff6666' : '#9fc7ff',
-    glow: enemy ? '#ff4444' : THEME.accentCyan,
-    engine: enemy ? '#ff6a3a' : '#7ad0ff',
+    deck: enemy ? '#5c3434' : ai ? '#4d376b' : '#3c4c66',
+    hull: enemy ? '#402424' : ai ? '#2f2347' : '#28344a',
+    dark: enemy ? '#241212' : ai ? '#171125' : '#141c2e',
+    stroke: enemy ? '#ff6666' : ai ? '#c889ff' : '#9fc7ff',
+    glow: enemy ? '#ff4444' : ai ? THEME.accentViolet : THEME.accentCyan,
+    engine: enemy ? '#ff6a3a' : ai ? '#c44dff' : '#7ad0ff',
   };
 }
 
@@ -940,6 +941,62 @@ export function drawHullSprite(ctx, x, y, hull, baseR, opts = {}) {
   }
   ctx.restore();
 
+  if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);
+}
+
+/** Fast tactical marker for large battles. Avoids shadows, gradients, and cached bitmap lookups. */
+export function drawHullSpriteLite(ctx, x, y, hull, baseR, opts = {}) {
+  const {
+    heading = 0,
+    side = 'player',
+    hp = 1,
+    maxHp = 1,
+    showHp = false,
+    alpha = 1,
+  } = opts;
+  const scale = hullRenderScale(hull);
+  const r = Math.max(2.5, baseR * scale * 0.78);
+  const colors = hullColors(hull, side);
+  const accent = side === 'enemy'
+    ? THEME.battle.enemy
+    : side === 'ai'
+      ? THEME.battle.ai
+      : THEME.battle.player;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+  ctx.fillStyle = colors.hull;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = Math.max(0.75, r * 0.12);
+  ctx.beginPath();
+  ctx.moveTo(r * 1.35, 0);
+  ctx.lineTo(-r * 0.85, r * 0.62);
+  ctx.lineTo(-r * 0.45, 0);
+  ctx.lineTo(-r * 0.85, -r * 0.62);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  if (hull === 'healer') {
+    ctx.strokeStyle = THEME.accentGreen;
+    ctx.lineWidth = Math.max(0.8, r * 0.13);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.1, -r * 0.42);
+    ctx.lineTo(-r * 0.1, r * 0.42);
+    ctx.moveTo(-r * 0.52, 0);
+    ctx.lineTo(r * 0.32, 0);
+    ctx.stroke();
+  } else if (hull.includes('carrier')) {
+    ctx.strokeStyle = hexToRgba(accent, 0.55);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.15, -r * 0.62);
+    ctx.lineTo(-r * 0.15, r * 0.62);
+    ctx.stroke();
+  }
+
+  ctx.restore();
   if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);
 }
 

@@ -99,6 +99,9 @@ export const TACTICAL_WEAPON_RANGE = 280;
 export const TACTICAL_WEAPON_COOLDOWN_MS = 800;
 export const TACTICAL_SHIP_SPEED = 45;
 export const TACTICAL_BATTLE_RADIUS = 900;
+export const TACTICAL_LARGE_BATTLE_UNITS = 72;
+export const TACTICAL_SWARM_BATTLE_UNITS = 150;
+export const TACTICAL_SPATIAL_CELL = 360;
 
 // --- Auto-resolve ---
 export const STANCE_MODIFIERS = { aggressive: 1.2, balanced: 1.0, defensive: 0.85 };
@@ -349,6 +352,9 @@ export const STARFIELD_COUNT = 320;
 export const STARFIELD_SPREAD = 10500;         // half-extent of background starfield
 export const CELESTIAL_VISUAL_SCALE = 1.35;    // render-only body size multiplier
 export const SELECTION_PULSE_MS = 1600;
+export const BATTLE_RENDER_LOD_UNITS = 64;
+export const BATTLE_RENDER_SWARM_UNITS = 140;
+export const BATTLE_TRACER_LIMIT = 96;
 export const STAR_BLOOM_SCALE = 1.0;           // bloom FBO resolution fraction (full res avoids blocky upscale)
 export const STAR_BLOOM_THRESHOLD = 0.38;      // luminance threshold for HDR bloom
 export const STAR_GL_QUALITY = 'high';        // 'high' | 'medium' | 'low'

@@ -65,19 +65,31 @@ function drawLensSpikes(ctx, x, y, r, color, count, rot) {
 
 function drawGranulation(ctx, x, y, r, seed, time, color, rotSpeed) {
   const rng = seededRng(seed ^ 0x9a7b3c1d);
-  const count = 24 + Math.floor(rng() * 18);
+  const count = 52 + Math.floor(rng() * 30);
   const drift = (time * rotSpeed) % (Math.PI * 2);
   ctx.save();
   ctx.beginPath();
   ctx.arc(x, y, r * 0.92, 0, Math.PI * 2);
   ctx.clip();
+  ctx.globalCompositeOperation = 'screen';
   for (let i = 0; i < count; i++) {
     const angle = drift + rng() * Math.PI * 2;
     const dist = r * (0.08 + rng() * 0.72);
-    ctx.fillStyle = hexToRgba(shiftHex(color, rng() > 0.5 ? 25 : -15), 0.12 + rng() * 0.12);
+    const cellR = r * (0.025 + rng() * 0.035);
+    ctx.fillStyle = hexToRgba(shiftHex(color, rng() > 0.5 ? 38 : -8), 0.08 + rng() * 0.16);
     ctx.beginPath();
-    ctx.ellipse(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, r * 0.035, r * 0.025, angle, 0, Math.PI * 2);
+    ctx.ellipse(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, cellR * 1.35, cellR, angle, 0, Math.PI * 2);
     ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'multiply';
+  for (let i = 0; i < 24; i++) {
+    const angle = drift * 0.7 + rng() * Math.PI * 2;
+    const dist = r * (0.12 + rng() * 0.68);
+    ctx.strokeStyle = `rgba(75, 35, 18, ${0.05 + rng() * 0.08})`;
+    ctx.lineWidth = Math.max(0.5, r * (0.006 + rng() * 0.006));
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(angle) * dist, y + Math.sin(angle) * dist, r * (0.05 + rng() * 0.1), angle, angle + Math.PI * (0.45 + rng() * 0.4));
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -185,19 +197,47 @@ function drawLightning(ctx, x, y, r, time, seed, coronaColor, secondaryColor, te
 }
 
 function drawFlareBurst(ctx, x, y, r, time, seed, color) {
-  const phase = ((time * 0.0012 + seed * 0.00001) % 1);
-  if (phase > 0.12) return;
-  const intensity = 1 - phase / 0.12;
-  const flare = ctx.createRadialGradient(x, y, r * 0.1, x, y, r * 2.5);
-  flare.addColorStop(0, hexToRgba('#ffffff', 0.7 * intensity));
-  flare.addColorStop(0.2, hexToRgba(color, 0.45 * intensity));
-  flare.addColorStop(1, hexToRgba(color, 0));
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  ctx.fillStyle = flare;
-  ctx.beginPath();
-  ctx.arc(x, y, r * 2.5, 0, Math.PI * 2);
-  ctx.fill();
+
+  for (let i = 0; i < 4; i++) {
+    const phase = ((time * (0.00016 + siteHash(seed, i + 32) * 0.00014) + siteHash(seed, i + 12)) % 1);
+    const strike = phase < 0.38
+      ? Math.sin((phase / 0.38) * Math.PI)
+      : Math.max(0, 1 - (phase - 0.38) / 0.44) * 0.24;
+    const simmer = 0.08 + 0.06 * Math.sin(time * 0.001 + i * 2.3);
+    const intensity = Math.max(strike, simmer);
+    if (intensity <= 0.04) continue;
+
+    const angle = siteHash(seed, i + 100) * Math.PI * 2 + time * 0.00003;
+    const reach = r * (0.7 + siteHash(seed, i + 120) * 0.7);
+    const sx = x + Math.cos(angle) * r * 0.92;
+    const sy = y + Math.sin(angle) * r * 0.92;
+    const ex = x + Math.cos(angle) * (r + reach);
+    const ey = y + Math.sin(angle) * (r + reach);
+    const bend = (siteHash(seed, i + 140) - 0.5) * r * 0.55;
+    const cx = x + Math.cos(angle) * (r + reach * 0.42) + Math.cos(angle + Math.PI / 2) * bend;
+    const cy = y + Math.sin(angle) * (r + reach * 0.42) + Math.sin(angle + Math.PI / 2) * bend;
+
+    ctx.shadowColor = color;
+    ctx.shadowBlur = r * 0.18;
+    ctx.strokeStyle = hexToRgba(color, 0.28 * intensity);
+    ctx.lineWidth = Math.max(3, r * 0.1);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(cx, cy, ex, ey);
+    ctx.stroke();
+
+    ctx.shadowBlur = r * 0.08;
+    ctx.strokeStyle = `rgba(255, 248, 220, ${0.7 * intensity})`;
+    ctx.lineWidth = Math.max(1, r * 0.026);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(cx, cy, ex, ey);
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -241,10 +281,10 @@ function drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed
   if (intel && hasFeature(profile, 'lensSpikes')) {
     drawLensSpikes(ctx, x, y, r, profile.coronaColor, 8, (time * profile.rotationSpeed * 40) % (Math.PI * 2));
   }
+  drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
   if (intel && hasFeature(profile, 'granulation')) {
     drawGranulation(ctx, x, y, r, seed, time, color, profile.rotationSpeed * 50);
   }
-  drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
   if (intel) {
     if (hasFeature(profile, 'sunspots')) {
       drawSunspots(ctx, x, y, r, rng, time, profile.rotationSpeed * 60, hasFeature(profile, 'compactCore') ? 0.5 : 1);
@@ -252,6 +292,9 @@ function drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed
     drawCoronaArcs(ctx, x, y, r, profile.coronaColor, time, rng, 3, 4200);
     if (hasFeature(profile, 'prominences')) {
       drawProminences(ctx, x, y, r, rng, time, profile.secondaryColor, profile.rotationSpeed * 45);
+    }
+    if (hasFeature(profile, 'flareBursts')) {
+      drawFlareBurst(ctx, x, y, r, time, seed, profile.coronaColor);
     }
     if (hasFeature(profile, 'lightning')) {
       const gpu = starGpuUniforms(profile);

@@ -1,0 +1,1265 @@
+{
+  "saveVersion": 9,
+  "time": 6550,
+  "paused": false,
+  "credits": 250000,
+  "solarii": 0,
+  "solariiUnlocked": false,
+  "solariiPerSec": 0,
+  "view": "system",
+  "currentSystem": "sys-142",
+  "systemName": "Solara Prime",
+  "strongholdSystem": "sys-142",
+  "systemOwner": "player",
+  "metaGalaxy": {
+    "activeGalaxyId": "gal-0",
+    "homeGalaxyId": "gal-0",
+    "galaxyCount": 10,
+    "hydratedCount": 1
+  },
+  "stronghold": {
+    "galaxyId": "gal-0",
+    "starId": "sys-142",
+    "planetCounts": {
+      "habitable": 5,
+      "barren": 1,
+      "gas": 2,
+      "total": 8
+    },
+    "moonCounts": [
+      2,
+      0,
+      2,
+      1,
+      1,
+      1,
+      4,
+      1
+    ]
+  },
+  "abstractGalaxies": [
+    {
+      "galaxyId": "gal-1",
+      "name": "Spiral II",
+      "aiCredits": 1802.93,
+      "aiSolarii": 0.625,
+      "fleetPower": 32.48,
+      "dysonShellProgress": 0.124,
+      "ownedSystemCount": 6,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-2",
+      "name": "Spiral III",
+      "aiCredits": 1880.42,
+      "aiSolarii": 4.432,
+      "fleetPower": 25.56,
+      "dysonShellProgress": 0.167,
+      "ownedSystemCount": 10,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-3",
+      "name": "Spiral IV",
+      "aiCredits": 958.66,
+      "aiSolarii": 1.033,
+      "fleetPower": 27.42,
+      "dysonShellProgress": 0.138,
+      "ownedSystemCount": 8,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-4",
+      "name": "Spiral V",
+      "aiCredits": 1579.23,
+      "aiSolarii": 5.128,
+      "fleetPower": 30.35,
+      "dysonShellProgress": 0.222,
+      "ownedSystemCount": 5,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-5",
+      "name": "Spiral VI",
+      "aiCredits": 554.84,
+      "aiSolarii": 3.623,
+      "fleetPower": 56.4,
+      "dysonShellProgress": 0.236,
+      "ownedSystemCount": 12,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-6",
+      "name": "Spiral VII",
+      "aiCredits": 1915.67,
+      "aiSolarii": 2.442,
+      "fleetPower": 56.48,
+      "dysonShellProgress": 0.284,
+      "ownedSystemCount": 4,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-7",
+      "name": "Spiral VIII",
+      "aiCredits": 733.1,
+      "aiSolarii": 5.063,
+      "fleetPower": 49.64,
+      "dysonShellProgress": 0.201,
+      "ownedSystemCount": 9,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-8",
+      "name": "Spiral IX",
+      "aiCredits": 1704.58,
+      "aiSolarii": 5.226,
+      "fleetPower": 48.6,
+      "dysonShellProgress": 0.346,
+      "ownedSystemCount": 4,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    },
+    {
+      "galaxyId": "gal-9",
+      "name": "Spiral X",
+      "aiCredits": 969.5,
+      "aiSolarii": 2.416,
+      "fleetPower": 44.47,
+      "dysonShellProgress": 0.253,
+      "ownedSystemCount": 11,
+      "aiOwnedCount": 0,
+      "aiFleetPower": 0,
+      "hasAnchor": false
+    }
+  ],
+  "wormholes": {
+    "count": 10,
+    "activeId": "wh-gal-0",
+    "anchored": 0,
+    "discoveredCount": 1
+  },
+  "selection": null,
+  "selectedScoutId": null,
+  "incomePerSec": 0,
+  "incomePerSecInViewedSystem": 0,
+  "flagship": {
+    "galaxyId": "gal-0",
+    "systemId": "sys-142",
+    "x": 0,
+    "y": -722.45,
+    "vx": 0,
+    "vy": -14.2,
+    "heading": -1.571,
+    "inTransit": false,
+    "orbiting": false,
+    "orbitTarget": null,
+    "destination": null,
+    "transitProgress": null,
+    "etaMs": null,
+    "wormholeTransit": null,
+    "atCore": false,
+    "canEnterWormhole": false
+  },
+  "scouts": [],
+  "scoutCount": 0,
+  "intel": {
+    "scoutedCount": 1,
+    "viewedSystemHasIntel": true,
+    "captureRequirement": 15,
+    "neighborFog": [
+      {
+        "id": "sys-0",
+        "hasIntel": false
+      },
+      {
+        "id": "sys-1",
+        "hasIntel": false
+      },
+      {
+        "id": "sys-2",
+        "hasIntel": false
+      }
+    ]
+  },
+  "capture": {
+    "force": 100,
+    "requirement": 15,
+    "progressMs": 0,
+    "canHold": false,
+    "contested": true
+  },
+  "production": {
+    "shipyardCount": 7,
+    "buildingScout": false,
+    "scoutCount": 0,
+    "combatQueues": [
+      {
+        "shipyardId": "ai-yard-sys-338",
+        "systemId": "sys-338",
+        "hull": "corvette",
+        "progress": 0.1159090909090909,
+        "queueItemId": null
+      },
+      {
+        "shipyardId": "ai-yard-sys-387",
+        "systemId": "sys-387",
+        "hull": "corvette",
+        "progress": 0.07045454545454545,
+        "queueItemId": null
+      }
+    ],
+    "shipyardSlots": 1,
+    "activeBuilds": 2
+  },
+  "empireQueue": [],
+  "research": {
+    "activeNodeId": null,
+    "progress": 0,
+    "unlocked": [
+      "eco_baseline"
+    ],
+    "queue": [],
+    "stationCount": 0,
+    "speedMult": 1
+  },
+  "trade": {
+    "stationCount": 0,
+    "componentCount": 0,
+    "largestComponent": 0,
+    "incomePerSec": 0
+  },
+  "factions": {
+    "ai": {
+      "id": "ai-0",
+      "name": "Dominion of Helix",
+      "personality": "expansionist",
+      "homeSystemId": "sys-354",
+      "credits": 100,
+      "ownedSystemCount": 6,
+      "ownedSystems": [
+        "sys-38",
+        "sys-151",
+        "sys-338",
+        "sys-354",
+        "sys-387",
+        "sys-397"
+      ],
+      "fleetCount": 0,
+      "factionCount": 4,
+      "all": [
+        {
+          "id": "ai-0",
+          "name": "Dominion of Helix",
+          "personality": "expansionist",
+          "homeSystemId": "sys-354"
+        },
+        {
+          "id": "ai-1",
+          "name": "Veridian Compact",
+          "personality": "economic",
+          "homeSystemId": "sys-397"
+        },
+        {
+          "id": "ai-2",
+          "name": "Solar Architects",
+          "personality": "megastructure",
+          "homeSystemId": "sys-338"
+        },
+        {
+          "id": "ai-3",
+          "name": "Void Runners",
+          "personality": "wormhole",
+          "homeSystemId": "sys-38"
+        }
+      ]
+    },
+    "list": [
+      {
+        "id": "ai-0",
+        "name": "Dominion of Helix",
+        "personality": "expansionist",
+        "homeSystemId": "sys-354"
+      },
+      {
+        "id": "ai-1",
+        "name": "Veridian Compact",
+        "personality": "economic",
+        "homeSystemId": "sys-397"
+      },
+      {
+        "id": "ai-2",
+        "name": "Solar Architects",
+        "personality": "megastructure",
+        "homeSystemId": "sys-338"
+      },
+      {
+        "id": "ai-3",
+        "name": "Void Runners",
+        "personality": "wormhole",
+        "homeSystemId": "sys-38"
+      }
+    ]
+  },
+  "aiShips": [],
+  "playerShips": [
+    {
+      "id": "cin-corvette-0",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-1",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-2",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-3",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-4",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-5",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-6",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-7",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-8",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-9",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-10",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-11",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-12",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-13",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-14",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-15",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-16",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-17",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-18",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-19",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-20",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-21",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-22",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-23",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-24",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-25",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-26",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-27",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-28",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-29",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-30",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-31",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-32",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-33",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-34",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-35",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-36",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-37",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-38",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-39",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-40",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-41",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-42",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-43",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-44",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-45",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-46",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-47",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-48",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-49",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-50",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-51",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-52",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-53",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-54",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-55",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-56",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-57",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-58",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-59",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-60",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-61",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-62",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-63",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-64",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-65",
+      "hull": "destroyer",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 350,
+      "maxHp": 350
+    },
+    {
+      "id": "cin-corvette-66",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-67",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-68",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    },
+    {
+      "id": "cin-corvette-69",
+      "hull": "corvette",
+      "systemId": "sys-142",
+      "inTransit": false,
+      "hp": 120,
+      "maxHp": 120
+    }
+  ],
+  "battleGroups": [],
+  "pirates": {
+    "fleetCount": 3,
+    "inViewedSystem": true,
+    "markers": [
+      "sys-375",
+      "sys-167",
+      "sys-142"
+    ],
+    "fleets": [
+      {
+        "id": "pirate-1",
+        "systemId": "sys-375",
+        "inTransit": false,
+        "shipCount": 3,
+        "totalHp": 440
+      },
+      {
+        "id": "pirate-2",
+        "systemId": "sys-167",
+        "inTransit": false,
+        "shipCount": 3,
+        "totalHp": 440
+      },
+      {
+        "id": "cinematic-swarm",
+        "systemId": "sys-142",
+        "inTransit": false,
+        "shipCount": 105,
+        "totalHp": 13800
+      }
+    ]
+  },
+  "battle": {
+    "active": true,
+    "mode": "tactical",
+    "playerShips": 71,
+    "enemyShips": 105,
+    "playerHp": 13620,
+    "enemyHp": 13800,
+    "lastResolve": null
+  },
+  "hullStats": [
+    "scout",
+    "corvette",
+    "patrol_cutter",
+    "frigate",
+    "destroyer",
+    "cruiser",
+    "battleship",
+    "dreadnought",
+    "light_carrier",
+    "fleet_carrier",
+    "super_carrier",
+    "light_hauler",
+    "bulk_freighter",
+    "armored_convoy",
+    "fighter",
+    "interceptor",
+    "heavy_fighter",
+    "bomber",
+    "healer",
+    "sensor_ship",
+    "builder_ship",
+    "command_cruiser",
+    "hero_flagship",
+    "miner"
+  ],
+  "galaxy": {
+    "starCount": 400,
+    "laneCount": 701,
+    "blackHole": "core",
+    "galaxyId": "gal-0",
+    "galaxyName": "Spiral I"
+  },
+  "bodies": [
+    {
+      "id": "p1",
+      "kind": "planet",
+      "type": "habitable",
+      "name": "Aurelia",
+      "moonCount": 2,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": true,
+      "canBuildShipyard": true,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p2",
+      "kind": "planet",
+      "type": "barren",
+      "name": "Boreas",
+      "moonCount": 0,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": false,
+      "canBuildShipyard": false,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p3",
+      "kind": "planet",
+      "type": "gas",
+      "name": "Cinder",
+      "moonCount": 2,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": false,
+      "canBuildShipyard": false,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p4",
+      "kind": "planet",
+      "type": "habitable",
+      "name": "Dagon",
+      "moonCount": 1,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": true,
+      "canBuildShipyard": true,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p5",
+      "kind": "planet",
+      "type": "gas",
+      "name": "Erebus",
+      "moonCount": 1,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": false,
+      "canBuildShipyard": false,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p6",
+      "kind": "planet",
+      "type": "habitable",
+      "name": "Ferrum",
+      "moonCount": 1,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": true,
+      "canBuildShipyard": true,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p7",
+      "kind": "planet",
+      "type": "habitable",
+      "name": "Gaia",
+      "moonCount": 4,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": true,
+      "canBuildShipyard": true,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    },
+    {
+      "id": "p8",
+      "kind": "planet",
+      "type": "habitable",
+      "name": "Helios",
+      "moonCount": 1,
+      "hasOutpost": false,
+      "hasShipyard": false,
+      "canBuildOutpost": true,
+      "canBuildShipyard": true,
+      "launcherCount": 0,
+      "canBuildLauncher": false,
+      "shipyardId": null,
+      "canQueueScout": false
+    }
+  ],
+  "structures": [],
+  "shuttles": {
+    "active": false,
+    "count": 0
+  },
+  "surfaceSites": {
+    "count": 0,
+    "pads": 0,
+    "rigs": 0,
+    "active": 0
+  },
+  "structureVisuals": {
+    "shipyards": [],
+    "launchers": []
+  },
+  "sailShuttles": {
+    "active": false,
+    "count": 0
+  },
+  "dyson": {
+    "hasFoundry": false,
+    "launcherCount": 0,
+    "completedShells": 0,
+    "shellSails": 0,
+    "foundryStock": 0,
+    "launcherStockTotal": 0,
+    "foundryHostPlanetId": null,
+    "foundryRingRadius": null,
+    "firstMoonOrbit": null,
+    "foundryDock": null,
+    "shellProgress": 0,
+    "solariiPerSec": 0,
+    "solariiUnlocked": false,
+    "nextShell": 1,
+    "canBuildFoundry": false
+  },
+  "dysonVisuals": {
+    "supplyLineCount": 0,
+    "completedRingCount": 0,
+    "inProgressSettledDots": 0,
+    "inFlightDots": 0,
+    "totalDotEquivalent": 0,
+    "dotStride": 1,
+    "currentShellProgress": 0,
+    "completedRingRadii": [],
+    "supplyLines": [],
+    "closestRingPoint": null,
+    "firstLauncherDock": null,
+    "inFlightSample": [],
+    "inFlightProgress": [],
+    "inFlightDistToStar": [],
+    "shellSails": 0,
+    "visualTier": 0,
+    "meshEdgeCount": 0,
+    "nodeCount": 0,
+    "isNovaculaComplete": false
+  },
+  "milestones": {
+    "completedDysonCount": 0,
+    "completedDysonSystems": [],
+    "diplomacyUnlocked": false,
+    "superweaponUnlocked": false
+  },
+  "diplomacy": {
+    "unlocked": false,
+    "panic": false,
+    "factions": [
+      {
+        "id": "ai-0",
+        "name": "Dominion of Helix",
+        "personality": "expansionist",
+        "status": "war",
+        "treaties": [],
+        "lastChangedAt": 0
+      },
+      {
+        "id": "ai-1",
+        "name": "Veridian Compact",
+        "personality": "economic",
+        "status": "war",
+        "treaties": [],
+        "lastChangedAt": 0
+      },
+      {
+        "id": "ai-2",
+        "name": "Solar Architects",
+        "personality": "megastructure",
+        "status": "war",
+        "treaties": [],
+        "lastChangedAt": 0
+      },
+      {
+        "id": "ai-3",
+        "name": "Void Runners",
+        "personality": "wormhole",
+        "status": "war",
+        "treaties": [],
+        "lastChangedAt": 0
+      }
+    ],
+    "tradeBonus": 1
+  },
+  "superweapon": {
+    "online": false,
+    "cradleSystemId": null,
+    "cooldownMs": 0,
+    "jumpCooldownMs": 0,
+    "lastAction": null,
+    "createCount": 0,
+    "panicUntil": 0
+  },
+  "heroFlagships": [],
+  "campaign": {
+    "mode": "sandbox",
+    "victoryType": "sandbox",
+    "defeated": false,
+    "won": false,
+    "tutorialStep": null,
+    "activeMissionId": null,
+    "completedMissions": [],
+    "missionProgress": {}
+  },
+  "missions": {
+    "active": null,
+    "completed": [],
+    "available": [
+      {
+        "id": "wormhole_race",
+        "name": "Wormhole Race",
+        "done": false
+      },
+      {
+        "id": "dyson_defense",
+        "name": "Dyson Defense",
+        "done": false
+      },
+      {
+        "id": "first_hero",
+        "name": "First Hero Flagship",
+        "done": false
+      },
+      {
+        "id": "superweapon_sculpt",
+        "name": "Stellar Sculptor",
+        "done": false
+      },
+      {
+        "id": "diplomacy_intro",
+        "name": "Diplomatic Contact",
+        "done": false
+      },
+      {
+        "id": "final_dominion",
+        "name": "Galactic Dominion",
+        "done": false
+      }
+    ]
+  },
+  "tutorial": {
+    "active": false,
+    "step": null,
+    "totalSteps": 9,
+    "current": {
+      "id": 0,
+      "title": "Stronghold",
+      "hint": "Your home system produces credits via outposts."
+    }
+  },
+  "manualTradeRoutes": {
+    "count": 0,
+    "max": 12,
+    "bonus": 1,
+    "routes": []
+  },
+  "strategicStructures": {
+    "listening_post": 0,
+    "lane_relay": 0,
+    "blockade_fort": 0,
+    "forward_base": 0,
+    "supply_cache": 0,
+    "command_post": 0
+  },
+  "shellBonuses": {
+    "shield": 1,
+    "repair": 1
+  },
+  "tickMs": 50
+}

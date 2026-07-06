@@ -200,8 +200,8 @@ export function ambientPiratePose(state, system, ship, fleetId, idx, total, time
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 
-export function nudgeUnitKeepOut(state, system, unit) {
-  const rep = keepOutRepulsion(state, system, unit.x, unit.y, KEEP_OUT_NUDGE_STRENGTH);
+export function nudgeUnitKeepOut(state, system, unit, bodyCache = null) {
+  const rep = keepOutRepulsion(state, system, unit.x, unit.y, KEEP_OUT_NUDGE_STRENGTH, state.time, bodyCache);
   const dt = TICK_MS / 1000;
   unit.x += rep.ax * dt;
   unit.y += rep.ay * dt;

@@ -9,6 +9,8 @@ import {
   STANCE_MODIFIERS,
   HEALER_AUTO_COEF,
   FLAGSHIP_HP,
+  TACTICAL_LARGE_BATTLE_UNITS,
+  TACTICAL_SPATIAL_CELL,
 } from './constants.js';
 import {
   effectiveDps,
@@ -23,8 +25,8 @@ import { heroInSystem, heroesInSystem } from './hero-flagships.js';
 import { shellRepairBonus } from './dyson.js';
 import { supplyCacheRepairMultiplier } from './strategic-structures.js';
 import { pruneBattleGroups } from './battle-groups.js';
-import { softKeepOut, nudgeUnitKeepOut } from './ship-motion.js';
-import { getSystems, getGraph } from './galaxy-scope.js';
+import { softKeepOut, nudgeUnitKeepOut, buildKeepOutBodyCache } from './ship-motion.js';
+import { getSystems } from './galaxy-scope.js';
 import { systemById } from './state.js';
 
 function seededEntryVector(seed, systemId, time) {
@@ -176,10 +178,6 @@ function startBattle(state, systemId) {
   return battle;
 }
 
-function livingUnits(battle, side) {
-  return battle.units.filter((u) => u.hp > 0 && u.side === side);
-}
-
 function applyCasualtiesToState(state, systemId, battle) {
   const pirateLosses = battle.lastResolve?.enemyCasualties ?? 0;
   const fleets = pirateFleetAtSystem(state, systemId);
@@ -282,35 +280,216 @@ function resolveAutoBattle(state, systemId, battle) {
   return battle.lastResolve;
 }
 
+function liveTacticalContext(battle) {
+  const live = [];
+  const bySide = new Map();
+  for (const unit of battle.units ?? []) {
+    if (unit.hp <= 0) continue;
+    live.push(unit);
+    const bucket = bySide.get(unit.side) ?? [];
+    bucket.push(unit);
+    bySide.set(unit.side, bucket);
+  }
+  return { live, bySide };
+}
+
+function spatialKeyFor(x, y) {
+  const cx = Math.floor(x / TACTICAL_SPATIAL_CELL);
+  const cy = Math.floor(y / TACTICAL_SPATIAL_CELL);
+  return `${cx},${cy}`;
+}
+
+function buildSpatialIndex(units) {
+  const cells = new Map();
+  for (const unit of units) {
+    const key = spatialKeyFor(unit.x, unit.y);
+    const list = cells.get(key) ?? [];
+    list.push(unit);
+    cells.set(key, list);
+  }
+  return cells;
+}
+
+function considerTarget(unit, candidate, best) {
+  if (!candidate || candidate.hp <= 0 || candidate.side === unit.side) return best;
+  const dx = candidate.x - unit.x;
+  const dy = candidate.y - unit.y;
+  const d2 = dx * dx + dy * dy;
+  if (d2 < best.d2) return { target: candidate, d2 };
+  return best;
+}
+
+function nearestTarget(unit, live, spatialIndex) {
+  let best = { target: null, d2: Infinity };
+
+  if (spatialIndex) {
+    const cx = Math.floor(unit.x / TACTICAL_SPATIAL_CELL);
+    const cy = Math.floor(unit.y / TACTICAL_SPATIAL_CELL);
+    for (let ring = 0; ring <= 2; ring++) {
+      for (let gx = cx - ring; gx <= cx + ring; gx++) {
+        for (let gy = cy - ring; gy <= cy + ring; gy++) {
+          if (ring > 0 && gx > cx - ring && gx < cx + ring && gy > cy - ring && gy < cy + ring) continue;
+          const cell = spatialIndex.get(`${gx},${gy}`);
+          if (!cell) continue;
+          for (const candidate of cell) best = considerTarget(unit, candidate, best);
+        }
+      }
+      if (best.target) return best.target;
+    }
+  }
+
+  for (const candidate of live) best = considerTarget(unit, candidate, best);
+  return best.target;
+}
+
+function healAllies(unit, allies, repairMult) {
+  if (!allies?.length) return;
+  const delta = (healRateForShip(unit) * repairMult * TICK_MS) / 1000;
+  if (delta <= 0) return;
+  for (const ally of allies) {
+    if (ally.id === unit.id || ally.hp <= 0 || ally.hp >= ally.maxHp) continue;
+    ally.hp = Math.min(ally.maxHp, ally.hp + delta);
+  }
+}
+
+function sideCentroid(units) {
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const unit of units) {
+    if (unit.hp <= 0) continue;
+    x += unit.x;
+    y += unit.y;
+    n++;
+  }
+  return n > 0 ? { x: x / n, y: y / n } : { x: 0, y: 0 };
+}
+
+function pooledDamage(units, amount) {
+  if (amount <= 0) return;
+  let liveCount = 0;
+  for (const unit of units) if (unit.hp > 0) liveCount++;
+  if (!liveCount) return;
+  const perUnit = amount / liveCount;
+  for (const unit of units) {
+    if (unit.hp <= 0) continue;
+    unit.hp = Math.max(0, unit.hp - perUnit);
+  }
+}
+
+function markAttackers(units) {
+  for (const unit of units) {
+    if (unit.hp <= 0) continue;
+    if (unit.cooldownMs <= 0 && effectiveDps(unit) > 0) {
+      unit.cooldownMs = TACTICAL_WEAPON_COOLDOWN_MS;
+    }
+  }
+}
+
+function pooledRepair(units, amount) {
+  if (amount <= 0) return;
+  let wounded = 0;
+  for (const unit of units) {
+    if (unit.hp > 0 && unit.hp < unit.maxHp) wounded++;
+  }
+  if (!wounded) return;
+  const perUnit = amount / wounded;
+  for (const unit of units) {
+    if (unit.hp <= 0 || unit.hp >= unit.maxHp) continue;
+    unit.hp = Math.min(unit.maxHp, unit.hp + perUnit);
+  }
+}
+
+function formationDrift(units, target, sideOffset, tickIndex) {
+  const dt = TICK_MS / 1000;
+  const speed = TACTICAL_SHIP_SPEED * 0.38 * dt;
+  for (let i = 0; i < units.length; i++) {
+    const unit = units[i];
+    if (unit.hp <= 0) continue;
+    const dx = target.x - unit.x;
+    const dy = target.y - unit.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const desired = TACTICAL_WEAPON_RANGE * 0.78;
+    const strafe = Math.sin((tickIndex + i * 13) * 0.17) * speed * 0.7;
+    if (dist > desired) {
+      unit.x += nx * speed;
+      unit.y += ny * speed;
+    } else {
+      unit.x += -ny * strafe * sideOffset;
+      unit.y += nx * strafe * sideOffset;
+    }
+    unit.heading = Math.atan2(dy, dx);
+  }
+}
+
+function tickLargeTacticalBattle(state, systemId, battle, context, repairMult) {
+  battle.largeTickIndex = (battle.largeTickIndex ?? 0) + 1;
+  const friendlies = context.live.filter((u) => u.side !== 'enemy');
+  const enemies = context.live.filter((u) => u.side === 'enemy');
+  if (!friendlies.length || !enemies.length) return;
+
+  for (const unit of context.live) {
+    unit.cooldownMs = Math.max(0, (unit.cooldownMs ?? 0) - TICK_MS);
+  }
+
+  const friendlyPower = totalPower(friendlies);
+  const enemyPower = totalPower(enemies);
+  const dt = TICK_MS / 1000;
+  const friendlyDamage = friendlyPower.dps * dt;
+  const enemyDamage = Math.max(0, (enemyPower.dps - friendlyPower.heal * HEALER_AUTO_COEF) * dt);
+
+  markAttackers(friendlies);
+  markAttackers(enemies);
+  pooledDamage(enemies, friendlyDamage);
+  pooledDamage(friendlies, enemyDamage);
+  pooledRepair(friendlies, friendlyPower.heal * repairMult * dt);
+
+  const fc = sideCentroid(friendlies);
+  const ec = sideCentroid(enemies);
+  formationDrift(friendlies, ec, 1, battle.largeTickIndex);
+  formationDrift(enemies, fc, -1, battle.largeTickIndex);
+}
+
 function tickTacticalBattle(state, systemId, battle) {
   if (!battle.units) initTacticalUnits(state, systemId, battle);
   const system = getSystems(state)[systemId];
+  const context = liveTacticalContext(battle);
+  const largeBattle = context.live.length >= TACTICAL_LARGE_BATTLE_UNITS;
+  const sys = systemById(state, systemId);
+  const repairMult = (sys ? shellRepairBonus(sys) : 1) * supplyCacheRepairMultiplier(state, systemId);
+
+  if (largeBattle) {
+    tickLargeTacticalBattle(state, systemId, battle, context, repairMult);
+    const afterLarge = liveTacticalContext(battle);
+    const friendlyLarge = (afterLarge.bySide.get('player')?.length ?? 0) + (afterLarge.bySide.get('ai')?.length ?? 0);
+    const enemyLarge = afterLarge.bySide.get('enemy')?.length ?? 0;
+    if (enemyLarge === 0) {
+      battle.lastResolve = { mode: 'tactical', playerWins: true, enemyCasualties: collectEnemyShips(state, systemId).length };
+      endBattle(state, systemId, 'player');
+    } else if (friendlyLarge === 0) {
+      battle.lastResolve = { mode: 'tactical', playerWins: false, playerCasualties: playerCombatShipsAtSystem(state, systemId).length };
+      endBattle(state, systemId, 'enemy');
+    }
+    return;
+  }
+
+  const spatialIndex = context.live.length >= Math.floor(TACTICAL_LARGE_BATTLE_UNITS * 0.65)
+    ? buildSpatialIndex(context.live)
+    : null;
+  const bodyCache = buildKeepOutBodyCache(system, state.time);
 
   for (const unit of battle.units) {
     if (unit.hp <= 0) continue;
     unit.cooldownMs = Math.max(0, (unit.cooldownMs ?? 0) - TICK_MS);
 
-    const foes = battle.units.filter((u) => u.hp > 0 && u.side !== unit.side);
-    if (!foes.length) continue;
-
-    let target = foes[0];
-    let bestDist = Infinity;
-    for (const f of foes) {
-      const d = Math.hypot(f.x - unit.x, f.y - unit.y);
-      if (d < bestDist) { bestDist = d; target = f; }
-    }
-
     const healRate = healRateForShip(unit);
-    const sys = systemById(state, systemId);
-    const repairMult = (sys ? shellRepairBonus(sys) : 1) * supplyCacheRepairMultiplier(state, systemId);
     if (healRate > 0) {
-      const allies = battle.units.filter((u) => u.hp > 0 && u.side === unit.side && u.id !== unit.id);
-      for (const ally of allies) {
-        if (ally.hp < ally.maxHp) {
-          ally.hp = Math.min(ally.maxHp, ally.hp + (healRate * repairMult * TICK_MS) / 1000);
-        }
-      }
+      healAllies(unit, context.bySide.get(unit.side), repairMult);
     } else {
+      const target = nearestTarget(unit, context.live, spatialIndex);
+      if (!target) continue;
       const dx = target.x - unit.x;
       const dy = target.y - unit.y;
       const dist = Math.hypot(dx, dy) || 1;
@@ -325,16 +504,17 @@ function tickTacticalBattle(state, systemId, battle) {
       }
     }
 
-    nudgeUnitKeepOut(state, system, unit);
+    nudgeUnitKeepOut(state, system, unit, bodyCache);
   }
 
-  const playerAlive = livingUnits(battle, 'player').length;
-  const enemyAlive = livingUnits(battle, 'enemy').length;
+  const after = liveTacticalContext(battle);
+  const friendlyAlive = (after.bySide.get('player')?.length ?? 0) + (after.bySide.get('ai')?.length ?? 0);
+  const enemyAlive = after.bySide.get('enemy')?.length ?? 0;
 
   if (enemyAlive === 0) {
     battle.lastResolve = { mode: 'tactical', playerWins: true, enemyCasualties: collectEnemyShips(state, systemId).length };
     endBattle(state, systemId, 'player');
-  } else if (playerAlive === 0) {
+  } else if (friendlyAlive === 0) {
     battle.lastResolve = { mode: 'tactical', playerWins: false, playerCasualties: playerCombatShipsAtSystem(state, systemId).length };
     endBattle(state, systemId, 'enemy');
   }
@@ -358,12 +538,43 @@ export function checkBattleTrigger(state, systemId) {
   return startBattle(state, systemId);
 }
 
+function combatCandidateSystemIds(state) {
+  const ids = new Set(Object.keys(state.systemBattles ?? {}));
+
+  if (state.flagship?.galaxyId === state.activeGalaxyId && state.flagship.systemId) {
+    ids.add(state.flagship.systemId);
+  }
+
+  for (const ship of state.playerShips ?? []) {
+    if (ship.galaxyId === state.activeGalaxyId && ship.systemId && !ship.transit && ship.hp > 0) {
+      ids.add(ship.systemId);
+    }
+  }
+
+  for (const ship of state.aiShips ?? []) {
+    if (ship.galaxyId === state.activeGalaxyId && ship.systemId && !ship.transit && ship.hp > 0) {
+      ids.add(ship.systemId);
+    }
+  }
+
+  for (const fleet of state.pirates?.fleets ?? []) {
+    if (fleet.galaxyId === state.activeGalaxyId && fleet.systemId && !fleet.transit) {
+      ids.add(fleet.systemId);
+    }
+  }
+
+  for (const hero of state.heroFlagships ?? []) {
+    if (hero.galaxyId === state.activeGalaxyId && hero.systemId && !hero.transit) {
+      ids.add(hero.systemId);
+    }
+  }
+
+  return ids;
+}
+
 export function tickCombat(state) {
   const events = [];
-  const systemIds = new Set([
-    ...Object.keys(state.systemBattles ?? {}),
-    ...getGraph(state).stars.map((s) => s.id).filter((id) => shouldBattle(state, id)),
-  ]);
+  const systemIds = combatCandidateSystemIds(state);
 
   for (const systemId of systemIds) {
     if (!shouldBattle(state, systemId)) {

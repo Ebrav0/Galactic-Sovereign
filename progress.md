@@ -314,6 +314,51 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-06 — Cinematic visuals + large battle performance pass
+
+**Task claimed:** Visual overhaul for a more cinematic presentation; system-view battle rendering and tactical tick performance for large fights
+**Status:** complete
+
+### Done
+- Added cinematic palette hooks and tactical battle LOD constants.
+- Added a system-view cinematic backdrop/grade layer with nebula wash, dust bands, vignette, and battle-alert tint.
+- Added lightweight ship glyph rendering for high-density battles and ambient fleet clusters.
+- Added pooled tactical resolution for large battles, with individual unit drift/tracer cues preserved for the system view.
+- Updated medium tactical combat to reuse live-unit buckets and spatial target lookup.
+- Replaced all-system capture and AI neutral-capture tick scans with candidate-driven checks to keep large ship counts from slowing every fixed tick.
+- Strengthened HUD tokens, panel surfaces, button states, and viewport frame lighting.
+- Added `output/verify_cinematic_battle.mjs` for a 176-unit system-view stress scenario and screenshot capture.
+
+### Notes
+- Detailed ship sprites remain the close-up/default path; large fights switch to lighter glyph rendering by zoom and unit count.
+- Verification: `npm run build`; `node output/verify_cinematic_battle.mjs` (5/5, 5s large-battle sim in 538ms); `node output/verify_phase6.mjs` (41/41); `node output/verify_battle_groups.mjs` (19/19); targeted player/AI capture smoke tests.
+- Older `verify_phase1.mjs` and `verify_phase2.mjs` still reference pre-v9 direct state fields such as `state.galaxy`/`state.systems`; they fail before reaching current combat/capture coverage.
+
+---
+
+## Session 2026-07-06 — Detailed stars + working flares
+
+**Task claimed:** Make stars look more realistic/detailed and make stellar flares visibly work
+**Status:** complete
+
+### Done
+- `src/glsl/star.frag` — richer photosphere shader with layered convection cells, faculae, deterministic sunspot fields, warmer/broader solar flare jets, and stronger flare visibility at normal system zooms.
+- `src/js/star-types.js` — enabled `flareBursts` on active stellar profiles and added granulation/prominence coverage for flare stars and red dwarfs.
+- `src/js/celestial-render-canvas2d.js` — fixed fallback draw order so granulation is drawn over the core instead of hidden beneath it; wired the previously unused flare-burst fallback renderer.
+- `output/verify_star_visuals.mjs` — new Playwright visual check that captures yellow-dwarf and flare-star closeups and verifies corona/plume/detail pixels plus shader console health.
+
+### Verification
+- `npm run build`
+- Required `develop-web-game` Playwright client completed and produced `output/web-game/shot-0.png`
+- `node output/verify_star_visuals.mjs` — 4/4 pass
+- `node output/verify_phase6.mjs` — 41/41 pass
+- `node output/verify_cinematic_battle.mjs` — 5/5 pass
+
+### Notes
+- `output/verify_visuals.mjs` is still an older direct-state fixture and fails on `state.systems[...]` before exercising current visuals.
+
+---
+
 ## Session 2026-07-05 — Phase 6 late game complete
 
 **Task claimed:** Phase 6 tasks 6.0–6.50

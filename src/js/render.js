@@ -14,6 +14,11 @@ import {
   SAIL_SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
   CAPTURE_HOLD_MS,
+  BATTLE_RENDER_LOD_UNITS,
+  BATTLE_RENDER_SWARM_UNITS,
+  BATTLE_TRACER_LIMIT,
+  TACTICAL_WEAPON_COOLDOWN_MS,
+  TACTICAL_WEAPON_RANGE,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
 import {
@@ -65,6 +70,7 @@ import { playerShipsAtSystem } from './fleets.js';
 import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
 import {
   drawHullSprite,
+  drawHullSpriteLite,
   drawFlagshipSprite,
   drawHeroFlagshipSprite,
   drawScoutSprite,
@@ -224,6 +230,63 @@ function drawStarfield(ctx, cam, canvas, time = 0) {
   ctx.globalAlpha = 1;
 }
 
+function drawCinematicSystemBackdrop(ctx, cam, canvas, time = 0, battle = null) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const drift = Math.sin(time / 17000) * 0.08;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+
+  let g = ctx.createRadialGradient(cx - w * (0.28 + drift), cy - h * 0.34, 0, cx - w * 0.2, cy - h * 0.25, w * 0.82);
+  g.addColorStop(0, THEME.cinematic.nebulaCyan);
+  g.addColorStop(0.48, THEME.cinematic.nebulaRose);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+
+  g = ctx.createLinearGradient(0, h * 0.18, w, h * 0.86);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(0.42, THEME.cinematic.dust);
+  g.addColorStop(0.56, THEME.cinematic.nebulaGold);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+
+  if (battle?.active) {
+    const pulse = 0.45 + 0.35 * Math.sin(time / 520);
+    g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.72);
+    g.addColorStop(0, `rgba(255, 58, 92, ${0.08 + pulse * 0.05})`);
+    g.addColorStop(0.62, THEME.battle.hazard);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  const vignette = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.22, cx, cy, Math.max(w, h) * 0.66);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, THEME.cinematic.vignette);
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+
+  const letterboxH = Math.max(20, h * 0.045);
+  const top = ctx.createLinearGradient(0, 0, 0, letterboxH);
+  top.addColorStop(0, THEME.cinematic.letterbox);
+  top.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = top;
+  ctx.fillRect(0, 0, w, letterboxH);
+  const bottom = ctx.createLinearGradient(0, h, 0, h - letterboxH);
+  bottom.addColorStop(0, THEME.cinematic.letterbox);
+  bottom.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = bottom;
+  ctx.fillRect(0, h - letterboxH, w, letterboxH);
+
+  ctx.restore();
+}
+
 function lightAngleFromOrigin(wx, wy) {
   return Math.atan2(wy, wx);
 }
@@ -275,6 +338,8 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   beginStarPass('system');
 
   drawStarfield(ctx, camera, canvas, t);
+  const activeBattle = getBattleState(state, systemId);
+  drawCinematicSystemBackdrop(ctx, camera, canvas, t, activeBattle);
 
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
@@ -541,10 +606,117 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   flushStars(ctx, 'outer');
   flushStars(ctx, 'bloom');
+  drawCinematicSystemGrade(ctx, canvas, activeBattle, t);
 }
 
-function drawCombatShipSprite(ctx, x, y, hull, baseR, opts) {
-  drawHullSprite(ctx, x, y, hull, baseR, opts);
+function drawCinematicSystemGrade(ctx, canvas, battle = null, time = 0) {
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  const edge = ctx.createRadialGradient(w * 0.5, h * 0.52, Math.min(w, h) * 0.24, w * 0.5, h * 0.52, Math.max(w, h) * 0.72);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, battle?.active ? 'rgba(1,2,8,0.44)' : 'rgba(1,2,8,0.32)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, w, h);
+
+  if (battle?.active) {
+    const pulse = 0.4 + 0.25 * Math.sin(time / 380);
+    ctx.fillStyle = `rgba(255, 63, 95, ${0.035 + pulse * 0.03})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.restore();
+}
+
+function combatRenderMode(unitCount, z) {
+  if (unitCount >= BATTLE_RENDER_SWARM_UNITS || z < 0.23) return 'swarm';
+  if (unitCount >= BATTLE_RENDER_LOD_UNITS || z < 0.5) return 'lite';
+  return 'detail';
+}
+
+function drawCombatShipSprite(ctx, x, y, hull, baseR, opts, mode = 'detail') {
+  if (mode === 'detail') {
+    drawHullSprite(ctx, x, y, hull, baseR, opts);
+    return;
+  }
+  drawHullSpriteLite(ctx, x, y, hull, baseR, {
+    ...opts,
+    showHp: mode === 'lite' && opts.hp < opts.maxHp * 0.55,
+    alpha: mode === 'swarm' ? 0.82 : 1,
+  });
+}
+
+function sideTracer(side, hull) {
+  if (hull === 'healer') return THEME.battle.tracerHeal;
+  if (side === 'enemy') return THEME.battle.tracerEnemy;
+  return THEME.battle.tracerPlayer;
+}
+
+function drawBattleEnvelope(ctx, battle, canvas, z, time) {
+  if (!battle?.units?.length) return;
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const unit of battle.units) {
+    if (unit.hp <= 0) continue;
+    x += unit.x;
+    y += unit.y;
+    n++;
+  }
+  if (!n) return;
+  const center = worldToScreen(camera, x / n, y / n, canvas);
+  const radius = Math.max(190, Math.min(720, Math.sqrt(n) * 64)) * z;
+  const pulse = 0.45 + 0.28 * Math.sin(time / 640);
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(255, 111, 125, ${0.2 + pulse * 0.2})`;
+  ctx.lineWidth = Math.max(1, 1.5 * z);
+  ctx.setLineDash([Math.max(7, 12 * z), Math.max(5, 8 * z)]);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const g = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, radius * 1.35);
+  g.addColorStop(0, 'rgba(255, 80, 110, 0.06)');
+  g.addColorStop(1, 'rgba(255, 80, 110, 0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * 1.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBattleTracers(ctx, battle, canvas, mode, time) {
+  if (!battle?.units?.length) return;
+  let drawn = 0;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const unit of battle.units) {
+    if (drawn >= BATTLE_TRACER_LIMIT) break;
+    if (unit.hp <= 0) continue;
+    const sinceFire = TACTICAL_WEAPON_COOLDOWN_MS - (unit.cooldownMs ?? 0);
+    if (sinceFire < 0 || sinceFire > 170) continue;
+    const start = worldToScreen(camera, unit.x, unit.y, canvas);
+    if (!screenInView(start, canvas, 80)) continue;
+    const len = (mode === 'detail' ? TACTICAL_WEAPON_RANGE * 0.62 : TACTICAL_WEAPON_RANGE * 0.44) * camera.zoom;
+    const heading = unit.heading ?? 0;
+    const alpha = Math.max(0, 1 - sinceFire / 170);
+    const endX = start.x + Math.cos(heading) * len;
+    const endY = start.y + Math.sin(heading) * len;
+    const g = ctx.createLinearGradient(start.x, start.y, endX, endY);
+    g.addColorStop(0, sideTracer(unit.side, unit.hull).replace(/[\d.]+\)$/, `${0.15 * alpha})`));
+    g.addColorStop(0.35, sideTracer(unit.side, unit.hull));
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = Math.max(1, (mode === 'detail' ? 1.6 : 1.1) * camera.zoom);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    drawn++;
+  }
+  ctx.restore();
 }
 
 function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
@@ -554,15 +726,21 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   const battle = getBattleState(state, systemId);
 
   if (battle?.active && battle.units?.length) {
+    const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
+    const mode = combatRenderMode(liveCount, z);
+    drawBattleEnvelope(ctx, battle, canvas, z, time);
+    drawBattleTracers(ctx, battle, canvas, mode, time);
     for (const unit of battle.units) {
       if (unit.hp <= 0) continue;
       const p = worldToScreen(camera, unit.x, unit.y, canvas);
+      if (!screenInView(p, canvas, 70)) continue;
       drawCombatShipSprite(ctx, p.x, p.y, unit.hull, baseR, {
         heading: unit.heading ?? 0,
         side: unit.side,
         hp: unit.hp,
         maxHp: unit.maxHp,
-      });
+        showHp: mode === 'detail',
+      }, mode);
     }
     return;
   }
@@ -570,31 +748,36 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   const bodyCache = buildKeepOutBodyCache(system, time);
 
   const playerShips = playerShipsAtSystem(state, systemId);
+  const pirateFleets = pirateFleetAtSystem(state, systemId);
+  const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
+  const ambientMode = combatRenderMode(playerShips.length + pirateTotal, z);
   playerShips.forEach((ship, idx) => {
     const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time, bodyCache);
     const p = worldToScreen(camera, pose.x, pose.y, canvas);
+    if (!screenInView(p, canvas, 70)) return;
     drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
       heading: pose.heading,
       side: 'player',
       hp: ship.hp,
       maxHp: ship.maxHp,
-    });
+      showHp: ambientMode === 'detail',
+    }, ambientMode);
   });
 
-  const pirateFleets = pirateFleetAtSystem(state, systemId);
   let pIdx = 0;
-  const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
   for (const fleet of pirateFleets) {
     for (const ship of fleet.ships) {
       if (ship.hp <= 0) continue;
       const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal, time, bodyCache);
       const p = worldToScreen(camera, pose.x, pose.y, canvas);
+      if (!screenInView(p, canvas, 70)) { pIdx++; continue; }
       drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
         heading: pose.heading,
         side: 'enemy',
         hp: ship.hp,
         maxHp: ship.maxHp,
-      });
+        showHp: ambientMode === 'detail',
+      }, ambientMode);
       pIdx++;
     }
   }

@@ -2,12 +2,12 @@
 
 :root {
   /* Backgrounds */
-  --bg-deep: #04060f;
-  --bg-galaxy: #03050c;
-  --bg-panel: rgba(8, 13, 28, 0.78);
-  --bg-panel-raised: rgba(13, 20, 40, 0.88);
-  --bg-panel-solid: #0a0e1c;
-  --bg-chip: rgba(14, 22, 44, 0.55);
+  --bg-deep: #02040b;
+  --bg-galaxy: #01030a;
+  --bg-panel: rgba(8, 12, 27, 0.72);
+  --bg-panel-raised: rgba(15, 21, 42, 0.9);
+  --bg-panel-solid: #090d1b;
+  --bg-chip: rgba(15, 23, 48, 0.62);
   --bg-inset: rgba(4, 7, 16, 0.65);
 
   /* Borders */
@@ -27,7 +27,9 @@
   --accent-cyan: #6fd6ff;
   --accent-green: #7dffa8;
   --accent-violet: #a78bff;
+  --accent-rose: #ff6b9a;
   --danger: #ff7d7d;
+  --danger-hot: #ff3f5f;
   --ok: #7dffa8;
 
   /* Planet type dots */
@@ -37,9 +39,12 @@
 
   /* Surfaces */
   --panel-blur: 14px;
-  --panel-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(120, 170, 255, 0.06);
-  --glow-accent: 0 0 18px rgba(111, 214, 255, 0.28);
-  --glow-gold: 0 0 18px rgba(255, 207, 122, 0.32);
+  --panel-shadow:
+    0 14px 42px rgba(0, 0, 0, 0.62),
+    0 0 0 1px rgba(120, 170, 255, 0.08),
+    inset 0 0 34px rgba(74, 118, 255, 0.055);
+  --glow-accent: 0 0 20px rgba(111, 214, 255, 0.34), 0 0 42px rgba(167, 139, 255, 0.12);
+  --glow-gold: 0 0 20px rgba(255, 207, 122, 0.36), 0 0 46px rgba(255, 107, 154, 0.11);
 
   /* Angular corner cuts */
   --cut: 10px;

@@ -1,9 +1,9 @@
 // Shared visual palette for Canvas 2D — keep in sync with src/css/tokens.css
 
 export const THEME = {
-  bgDeep: '#05070f',
-  bgGalaxy: '#04060d',
-  bgBlackHole: '#02030a',
+  bgDeep: '#03050d',
+  bgGalaxy: '#02040a',
+  bgBlackHole: '#010209',
 
   textPrimary: '#cfe0ff',
   textSecondary: 'rgba(207, 224, 255, 0.75)',
@@ -13,12 +13,40 @@ export const THEME = {
   accentGold: '#ffd27a',
   accentCyan: '#7ad0ff',
   accentGreen: '#7aff9e',
+  accentRose: '#ff6b9a',
+  accentViolet: '#b48cff',
+  commandBlue: '#4f7dff',
   danger: '#ff7a7a',
+  dangerHot: '#ff3f5f',
 
   starfield: '#cfe0ff',
   moon: '#a8b4cc',
   hull: '#dfe9ff',
   trafficPulse: '#9fc7ff',
+
+  cinematic: {
+    nebulaGold: 'rgba(255, 190, 96, 0.13)',
+    nebulaCyan: 'rgba(65, 190, 255, 0.15)',
+    nebulaRose: 'rgba(255, 72, 130, 0.10)',
+    dust: 'rgba(156, 188, 255, 0.055)',
+    vignette: 'rgba(1, 2, 8, 0.72)',
+    letterbox: 'rgba(1, 2, 8, 0.34)',
+    scanline: 'rgba(180, 214, 255, 0.018)',
+  },
+
+  battle: {
+    player: '#7ad0ff',
+    playerGlow: 'rgba(122, 208, 255, 0.42)',
+    enemy: '#ff6b6b',
+    enemyGlow: 'rgba(255, 88, 88, 0.42)',
+    ai: '#c44dff',
+    aiGlow: 'rgba(196, 77, 255, 0.42)',
+    neutral: '#dfe9ff',
+    tracerPlayer: 'rgba(124, 226, 255, 0.72)',
+    tracerEnemy: 'rgba(255, 94, 94, 0.70)',
+    tracerHeal: 'rgba(125, 255, 168, 0.55)',
+    hazard: 'rgba(255, 82, 112, 0.16)',
+  },
 
   planet: {
     habitable: '#4f9e6b',
