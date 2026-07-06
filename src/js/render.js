@@ -26,6 +26,7 @@ import {
   drawCompletedShellRings,
   drawInProgressSailDots,
 } from './dyson-render.js';
+import { drawDysonLensFlare } from './dyson-megastructure-render.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { typeSizeBonus } from './star-types.js';
 import {
@@ -303,6 +304,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       system.star.radius,
       t,
       dyson.lastShellCompletedAt,
+      state.seed ?? 0,
     );
     const settled = settledInProgressDots(state, systemId, system.star.radius);
     const inFlight = inFlightSailDots(state, systemId, system.star.radius, t);
@@ -316,7 +318,19 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     x: starScreen.x,
     y: starScreen.y,
     zoom: z,
+    time: t,
   });
+  if (intel && dyson.completedShells >= 8) {
+    drawDysonLensFlare(
+      ctx,
+      starScreen.x,
+      starScreen.y,
+      z,
+      dyson.completedShells,
+      system.star.radius,
+      t,
+    );
+  }
 
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
   const surfaceSites = intel ? outpostSurfaceSites(state, systemId, t) : [];
