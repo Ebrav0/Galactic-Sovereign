@@ -230,6 +230,91 @@ function drawStarfield(ctx, cam, canvas, time = 0) {
   ctx.globalAlpha = 1;
 }
 
+const titleCam = { x: 0, y: 0, zoom: 1 };
+
+/** Slow-drifting starfield for the title screen. */
+export function drawTitleBackground(ctx, canvas, time = 0) {
+  const drift = time * 0.00003;
+  titleCam.x = Math.sin(drift) * 140;
+  titleCam.y = Math.cos(drift * 0.72) * 90;
+  ctx.fillStyle = THEME.bgDeep;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawStarfield(ctx, titleCam, canvas, time);
+  const cx = canvas.width * 0.5;
+  const cy = canvas.height * 0.5;
+  const r = Math.max(canvas.width, canvas.height) * 0.62;
+  const g = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+/** Radial star streaks for the warp intro tunnel effect. */
+export function drawWarpStarfield(ctx, canvas, time = 0, intensity = 0, mask = null) {
+  const cx = mask?.cx ?? canvas.width * 0.5;
+  const cy = mask?.cy ?? canvas.height * 0.5;
+  const maskR = mask?.r ?? 0;
+
+  for (const n of getNebulae()) {
+    const baseX = cx + n.x * 0.018;
+    const baseY = cy + n.y * 0.018;
+    const pull = 1 - intensity * 0.45;
+    const px = cx + (baseX - cx) * pull;
+    const py = cy + (baseY - cy) * pull;
+    const sr = n.r * 0.035 * (1 + intensity * 0.4);
+    const g = ctx.createRadialGradient(px, py, sr * 0.1, px, py, sr);
+    g.addColorStop(0, n.palette[0]);
+    g.addColorStop(1, n.palette[1]);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, py, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const s of getStarfield()) {
+    const wobbleX = Math.sin(time * 0.35 + s.twinkle) * 18;
+    const wobbleY = Math.cos(time * 0.28 + s.twinkle) * 18;
+    const sx = cx + (s.x + wobbleX) * 0.016;
+    const sy = cy + (s.y + wobbleY) * 0.016;
+    const dx = sx - cx;
+    const dy = sy - cy;
+    const dist = Math.hypot(dx, dy) || 0.001;
+    const angle = Math.atan2(dy, dx) + s.twinkle * 0.08;
+    const radialPush = intensity * s.depth * (320 + time * 420);
+    const px = cx + Math.cos(angle) * (dist + radialPush);
+    const py = cy + Math.sin(angle) * (dist + radialPush);
+    const twinkle = 0.55 + 0.45 * Math.sin(time * s.twinkleSpeed * 1000 + s.twinkle);
+
+    if (intensity > 0.18) {
+      const streakLen = s.r * (2 + intensity * 14) * s.depth;
+      const tailX = px - Math.cos(angle) * streakLen;
+      const tailY = py - Math.sin(angle) * streakLen;
+      if (maskR > 0) {
+        const tailDist = Math.hypot(tailX - cx, tailY - cy);
+        const headDist = Math.hypot(px - cx, py - cy);
+        if (tailDist < maskR * 0.85 && headDist > maskR * 0.35) continue;
+        const band = maskR * 0.12;
+        if (Math.abs(tailY - cy) < band && Math.abs(py - cy) < band && Math.abs(tailX - cx) < maskR * 1.4) continue;
+      }
+      ctx.globalAlpha = s.a * twinkle;
+      ctx.strokeStyle = s.tint;
+      ctx.lineWidth = Math.max(0.5, s.r * (0.6 + intensity));
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = s.a * twinkle;
+      ctx.fillStyle = s.tint;
+      ctx.beginPath();
+      ctx.arc(px, py, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawCinematicSystemBackdrop(ctx, cam, canvas, time = 0, battle = null) {
   const w = canvas.width;
   const h = canvas.height;

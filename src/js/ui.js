@@ -41,7 +41,7 @@ import {
 } from './dyson.js';
 import { transitStatus, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
-import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
+import { SLOTS, listSlots, readSlot, exportSaveFile, importSaveFile } from './save.js';
 import { getActiveGalaxy } from './galaxy-scope.js';
 import { canEnterWormhole, canBuildWormholeAnchor } from './wormholes.js';
 import { WORMHOLE_ANCHOR_COST } from './constants.js';
@@ -1470,6 +1470,8 @@ export function initUi(ctx) {
     doBuildWormholeAnchor,
     getGalaxyTargetStar,
     doStartNewGame,
+    getBootPhase,
+    setBootPhase,
   } = ctx;
 
   let sidePanel = null;
@@ -1723,14 +1725,43 @@ export function initUi(ctx) {
 
   const newGameModal = el('new-game-modal');
   const newGameBackdrop = el('new-game-modal-backdrop');
+  const titleScreen = el('title-screen');
+
   function openNewGameModal() {
+    titleScreen?.classList.add('hidden');
     newGameModal?.classList.remove('hidden');
     newGameBackdrop?.classList.remove('hidden');
   }
   function closeNewGameModal() {
     newGameModal?.classList.add('hidden');
     newGameBackdrop?.classList.add('hidden');
+    if (getBootPhase?.() === 'title') titleScreen?.classList.remove('hidden');
   }
+  function showTitleScreen() {
+    titleScreen?.classList.remove('hidden');
+    setBootPhase?.('title');
+    getState().paused = true;
+  }
+
+  el('title-new-campaign-btn')?.addEventListener('click', openNewGameModal);
+  el('title-continue-btn')?.addEventListener('click', async () => {
+    titleScreen?.classList.add('hidden');
+    setBootPhase?.('playing');
+    getState().paused = false;
+    await doLoadSlot('autosave');
+  });
+  el('title-load-btn')?.addEventListener('click', () => {
+    titleScreen?.classList.add('hidden');
+    openSaveMenu();
+  });
+
+  readSlot('autosave').then((res) => {
+    const btn = el('title-continue-btn');
+    if (res.ok) btn?.classList.remove('hidden');
+    else btn?.classList.add('hidden');
+  });
+
+  showTitleScreen();
   el('close-new-game-btn')?.addEventListener('click', closeNewGameModal);
   newGameBackdrop?.addEventListener('click', closeNewGameModal);
   el('new-game-sandbox-btn')?.addEventListener('click', () => {
@@ -1746,7 +1777,6 @@ export function initUi(ctx) {
     doStartNewGame?.({ mode: 'mission', victoryType: 'dominion' });
     closeNewGameModal();
   });
-  openNewGameModal();
 
   const saveMenu = el('save-menu');
   const saveBackdrop = el('save-menu-backdrop');
@@ -1760,6 +1790,7 @@ export function initUi(ctx) {
   function closeSaveMenu() {
     saveMenu.classList.add('hidden');
     saveBackdrop.classList.add('hidden');
+    if (getBootPhase?.() === 'title') titleScreen?.classList.remove('hidden');
   }
 
   async function refreshSaveMenu() {
@@ -1846,6 +1877,9 @@ export function initUi(ctx) {
   };
 
   function updateUi() {
+    const phase = getBootPhase?.() ?? 'playing';
+    el('hud')?.classList.toggle('hud--boot', phase !== 'playing');
+
     const state = getState();
     const selection = getSelection();
     const view = getView();
@@ -1932,7 +1966,7 @@ export function initUi(ctx) {
     }
 
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
-    el('pause-overlay').classList.toggle('hidden', !state.paused);
+    el('pause-overlay').classList.toggle('hidden', !state.paused || phase !== 'playing');
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
     el('view-hint').textContent = HINTS[view];

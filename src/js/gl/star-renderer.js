@@ -212,7 +212,7 @@ function drawStarEntity(entry, pass = 0) {
 }
 
 function drawBlackHoleEntity(entry) {
-  const { x, y, screenR, time, large } = entry;
+  const { x, y, screenR, time, large, warp = 0 } = entry;
   const prog = programs.blackhole;
   gl.useProgram(prog);
   setUniform2f(gl, prog, 'u_resolution', width, height);
@@ -220,6 +220,7 @@ function drawBlackHoleEntity(entry) {
   setUniform1f(gl, prog, 'u_radius', screenR);
   setUniform1f(gl, prog, 'u_time', time);
   setUniform1f(gl, prog, 'u_large', large ? 1.0 : 0.0);
+  setUniform1f(gl, prog, 'u_warp', warp);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   drawFullscreenQuad(gl, quad, prog);

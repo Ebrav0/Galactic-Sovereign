@@ -74,6 +74,7 @@ import {
 import {
   drawSystem,
   drawGalaxy,
+  drawTitleBackground,
   follow,
   updateFollowCamera,
   snapCameraTo,
@@ -84,6 +85,8 @@ import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
 import { initUi, toast } from './ui.js';
 import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
+import { getBootPhase, setBootPhase, BOOT_PHASE } from './boot.js';
+import { startWarpIntro, drawWarpIntro } from './warp-intro.js';
 import {
   devAction,
   devGrantCredits,
@@ -157,6 +160,8 @@ import { tickContextualTips, resetContextualTips } from './tips.js';
 let state = createNewGame(DEFAULT_SEED);
 state.pirates = spawnPirateFleets(state);
 seedAiFaction(state, state.homeGalaxyId);
+state.paused = true;
+setBootPhase(BOOT_PHASE.TITLE);
 let selection = null;
 let view = 'system';
 let viewedSystemId = state.stronghold;
@@ -438,6 +443,9 @@ function doImportState(newState) {
   ensureSelectedScout();
   const f = state.flagship;
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
+  setBootPhase(BOOT_PHASE.PLAYING);
+  state.paused = false;
+  document.getElementById('title-screen')?.classList.add('hidden');
 }
 
 function checkFlagshipArrival() {
@@ -495,6 +503,8 @@ const { updateUi, closeSidePanel } = initUi({
   canQueueHull,
   getGalaxyTargetStar: () => galaxyTargetStarId,
   doStartNewGame: (opts) => doStartNewGame(opts),
+  getBootPhase,
+  setBootPhase,
 });
 
 attachInput(canvas, {
@@ -589,6 +599,21 @@ let lastAutosave = performance.now();
 function frame(now) {
   const dt = Math.min(now - lastFrame, 250);
   lastFrame = now;
+  const phase = getBootPhase();
+
+  if (phase === BOOT_PHASE.TITLE) {
+    drawTitleBackground(ctx2d, canvas, now);
+    updateUi();
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  if (phase === BOOT_PHASE.WARP_INTRO) {
+    drawWarpIntro(ctx2d, canvas, now);
+    updateUi();
+    requestAnimationFrame(frame);
+    return;
+  }
 
   if (!state.paused) state.meta.playTimeMs += dt;
   const tickEvents = step(state, accumulator + dt);
@@ -1066,9 +1091,42 @@ function doStartNewGame(opts = {}) {
   selection = null;
   selectedScoutId = null;
   selectedBattleGroupId = null;
-  snapCameraTo(0, 0);
-  toast(`New ${opts.mode ?? 'sandbox'} campaign started`, 'ok');
+  state.paused = true;
+  document.getElementById('title-screen')?.classList.add('hidden');
+  setBootPhase(BOOT_PHASE.WARP_INTRO);
+  startWarpIntro(ctx2d, canvas, {
+    onComplete: () => {
+      setBootPhase(BOOT_PHASE.PLAYING);
+      state.paused = false;
+      snapCameraTo(0, 0);
+      camera.zoom = CAMERA_DEFAULT_ZOOM;
+      follow.enabled = true;
+      toast(`New ${opts.mode ?? 'sandbox'} campaign started`, 'ok');
+    },
+    drawGameFrame: (ctx, fade, elapsed) => {
+      const dropT = Math.min(1, Math.max(0, (elapsed - 5200) / 1300));
+      const savedZoom = camera.zoom;
+      camera.zoom = 0.3 + (CAMERA_DEFAULT_ZOOM - 0.3) * dropT;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      drawSystem(ctx, state, viewedSystemId, selection, 0);
+      ctx.restore();
+      camera.zoom = savedZoom;
+    },
+  });
 }
+window.__setBootPhase = (phase) => setBootPhase(phase);
+window.__getBootPhase = () => getBootPhase();
+window.__startWarpIntro = () => {
+  document.getElementById('title-screen')?.classList.add('hidden');
+  setBootPhase(BOOT_PHASE.WARP_INTRO);
+  startWarpIntro(ctx2d, canvas, {
+    onComplete: () => {
+      setBootPhase(BOOT_PHASE.PLAYING);
+      state.paused = false;
+    },
+  });
+};
 window.__saveSlot = (slot) => doSaveSlot(slot);
 window.__loadSlot = (slot) => doLoadSlot(slot);
 window.__setFlagshipInput = (x, y) => setFlagshipInput(x, y);
