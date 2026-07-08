@@ -45,7 +45,18 @@ import {
   canHoldCapture,
   enemyCombatPresence,
 } from './capture.js';
-import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, resetPirateIds, pirateFleetAtSystem } from './pirates.js';
+import {
+  spawnPirateFleets,
+  forcePirateIntoSystem,
+  pirateSystemsWithPresence,
+  resetPirateIds,
+  pirateFleetAtSystem,
+  pirateFleetEtaMs,
+  pirateFleetPower,
+  pirateFleetMarkersForGalaxy,
+  pirateFleetTransitMarkersForGalaxy,
+  ensurePiratesState,
+} from './pirates.js';
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
 import {
   createBattleGroup,
@@ -471,6 +482,7 @@ function doImportState(newState) {
   if (!newState.pirates?.fleets?.length) {
     newState.pirates = spawnPirateFleets(newState);
   }
+  ensurePiratesState(newState);
   if (!newState.activeGalaxyId) newState.activeGalaxyId = 'gal-0';
   if (!newState.homeGalaxyId) newState.homeGalaxyId = 'gal-0';
   if (!newState.battleGroups) newState.battleGroups = [];
@@ -671,6 +683,14 @@ function frame(now) {
   for (const arrival of tickEvents.scoutArrivals ?? []) {
     const name = systemById(state, arrival.systemId)?.name ?? arrival.systemId;
     toast(`Intel gathered: ${name}`, 'ok');
+  }
+  for (const arrival of tickEvents.pirateArrivals ?? []) {
+    const name = systemById(state, arrival.systemId)?.name ?? arrival.systemId;
+    toast(`Pirate fleet sighted at ${name}`, 'error');
+  }
+  for (const ev of tickEvents.pirateInterdictions ?? []) {
+    const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+    toast(`Pirates intercepted ${ev.shipId} near ${name}`, 'error');
   }
   for (const battle of tickEvents.battleEvents ?? []) {
     const name = systemById(state, battle.systemId)?.name ?? battle.systemId;
@@ -907,11 +927,18 @@ window.render_game_to_text = () => {
       fleetCount: state.pirates?.fleets?.length ?? 0,
       inViewedSystem: pirateFleetAtSystem(state, viewedSystemId).length > 0,
       markers: pirateSystemsWithPresence(state),
+      galaxyMarkers: pirateFleetMarkersForGalaxy(state),
+      transitMarkers: pirateFleetTransitMarkersForGalaxy(state),
       fleets: (state.pirates?.fleets ?? []).map((fleet) => ({
         id: fleet.id,
         systemId: fleet.systemId,
         inTransit: !!fleet.transit,
+        destination: fleet.transit?.path?.length ? fleet.transit.path[fleet.transit.path.length - 1] : null,
+        etaMs: fleet.transit ? pirateFleetEtaMs(state, fleet) : null,
+        intent: fleet.intent?.type ?? 'wander',
+        targetSystemId: fleet.intent?.targetSystemId ?? null,
         shipCount: fleet.ships.filter((s) => s.hp > 0).length,
+        power: pirateFleetPower(fleet, state),
         totalHp: fleet.ships.reduce((n, s) => n + Math.max(0, s.hp), 0),
       })),
     },

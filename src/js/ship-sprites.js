@@ -1087,22 +1087,55 @@ function drawFleetFormationGlyph(ctx, color) {
   ctx.stroke();
 }
 
+function drawPirateFleetGlyph(ctx, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = hexToRgba(color, 0.72);
+  ctx.lineWidth = 1.4;
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(4.8, 0);
+  ctx.lineTo(-3.2, -4.2);
+  ctx.lineTo(-1.2, 0);
+  ctx.lineTo(-3.2, 4.2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(4, 5, 12, 0.85)';
+  ctx.beginPath();
+  ctx.arc(0.8, -1.1, 0.75, 0, Math.PI * 2);
+  ctx.arc(0.8, 1.1, 0.75, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(-4.4, -4.8);
+  ctx.lineTo(4.8, 4.8);
+  ctx.moveTo(4.8, -4.8);
+  ctx.lineTo(-4.4, 4.8);
+  ctx.stroke();
+}
+
 /** Battle group marker for galaxy map — naval glyph + ship count badge. */
 export function drawFleetMarker(ctx, x, y, scale, opts = {}) {
   const {
     shipCount = 0,
     power = 0,
     selected = false,
+    side = 'player',
+    intent = null,
   } = opts;
   const s = Math.max(0.55, Math.min(1.4, scale));
-  const accent = selected ? THEME.accentGreen : THEME.accentCyan;
-  const badgeW = Math.max(28, 34 * s);
+  const enemy = side === 'enemy';
+  const accent = enemy ? THEME.dangerHot : (selected ? THEME.accentGreen : THEME.accentCyan);
+  const badgeW = Math.max(enemy ? 36 : 32, (power >= 100 ? 45 : 38) * s);
   const badgeH = Math.max(14, 16 * s);
   const left = x - badgeW * 0.5;
   const top = y - badgeH * 0.5;
 
   ctx.save();
-  ctx.fillStyle = selected ? 'rgba(125, 255, 168, 0.18)' : 'rgba(111, 214, 255, 0.12)';
+  ctx.fillStyle = enemy
+    ? (intent === 'raid' || intent === 'interdict' ? 'rgba(255, 63, 95, 0.2)' : 'rgba(255, 99, 99, 0.13)')
+    : (selected ? 'rgba(125, 255, 168, 0.18)' : 'rgba(111, 214, 255, 0.12)');
   ctx.strokeStyle = hexToRgba(accent, selected ? 0.95 : 0.75);
   ctx.lineWidth = Math.max(1, 1.1 * s);
   if (ctx.roundRect) {
@@ -1114,24 +1147,25 @@ export function drawFleetMarker(ctx, x, y, scale, opts = {}) {
   ctx.fill();
   ctx.stroke();
 
-  if (selected) {
-    ctx.shadowColor = hexToRgba(THEME.accentGreen, 0.55);
+  if (selected || intent === 'raid' || intent === 'interdict') {
+    ctx.shadowColor = hexToRgba(enemy ? THEME.dangerHot : THEME.accentGreen, 0.55);
     ctx.shadowBlur = 8 * s;
-    ctx.strokeStyle = hexToRgba(THEME.accentGreen, 0.45);
+    ctx.strokeStyle = hexToRgba(accent, 0.45);
     ctx.stroke();
     ctx.shadowBlur = 0;
   }
 
   ctx.translate(left + badgeW * 0.22, y);
   ctx.scale(0.85 * s, 0.85 * s);
-  drawFleetFormationGlyph(ctx, accent);
+  if (enemy) drawPirateFleetGlyph(ctx, accent);
+  else drawFleetFormationGlyph(ctx, accent);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-  const label = power > 0 ? `${shipCount} · ${power}` : String(shipCount);
+  const label = power > 0 ? `${shipCount}/${power}` : String(shipCount);
   ctx.font = `600 ${Math.max(7.5, 9 * s)}px "IBM Plex Mono", monospace`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = selected ? THEME.accentGreen : '#e8f4ff';
+  ctx.fillStyle = enemy ? '#ffe6e6' : (selected ? THEME.accentGreen : '#e8f4ff');
   ctx.fillText(label, left + badgeW * 0.42, y + 0.5 * s);
 
   ctx.restore();

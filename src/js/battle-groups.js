@@ -3,7 +3,7 @@
 import { getGraph } from './galaxy-scope.js';
 import { findPlayerShip, orderShipTravel, playerShipStatus } from './fleets.js';
 import { findHeroFlagship } from './hero-flagships.js';
-import { effectiveDps } from './hull.js';
+import { shipPower } from './fleet-power.js';
 import { systemById } from './state.js';
 
 let nextBattleGroupId = 1;
@@ -228,7 +228,7 @@ export function fleetMarkersForGalaxy(state, selectedBattleGroupId = null) {
         markers.set(key, marker);
       }
       marker.shipCount++;
-      marker.power += effectiveDps(ship) + ship.hp / 40;
+      marker.power += shipPower(ship, state);
     }
   }
   return [...markers.values()].map((m) => ({
@@ -283,7 +283,7 @@ export function fleetTransitMarkersForGalaxy(state, selectedBattleGroupId = null
       x += status.x;
       y += status.y;
       angle += status.angle;
-      power += effectiveDps(ship) + ship.hp / 40;
+      power += shipPower(ship, state);
       destId = ship.transit.path[ship.transit.path.length - 1];
       placed++;
     }

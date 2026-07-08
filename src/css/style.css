@@ -1512,6 +1512,10 @@ button {
   stroke: rgba(90, 110, 140, 0.55);
 }
 
+.tech-web-edge--filtered {
+  opacity: 0.08;
+}
+
 .tech-web-edge--path {
   stroke: #ff9a4a;
   stroke-width: 3;

@@ -73,7 +73,13 @@ import { laneBulge, laneControlPoint } from './galaxy.js';
 import { getGraph, getActiveGalaxy, wormholeIdForGalaxy } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
 import { playerShipsAtSystem } from './fleets.js';
-import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
+import {
+  pirateFleetAtSystem,
+  pirateSystemsWithPresence,
+  pirateFleetMarkersForGalaxy,
+  pirateTransitLaneKeys,
+  pirateFleetTransitMarkersForGalaxy,
+} from './pirates.js';
 import {
   drawHullSprite,
   drawHullSpriteLite,
@@ -1034,6 +1040,14 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
   }
   const fleetRoutes = fleetTransitLaneKeys(state, selectedBattleGroupId);
   const piratePresence = new Set(pirateSystemsWithPresence(state));
+  const pirateRoutes = pirateTransitLaneKeys(state);
+  const pirateMarkers = pirateFleetMarkersForGalaxy(state);
+  const pirateMarkersBySystem = new Map();
+  for (const marker of pirateMarkers) {
+    const list = pirateMarkersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    pirateMarkersBySystem.set(marker.systemId, list);
+  }
   const fleetMarkers = fleetMarkersForGalaxy(state, selectedBattleGroupId);
   const fleetMarkersBySystem = new Map();
   for (const marker of fleetMarkers) {
@@ -1056,12 +1070,17 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     const onManualRoute = manualRoutes.has(key);
     const onFleetRoute = fleetRoutes.all.has(key);
     const onFleetSelectedRoute = fleetRoutes.selected.has(key);
-    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onManualRoute && !onFleetRoute && (i % 3 !== 0)) {
+    const onPirateRoute = pirateRoutes.has(key);
+    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onManualRoute && !onFleetRoute && !onPirateRoute && (i % 3 !== 0)) {
       continue;
     }
     visibleLanes++;
 
-    if (onManualRoute) {
+    if (onPirateRoute) {
+      ctx.setLineDash([5 * z, 4 * z]);
+      ctx.strokeStyle = hexToRgba(THEME.dangerHot, 0.72);
+      ctx.lineWidth = Math.max(1.2, 2.2 * z);
+    } else if (onManualRoute) {
       ctx.setLineDash([8 * z, 6 * z]);
       ctx.strokeStyle = hexToRgba(THEME.accentGold, 0.85);
       ctx.lineWidth = Math.max(1.5, 2.4 * z);
@@ -1182,7 +1201,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     const owned = isPlayerOwned(state, star.id);
     const aiOwned = isAiOwned(state, star.id);
     const fleetAtStar = fleetMarkersBySystem.get(star.id) ?? [];
-    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0;
+    const pirateAtStar = pirateMarkersBySystem.get(star.id) ?? [];
+    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0;
     if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
 
     if (!system?.star) {
@@ -1248,7 +1268,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     }
 
     const labelImportant = owned || aiOwned || state.stronghold === star.id
-      || fleetAtStar.length > 0 || piratePresence.has(star.id);
+      || fleetAtStar.length > 0 || piratePresence.has(star.id) || pirateAtStar.length > 0;
     if (intel && tier !== 'far' && (tier === 'close' || labelImportant)) {
       labelText(ctx, star.name, s.x, s.y + nodeR + 16 * z, Math.max(10, 12 * z), THEME.textLabel);
       const n = system?.bodies.length ?? 0;
@@ -1300,6 +1320,16 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
       drawFleetMarker(
         ctx,
         s.x - nodeR - 12 * z - idx * 22 * z,
+        s.y + nodeR + 12 * z,
+        z,
+        marker,
+      );
+    });
+
+    pirateAtStar.forEach((marker, idx) => {
+      drawFleetMarker(
+        ctx,
+        s.x + nodeR + 18 * z + idx * 30 * z,
         s.y + nodeR + 12 * z,
         z,
         marker,
@@ -1357,6 +1387,26 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     }
   }
 
+  for (const marker of pirateFleetTransitMarkersForGalaxy(state)) {
+    const s = worldToScreen(galaxyCamera, marker.x, marker.y, canvas);
+    if (!screenInView(s, canvas, 50)) continue;
+    drawFleetMarker(ctx, s.x, s.y, z, marker);
+    if (marker.intent === 'raid' && marker.destId) {
+      const dest = nodePos(galaxy, marker.destId);
+      const ds = worldToScreen(galaxyCamera, dest.x, dest.y, canvas);
+      const pulse = 0.5 + 0.5 * Math.sin((performance.now() / SELECTION_PULSE_MS) * Math.PI * 2);
+      drawGlowRing(
+        ctx,
+        ds.x,
+        ds.y,
+        (starNodeRadius(state, marker.destId) + (9 + 4 * pulse)) * z,
+        THEME.dangerHot,
+        Math.max(1, 1.6 * z),
+        0.28 + 0.42 * pulse,
+      );
+    }
+  }
+
   const droneTransit = builderDroneTransitPositions(state);
   for (const entry of droneTransit) {
     if (tier === 'far' && !entry.drone?.targetSystemId) continue;
@@ -1397,6 +1447,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     visibleStars,
     visibleLanes,
     fleetMarkers: fleetMarkers.length,
+    pirateMarkers: pirateMarkers.length + pirateFleetTransitMarkersForGalaxy(state).length,
     droneMarkers: droneTransit.length,
     lastDrawMs: Math.round((performance.now() - drawStartedAt) * 100) / 100,
   };

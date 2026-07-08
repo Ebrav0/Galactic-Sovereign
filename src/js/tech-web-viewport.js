@@ -49,6 +49,23 @@ export function attachTechWebViewport(container, svg, opts = {}) {
     applyViewBox();
   }
 
+  function fitBounds(bounds, padding = 120) {
+    if (!bounds) {
+      fitView();
+      return;
+    }
+    const targetWidth = Math.max(220, bounds.x2 - bounds.x1 + padding * 2);
+    const targetHeight = Math.max(160, bounds.y2 - bounds.y1 + padding * 2);
+    zoom = clampZoom(Math.min(graphWidth / targetWidth, graphHeight / targetHeight));
+    const viewWidth = graphWidth / zoom;
+    const viewHeight = graphHeight / zoom;
+    const cx = (bounds.x1 + bounds.x2) / 2;
+    const cy = (bounds.y1 + bounds.y2) / 2;
+    panX = cx - viewWidth / 2;
+    panY = cy - viewHeight / 2;
+    applyViewBox();
+  }
+
   function clientToGraph(clientX, clientY) {
     const rect = svg.getBoundingClientRect();
     const w = graphWidth / zoom;
@@ -143,5 +160,5 @@ export function attachTechWebViewport(container, svg, opts = {}) {
 
   fitView();
 
-  return { fitView, applyViewBox };
+  return { fitView, fitBounds, applyViewBox };
 }

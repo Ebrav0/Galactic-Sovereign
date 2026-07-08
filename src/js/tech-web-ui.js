@@ -12,6 +12,7 @@ import {
   ancestorChain,
   NODE_SIZE,
   CLUSTER_BAND,
+  TECH_CLUSTER_ORDER,
 } from './tech-web-layout.js';
 import { attachTechWebViewport } from './tech-web-viewport.js';
 
@@ -78,14 +79,14 @@ function edgeCurve(from, to) {
 function createBandLabels(svg, bandCenters) {
   const bandsG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   bandsG.setAttribute('class', 'tech-web-bands');
-  for (const band of [0, 1, 2, 3, 4, 5]) {
+  for (const clusterId of TECH_CLUSTER_ORDER) {
+    const band = CLUSTER_BAND[clusterId];
     const y = bandCenters.get(band) ?? 0;
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('class', 'tech-web-band-label');
     label.setAttribute('x', '12');
     label.setAttribute('y', String(y + 4));
-    const clusterId = Object.entries(CLUSTER_BAND).find(([, b]) => b === band)?.[0];
-    const meta = clusterId ? TECH_CLUSTERS[clusterId] : null;
+    const meta = TECH_CLUSTERS[clusterId] ?? null;
     label.setAttribute('fill', meta?.color ?? '#888');
     label.textContent = meta?.label ?? '';
     bandsG.appendChild(label);
@@ -217,8 +218,10 @@ function buildSvgGraph(state, summary, opts = {}) {
  */
 export function updateTechWebGraph(svg, state, summary, opts = {}) {
   const nodes = allTechNodes();
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const summarySafe = summary ?? { activeNodeId: null, queue: [], progress: 0 };
   const hoverId = opts.hoverNodeId ?? null;
+  const clusterFilter = opts.clusterFilter ?? null;
   const pathIds = hoverId
     ? new Set(ancestorChain(hoverId, techNode))
     : new Set(
@@ -249,12 +252,13 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
     const hidden = isNodeHidden(state, node.id);
     const status = hidden ? 'hidden' : nodeState(state, node.id, summarySafe);
     const onPath = pathIds.has(node.id);
+    const filtered = clusterFilter && node.cluster !== clusterFilter;
 
     g.setAttribute('class', [
       'tech-web-node',
       `tech-web-node--${status}`,
       onPath ? 'tech-web-node--path' : '',
-      g.classList.contains('tech-web-node--filtered') ? 'tech-web-node--filtered' : '',
+      filtered ? 'tech-web-node--filtered' : '',
     ].filter(Boolean).join(' '));
 
     const tile = g.querySelector('.tech-web-node__tile');
@@ -310,14 +314,39 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
   for (const path of svg.querySelectorAll('.tech-web-edge')) {
     const fromId = path.dataset.fromId;
     const toId = path.dataset.toId;
+    const fromNode = nodeById.get(fromId);
+    const toNode = nodeById.get(toId);
     const key = `${fromId}->${toId}`;
     const bothUnlocked = isTechUnlocked(state, fromId) && isTechUnlocked(state, toId);
     const onPath = pathEdges.has(key);
+    const filtered = clusterFilter
+      && fromNode?.cluster !== clusterFilter
+      && toNode?.cluster !== clusterFilter;
     let cls = 'tech-web-edge';
+    if (filtered) cls += ' tech-web-edge--filtered';
     if (onPath) cls += ' tech-web-edge--path';
     else if (bothUnlocked) cls += ' tech-web-edge--lit';
     path.setAttribute('class', cls);
   }
+}
+
+function clusterBounds(positions, nodes, clusterId) {
+  if (!clusterId) return null;
+  let x1 = Infinity;
+  let y1 = Infinity;
+  let x2 = -Infinity;
+  let y2 = -Infinity;
+  const half = NODE_SIZE / 2;
+  for (const node of nodes) {
+    if (node.cluster !== clusterId) continue;
+    const pos = positions.get(node.id);
+    if (!pos) continue;
+    x1 = Math.min(x1, pos.x - half);
+    y1 = Math.min(y1, pos.y - half);
+    x2 = Math.max(x2, pos.x + half);
+    y2 = Math.max(y2, pos.y + half);
+  }
+  return Number.isFinite(x1) ? { x1, y1, x2, y2 } : null;
 }
 
 export function researchSnapshotKey(summary) {
@@ -344,7 +373,10 @@ export function mountTechWebGraph(container, state, opts = {}) {
     hoverNodeId,
   });
 
-  const { svg, width, height } = buildSvgGraph(state, summary, graphOpts());
+  const { svg, positions, width, height } = buildSvgGraph(state, summary, graphOpts());
+  const nodes = allTechNodes();
+  let currentState = state;
+  let currentSummary = summary;
 
   const viewport = attachTechWebViewport(graphHost, svg, {
     graphWidth: width,
@@ -352,7 +384,7 @@ export function mountTechWebGraph(container, state, opts = {}) {
     onResearch: opts.onResearch,
     onHoverNode: (nodeId) => {
       hoverNodeId = nodeId;
-      updateTechWebGraph(svg, state, summary, graphOpts());
+      updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
       opts.onHoverNode?.(nodeId);
     },
   });
@@ -363,12 +395,15 @@ export function mountTechWebGraph(container, state, opts = {}) {
     fitView: viewport.fitView,
     setClusterFilter: (filter) => {
       opts.clusterFilter = filter;
-      for (const g of svg.querySelectorAll('.tech-web-node')) {
-        const match = !filter || g.dataset.cluster === filter;
-        g.classList.toggle('tech-web-node--filtered', !match);
-      }
+      updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
+      if (filter) viewport.fitBounds(clusterBounds(positions, nodes, filter));
+      else viewport.fitView();
     },
-    refresh: (st, sum) => updateTechWebGraph(svg, st, sum, graphOpts()),
+    refresh: (st, sum) => {
+      currentState = st;
+      currentSummary = sum;
+      updateTechWebGraph(svg, st, sum, graphOpts());
+    },
   };
 }
 
