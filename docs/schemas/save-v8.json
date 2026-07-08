@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Galactic Sovereign save file — version 8",
-  "description": "Construction drones: timed structure builds with drone swarm (Phase 6).",
+  "description": "Player battle groups plus construction drones for timed structure builds.",
   "type": "object",
   "required": ["saveVersion", "checksum", "savedAt", "state"],
   "properties": {
@@ -12,11 +12,24 @@
       "type": "object",
       "required": [
         "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
-        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "pirates",
+        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "battleGroups", "pirates",
         "systemBattles", "battleStance", "solarii", "solariiUnlocked",
         "empireQueue", "research", "factions", "aiShips", "constructionJobs", "drones"
       ],
       "properties": {
+        "battleGroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "galaxyId", "ordinal", "shipIds"],
+            "properties": {
+              "id": { "type": "string" },
+              "galaxyId": { "type": "string" },
+              "ordinal": { "type": "integer", "minimum": 1 },
+              "shipIds": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
         "empireQueue": { "type": "array" },
         "research": { "type": "object" },
         "factions": { "type": "object" },

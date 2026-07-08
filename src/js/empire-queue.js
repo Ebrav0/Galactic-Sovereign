@@ -4,7 +4,7 @@ import {
   EMPIRE_QUEUE_MAX,
   SHIPYARD_COMBAT_HULLS,
 } from './constants.js';
-import { hullStats } from './hull.js';
+import { hullStats, hullQueueCost } from './hull.js';
 import { findPath, neighborsOf } from './galaxy.js';
 import { getGraph, getSystems } from './galaxy-scope.js';
 import {
@@ -29,10 +29,8 @@ export function resetQueueIds(state) {
   nextQueueId = max + 1;
 }
 
-function hullCost(hull) {
-  const stats = hullStats(hull);
-  if (!stats) return null;
-  return stats.cost;
+function hullCost(state, hull) {
+  return hullQueueCost(state, hull);
 }
 
 function hullBuildMs(hull) {
@@ -135,7 +133,7 @@ export function enqueueHull(state, hull) {
   if (!empireQueueHulls(state).includes(hull)) {
     return { ok: false, reason: 'Hull not unlocked in empire queue' };
   }
-  const cost = hullCost(hull);
+  const cost = hullCost(state, hull);
   const buildMs = hullBuildMs(hull);
   if (cost == null || buildMs == null) return { ok: false, reason: 'Unknown hull type' };
 

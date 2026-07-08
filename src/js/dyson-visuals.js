@@ -11,6 +11,9 @@ import {
   SAIL_DOT_DRAW_MAX,
   SAIL_DOT_LOD_STRIDE_TARGET,
   CELESTIAL_VISUAL_SCALE,
+  DYSON_LATTICE_BLEND_PROGRESS,
+  DYSON_CONSTRUCTION_LATTICE_SLOTS,
+  DYSON_MAX_MESH_EDGES,
 } from './constants.js';
 import {
   systemById,
@@ -36,6 +39,174 @@ export function foundryRingClosestPoint(planetX, planetY, ringR, targetX, target
 export function shellOrbitRadius(starRadius, shellTier) {
   const visualR = starRadius * CELESTIAL_VISUAL_SCALE;
   return visualR * (1.08 + shellTier * 0.06);
+}
+
+/** Geodesic harvest cage radius (outermost completed shell). */
+export function envelopeRadius(starRadius) {
+  return shellOrbitRadius(starRadius, SHELL_COUNT);
+}
+
+/** GDD visual phase 0–8 (matches completedShells). */
+export function shellVisualTier(completedShells) {
+  return Math.max(0, Math.min(SHELL_COUNT, completedShells | 0));
+}
+
+/** Icosahedron subdivision frequency for geodesic mesh (0 = no mesh). */
+export function geodesicFrequency(completedShells) {
+  if (completedShells >= 7) return 2;
+  if (completedShells >= 5) return 1;
+  return 0;
+}
+
+function normalize3(v) {
+  const len = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+function midpoint3(a, b) {
+  return normalize3([(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5]);
+}
+
+function edgeKey(i, j) {
+  return i < j ? `${i},${j}` : `${j},${i}`;
+}
+
+/** Build a pole-view geodesic mesh around the star (deterministic from seed). */
+export function buildGeodesicMesh(starRadius, completedShells, systemSeed = 0) {
+  const tier = shellVisualTier(completedShells);
+  const freq = geodesicFrequency(completedShells);
+  const radius = envelopeRadius(starRadius);
+  if (freq <= 0 || tier <= 0) {
+    return { nodes: [], edges: [], frequency: 0, envelopeR: radius, tier };
+  }
+
+  const phi = (1 + Math.sqrt(5)) * 0.5;
+  let vertices = [
+    [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
+    [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
+    [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1],
+  ].map(normalize3);
+
+  let faces = [
+    [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+    [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+    [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+    [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+  ];
+
+  for (let f = 0; f < freq; f++) {
+    const nextVerts = [...vertices];
+    const midCache = new Map();
+    const nextFaces = [];
+
+    function getMid(a, b) {
+      const key = edgeKey(a, b);
+      if (midCache.has(key)) return midCache.get(key);
+      const mid = midpoint3(vertices[a], vertices[b]);
+      const idx = nextVerts.length;
+      nextVerts.push(mid);
+      midCache.set(key, idx);
+      return idx;
+    }
+
+    for (const [a, b, c] of faces) {
+      const ab = getMid(a, b);
+      const bc = getMid(b, c);
+      const ca = getMid(c, a);
+      nextFaces.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]);
+    }
+    vertices = nextVerts;
+    faces = nextFaces;
+  }
+
+  const spin = ((hashSeed(0xd501, String(systemSeed)) % 628) / 100) * 0.1;
+  const cosS = Math.cos(spin);
+  const sinS = Math.sin(spin);
+
+  const nodes = vertices.map((v, id) => {
+    const x = v[0] * cosS - v[1] * sinS;
+    const y = v[0] * sinS + v[1] * cosS;
+    return { id, x: x * radius, y: y * radius, z: v[2] };
+  });
+
+  const edgeSet = new Set();
+  const edges = [];
+  for (const [a, b, c] of faces) {
+    for (const [i, j] of [[a, b], [b, c], [c, a]]) {
+      const key = edgeKey(i, j);
+      if (edgeSet.has(key)) continue;
+      edgeSet.add(key);
+      const n1 = nodes[i];
+      const n2 = nodes[j];
+      edges.push({
+        id: edges.length,
+        x1: n1.x,
+        y1: n1.y,
+        x2: n2.x,
+        y2: n2.y,
+        z1: n1.z,
+        z2: n2.z,
+      });
+    }
+  }
+
+  // Shell tier gates visible edge fraction (construction / escalation).
+  const edgeFraction = tier >= 8 ? 1
+    : tier >= 7 ? 0.92
+      : tier >= 6 ? 0.78
+        : tier >= 5 ? 0.6
+          : 0.4;
+  let visibleEdges = edges.slice(0, Math.max(1, Math.floor(edges.length * edgeFraction)));
+  if (visibleEdges.length > DYSON_MAX_MESH_EDGES) {
+    const stride = Math.ceil(visibleEdges.length / DYSON_MAX_MESH_EDGES);
+    visibleEdges = visibleEdges.filter((_, i) => i % stride === 0);
+  }
+
+  return {
+    nodes,
+    edges: visibleEdges,
+    frequency: freq,
+    envelopeR: radius,
+    tier,
+  };
+}
+
+/** Edge midpoints for construction weave (high shell progress). */
+export function latticeConstructionSlots(starRadius, completedShells, systemSeed = 0) {
+  const mesh = buildGeodesicMesh(starRadius, Math.max(completedShells + 1, 5), systemSeed);
+  const slots = [];
+  const cap = DYSON_CONSTRUCTION_LATTICE_SLOTS;
+  for (let i = 0; i < mesh.edges.length && slots.length < cap; i++) {
+    const e = mesh.edges[i];
+    slots.push({
+      x: (e.x1 + e.x2) * 0.5,
+      y: (e.y1 + e.y2) * 0.5,
+      edgeId: e.id,
+    });
+  }
+  while (slots.length < cap) {
+    const orbitR = shellOrbitRadius(starRadius, completedShells + 1);
+    const angle = (slots.length / cap) * Math.PI * 2;
+    slots.push({ x: Math.cos(angle) * orbitR, y: Math.sin(angle) * orbitR, edgeId: -1 });
+  }
+  return slots;
+}
+
+/** Construction dot position — ring early, lattice weave late. */
+export function constructionDotPosition(slot, completedShells, starRadius, shellSails, systemSeed = 0) {
+  const ring = inProgressSailDotPosition(slot, completedShells, starRadius);
+  const progress = shellSails / SHELL_SAILS_REQUIRED;
+  if (progress < DYSON_LATTICE_BLEND_PROGRESS) return ring;
+
+  const lattice = latticeConstructionSlots(starRadius, completedShells, systemSeed);
+  const target = lattice[slot % lattice.length];
+  const blend = Math.min(1, (progress - DYSON_LATTICE_BLEND_PROGRESS) / (1 - DYSON_LATTICE_BLEND_PROGRESS));
+  const eased = blend * blend * (3 - 2 * blend);
+  return {
+    ...ring,
+    x: ring.x + (target.x - ring.x) * eased,
+    y: ring.y + (target.y - ring.y) * eased,
+  };
 }
 
 /** Slot on the in-progress shell ring (slot 0 .. SHELL_SAILS_REQUIRED-1). */
@@ -90,9 +261,16 @@ export function settledInProgressDots(state, systemId, starRadius) {
   if (dyson.completedShells >= SHELL_COUNT) return [];
 
   const count = Math.floor(dyson.shellSails);
+  const systemSeed = state.seed ?? 0;
   const dots = [];
   for (let slot = 0; slot < count; slot++) {
-    const pos = inProgressSailDotPosition(slot, dyson.completedShells, starRadius);
+    const pos = constructionDotPosition(
+      slot,
+      dyson.completedShells,
+      starRadius,
+      dyson.shellSails,
+      systemSeed,
+    );
     dots.push({ ...pos, settled: true, progress: 1 });
   }
   return dots;
@@ -159,6 +337,8 @@ export function completedShellRingRadii(starRadius, completedShells) {
 export function dysonVisualSummary(state, systemId, starRadius, zoom) {
   const system = systemById(state, systemId);
   const dyson = system ? ensureDyson(system) : null;
+  const tier = dyson ? shellVisualTier(dyson.completedShells) : 0;
+  const mesh = dyson ? buildGeodesicMesh(starRadius, dyson.completedShells, state.seed ?? 0) : null;
   const settled = dyson ? settledInProgressDots(state, systemId, starRadius) : [];
   const inFlight = dyson ? inFlightSailDots(state, systemId, starRadius) : [];
   const supplyLines = hasFoundry(state, systemId)
@@ -203,6 +383,10 @@ export function dysonVisualSummary(state, systemId, starRadius, zoom) {
     inFlightProgress: inFlight.map((d) => Math.round(d.progress * 1000) / 1000),
     inFlightDistToStar: inFlight.map((d) => Math.round(d.distToStar * 10) / 10),
     shellSails: dyson ? Math.floor(dyson.shellSails) : 0,
+    visualTier: tier,
+    meshEdgeCount: mesh?.edges?.length ?? 0,
+    nodeCount: mesh?.nodes?.length ?? 0,
+    isNovaculaComplete: tier >= SHELL_COUNT,
   };
 }
 

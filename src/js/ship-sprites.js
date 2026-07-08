@@ -32,27 +32,29 @@ const HULL_RENDER = {
   command_cruiser: { scale: 1.3 },
   miner: { scale: 0.95 },
   flagship: { scale: 1.5 },
+  hero_flagship: { scale: 1.25 },
 };
 
 function hullColors(hull, side) {
   const enemy = side === 'enemy';
+  const ai = side === 'ai';
   if (hull === 'healer') {
     return {
-      deck: enemy ? '#6a3a3a' : '#3a6a52',
-      hull: enemy ? '#4a2828' : '#24443a',
-      dark: enemy ? '#2a1616' : '#122420',
-      stroke: enemy ? '#ff8888' : '#7affb8',
-      glow: enemy ? '#ff5555' : '#7aff9e',
-      engine: enemy ? '#ff7755' : '#7ad0ff',
+      deck: enemy ? '#6a3a3a' : ai ? '#5a3f70' : '#3a6a52',
+      hull: enemy ? '#4a2828' : ai ? '#352348' : '#24443a',
+      dark: enemy ? '#2a1616' : ai ? '#1c132c' : '#122420',
+      stroke: enemy ? '#ff8888' : ai ? '#d194ff' : '#7affb8',
+      glow: enemy ? '#ff5555' : ai ? THEME.accentViolet : '#7aff9e',
+      engine: enemy ? '#ff7755' : ai ? '#c44dff' : '#7ad0ff',
     };
   }
   return {
-    deck: enemy ? '#5c3434' : '#3c4c66',
-    hull: enemy ? '#402424' : '#28344a',
-    dark: enemy ? '#241212' : '#141c2e',
-    stroke: enemy ? '#ff6666' : '#9fc7ff',
-    glow: enemy ? '#ff4444' : THEME.accentCyan,
-    engine: enemy ? '#ff6a3a' : '#7ad0ff',
+    deck: enemy ? '#5c3434' : ai ? '#4d376b' : '#3c4c66',
+    hull: enemy ? '#402424' : ai ? '#2f2347' : '#28344a',
+    dark: enemy ? '#241212' : ai ? '#171125' : '#141c2e',
+    stroke: enemy ? '#ff6666' : ai ? '#c889ff' : '#9fc7ff',
+    glow: enemy ? '#ff4444' : ai ? THEME.accentViolet : THEME.accentCyan,
+    engine: enemy ? '#ff6a3a' : ai ? '#c44dff' : '#7ad0ff',
   };
 }
 
@@ -90,14 +92,56 @@ function engineFlame(ctx, x, y, len, width, color, flicker = 1) {
 }
 
 function glowDot(ctx, x, y, r, color, alpha = 1) {
-  ctx.save();
-  ctx.shadowColor = color;
-  ctx.shadowBlur = r * 3;
-  ctx.fillStyle = hexToRgba(color, alpha);
+  const outer = r * 2.2;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, outer);
+  g.addColorStop(0, hexToRgba(color, alpha));
+  g.addColorStop(0.45, hexToRgba(color, alpha * 0.55));
+  g.addColorStop(1, hexToRgba(color, 0));
+  ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x, y, outer, 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
+  ctx.fillStyle = hexToRgba(color, Math.min(1, alpha + 0.15));
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.65, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+const ANIMATED_HULLS = new Set([
+  'light_carrier', 'fleet_carrier', 'super_carrier',
+  'healer', 'sensor_ship', 'miner',
+]);
+
+const HULL_CACHE_MAX = 48;
+/** @type {Map<string, { canvas: HTMLCanvasElement, half: number }>} */
+const hullBitmapCache = new Map();
+
+function cacheHullBitmap(hull, side, r) {
+  const rKey = Math.max(4, Math.round(r));
+  const key = `${hull}:${side}:${rKey}`;
+  const existing = hullBitmapCache.get(key);
+  if (existing) {
+    hullBitmapCache.delete(key);
+    hullBitmapCache.set(key, existing);
+    return existing;
+  }
+
+  const pad = rKey * 2.4;
+  const size = Math.ceil(rKey * 4 + pad * 2);
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const c = canvas.getContext('2d');
+  c.translate(size / 2, size / 2);
+  drawHullShape(c, hull, rKey, hullColors(hull, side), 0);
+
+  const entry = { canvas, half: size / 2 };
+  if (hullBitmapCache.size >= HULL_CACHE_MAX) {
+    const oldest = hullBitmapCache.keys().next().value;
+    hullBitmapCache.delete(oldest);
+  }
+  hullBitmapCache.set(key, entry);
+  return entry;
 }
 
 // ============================= FLAGSHIP =============================
@@ -813,6 +857,28 @@ function drawMinerModel(ctx, r, c, time) {
   ctx.restore();
 }
 
+function drawHeroFlagshipModel(ctx, r, colors, time = performance.now()) {
+  const flicker = 0.85 + 0.15 * Math.sin(time / 55);
+  ctx.fillStyle = colors.hull;
+  ctx.strokeStyle = colors.stroke;
+  ctx.lineWidth = r * 0.08;
+  ctx.beginPath();
+  ctx.moveTo(r * 1.1, 0);
+  ctx.lineTo(-r * 0.35, r * 0.55);
+  ctx.lineTo(-r * 0.85, r * 0.35);
+  ctx.lineTo(-r * 1.0, 0);
+  ctx.lineTo(-r * 0.85, -r * 0.35);
+  ctx.lineTo(-r * 0.35, -r * 0.55);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = hexToRgba(THEME.accentGold, 0.35 + 0.2 * flicker);
+  ctx.beginPath();
+  ctx.arc(r * 0.15, 0, r * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  engineFlame(ctx, -r * 1.05, 0, r * 1.4, r * 0.28, colors.engine, flicker);
+}
+
 function drawHullShape(ctx, hull, r, colors, time) {
   switch (hull) {
     case 'patrol_cutter': drawPatrolCutterModel(ctx, r, colors); break;
@@ -837,6 +903,7 @@ function drawHullShape(ctx, hull, r, colors, time) {
     case 'command_cruiser': drawCommandCruiserModel(ctx, r, colors); break;
     case 'miner': drawMinerModel(ctx, r, colors, time); break;
     case 'flagship': drawFlagshipModel(ctx, r * 0.85, { time, side: 'player' }); break;
+    case 'hero_flagship': drawHeroFlagshipModel(ctx, r, colors, time); break;
     case 'corvette': drawCorvetteModel(ctx, r, colors); break;
     case 'scout':
     default:
@@ -866,12 +933,70 @@ export function drawHullSprite(ctx, x, y, hull, baseR, opts = {}) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
-  ctx.shadowColor = hexToRgba(colors.glow, 0.35);
-  ctx.shadowBlur = r * 0.3;
-  drawHullShape(ctx, hull, r, colors, time);
-  ctx.shadowBlur = 0;
+  if (ANIMATED_HULLS.has(hull)) {
+    drawHullShape(ctx, hull, r, colors, time);
+  } else {
+    const cached = cacheHullBitmap(hull, side, r);
+    ctx.drawImage(cached.canvas, -cached.half, -cached.half);
+  }
   ctx.restore();
 
+  if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);
+}
+
+/** Fast tactical marker for large battles. Avoids shadows, gradients, and cached bitmap lookups. */
+export function drawHullSpriteLite(ctx, x, y, hull, baseR, opts = {}) {
+  const {
+    heading = 0,
+    side = 'player',
+    hp = 1,
+    maxHp = 1,
+    showHp = false,
+    alpha = 1,
+  } = opts;
+  const scale = hullRenderScale(hull);
+  const r = Math.max(2.5, baseR * scale * 0.78);
+  const colors = hullColors(hull, side);
+  const accent = side === 'enemy'
+    ? THEME.battle.enemy
+    : side === 'ai'
+      ? THEME.battle.ai
+      : THEME.battle.player;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+  ctx.fillStyle = colors.hull;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = Math.max(0.75, r * 0.12);
+  ctx.beginPath();
+  ctx.moveTo(r * 1.35, 0);
+  ctx.lineTo(-r * 0.85, r * 0.62);
+  ctx.lineTo(-r * 0.45, 0);
+  ctx.lineTo(-r * 0.85, -r * 0.62);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  if (hull === 'healer') {
+    ctx.strokeStyle = THEME.accentGreen;
+    ctx.lineWidth = Math.max(0.8, r * 0.13);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.1, -r * 0.42);
+    ctx.lineTo(-r * 0.1, r * 0.42);
+    ctx.moveTo(-r * 0.52, 0);
+    ctx.lineTo(r * 0.32, 0);
+    ctx.stroke();
+  } else if (hull.includes('carrier')) {
+    ctx.strokeStyle = hexToRgba(accent, 0.55);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.15, -r * 0.62);
+    ctx.lineTo(-r * 0.15, r * 0.62);
+    ctx.stroke();
+  }
+
+  ctx.restore();
   if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);
 }
 
@@ -882,6 +1007,17 @@ export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
   ctx.rotate(heading);
   drawFlagshipModel(ctx, r, { thrusting, time: performance.now() });
   ctx.restore();
+}
+
+/** Hero flagship sprite (galaxy + system views). */
+export function drawHeroFlagshipSprite(ctx, x, y, heading, r, hp = 1, maxHp = 1) {
+  const colors = hullColors('hero_flagship', 'player');
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(heading);
+  drawHeroFlagshipModel(ctx, r, colors, performance.now());
+  ctx.restore();
+  drawHpBar(ctx, x, y, r, hp, maxHp);
 }
 
 /** Whisper-ship shuttle sprite. */
@@ -907,5 +1043,130 @@ export function drawScoutSprite(ctx, x, y, angle, r, selected) {
   ctx.shadowBlur = r * 0.4;
   drawScoutModel(ctx, r, colors);
   ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+function drawFleetFormationGlyph(ctx, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = hexToRgba(color, 0.45);
+  ctx.lineWidth = 0.45;
+
+  ctx.beginPath();
+  ctx.moveTo(0, -5.5);
+  ctx.lineTo(2.8, -1.2);
+  ctx.lineTo(1.2, -0.4);
+  ctx.lineTo(0, -2.2);
+  ctx.lineTo(-1.2, -0.4);
+  ctx.lineTo(-2.8, -1.2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.globalAlpha = 0.75;
+  ctx.beginPath();
+  ctx.moveTo(-3.8, 2.8);
+  ctx.lineTo(-2.4, 0.2);
+  ctx.lineTo(-3.1, -0.2);
+  ctx.lineTo(-4.4, 2.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(3.8, 2.8);
+  ctx.lineTo(2.4, 0.2);
+  ctx.lineTo(3.1, -0.2);
+  ctx.lineTo(4.4, 2.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.beginPath();
+  ctx.moveTo(0, 1.2);
+  ctx.lineTo(0, 5.5);
+  ctx.moveTo(-1.8, 4.6);
+  ctx.lineTo(0, 3.6);
+  ctx.lineTo(1.8, 4.6);
+  ctx.stroke();
+}
+
+function drawPirateFleetGlyph(ctx, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = hexToRgba(color, 0.72);
+  ctx.lineWidth = 1.4;
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(4.8, 0);
+  ctx.lineTo(-3.2, -4.2);
+  ctx.lineTo(-1.2, 0);
+  ctx.lineTo(-3.2, 4.2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(4, 5, 12, 0.85)';
+  ctx.beginPath();
+  ctx.arc(0.8, -1.1, 0.75, 0, Math.PI * 2);
+  ctx.arc(0.8, 1.1, 0.75, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(-4.4, -4.8);
+  ctx.lineTo(4.8, 4.8);
+  ctx.moveTo(4.8, -4.8);
+  ctx.lineTo(-4.4, 4.8);
+  ctx.stroke();
+}
+
+/** Battle group marker for galaxy map — naval glyph + ship count badge. */
+export function drawFleetMarker(ctx, x, y, scale, opts = {}) {
+  const {
+    shipCount = 0,
+    power = 0,
+    selected = false,
+    side = 'player',
+    intent = null,
+  } = opts;
+  const s = Math.max(0.55, Math.min(1.4, scale));
+  const enemy = side === 'enemy';
+  const accent = enemy ? THEME.dangerHot : (selected ? THEME.accentGreen : THEME.accentCyan);
+  const badgeW = Math.max(enemy ? 36 : 32, (power >= 100 ? 45 : 38) * s);
+  const badgeH = Math.max(14, 16 * s);
+  const left = x - badgeW * 0.5;
+  const top = y - badgeH * 0.5;
+
+  ctx.save();
+  ctx.fillStyle = enemy
+    ? (intent === 'raid' || intent === 'interdict' ? 'rgba(255, 63, 95, 0.2)' : 'rgba(255, 99, 99, 0.13)')
+    : (selected ? 'rgba(125, 255, 168, 0.18)' : 'rgba(111, 214, 255, 0.12)');
+  ctx.strokeStyle = hexToRgba(accent, selected ? 0.95 : 0.75);
+  ctx.lineWidth = Math.max(1, 1.1 * s);
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(left, top, badgeW, badgeH, Math.max(2, 3 * s));
+  } else {
+    ctx.rect(left, top, badgeW, badgeH);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  if (selected || intent === 'raid' || intent === 'interdict') {
+    ctx.shadowColor = hexToRgba(enemy ? THEME.dangerHot : THEME.accentGreen, 0.55);
+    ctx.shadowBlur = 8 * s;
+    ctx.strokeStyle = hexToRgba(accent, 0.45);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.translate(left + badgeW * 0.22, y);
+  ctx.scale(0.85 * s, 0.85 * s);
+  if (enemy) drawPirateFleetGlyph(ctx, accent);
+  else drawFleetFormationGlyph(ctx, accent);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const label = power > 0 ? `${shipCount}/${power}` : String(shipCount);
+  ctx.font = `600 ${Math.max(7.5, 9 * s)}px "IBM Plex Mono", monospace`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = enemy ? '#ffe6e6' : (selected ? THEME.accentGreen : '#e8f4ff');
+  ctx.fillText(label, left + badgeW * 0.42, y + 0.5 * s);
+
   ctx.restore();
 }

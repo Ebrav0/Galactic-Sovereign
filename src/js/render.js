@@ -14,6 +14,11 @@ import {
   SAIL_SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
   CAPTURE_HOLD_MS,
+  BATTLE_RENDER_LOD_UNITS,
+  BATTLE_RENDER_SWARM_UNITS,
+  BATTLE_TRACER_LIMIT,
+  TACTICAL_WEAPON_COOLDOWN_MS,
+  TACTICAL_WEAPON_RANGE,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
 import {
@@ -26,6 +31,7 @@ import {
   drawCompletedShellRings,
   drawInProgressSailDots,
 } from './dyson-render.js';
+import { drawDysonLensFlare } from './dyson-megastructure-render.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { typeSizeBonus } from './star-types.js';
 import {
@@ -43,9 +49,15 @@ import {
 } from './state.js';
 import { shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
-import { drawLandingPad, drawMiningRig } from './surface-structures-render.js';
+import { drawLandingPad, drawMiningRig, drawSurfaceBuilding } from './surface-structures-render.js';
 import { structureSites } from './structure-sites.js';
-import { drawShipyardStation, drawSailLauncher, drawLaunchMuzzleFlash } from './structure-render.js';
+import {
+  drawShipyardStation,
+  drawSailLauncher,
+  drawLaunchMuzzleFlash,
+  drawDrydockStation,
+  drawOrbitalDefensePlatform,
+} from './structure-render.js';
 import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
 import { dronePoses } from './drone-motion.js';
 import { drawConstructionDrone, drawDroneTrail } from './drone-render.js';
@@ -63,14 +75,26 @@ import { laneBulge, laneControlPoint } from './galaxy.js';
 import { getGraph, getActiveGalaxy, wormholeIdForGalaxy } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
 import { playerShipsAtSystem } from './fleets.js';
-import { pirateFleetAtSystem, pirateSystemsWithPresence } from './pirates.js';
+import {
+  pirateFleetAtSystem,
+  pirateSystemsWithPresence,
+  pirateFleetMarkersForGalaxy,
+  pirateTransitLaneKeys,
+  pirateFleetTransitMarkersForGalaxy,
+} from './pirates.js';
 import {
   drawHullSprite,
+  drawHullSpriteLite,
   drawFlagshipSprite,
+  drawHeroFlagshipSprite,
   drawScoutSprite,
   drawShuttleSprite,
+  drawFleetMarker,
 } from './ship-sprites.js';
-import { ambientShipPose, ambientPiratePose } from './ship-motion.js';
+import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
+import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
+import { weaponProfile } from './hull.js';
+import { builderDroneTransitPositions } from './builder-drones.js';
 import {
   THEME,
   hexToRgba,
@@ -81,6 +105,19 @@ import {
 export const camera = { x: 0, y: 0, zoom: 1 };
 export const galaxyCamera = { x: 0, y: 0, zoom: 0.4 };
 export const follow = { enabled: false };
+
+let lastGalaxyPerf = {
+  tier: 'close',
+  visibleStars: 0,
+  visibleLanes: 0,
+  fleetMarkers: 0,
+  droneMarkers: 0,
+  lastDrawMs: 0,
+};
+
+export function galaxyPerfSummary() {
+  return { ...lastGalaxyPerf };
+}
 
 export function clampZoom(z) {
   return Math.min(CAMERA_MAX_ZOOM, Math.max(CAMERA_MIN_ZOOM, z));
@@ -222,6 +259,148 @@ function drawStarfield(ctx, cam, canvas, time = 0) {
   ctx.globalAlpha = 1;
 }
 
+const titleCam = { x: 0, y: 0, zoom: 1 };
+
+/** Slow-drifting starfield for the title screen. */
+export function drawTitleBackground(ctx, canvas, time = 0) {
+  const drift = time * 0.00003;
+  titleCam.x = Math.sin(drift) * 140;
+  titleCam.y = Math.cos(drift * 0.72) * 90;
+  ctx.fillStyle = THEME.bgDeep;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawStarfield(ctx, titleCam, canvas, time);
+  const cx = canvas.width * 0.5;
+  const cy = canvas.height * 0.5;
+  const r = Math.max(canvas.width, canvas.height) * 0.62;
+  const g = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+/** Radial star streaks for the warp intro tunnel effect. */
+export function drawWarpStarfield(ctx, canvas, time = 0, intensity = 0, mask = null) {
+  const cx = mask?.cx ?? canvas.width * 0.5;
+  const cy = mask?.cy ?? canvas.height * 0.5;
+  const maskR = mask?.r ?? 0;
+
+  for (const n of getNebulae()) {
+    const baseX = cx + n.x * 0.018;
+    const baseY = cy + n.y * 0.018;
+    const pull = 1 - intensity * 0.45;
+    const px = cx + (baseX - cx) * pull;
+    const py = cy + (baseY - cy) * pull;
+    const sr = n.r * 0.035 * (1 + intensity * 0.4);
+    const g = ctx.createRadialGradient(px, py, sr * 0.1, px, py, sr);
+    g.addColorStop(0, n.palette[0]);
+    g.addColorStop(1, n.palette[1]);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(px, py, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const s of getStarfield()) {
+    const wobbleX = Math.sin(time * 0.35 + s.twinkle) * 18;
+    const wobbleY = Math.cos(time * 0.28 + s.twinkle) * 18;
+    const sx = cx + (s.x + wobbleX) * 0.016;
+    const sy = cy + (s.y + wobbleY) * 0.016;
+    const dx = sx - cx;
+    const dy = sy - cy;
+    const dist = Math.hypot(dx, dy) || 0.001;
+    const angle = Math.atan2(dy, dx) + s.twinkle * 0.08;
+    const radialPush = intensity * s.depth * (320 + time * 420);
+    const px = cx + Math.cos(angle) * (dist + radialPush);
+    const py = cy + Math.sin(angle) * (dist + radialPush);
+    const twinkle = 0.55 + 0.45 * Math.sin(time * s.twinkleSpeed * 1000 + s.twinkle);
+
+    if (intensity > 0.18) {
+      const streakLen = s.r * (2 + intensity * 14) * s.depth;
+      const tailX = px - Math.cos(angle) * streakLen;
+      const tailY = py - Math.sin(angle) * streakLen;
+      if (maskR > 0) {
+        const tailDist = Math.hypot(tailX - cx, tailY - cy);
+        const headDist = Math.hypot(px - cx, py - cy);
+        if (tailDist < maskR * 0.85 && headDist > maskR * 0.35) continue;
+        const band = maskR * 0.12;
+        if (Math.abs(tailY - cy) < band && Math.abs(py - cy) < band && Math.abs(tailX - cx) < maskR * 1.4) continue;
+      }
+      ctx.globalAlpha = s.a * twinkle;
+      ctx.strokeStyle = s.tint;
+      ctx.lineWidth = Math.max(0.5, s.r * (0.6 + intensity));
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+    } else {
+      ctx.globalAlpha = s.a * twinkle;
+      ctx.fillStyle = s.tint;
+      ctx.beginPath();
+      ctx.arc(px, py, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawCinematicSystemBackdrop(ctx, cam, canvas, time = 0, battle = null) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const drift = Math.sin(time / 17000) * 0.08;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+
+  let g = ctx.createRadialGradient(cx - w * (0.28 + drift), cy - h * 0.34, 0, cx - w * 0.2, cy - h * 0.25, w * 0.82);
+  g.addColorStop(0, THEME.cinematic.nebulaCyan);
+  g.addColorStop(0.48, THEME.cinematic.nebulaRose);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+
+  g = ctx.createLinearGradient(0, h * 0.18, w, h * 0.86);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(0.42, THEME.cinematic.dust);
+  g.addColorStop(0.56, THEME.cinematic.nebulaGold);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+
+  if (battle?.active) {
+    const pulse = 0.45 + 0.35 * Math.sin(time / 520);
+    g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.72);
+    g.addColorStop(0, `rgba(255, 58, 92, ${0.08 + pulse * 0.05})`);
+    g.addColorStop(0.62, THEME.battle.hazard);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  const vignette = ctx.createRadialGradient(cx, cy, Math.min(w, h) * 0.22, cx, cy, Math.max(w, h) * 0.66);
+  vignette.addColorStop(0, 'rgba(0,0,0,0)');
+  vignette.addColorStop(1, THEME.cinematic.vignette);
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+
+  const letterboxH = Math.max(20, h * 0.045);
+  const top = ctx.createLinearGradient(0, 0, 0, letterboxH);
+  top.addColorStop(0, THEME.cinematic.letterbox);
+  top.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = top;
+  ctx.fillRect(0, 0, w, letterboxH);
+  const bottom = ctx.createLinearGradient(0, h, 0, h - letterboxH);
+  bottom.addColorStop(0, THEME.cinematic.letterbox);
+  bottom.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = bottom;
+  ctx.fillRect(0, h - letterboxH, w, letterboxH);
+
+  ctx.restore();
+}
+
 function lightAngleFromOrigin(wx, wy) {
   return Math.atan2(wy, wx);
 }
@@ -273,6 +452,8 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   beginStarPass('system');
 
   drawStarfield(ctx, camera, canvas, t);
+  const activeBattle = getBattleState(state, systemId);
+  drawCinematicSystemBackdrop(ctx, camera, canvas, t, activeBattle);
 
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
@@ -305,6 +486,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       system.star.radius,
       t,
       dyson.lastShellCompletedAt,
+      state.seed ?? 0,
     );
     const settled = settledInProgressDots(state, systemId, system.star.radius);
     const inFlight = inFlightSailDots(state, systemId, system.star.radius, t);
@@ -318,7 +500,19 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     x: starScreen.x,
     y: starScreen.y,
     zoom: z,
+    time: t,
   });
+  if (intel && dyson.completedShells >= 8) {
+    drawDysonLensFlare(
+      ctx,
+      starScreen.x,
+      starScreen.y,
+      z,
+      dyson.completedShells,
+      system.star.radius,
+      t,
+    );
+  }
 
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
   const surfaceSites = intel ? outpostSurfaceSites(state, systemId, t) : [];
@@ -358,6 +552,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
           const ss = worldToScreen(camera, site.x, site.y, canvas);
           if (site.kind === 'moon-rig') {
             drawMiningRig(ctx, ss.x, ss.y, site.heading, z, {
+              active: site.active,
+              time: t,
+              seed: site.seed,
+            });
+          } else if (site.kind.startsWith('surface-')) {
+            drawSurfaceBuilding(ctx, ss.x, ss.y, site.heading, z, {
+              type: site.structureType,
               active: site.active,
               time: t,
               seed: site.seed,
@@ -411,6 +612,10 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
         const ss = worldToScreen(camera, st.x, st.y, canvas);
         if (st.kind === 'shipyard') {
           drawShipyardStation(ctx, ss.x, ss.y, z, st, t);
+        } else if (st.kind === 'drydock') {
+          drawDrydockStation(ctx, ss.x, ss.y, z, st, t);
+        } else if (st.kind === 'orbital_defense') {
+          drawOrbitalDefensePlatform(ctx, ss.x, ss.y, z, st, t);
         } else if (st.kind === 'research_station' && st.bodyId === planet.id) {
           drawResearchStation(ctx, ss.x, ss.y, z, st, t);
           const label = researchStationLabelAnchor(ss.x, ss.y, z);
@@ -517,6 +722,8 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     }
   }
 
+  drawBuilderDroneConstruction(ctx, state, system, canvas, z, t);
+
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit) {
     const orbitVisual = getFlagshipOrbitVisual(state, t);
@@ -537,10 +744,128 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   flushStars(ctx, 'outer');
   flushStars(ctx, 'bloom');
+  drawCinematicSystemGrade(ctx, canvas, activeBattle, t);
 }
 
-function drawCombatShipSprite(ctx, x, y, hull, baseR, opts) {
-  drawHullSprite(ctx, x, y, hull, baseR, opts);
+function drawCinematicSystemGrade(ctx, canvas, battle = null, time = 0) {
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  const edge = ctx.createRadialGradient(w * 0.5, h * 0.52, Math.min(w, h) * 0.24, w * 0.5, h * 0.52, Math.max(w, h) * 0.72);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, battle?.active ? 'rgba(1,2,8,0.44)' : 'rgba(1,2,8,0.32)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, w, h);
+
+  if (battle?.active) {
+    const pulse = 0.4 + 0.25 * Math.sin(time / 380);
+    ctx.fillStyle = `rgba(255, 63, 95, ${0.035 + pulse * 0.03})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.restore();
+}
+
+function combatRenderMode(unitCount, z) {
+  if (unitCount >= BATTLE_RENDER_SWARM_UNITS || z < 0.23) return 'swarm';
+  if (unitCount >= BATTLE_RENDER_LOD_UNITS || z < 0.5) return 'lite';
+  return 'detail';
+}
+
+function drawCombatShipSprite(ctx, x, y, hull, baseR, opts, mode = 'detail') {
+  if (mode === 'detail') {
+    drawHullSprite(ctx, x, y, hull, baseR, opts);
+    return;
+  }
+  drawHullSpriteLite(ctx, x, y, hull, baseR, {
+    ...opts,
+    showHp: mode === 'lite' && opts.hp < opts.maxHp * 0.55,
+    alpha: mode === 'swarm' ? 0.82 : 1,
+  });
+}
+
+function sideTracer(side, hull) {
+  if (hull === 'healer') return THEME.battle.tracerHeal;
+  if (side === 'enemy') return THEME.battle.tracerEnemy;
+  return THEME.battle.tracerPlayer;
+}
+
+function weaponTracer(unit) {
+  if (unit.weaponProfile === 'point_defense') return 'rgba(180, 245, 255, 0.92)';
+  if (unit.weaponProfile === 'torpedo') return 'rgba(255, 178, 95, 0.95)';
+  if (unit.weaponProfile === 'beam_lance') return 'rgba(125, 223, 255, 0.95)';
+  if (unit.weaponProfile === 'ion') return 'rgba(176, 124, 255, 0.95)';
+  return sideTracer(unit.side, unit.hull);
+}
+
+function drawBattleEnvelope(ctx, battle, canvas, z, time) {
+  if (!battle?.units?.length) return;
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const unit of battle.units) {
+    if (unit.hp <= 0) continue;
+    x += unit.x;
+    y += unit.y;
+    n++;
+  }
+  if (!n) return;
+  const center = worldToScreen(camera, x / n, y / n, canvas);
+  const radius = Math.max(190, Math.min(720, Math.sqrt(n) * 64)) * z;
+  const pulse = 0.45 + 0.28 * Math.sin(time / 640);
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(255, 111, 125, ${0.2 + pulse * 0.2})`;
+  ctx.lineWidth = Math.max(1, 1.5 * z);
+  ctx.setLineDash([Math.max(7, 12 * z), Math.max(5, 8 * z)]);
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const g = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, radius * 1.35);
+  g.addColorStop(0, 'rgba(255, 80, 110, 0.06)');
+  g.addColorStop(1, 'rgba(255, 80, 110, 0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * 1.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawBattleTracers(ctx, battle, canvas, mode, time) {
+  if (!battle?.units?.length) return;
+  let drawn = 0;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (const unit of battle.units) {
+    if (drawn >= BATTLE_TRACER_LIMIT) break;
+    if (unit.hp <= 0) continue;
+    const profile = weaponProfile(unit.weaponProfile ?? 'kinetic');
+    const cooldown = profile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS;
+    const sinceFire = cooldown - (unit.cooldownMs ?? 0);
+    if (sinceFire < 0 || sinceFire > 170) continue;
+    const start = worldToScreen(camera, unit.x, unit.y, canvas);
+    if (!screenInView(start, canvas, 80)) continue;
+    const len = (mode === 'detail' ? (profile.range ?? TACTICAL_WEAPON_RANGE) * 0.62 : (profile.range ?? TACTICAL_WEAPON_RANGE) * 0.44) * camera.zoom;
+    const heading = unit.heading ?? 0;
+    const alpha = Math.max(0, 1 - sinceFire / 170);
+    const endX = start.x + Math.cos(heading) * len;
+    const endY = start.y + Math.sin(heading) * len;
+    const g = ctx.createLinearGradient(start.x, start.y, endX, endY);
+    const tracer = weaponTracer(unit);
+    g.addColorStop(0, tracer.replace(/[\d.]+\)$/, `${0.15 * alpha})`));
+    g.addColorStop(0.35, tracer);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.strokeStyle = g;
+    ctx.lineWidth = Math.max(1, (mode === 'detail' ? 1.6 : 1.1) * camera.zoom);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    drawn++;
+  }
+  ctx.restore();
 }
 
 function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
@@ -550,47 +875,116 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   const battle = getBattleState(state, systemId);
 
   if (battle?.active && battle.units?.length) {
+    const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
+    const mode = combatRenderMode(liveCount, z);
+    drawBattleEnvelope(ctx, battle, canvas, z, time);
+    drawBattleTracers(ctx, battle, canvas, mode, time);
     for (const unit of battle.units) {
       if (unit.hp <= 0) continue;
       const p = worldToScreen(camera, unit.x, unit.y, canvas);
+      if (!screenInView(p, canvas, 70)) continue;
       drawCombatShipSprite(ctx, p.x, p.y, unit.hull, baseR, {
         heading: unit.heading ?? 0,
         side: unit.side,
         hp: unit.hp,
         maxHp: unit.maxHp,
-      });
+        showHp: mode === 'detail',
+      }, mode);
     }
     return;
   }
 
+  const bodyCache = buildKeepOutBodyCache(system, time);
+
   const playerShips = playerShipsAtSystem(state, systemId);
+  const pirateFleets = pirateFleetAtSystem(state, systemId);
+  const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
+  const ambientMode = combatRenderMode(playerShips.length + pirateTotal, z);
   playerShips.forEach((ship, idx) => {
-    const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time);
+    const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time, bodyCache);
     const p = worldToScreen(camera, pose.x, pose.y, canvas);
+    if (!screenInView(p, canvas, 70)) return;
     drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
       heading: pose.heading,
       side: 'player',
       hp: ship.hp,
       maxHp: ship.maxHp,
-    });
+      showHp: ambientMode === 'detail',
+    }, ambientMode);
   });
 
-  const pirateFleets = pirateFleetAtSystem(state, systemId);
   let pIdx = 0;
-  const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
   for (const fleet of pirateFleets) {
     for (const ship of fleet.ships) {
       if (ship.hp <= 0) continue;
-      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal, time);
+      const pose = ambientPiratePose(state, system, ship, fleet.id, pIdx, pirateTotal, time, bodyCache);
       const p = worldToScreen(camera, pose.x, pose.y, canvas);
+      if (!screenInView(p, canvas, 70)) { pIdx++; continue; }
       drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
         heading: pose.heading,
         side: 'enemy',
         hp: ship.hp,
         maxHp: ship.maxHp,
-      });
+        showHp: ambientMode === 'detail',
+      }, ambientMode);
       pIdx++;
     }
+  }
+}
+
+function bodyWorldPosition(system, bodyId, time) {
+  for (const planet of system.bodies) {
+    if (planet.id === bodyId) return planetPosition(planet, time);
+    const moon = planet.moons.find((m) => m.id === bodyId);
+    if (moon) return moonPosition(planet, moon, time);
+  }
+  return null;
+}
+
+function drawBuilderDroneConstruction(ctx, state, system, canvas, z, time) {
+  const drones = (state.builderDrones ?? []).filter(
+    (d) => d.galaxyId === state.activeGalaxyId
+      && d.status === 'building'
+      && d.targetSystemId === system.id
+      && d.targetBodyId,
+  );
+  for (const drone of drones) {
+    const pos = bodyWorldPosition(system, drone.targetBodyId, time);
+    if (!pos) continue;
+    const phase = Math.sin(time / 220 + drone.id.length) * 0.5 + 0.5;
+    const x = pos.x + 56;
+    const y = pos.y - 46;
+    const s = worldToScreen(camera, x, y, canvas);
+    if (!screenInView(s, canvas, 50)) continue;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.strokeStyle = `rgba(255, 184, 92, ${0.35 + phase * 0.35})`;
+    ctx.lineWidth = Math.max(1, 1.4 * z);
+    ctx.setLineDash([4 * z, 5 * z]);
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(7, 18 * z), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowColor = 'rgba(255, 184, 92, 0.9)';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = 'rgba(255, 184, 92, 0.95)';
+    const r = Math.max(3, 5 * z);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.8, 0);
+    ctx.lineTo(-r, -r * 0.8);
+    ctx.lineTo(-r * 0.4, 0);
+    ctx.lineTo(-r, r * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(157, 229, 255, 0.8)';
+    ctx.beginPath();
+    ctx.moveTo(-r * 2.2, r * 1.6);
+    ctx.lineTo(-r * 3.2 - phase * r, r * 2.3);
+    ctx.moveTo(-r * 1.8, -r * 1.4);
+    ctx.lineTo(-r * 3.0 - phase * r, -r * 2.1);
+    ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -604,7 +998,8 @@ function starNodeRadius(state, starId) {
 
 const BLACK_HOLE_NODE_RADIUS = 26;
 
-export function drawGalaxy(ctx, state, selectedScoutId = null) {
+export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGroupId = null) {
+  const drawStartedAt = performance.now();
   const canvas = ctx.canvas;
   ctx.fillStyle = THEME.bgGalaxy;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -617,6 +1012,9 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   const galaxy = getGraph(state);
   const transit = transitStatus(state);
   const lod = z < GALAXY_LOD_ZOOM;
+  const tier = z < 0.09 ? 'far' : z < 0.22 ? 'mid' : 'close';
+  let visibleStars = 0;
+  let visibleLanes = 0;
   const whId = wormholeIdForGalaxy(state.activeGalaxyId);
   const wh = state.wormholes?.[whId];
   const whLabel = state.flagship.wormholeTransit
@@ -647,6 +1045,30 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     }
   }
 
+  const manualRoutes = new Set();
+  for (const route of state.manualTradeRoutes ?? []) {
+    const a = route.fromSystemId;
+    const b = route.toSystemId;
+    manualRoutes.add(a < b ? `${a}|${b}` : `${b}|${a}`);
+  }
+  const fleetRoutes = fleetTransitLaneKeys(state, selectedBattleGroupId);
+  const piratePresence = new Set(pirateSystemsWithPresence(state));
+  const pirateRoutes = pirateTransitLaneKeys(state);
+  const pirateMarkers = pirateFleetMarkersForGalaxy(state);
+  const pirateMarkersBySystem = new Map();
+  for (const marker of pirateMarkers) {
+    const list = pirateMarkersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    pirateMarkersBySystem.set(marker.systemId, list);
+  }
+  const fleetMarkers = fleetMarkersForGalaxy(state, selectedBattleGroupId);
+  const fleetMarkersBySystem = new Map();
+  for (const marker of fleetMarkers) {
+    const list = fleetMarkersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    fleetMarkersBySystem.set(marker.systemId, list);
+  }
+
   for (let i = 0; i < galaxy.lanes.length; i++) {
     const [aId, bId] = galaxy.lanes[i];
     const a = nodePos(galaxy, aId);
@@ -658,11 +1080,35 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
     const onFlagshipRoute = routeLanes?.has(key);
     const onScoutRoute = scoutRoutes.has(key);
+    const onManualRoute = manualRoutes.has(key);
+    const onFleetRoute = fleetRoutes.all.has(key);
+    const onFleetSelectedRoute = fleetRoutes.selected.has(key);
+    const onPirateRoute = pirateRoutes.has(key);
+    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onManualRoute && !onFleetRoute && !onPirateRoute && (i % 3 !== 0)) {
+      continue;
+    }
+    visibleLanes++;
 
-    if (onScoutRoute) {
+    if (onPirateRoute) {
+      ctx.setLineDash([5 * z, 4 * z]);
+      ctx.strokeStyle = hexToRgba(THEME.dangerHot, 0.72);
+      ctx.lineWidth = Math.max(1.2, 2.2 * z);
+    } else if (onManualRoute) {
+      ctx.setLineDash([8 * z, 6 * z]);
+      ctx.strokeStyle = hexToRgba(THEME.accentGold, 0.85);
+      ctx.lineWidth = Math.max(1.5, 2.4 * z);
+    } else if (onScoutRoute) {
       ctx.setLineDash([6 * z, 4 * z]);
       ctx.strokeStyle = THEME.laneScout;
       ctx.lineWidth = Math.max(1, 1.8 * z);
+    } else if (onFleetSelectedRoute) {
+      ctx.setLineDash([7 * z, 3 * z]);
+      ctx.strokeStyle = THEME.laneFleetSelected;
+      ctx.lineWidth = Math.max(1, 2.2 * z);
+    } else if (onFleetRoute) {
+      ctx.setLineDash([6 * z, 4 * z]);
+      ctx.strokeStyle = THEME.laneFleet;
+      ctx.lineWidth = Math.max(1, 1.9 * z);
     } else {
       ctx.setLineDash([]);
       ctx.strokeStyle = onFlagshipRoute ? THEME.laneRoute : THEME.lane;
@@ -675,7 +1121,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     drawQuadraticCurve(ctx, sa.x, sa.y, sc.x, sc.y, sb.x, sb.y);
     ctx.setLineDash([]);
 
-    if (!lod) {
+    if (!lod && tier !== 'far') {
       for (let k = 0; k < 2; k++) {
         const t = ((state.time / 6000) + k * 0.5 + i * 0.13) % 1;
         const pt = bezierPoint(sa.x, sa.y, sc.x, sc.y, sb.x, sb.y, t);
@@ -693,14 +1139,35 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   }
 
   const bhScreen = worldToScreen(galaxyCamera, galaxy.blackHole.x, galaxy.blackHole.y, canvas);
-  drawBlackHole(ctx, bhScreen.x, bhScreen.y, BLACK_HOLE_NODE_RADIUS * z, state.time, !!wh?.anchor || !!state.flagship.wormholeTransit);
+  if (tier === 'far') {
+    const r = Math.max(3, BLACK_HOLE_NODE_RADIUS * z);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(176, 122, 219, 0.7)';
+    ctx.lineWidth = Math.max(1, 1.4 * z);
+    ctx.beginPath();
+    ctx.arc(bhScreen.x, bhScreen.y, r * 2.1, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(5, 6, 12, 0.95)';
+    ctx.shadowColor = 'rgba(176, 122, 219, 0.7)';
+    ctx.shadowBlur = 10 * z;
+    ctx.beginPath();
+    ctx.arc(bhScreen.x, bhScreen.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    drawBlackHole(ctx, bhScreen.x, bhScreen.y, BLACK_HOLE_NODE_RADIUS * z, state.time, !!wh?.anchor || !!state.flagship.wormholeTransit);
+  }
 
-  for (const star of galaxy.stars) {
+  for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
+    const star = galaxy.stars[starIdx];
     const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
     if (!screenInView(s, canvas, 40)) continue;
     const nodeR = starNodeRadius(state, star.id) * z;
     const intel = hasIntel(state, star.id);
+    const important = intel || state.stronghold === star.id || piratePresence.has(star.id);
+    if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
+    visibleStars++;
 
     if (!intel) {
       ctx.fillStyle = THEME.fog.galaxyNode;
@@ -709,7 +1176,14 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       ctx.fill();
     }
 
-    if (system?.star) {
+    if (tier === 'far') {
+      ctx.fillStyle = intel ? (system?.star?.color ?? THEME.textSecondary) : THEME.fog.star;
+      ctx.globalAlpha = intel ? 0.9 : 0.5;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(1.8, nodeR * 0.72), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    } else if (system?.star) {
       drawStar(ctx, {
         star: system.star,
         x: s.x,
@@ -730,7 +1204,8 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
   labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
   labelText(ctx, whLabel, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.85)');
 
-  for (const star of galaxy.stars) {
+  for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
+    const star = galaxy.stars[starIdx];
     const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
     if (!screenInView(s, canvas, 40)) continue;
@@ -738,6 +1213,10 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     const intel = hasIntel(state, star.id);
     const owned = isPlayerOwned(state, star.id);
     const aiOwned = isAiOwned(state, star.id);
+    const fleetAtStar = fleetMarkersBySystem.get(star.id) ?? [];
+    const pirateAtStar = pirateMarkersBySystem.get(star.id) ?? [];
+    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0;
+    if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
 
     if (!system?.star) {
       const color = THEME.accentGold;
@@ -770,7 +1249,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       ctx.fill();
     }
 
-    if (pirateSystemsWithPresence(state).includes(star.id)) {
+    if (piratePresence.has(star.id)) {
       ctx.fillStyle = '#ff4444';
       ctx.shadowColor = '#ff4444';
       ctx.shadowBlur = 6;
@@ -801,21 +1280,41 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
       ctx.shadowBlur = 0;
     }
 
-    if (intel) {
+    const labelImportant = owned || aiOwned || state.stronghold === star.id
+      || fleetAtStar.length > 0 || piratePresence.has(star.id) || pirateAtStar.length > 0;
+    if (intel && tier !== 'far' && (tier === 'close' || labelImportant)) {
       labelText(ctx, star.name, s.x, s.y + nodeR + 16 * z, Math.max(10, 12 * z), THEME.textLabel);
       const n = system?.bodies.length ?? 0;
-      labelText(
-        ctx,
-        n === 0 ? 'dead star' : `${n} planet${n === 1 ? '' : 's'}`,
-        s.x,
-        s.y + nodeR + 29 * z,
-        Math.max(8, 9.5 * z),
-        THEME.textMuted,
-      );
+      if (tier === 'close') {
+        labelText(
+          ctx,
+          n === 0 ? 'dead star' : `${n} planet${n === 1 ? '' : 's'}`,
+          s.x,
+          s.y + nodeR + 29 * z,
+          Math.max(8, 9.5 * z),
+          THEME.textMuted,
+        );
+      }
     }
 
     if (state.flagship.galaxyId === state.activeGalaxyId && state.flagship.systemId === star.id) {
       drawFlagshipSprite(ctx, s.x + nodeR + 14 * z, s.y - nodeR - 12 * z, -Math.PI / 4, Math.max(3, 5.5 * z), false);
+    }
+
+    let heroIdx = 0;
+    for (const hero of state.heroFlagships ?? []) {
+      if (hero.galaxyId !== state.activeGalaxyId || hero.systemId !== star.id || hero.transit) continue;
+      if (state.time < (hero.buildCompleteAt ?? 0)) continue;
+      drawHeroFlagshipSprite(
+        ctx,
+        s.x - nodeR - 14 * z - heroIdx * 12 * z,
+        s.y + nodeR + 10 * z,
+        Math.PI / 5,
+        Math.max(2.5, 4.5 * z),
+        hero.hp,
+        hero.maxHp,
+      );
+      heroIdx++;
     }
 
     const stationed = scoutsAtSystem(state, star.id);
@@ -827,6 +1326,26 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
         Math.PI / 4,
         Math.max(2.5, 4.5 * z),
         scout.id === selectedScoutId,
+      );
+    });
+
+    fleetAtStar.forEach((marker, idx) => {
+      drawFleetMarker(
+        ctx,
+        s.x - nodeR - 12 * z - idx * 22 * z,
+        s.y + nodeR + 12 * z,
+        z,
+        marker,
+      );
+    });
+
+    pirateAtStar.forEach((marker, idx) => {
+      drawFleetMarker(
+        ctx,
+        s.x + nodeR + 18 * z + idx * 30 * z,
+        s.y + nodeR + 12 * z,
+        z,
+        marker,
       );
     });
   }
@@ -861,7 +1380,90 @@ export function drawGalaxy(ctx, state, selectedScoutId = null) {
     );
   }
 
+  for (const marker of fleetTransitMarkersForGalaxy(state, selectedBattleGroupId)) {
+    const s = worldToScreen(galaxyCamera, marker.x, marker.y, canvas);
+    drawFleetMarker(ctx, s.x, s.y, z, marker);
+
+    if (marker.selected && marker.destId) {
+      const dest = nodePos(galaxy, marker.destId);
+      const ds = worldToScreen(galaxyCamera, dest.x, dest.y, canvas);
+      const pulse = 0.5 + 0.5 * Math.sin((performance.now() / SELECTION_PULSE_MS) * Math.PI * 2);
+      drawGlowRing(
+        ctx,
+        ds.x,
+        ds.y,
+        (starNodeRadius(state, marker.destId) + (10 + 4 * pulse)) * z,
+        THEME.accentGreen,
+        Math.max(1, 1.6 * z),
+        0.35 + 0.4 * pulse,
+      );
+    }
+  }
+
+  for (const marker of pirateFleetTransitMarkersForGalaxy(state)) {
+    const s = worldToScreen(galaxyCamera, marker.x, marker.y, canvas);
+    if (!screenInView(s, canvas, 50)) continue;
+    drawFleetMarker(ctx, s.x, s.y, z, marker);
+    if (marker.intent === 'raid' && marker.destId) {
+      const dest = nodePos(galaxy, marker.destId);
+      const ds = worldToScreen(galaxyCamera, dest.x, dest.y, canvas);
+      const pulse = 0.5 + 0.5 * Math.sin((performance.now() / SELECTION_PULSE_MS) * Math.PI * 2);
+      drawGlowRing(
+        ctx,
+        ds.x,
+        ds.y,
+        (starNodeRadius(state, marker.destId) + (9 + 4 * pulse)) * z,
+        THEME.dangerHot,
+        Math.max(1, 1.6 * z),
+        0.28 + 0.42 * pulse,
+      );
+    }
+  }
+
+  const droneTransit = builderDroneTransitPositions(state);
+  for (const entry of droneTransit) {
+    if (tier === 'far' && !entry.drone?.targetSystemId) continue;
+    const s = worldToScreen(galaxyCamera, entry.x, entry.y, canvas);
+    if (!screenInView(s, canvas, 40)) continue;
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(entry.angle);
+    ctx.fillStyle = 'rgba(255, 184, 92, 0.92)';
+    ctx.shadowColor = 'rgba(255, 184, 92, 0.8)';
+    ctx.shadowBlur = 7;
+    const r = Math.max(2.2, 4.2 * z);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.8, 0);
+    ctx.lineTo(-r, -r * 0.8);
+    ctx.lineTo(-r * 0.45, 0);
+    ctx.lineTo(-r, r * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   flushStars(ctx, 'bloom');
+
+  const swAction = state.superweapon?.lastAction;
+  if (swAction && state.time - swAction.at < 4000) {
+    const target = nodePos(galaxy, swAction.targetSystemId);
+    if (target) {
+      const ts = worldToScreen(galaxyCamera, target.x, target.y, canvas);
+      const pulse = 1 - (state.time - swAction.at) / 4000;
+      const color = swAction.type === 'destroy' ? '#ff4466' : swAction.type === 'create' ? '#66ffaa' : '#aa88ff';
+      drawGlowRing(ctx, ts.x, ts.y, (40 + 30 * pulse) * z, color, Math.max(2, 3 * z), 0.25 + 0.45 * pulse);
+    }
+  }
+
+  lastGalaxyPerf = {
+    tier,
+    visibleStars,
+    visibleLanes,
+    fleetMarkers: fleetMarkers.length,
+    pirateMarkers: pirateMarkers.length + pirateFleetTransitMarkersForGalaxy(state).length,
+    droneMarkers: droneTransit.length,
+    lastDrawMs: Math.round((performance.now() - drawStartedAt) * 100) / 100,
+  };
 }
 
 function screenInView(s, canvas, margin = 60) {
@@ -923,6 +1525,37 @@ export function hitTestScout(state, wx, wy) {
       const dx = wx - sx;
       const dy = wy - sy;
       if (dx * dx + dy * dy <= halo * halo) return scout.id;
+    }
+  }
+  return null;
+}
+
+export function hitTestFleetMarker(state, wx, wy, selectedBattleGroupId = null) {
+  const halo = 18 / galaxyCamera.zoom;
+  for (const marker of fleetTransitMarkersForGalaxy(state, selectedBattleGroupId)) {
+    const dx = wx - marker.x;
+    const dy = wy - marker.y;
+    if (dx * dx + dy * dy <= halo * halo) return marker.groupId;
+  }
+
+  const galaxy = getGraph(state);
+  const markersBySystem = new Map();
+  for (const marker of fleetMarkersForGalaxy(state, selectedBattleGroupId)) {
+    const list = markersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    markersBySystem.set(marker.systemId, list);
+  }
+
+  for (const star of galaxy.stars) {
+    const markers = markersBySystem.get(star.id);
+    if (!markers?.length) continue;
+    const nodeR = starNodeRadius(state, star.id);
+    for (let idx = 0; idx < markers.length; idx++) {
+      const mx = star.x - nodeR - 12 - idx * 22;
+      const my = star.y + nodeR + 12;
+      const dx = wx - mx;
+      const dy = wy - my;
+      if (dx * dx + dy * dy <= halo * halo) return markers[idx].groupId;
     }
   }
   return null;

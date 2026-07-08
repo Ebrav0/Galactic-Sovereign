@@ -150,6 +150,7 @@ const stronghold42 = await page.evaluate(() => window.getGameState().stronghold)
 await page.evaluate(() => {
   const st = window.getGameState();
   st.credits = 8000;
+  st.research.unlocked.push('mil_parallel_dock', 'mil_destroyer_unlock');
   const sys = st.systems[st.stronghold];
   const planet = sys.bodies.find((b) => b.type === 'habitable');
   sys.structures.push({ id: 'sy-c', type: 'shipyard', bodyId: planet.id, builtAtTime: 0, build: null });

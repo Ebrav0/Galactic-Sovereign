@@ -10,11 +10,16 @@ import { FLEET_STATION_ORBIT_PAD, FLEET_STATION_BODY_PAD } from './constants.js'
 import { findPath } from './galaxy.js';
 import { getGraph } from './galaxy-scope.js';
 import {
-  legDurationMs,
   transitStatus as transitStatusCore,
   transitEtaMs,
   advanceTransit,
 } from './transit.js';
+import { effectiveLegDurationMs } from './strategic-structures.js';
+import {
+  battleGroupsForGalaxy,
+  shipsInBattleGroup,
+} from './battle-groups.js';
+import { findHeroFlagship } from './hero-flagships.js';
 
 let nextShipId = 1;
 
@@ -55,7 +60,7 @@ export function stationedShipPose(state, system, ship, idx, total, time = state.
 
 export function spawnPlayerShip(state, systemId, hull, anchorBodyId = null) {
   const ship = {
-    ...createShipInstance(`ship-${nextShipId++}`, hull),
+    ...createShipInstance(`ship-${nextShipId++}`, hull, state),
     galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
@@ -102,11 +107,12 @@ export function orderShipTravel(state, shipId, targetId) {
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   const speed = shipLaneSpeed(ship.hull);
+  const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, speed, SHIP_LANE_MIN_LEG_MS);
   ship.transit = {
     path,
     legIndex: 0,
     legStartTime: state.time,
-    legDurationMs: legDurationMs(galaxy, path[0], path[1], speed, SHIP_LANE_MIN_LEG_MS),
+    legDurationMs: durFn(path[0], path[1]),
   };
   ship.systemId = null;
   return { ok: true, path, etaMs: playerShipEtaMs(state, ship) };
@@ -118,6 +124,7 @@ export function tickPlayerShips(state, onArrive) {
   for (const ship of state.playerShips) {
     if (ship.galaxyId !== state.activeGalaxyId || !ship.transit) continue;
     const speed = shipLaneSpeed(ship.hull);
+    const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, speed, SHIP_LANE_MIN_LEG_MS);
     advanceTransit(
       ship.transit,
       galaxy,
@@ -130,6 +137,7 @@ export function tickPlayerShips(state, onArrive) {
         arrivals.push({ shipId: ship.id, systemId: destId, hull: ship.hull });
         onArrive?.(destId, ship);
       },
+      durFn,
     );
   }
   return arrivals;
@@ -152,4 +160,35 @@ export function totalCaptureForceFromShips(state, systemId) {
     force += captureForceForShip(ship);
   }
   return force;
+}
+
+export function captureForceFromAnchoredGroups(state, systemId) {
+  let force = 0;
+  for (const group of battleGroupsForGalaxy(state)) {
+    if (!group.anchorHeroId) continue;
+    const hero = findHeroFlagship(state, group.anchorHeroId);
+    if (!hero || hero.transit || hero.systemId !== systemId) continue;
+    if (state.time < (hero.buildCompleteAt ?? 0)) continue;
+    for (const ship of shipsInBattleGroup(state, group.id)) {
+      if (ship.transit || ship.hp <= 0 || !isCombatHull(ship.hull)) continue;
+      if (ship.systemId === systemId) continue;
+      force += captureForceForShip(ship);
+    }
+  }
+  return force;
+}
+
+export function anchoredCombatShipsAtSystem(state, systemId) {
+  const out = [];
+  for (const group of battleGroupsForGalaxy(state)) {
+    if (!group.anchorHeroId) continue;
+    const hero = findHeroFlagship(state, group.anchorHeroId);
+    if (!hero || hero.transit || hero.systemId !== systemId) continue;
+    if (state.time < (hero.buildCompleteAt ?? 0)) continue;
+    for (const ship of shipsInBattleGroup(state, group.id)) {
+      if (ship.transit || ship.hp <= 0 || !isCombatHull(ship.hull)) continue;
+      if (ship.systemId !== systemId) out.push(ship);
+    }
+  }
+  return out;
 }

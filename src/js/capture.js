@@ -9,14 +9,21 @@ import {
   CAPTURE_FLAGSHIP_FORCE,
   CAPTURE_HOLD_MS,
   TICK_MS,
+  HERO_FLAGSHIP_CAPTURE_FORCE,
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
 import { systemById, isStructureActive } from './state.js';
 import { getGalaxyCapture, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
-import { totalCaptureForceFromShips } from './fleets.js';
+import { totalCaptureForceFromShips, captureForceFromAnchoredGroups } from './fleets.js';
 import { pirateCombatPresence } from './pirates.js';
 import { aiCombatPresence } from './ai-ships.js';
+import {
+  forwardBaseCaptureBonus,
+  commandPostCaptureReduction,
+} from './strategic-structures.js';
+import { heroesInSystem } from './hero-flagships.js';
+import { isTechUnlocked, techEffects } from './tech-web.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -32,16 +39,27 @@ export function captureRequirement(state, systemId) {
   }
   const shells = system.dyson?.completedShells ?? 0;
   req += shells * CAPTURE_DYSON_SHELL_WEIGHT;
-  return Math.ceil(req);
+  req -= commandPostCaptureReduction(state, systemId);
+  return Math.max(CAPTURE_BASE, Math.ceil(req));
 }
 
 export function captureForceInSystem(state, systemId) {
   let force = totalCaptureForceFromShips(state, systemId);
+  force += captureForceFromAnchoredGroups(state, systemId);
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit && !f.wormholeTransit
       && f.galaxyId === state.activeGalaxyId) {
     force += CAPTURE_FLAGSHIP_FORCE;
   }
+  for (const hero of heroesInSystem(state, systemId)) {
+    if (state.time >= (hero.buildCompleteAt ?? 0)) {
+      let hf = HERO_FLAGSHIP_CAPTURE_FORCE;
+      if (isTechUnlocked(state, 'hero_rally_doctrine')) hf *= 1.25;
+      force += hf;
+    }
+  }
+  force += forwardBaseCaptureBonus(state, systemId);
+  force += techEffects(state).captureForceBonus ?? 0;
   return force;
 }
 
@@ -67,9 +85,37 @@ export function captureProgressMs(state, systemId) {
   return getGalaxyCapture(state)[systemId]?.progressMs ?? 0;
 }
 
+function captureCandidateSystemIds(state, capture) {
+  const ids = new Set(Object.keys(capture ?? {}));
+
+  const f = state.flagship;
+  if (f.galaxyId === state.activeGalaxyId && f.systemId && !f.transit && !f.wormholeTransit) {
+    ids.add(f.systemId);
+  }
+
+  for (const ship of state.playerShips ?? []) {
+    if (ship.galaxyId === state.activeGalaxyId && ship.systemId && !ship.transit && ship.hp > 0) {
+      ids.add(ship.systemId);
+    }
+  }
+
+  for (const hero of state.heroFlagships ?? []) {
+    if (hero.galaxyId === state.activeGalaxyId && hero.systemId && !hero.transit) {
+      ids.add(hero.systemId);
+    }
+  }
+
+  // Preserve the old global behavior for any future tech that grants passive capture force.
+  if ((techEffects(state).captureForceBonus ?? 0) > 0) {
+    for (const systemId of Object.keys(getSystems(state))) ids.add(systemId);
+  }
+
+  return ids;
+}
+
 export function tickCapture(state) {
   const capture = getGalaxyCapture(state);
-  for (const systemId of Object.keys(getSystems(state))) {
+  for (const systemId of captureCandidateSystemIds(state, capture)) {
     if (!isCapturableSystem(state, systemId)) {
       if (capture[systemId]) delete capture[systemId];
       continue;

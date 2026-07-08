@@ -3,14 +3,21 @@
 import { derivedTier } from './tech-web.js';
 
 /** Vertical band per cluster — branches spread horizontally by tier. */
-export const CLUSTER_BAND = {
-  economy: 0,
-  military: 1,
-  megastructure: 2,
-  trade: 3,
-  wormhole: 4,
-  research: 5,
-};
+export const TECH_CLUSTER_ORDER = [
+  'economy',
+  'military',
+  'megastructure',
+  'trade',
+  'wormhole',
+  'research',
+  'diplomacy',
+  'superweapon',
+  'flagship',
+];
+
+export const CLUSTER_BAND = Object.fromEntries(
+  TECH_CLUSTER_ORDER.map((clusterId, index) => [clusterId, index]),
+);
 
 export const NODE_SIZE = 52;
 export const COL_WIDTH = 220;
@@ -47,7 +54,7 @@ export function layoutHorizontalTree(nodes) {
   }
 
   const bandHeights = {};
-  for (const band of Object.values(CLUSTER_BAND)) {
+  for (const band of TECH_CLUSTER_ORDER.map((clusterId) => CLUSTER_BAND[clusterId])) {
     let maxStack = 1;
     for (const [key, count] of Object.entries(bandMaxStack)) {
       if (Number(key.split(':')[1]) === band) maxStack = Math.max(maxStack, count);
@@ -57,7 +64,7 @@ export function layoutHorizontalTree(nodes) {
 
   const bandCenters = new Map();
   let accY = PADDING_Y;
-  for (const band of [0, 1, 2, 3, 4, 5]) {
+  for (const band of TECH_CLUSTER_ORDER.map((clusterId) => CLUSTER_BAND[clusterId])) {
     bandCenters.set(band, accY + bandHeights[band] / 2);
     accY += bandHeights[band];
   }

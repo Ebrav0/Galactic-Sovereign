@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 11;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -69,11 +69,30 @@ export const HULL_STATS = {
   sensor_ship: { hp: 120, dps: 0, captureForce: 0, cost: 260, buildMs: 28000, laneSpeed: 115, healRate: 0 },
   builder_ship: { hp: 200, dps: 0, captureForce: 1, cost: 380, buildMs: 42000, laneSpeed: 95, healRate: 0 },
   command_cruiser: { hp: 450, dps: 14, captureForce: 3, cost: 720, buildMs: 58000, laneSpeed: 95, healRate: 0 },
+  hero_flagship: {
+    hp: 800, dps: 15, captureForce: 2,
+    cost: 2000, buildMs: 45000, laneSpeed: 110, healRate: 0,
+  },
   miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
 };
 
 /** Carrier-supplied wing craft — not built at shipyards. */
 export const CARRIER_WING_HULLS = ['fighter', 'interceptor', 'heavy_fighter', 'bomber'];
+
+export const CARRIER_WING_SPECS = {
+  light_carrier: { interceptor: 3, fighter: 2 },
+  fleet_carrier: { interceptor: 4, fighter: 3, heavy_fighter: 2 },
+  super_carrier: { interceptor: 5, fighter: 4, heavy_fighter: 3, bomber: 3 },
+};
+
+export const WEAPON_PROFILES = {
+  point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 2.8, antiCapital: 0.55, structure: 0.35 },
+  kinetic: { label: 'Kinetic Batteries', range: 280, cooldownMs: 760, antiFighter: 0.85, antiCapital: 1.0, structure: 0.9 },
+  torpedo: { label: 'Torpedo Bays', range: 340, cooldownMs: 1100, antiFighter: 0.25, antiCapital: 1.65, structure: 1.7 },
+  beam_lance: { label: 'Beam Lance', range: 360, cooldownMs: 980, antiFighter: 0.7, antiCapital: 1.35, structure: 1.15 },
+  ion: { label: 'Ion Disruptor', range: 300, cooldownMs: 900, antiFighter: 1.25, antiCapital: 1.45, structure: 0.75, disrupt: 0.28 },
+  repair: { label: 'Repair Drones', range: 230, cooldownMs: 600, antiFighter: 0, antiCapital: 0, structure: 0 },
+};
 
 export const COMBAT_HULL_TYPES = [
   'corvette', 'patrol_cutter', 'frigate', 'destroyer', 'cruiser', 'battleship', 'dreadnought',
@@ -99,6 +118,16 @@ export const FLEET_STATION_ORBIT_PAD = 300;   // min distance beyond star edge f
 export const FLEET_STATION_BODY_PAD = 95;     // orbit offset from shipyard planet
 export const SHIP_LANE_MIN_LEG_MS = 2000;
 
+// --- Flagship builder drones ---
+export const BUILDER_DRONE_CAPACITY = 2;
+export const BUILDER_DRONE_DEPLOY_COST = 40;
+export const BUILDER_DRONE_LANE_SPEED = 150;
+export const BUILDER_DRONE_LANE_MIN_LEG_MS = 1500;
+export const BUILDER_DRONE_BUILD_TIME_MULT = 1.25;
+export const BUILDER_DRONE_OUTPOST_BUILD_MS = 12000;
+export const BUILDER_DRONE_SHIPYARD_BUILD_MS = 18000;
+export const BUILDER_DRONE_BODY_STRUCTURE_BUILD_MS = 14000;
+
 // --- Ship motion (ambient patrol + keep-out) ---
 export const STAR_KEEP_OUT_PAD = 120;
 export const STAR_KEEP_OUT_ORBIT_FRACTION = 0.88; // star repulsion fades out by innermost orbit
@@ -106,6 +135,7 @@ export const PLANET_KEEP_OUT_PAD = 80;
 export const MOON_KEEP_OUT_PAD = 45;
 export const AMBIENT_PATROL_RADIUS = 55;
 export const AMBIENT_PATROL_OMEGA = 0.38;
+export const AMBIENT_KEEP_OUT_PASSES = 3;    // render-only nudge (combat init uses more)
 export const KEEP_OUT_SOFT_ZONE = 2.4;       // repulsion reach as multiple of keep radius
 export const KEEP_OUT_REPULSION = 480;       // flagship push accel (world units / s²)
 export const KEEP_OUT_NUDGE_STRENGTH = 320;  // kinematic ships + tactical nudge
@@ -119,6 +149,9 @@ export const TACTICAL_WEAPON_RANGE = 280;
 export const TACTICAL_WEAPON_COOLDOWN_MS = 800;
 export const TACTICAL_SHIP_SPEED = 45;
 export const TACTICAL_BATTLE_RADIUS = 900;
+export const TACTICAL_LARGE_BATTLE_UNITS = 72;
+export const TACTICAL_SWARM_BATTLE_UNITS = 150;
+export const TACTICAL_SPATIAL_CELL = 360;
 
 // --- Auto-resolve ---
 export const STANCE_MODIFIERS = { aggressive: 1.2, balanced: 1.0, defensive: 0.85 };
@@ -127,6 +160,9 @@ export const HEALER_AUTO_COEF = 0.25;
 // --- Pirates (Phase 2 test faction) ---
 export const PIRATE_FLEET_COUNT = 2;
 export const PIRATE_WANDER_MS = 45000;
+export const PIRATE_RAID_CHANCE = 0.7;
+export const PIRATE_RAID_MAX_HOPS = 5;
+export const PIRATE_INTERDICTION_PROGRESS_DELTA = 0.16;
 export const PIRATE_RESPAWN_MS = 120000;
 export const PIRATE_LANE_SPEED = 85;
 export const PIRATE_LANE_MIN_LEG_MS = 2200;
@@ -149,11 +185,26 @@ export const CAPTURE_PER_PLANET = 1;
 export const CAPTURE_PER_MOON = 0.5;
 export const CAPTURE_STRUCTURE_WEIGHT = {
   outpost: 2,
+  mining_complex: 2,
+  refinery: 3,
+  storage_depot: 2,
+  fighter_factory: 4,
+  planetary_shield: 5,
+  ion_battery: 4,
   shipyard: 4,
+  drydock: 4,
+  orbital_defense: 5,
   sail_foundry: 6,
   dyson_launcher: 3,
+  asteroid_harvester: 2,
   trade_station: 3,
   research_station: 4,
+  listening_post: 1,
+  lane_relay: 1,
+  blockade_fort: 2,
+  forward_base: 2,
+  supply_cache: 1,
+  command_post: 3,
 };
 export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
@@ -273,6 +324,11 @@ export const SAIL_DOT_SIZE = 0.8;                  // world units
 export const SAIL_DOT_LOD_ZOOM = 0.35;             // full in-progress dot field above this zoom
 export const SAIL_DOT_DRAW_MAX = 6000;             // hard cap with stride
 export const SAIL_DOT_LOD_STRIDE_TARGET = 400;     // visible settled dots when zoomed out
+export const DYSON_MESH_LOD_ZOOM = 0.28;           // below: simplified rings + node dots only
+export const DYSON_CAGE_ROTATION_SPEED = 0.018;    // rad/s — geodesic cage spin (shell 5+)
+export const DYSON_LATTICE_BLEND_PROGRESS = 0.6;   // shell progress fraction → lattice snap
+export const DYSON_CONSTRUCTION_LATTICE_SLOTS = 800; // edge midpoints used for high-progress weave
+export const DYSON_MAX_MESH_EDGES = 280;           // hard cap for Canvas draw cost
 
 // --- Camera ---
 export const CAMERA_MIN_ZOOM = 0.15;
@@ -293,21 +349,91 @@ export const RESEARCH_BASE_MS = 45000;
 export const TRADE_STATION_COST = 450;
 export const TRADE_BASE_INCOME = 1.5;
 export const TRADE_CONNECTIVITY_BONUS = 0.1;
+export const MINING_COMPLEX_COST = 360;
+export const REFINERY_COST = 520;
+export const STORAGE_DEPOT_COST = 420;
+export const FIGHTER_FACTORY_COST = 650;
+export const PLANETARY_SHIELD_COST = 900;
+export const ION_BATTERY_COST = 760;
+export const DRYDOCK_COST = 700;
+export const ORBITAL_DEFENSE_COST = 850;
+export const ASTEROID_HARVESTER_COST = 480;
+export const MINING_COMPLEX_INCOME_BONUS = 0.35;
+export const REFINERY_TRADE_BONUS = 0.22;
+export const STORAGE_BLOCKADE_REDUCTION = 0.18;
+export const FIGHTER_FACTORY_REPLENISH_PER_SEC = 0.08;
+export const DRYDOCK_REPAIR_PER_SEC = 4;
+export const ORBITAL_DEFENSE_POWER = 32;
+export const SHIELD_STRUCTURE_HP_MULT = 1.35;
+export const ION_BATTERY_POWER = 26;
 export const SHELL_TRADE_BONUS = 1.25;
 export const SHELL_RESEARCH_BONUS = 1.2;
 export const AI_STARTING_CREDITS = 1200;
 export const AI_STARTING_SYSTEMS = 4;
 export const AI_TICK_INTERVAL_TICKS = 20;
 export const AI_BUILD_OUTPOST_COST = 300;
-export const AI_PERSONALITY_NAMES = { expansionist: 'Dominion of Helix' };
+export const AI_PERSONALITY_NAMES = {
+  expansionist: 'Dominion of Helix',
+  economic: 'Veridian Compact',
+  megastructure: 'Solar Architects',
+  wormhole: 'Void Runners',
+};
+export const AI_FACTION_COUNT = 4;
 export const AI_LANE_SPEED = 90;
 export const AI_LANE_MIN_LEG_MS = 2500;
+
+// --- Phase 6: Late game ---
+export const SHELL_SHIELD_BONUS = 1.25;
+export const SHELL_REPAIR_BONUS = 1.2;
+export const DYSON_SHIELD_TECH_MULT = 1.15;
+export const DYSON_SHIELD_COOLDOWN_MS = 180000;
+export const SUPERWEAPON_CRADLE_COST = 5000;
+export const SUPERWEAPON_CRADLE_SOLARII = 10;
+export const SUPERWEAPON_CREATE_SOLARII = 25;
+export const SUPERWEAPON_DESTROY_SOLARII = 30;
+export const SUPERWEAPON_JUMP_SOLARII = 15;
+export const SUPERWEAPON_COOLDOWN_MS = 120000;
+export const SUPERWEAPON_JUMP_COOLDOWN_MS = 90000;
+export const HERO_FLAGSHIP_COST_CREDITS = 2000;
+export const HERO_FLAGSHIP_COST_SOLARII = 5;
+export const HERO_FLAGSHIP_HP = 800;
+export const HERO_FLAGSHIP_DPS = 15;
+export const HERO_FLAGSHIP_CAPTURE_FORCE = 2;
+export const HERO_FLAGSHIP_BUILD_MS = 45000;
+export const HERO_FLAGSHIP_LANE_SPEED = 110;
+export const MANUAL_TRADE_ROUTE_MAX = 12;
+export const MANUAL_TRADE_ROUTE_BONUS = 0.25;
+export const DIPLOMACY_TRUCE_COST = 500;
+export const DIPLOMACY_TRADE_TREATY_COST = 800;
+export const DIPLOMACY_ALLIANCE_COST = 1500;
+export const DIPLOMACY_ALLIANCE_SOLARII = 3;
+export const DIPLOMACY_TRADE_INCOME_BONUS = 0.2;
+export const AI_PANIC_DURATION_MS = 120000;
+export const LISTENING_POST_COST = 600;
+export const LANE_RELAY_COST = 750;
+export const BLOCKADE_FORT_COST = 900;
+export const FORWARD_BASE_COST = 700;
+export const SUPPLY_CACHE_COST = 500;
+export const COMMAND_POST_COST = 850;
+export const LANE_RELAY_SPEED_BONUS = 0.15;
+export const BLOCKADE_TRADE_PENALTY = 0.35;
+export const FORWARD_BASE_CAPTURE_BONUS = 1;
+export const SUPPLY_CACHE_REPAIR_BONUS = 1.15;
+export const COMMAND_POST_CAPTURE_REDUCTION = 1;
+export const LISTENING_POST_INTEL_BONUS = 1;
+export const VICTORY_DOMINION_THRESHOLD = 0.35;
+export const VICTORY_ECONOMIC_CREDITS = 50000;
+export const VICTORY_ECONOMIC_SOLARII = 50;
+export const VICTORY_SCULPTOR_ACTIONS = 3;
 
 // --- Rendering ---
 export const STARFIELD_COUNT = 320;
 export const STARFIELD_SPREAD = 10500;         // half-extent of background starfield
 export const CELESTIAL_VISUAL_SCALE = 1.35;    // render-only body size multiplier
 export const SELECTION_PULSE_MS = 1600;
+export const BATTLE_RENDER_LOD_UNITS = 64;
+export const BATTLE_RENDER_SWARM_UNITS = 140;
+export const BATTLE_TRACER_LIMIT = 96;
 export const STAR_BLOOM_SCALE = 1.0;           // bloom FBO resolution fraction (full res avoids blocky upscale)
 export const STAR_BLOOM_THRESHOLD = 0.38;      // luminance threshold for HDR bloom
 export const STAR_GL_QUALITY = 'high';        // 'high' | 'medium' | 'low'

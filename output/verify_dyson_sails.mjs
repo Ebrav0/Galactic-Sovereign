@@ -222,6 +222,9 @@ await page.evaluate(
 s = await text();
 check('D5 eight completed shells, no in-progress dots', s.dysonVisuals.completedRingCount === 8
   && s.dysonVisuals.inProgressSettledDots === 0);
+check('D6 shell 8 is Novacula complete', s.dysonVisuals.isNovaculaComplete === true);
+check('D7 shell 8 geodesic mesh has edges', s.dysonVisuals.meshEdgeCount > 0);
+check('D8 shell 8 visual tier is 8', s.dysonVisuals.visualTier === 8);
 
 // --- E. LOD / performance ---
 console.log('\nE. LOD / performance observables');

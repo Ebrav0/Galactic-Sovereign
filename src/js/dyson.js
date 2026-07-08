@@ -19,6 +19,8 @@ import {
   SHELL_BONUS_SAIL_EFFICIENCY,
   SHELL_TRADE_BONUS,
   SHELL_RESEARCH_BONUS,
+  SHELL_SHIELD_BONUS,
+  SHELL_REPAIR_BONUS,
   TICK_MS,
   STRUCTURE_BUILD_MS,
 } from './constants.js';
@@ -34,6 +36,8 @@ import {
   ensureDyson,
   pendingStructureOnBody,
 } from './state.js';
+import { refreshMilestones } from './milestones.js';
+import { allocateStructureId } from './economy.js';
 import { getSystems } from './galaxy-scope.js';
 import { sailShuttleLauncherArrivals } from './sail-shuttles.js';
 import { flagshipInSystem } from './flagship-presence.js';
@@ -143,8 +147,16 @@ export function shellSailEfficiencyBonus(system) {
   return SHELL_BONUS_SAIL_EFFICIENCY[shells] ?? 1;
 }
 
-export function shellShieldBonus(_system) {
-  return 1.0; // Phase 6 Superweapon counterplay
+export function shellShieldBonus(system, state = null) {
+  const shells = system?.dyson?.completedShells ?? 0;
+  if (shells < 4) return 1.0;
+  let mult = SHELL_SHIELD_BONUS;
+  if (state && isTechUnlocked(state, 'mega_orbital_shield')) mult *= 1.15;
+  return mult;
+}
+
+export function shellShieldBonusForState(state, system) {
+  return shellShieldBonus(system, state);
 }
 
 export function shellTradeBonus(system) {
@@ -157,8 +169,9 @@ export function shellResearchBonus(system) {
   return shells >= 6 ? SHELL_RESEARCH_BONUS : 1.0;
 }
 
-export function shellRepairBonus(_system) {
-  return 1.0; // wired when fleet repair uses shell bonus
+export function shellRepairBonus(system) {
+  const shells = system?.dyson?.completedShells ?? 0;
+  return shells >= 7 ? SHELL_REPAIR_BONUS : 1.0;
 }
 
 export function solariiPerSecond(state) {
@@ -192,7 +205,8 @@ function completeShell(state, system, dyson) {
   dyson.lastShellCompletedAt = state.time;
   const shellNum = dyson.completedShells;
   if (shellNum >= 1) state.solariiUnlocked = true;
-  return { shellCompleted: true, systemId: system.id, shellNumber: shellNum };
+  const milestoneEvents = refreshMilestones(state);
+  return { shellCompleted: true, systemId: system.id, shellNumber: shellNum, milestoneEvents };
 }
 
 function tickSystemDyson(state, system) {
@@ -279,10 +293,10 @@ export function activeShellBonuses(system) {
   if (shells >= 1) bonuses.push('Solarii income');
   if (shells >= 2) bonuses.push(`Credit output ×${shellCreditBonus(system).toFixed(2)}`);
   if (shells >= 3) bonuses.push(`Sail efficiency ×${shellSailEfficiencyBonus(system).toFixed(2)}`);
-  if (shells >= 4) bonuses.push('System shield (pending Phase 6)');
+  if (shells >= 4) bonuses.push(`System shield ×${shellShieldBonus(system).toFixed(2)}`);
   if (shells >= 5) bonuses.push(`Trade output ×${shellTradeBonus(system).toFixed(2)}`);
   if (shells >= 6) bonuses.push(`Research efficiency ×${shellResearchBonus(system).toFixed(2)}`);
-  if (shells >= 7) bonuses.push('Fleet repair (pending)');
+  if (shells >= 7) bonuses.push(`Fleet repair ×${shellRepairBonus(system).toFixed(2)}`);
   if (shells >= 8) bonuses.push('Completed Dyson sphere');
   return bonuses;
 }

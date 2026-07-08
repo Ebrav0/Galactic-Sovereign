@@ -47,7 +47,7 @@ import {
 } from './dyson.js';
 import { transitStatus, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
 import { scoutEtaMs, findScout } from './scout.js';
-import { SLOTS, listSlots, exportSaveFile, importSaveFile } from './save.js';
+import { SLOTS, listSlots, readSlot, exportSaveFile, importSaveFile } from './save.js';
 import { getActiveGalaxy } from './galaxy-scope.js';
 import { canEnterWormhole, canBuildWormholeAnchor } from './wormholes.js';
 import { WORMHOLE_ANCHOR_COST } from './constants.js';
@@ -55,21 +55,55 @@ import { BLACK_HOLE_ID } from './galaxy.js';
 import { enqueueHull, cancelQueueItem, pinQueueItem, empireQueueSummary, listPlayerShipyards } from './empire-queue.js';
 import { startResearch, canBuildResearchStation, buildResearchStation, researchSummary, researchStationCount } from './research.js';
 import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.js';
+import { diplomacySummary, offerTreaty } from './diplomacy.js';
+import { campaignSummary } from './campaign.js';
+import { listMissions, startMission } from './missions.js';
+import { initTutorial } from './tutorial.js';
+import { milestonesSummary } from './milestones.js';
+import {
+  superweaponCreate,
+  superweaponDestroy,
+  superweaponJump,
+  superweaponSummary,
+} from './superweapon.js';
+import {
+  buildHeroFlagship,
+  heroFlagshipsSummary,
+  setHeroRally,
+} from './hero-flagships.js';
+import { clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
+import {
+  canBuildStrategicStructure,
+  buildStrategicStructure,
+  STRUCTURE_DEFS,
+} from './strategic-structures.js';
+import {
+  bodyStructureBuildRows,
+  buildBodyStructure,
+  bodyStructuresSummary,
+} from './body-structures.js';
 import { allTechNodes, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
   playerShipEtaMs,
-  playerShipStatus,
+  findPlayerShip,
 } from './fleets.js';
+import {
+  formatFleetName,
+  battleGroupsForGalaxy,
+  unassignedPlayerShips,
+  fleetLocationSummary,
+  setBattleGroupHeroAnchor,
+} from './battle-groups.js';
 import { getGraph } from './galaxy-scope.js';
 
 const el = (id) => document.getElementById(id);
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Shift+click: send scout · double-click: view system · M: system view',
+  galaxy: 'Click star: travel · Tab+click: fleet · Shift+click: scout · Ctrl+click: trade route · double-click: view · M: system',
 };
 
 const PLANET_DOT = {
@@ -238,6 +272,7 @@ function renderCaptureBody(container, state, systemId, req, ctx) {
 
 function renderBuildBody(container, planet, state, systemId) {
   clearChildren(container);
+  const bodySummary = bodyStructuresSummary(state, systemId);
 
   const header = document.createElement('div');
   header.className = 'build-header';
@@ -266,6 +301,8 @@ function renderBuildBody(container, planet, state, systemId) {
       label: 'Sail Foundry',
       built: hasFoundry(state, systemId) && foundryHostPlanet(state, systemId)?.id === planet.id,
     },
+    { label: 'Surface', value: String(bodySummary.byPlacement.surface) },
+    { label: 'Orbital', value: String(bodySummary.byPlacement.orbital) },
   ];
 
   for (const row of rows) {
@@ -313,6 +350,104 @@ function updateTabBar(view, sidePanel) {
   el('tab-dyson').classList.toggle('tab--active', sidePanel === 'dyson');
   el('tab-tech').classList.toggle('tab--active', sidePanel === 'tech');
   el('tab-fleet')?.classList.toggle('tab--active', sidePanel === 'fleet');
+  el('tab-diplomacy')?.classList.toggle('tab--active', sidePanel === 'diplomacy');
+  el('tab-campaign')?.classList.toggle('tab--active', sidePanel === 'campaign');
+}
+
+function renderDiplomacyPanel(container, state) {
+  clearChildren(container);
+  const summary = diplomacySummary(state);
+  if (!summary.unlocked) {
+    const locked = document.createElement('p');
+    locked.className = 'empty-state';
+    locked.textContent = 'Complete a Dyson sphere (Shell #8) to unlock diplomacy.';
+    container.appendChild(locked);
+    return;
+  }
+  for (const f of summary.factions) {
+    const row = document.createElement('div');
+    row.className = 'intel-row';
+    row.innerHTML = `<span>${f.name}</span><span>${f.status}</span>`;
+    container.appendChild(row);
+    const actions = document.createElement('div');
+    actions.className = 'dev-row';
+    for (const [type, label] of [['truce', 'Truce'], ['trade', 'Trade'], ['alliance', 'Alliance']]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--xs';
+      btn.textContent = label;
+      btn.onclick = () => {
+        const res = offerTreaty(state, f.id, type);
+        toast(res.ok ? `${label} with ${f.name}` : res.reason, res.ok ? 'ok' : 'error');
+      };
+      actions.appendChild(btn);
+    }
+    container.appendChild(actions);
+  }
+}
+
+function renderCampaignPanel(container, state) {
+  clearChildren(container);
+  const camp = campaignSummary(state);
+  const ms = milestonesSummary(state);
+  const intro = document.createElement('p');
+  intro.className = 'panel-note';
+  intro.textContent = `Mode: ${camp.mode} · Victory: ${camp.victoryType}${camp.won ? ' · WON' : ''}${camp.defeated ? ' · DEFEATED' : ''}`;
+  container.appendChild(intro);
+  const mile = document.createElement('p');
+  mile.className = 'panel-note panel-note--muted';
+  mile.textContent = `Completed Dysons: ${ms.completedDysonCount} · Diplomacy: ${ms.diplomacyUnlocked ? 'yes' : 'no'} · Superweapon: ${ms.superweaponUnlocked ? 'yes' : 'no'}`;
+  container.appendChild(mile);
+  const sw = superweaponSummary(state);
+  if (sw.online) {
+    const swRow = document.createElement('div');
+    swRow.className = 'dev-row';
+    for (const [label, fn] of [
+      ['Create Star', () => superweaponCreate(state, state.stronghold)],
+      ['Destroy Viewed', () => superweaponDestroy(state, getViewedSystemId())],
+      ['Jump Home', () => superweaponJump(state, state.stronghold)],
+    ]) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--sm';
+      btn.textContent = label;
+      btn.onclick = () => {
+        const res = fn();
+        toast(res.ok ? label : res.reason, res.ok ? 'ok' : 'error');
+      };
+      swRow.appendChild(btn);
+    }
+    container.appendChild(swRow);
+    const heroBtn = document.createElement('button');
+    heroBtn.type = 'button';
+    heroBtn.className = 'btn btn--primary btn--sm';
+    heroBtn.textContent = 'Build Hero Flagship';
+    heroBtn.onclick = () => {
+      const res = buildHeroFlagship(state);
+      toast(res.ok ? 'Hero flagship queued' : res.reason, res.ok ? 'ok' : 'error');
+    };
+    container.appendChild(heroBtn);
+  }
+  const tutBtn = document.createElement('button');
+  tutBtn.type = 'button';
+  tutBtn.className = 'btn btn--ghost btn--sm';
+  tutBtn.textContent = 'Start Tutorial';
+  tutBtn.onclick = () => {
+    initTutorial(state);
+    toast('Tutorial started', 'ok');
+  };
+  container.appendChild(tutBtn);
+  for (const m of listMissions()) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--xs';
+    btn.textContent = m.name;
+    btn.onclick = () => {
+      const res = startMission(state, m.id);
+      toast(res.ok ? `Mission: ${m.name}` : res.reason, res.ok ? 'ok' : 'error');
+    };
+    container.appendChild(btn);
+  }
 }
 
 function renderDysonPanel(container, state, systemId) {
@@ -422,7 +557,139 @@ function hullLabel(hull) {
   return hull.replace(/_/g, ' ');
 }
 
-function renderGroupedHullButtons(container, state, onQueue) {
+function empireQueueListSnapshot(state) {
+  const yards = listPlayerShipyards(state).map((y) => y.shipyardId).sort().join(',');
+  const items = empireQueueSummary(state).map((q) => ({
+    id: q.id,
+    hull: q.hull,
+    status: q.status,
+    pin: q.pinnedShipyardId ?? null,
+  }));
+  return JSON.stringify({ yards, items });
+}
+
+function empireQueueActionsSnapshot(state) {
+  const yards = listPlayerShipyards(state);
+  if (yards.length === 0) return 'no-yards';
+  return empireQueueHulls(state).join(',');
+}
+
+function scoutRosterStructureSnapshot(state, selectedScoutId) {
+  return JSON.stringify(
+    state.scouts.map((s) => ({
+      id: s.id,
+      selected: s.id === selectedScoutId,
+      loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+      transit: !!s.transit,
+    })),
+  );
+}
+
+function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScoutId) {
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
+  return JSON.stringify({
+    groups: battleGroupsForGalaxy(state).map((g) => ({
+      id: g.id,
+      ordinal: g.ordinal,
+      shipIds: g.shipIds,
+      selected: g.id === selectedBattleGroupId,
+    })),
+    unassigned: unassignedPlayerShips(state).map((s) => s.id),
+    ships: playerShips.map((s) => ({
+      id: s.id,
+      hull: s.hull,
+      transit: !!s.transit,
+      loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+    })),
+    scouts: state.scouts.map((s) => ({
+      id: s.id,
+      selected: s.id === selectedScoutId,
+      transit: !!s.transit,
+      loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+    })),
+    drones: (state.builderDrones ?? []).map((d) => ({
+      id: d.id,
+      status: d.status,
+      target: d.targetSystemId,
+      buildType: d.buildType,
+      buildStartedAt: d.buildStartedAt,
+    })),
+    yards: listPlayerShipyards(state).length,
+    queuePending: empireQueueSummary(state).filter((q) => q.status === 'pending').length,
+  });
+}
+
+function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId) {
+  const container = el('fleet-panel-body');
+  if (!container) return;
+
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
+  const readyShips = playerShips.filter((s) => !s.transit).length;
+  const transitShips = playerShips.filter((s) => s.transit).length;
+  const battleGroups = battleGroupsForGalaxy(state);
+  const queue = empireQueueSummary(state);
+
+  const stats = container.querySelector('.fleet-stats');
+  if (stats) {
+    stats.innerHTML = `
+      <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
+      <span>Fleets: <strong>${battleGroups.length}</strong></span>
+      <span>Scouts: <strong>${state.scouts.length}</strong></span>
+      <span>Shipyards: <strong>${listPlayerShipyards(state).length}</strong></span>
+      <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
+    `;
+  }
+
+  for (const row of container.querySelectorAll('.fleet-ship-row')) {
+    const ship = findPlayerShip(state, row.dataset.shipId);
+    if (!ship) continue;
+    const icon = row.querySelector('.list-row__icon');
+    if (icon) icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+    const sub = row.querySelector('.list-row__sub');
+    if (!sub) continue;
+    if (ship.transit) {
+      const destId = ship.transit.path[ship.transit.path.length - 1];
+      const dest = systemById(state, destId);
+      sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
+    } else {
+      const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
+      sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+    }
+  }
+
+  for (const header of container.querySelectorAll('.fleet-group-header')) {
+    const groupId = header.dataset.fleetSelect;
+    const group = battleGroups.find((g) => g.id === groupId);
+    if (!group) continue;
+    header.classList.toggle('list-row--selected', group.id === selectedBattleGroupId);
+    const fleetIcon = header.querySelector('.fleet-group-icon');
+    fleetIcon?.classList.toggle('fleet-group-icon--selected', group.id === selectedBattleGroupId);
+    const sub = header.querySelector('.list-row__sub');
+    if (!sub) continue;
+    const shipCount = group.shipIds.length;
+    sub.textContent = `${shipCount} ship${shipCount === 1 ? '' : 's'} · ${fleetLocationSummary(state, group.id)}`;
+  }
+
+  for (const btn of container.querySelectorAll('.scout-select-btn')) {
+    const scout = findScout(state, btn.dataset.scoutId);
+    if (!scout) continue;
+    btn.classList.toggle('list-row--selected', scout.id === selectedScoutId);
+    const icon = btn.querySelector('.list-row__icon');
+    if (icon) icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+    const sub = btn.querySelector('.list-row__sub');
+    if (!sub) continue;
+    if (scout.transit) {
+      const st = scout.transit;
+      const dest = systemById(state, st.path[st.path.length - 1]);
+      sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+    } else {
+      const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+      sub.textContent = `@ ${loc}`;
+    }
+  }
+}
+
+function renderGroupedHullButtons(container, state) {
   clearChildren(container);
   const unlocked = new Set(empireQueueHulls(state));
   let anyVisible = false;
@@ -435,17 +702,12 @@ function renderGroupedHullButtons(container, state, onQueue) {
     const section = document.createElement('div');
     section.className = 'queue-category';
     section.dataset.category = catId;
+    section.dataset.categoryLabel = cat.label;
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'queue-category__toggle';
     toggle.textContent = `▾ ${cat.label}`;
-    toggle.onclick = () => {
-      section.classList.toggle('queue-category--collapsed');
-      toggle.textContent = section.classList.contains('queue-category--collapsed')
-        ? `▸ ${cat.label}`
-        : `▾ ${cat.label}`;
-    };
     section.appendChild(toggle);
 
     const btns = document.createElement('div');
@@ -454,9 +716,9 @@ function renderGroupedHullButtons(container, state, onQueue) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn--primary btn--block';
+      btn.dataset.queueHull = hull;
       const cost = HULL_STATS[hull]?.cost ?? 0;
       btn.textContent = `Queue ${hullLabel(hull)} (${cost} cr)`;
-      btn.onclick = () => onQueue(hull);
       btns.appendChild(btn);
     }
     section.appendChild(btns);
@@ -466,12 +728,10 @@ function renderGroupedHullButtons(container, state, onQueue) {
   return anyVisible;
 }
 
-function renderEmpireQueuePanel(state) {
+function renderEmpireQueueList(state) {
   const list = el('empire-queue-list');
-  const actions = el('empire-queue-actions');
-  if (!list || !actions) return;
+  if (!list) return;
   clearChildren(list);
-  clearChildren(actions);
 
   const queue = empireQueueSummary(state);
   if (queue.length === 0) {
@@ -479,133 +739,566 @@ function renderEmpireQueuePanel(state) {
     empty.className = 'empty-state';
     empty.textContent = 'No ships queued.';
     list.appendChild(empty);
-  } else {
-    const yards = listPlayerShipyards(state);
-    for (const item of queue) {
-      const row = document.createElement('div');
-      row.className = 'planet-row';
-      const title = document.createElement('div');
-      title.className = 'planet-row__name';
-      title.textContent = `${item.hull} · ${item.status}`;
-      row.appendChild(title);
-      if (item.status === 'pending') {
-        const pin = document.createElement('select');
-        pin.className = 'btn btn--ghost btn--sm';
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'Auto route';
-        pin.appendChild(opt);
-        for (const y of yards) {
-          const o = document.createElement('option');
-          o.value = y.shipyardId;
-          o.textContent = `${y.systemId.slice(-6)} / ${y.shipyardId}`;
-          if (item.pinnedShipyardId === y.shipyardId) o.selected = true;
-          pin.appendChild(o);
-        }
-        pin.onchange = () => pinQueueItem(state, item.id, pin.value || null);
-        row.appendChild(pin);
-        const cancel = document.createElement('button');
-        cancel.type = 'button';
-        cancel.className = 'btn btn--ghost btn--xs';
-        cancel.textContent = 'Cancel';
-        cancel.onclick = () => {
-          const res = cancelQueueItem(state, item.id);
-          if (!res.ok) toast(res.reason, 'error');
-        };
-        row.appendChild(cancel);
-      }
-      list.appendChild(row);
-    }
+    return;
   }
 
   const yards = listPlayerShipyards(state);
-  if (yards.length === 0) {
+  for (const item of queue) {
+    const row = document.createElement('div');
+    row.className = 'planet-row';
+    const title = document.createElement('div');
+    title.className = 'planet-row__name';
+    title.textContent = `${item.hull} · ${item.status}`;
+    row.appendChild(title);
+    if (item.status === 'pending') {
+      const pin = document.createElement('select');
+      pin.className = 'btn btn--ghost btn--sm';
+      pin.dataset.queuePin = item.id;
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'Auto route';
+      pin.appendChild(opt);
+      for (const y of yards) {
+        const o = document.createElement('option');
+        o.value = y.shipyardId;
+        o.textContent = `${y.systemId.slice(-6)} / ${y.shipyardId}`;
+        if (item.pinnedShipyardId === y.shipyardId) o.selected = true;
+        pin.appendChild(o);
+      }
+      row.appendChild(pin);
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'btn btn--ghost btn--xs';
+      cancel.dataset.queueCancel = item.id;
+      cancel.textContent = 'Cancel';
+      row.appendChild(cancel);
+    }
+    list.appendChild(row);
+  }
+}
+
+function renderEmpireQueueActions(state) {
+  const actions = el('empire-queue-actions');
+  if (!actions) return;
+  clearChildren(actions);
+
+  if (listPlayerShipyards(state).length === 0) {
     const note = document.createElement('p');
     note.className = 'panel-note panel-note--muted';
     note.textContent = 'Build a shipyard to queue ships.';
     actions.appendChild(note);
+    return;
+  }
+
+  renderGroupedHullButtons(actions, state);
+}
+
+function renderScoutRoster(state, selectedScoutId) {
+  const roster = el('scout-roster');
+  if (!roster) return;
+  clearChildren(roster);
+
+  for (const scout of state.scouts) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.scoutId = scout.id;
+    const selected = scout.id === selectedScoutId;
+    btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
+
+    const icon = document.createElement('span');
+    icon.className = 'list-row__icon';
+    icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+    const main = document.createElement('span');
+    main.className = 'list-row__main';
+    const title = document.createElement('div');
+    title.className = 'list-row__title';
+    title.textContent = scout.id;
+    const sub = document.createElement('div');
+    sub.className = 'list-row__sub';
+
+    if (scout.transit) {
+      const st = scout.transit;
+      const dest = systemById(state, st.path[st.path.length - 1]);
+      sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+    } else {
+      const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+      sub.textContent = `@ ${loc}`;
+    }
+
+    main.appendChild(title);
+    main.appendChild(sub);
+    btn.appendChild(icon);
+    btn.appendChild(main);
+    roster.appendChild(btn);
+  }
+}
+
+function updateSelectedScoutLine(state, selectedScoutId) {
+  const sel = selectedScoutId ? findScout(state, selectedScoutId) : null;
+  const line = el('selected-scout-line');
+  if (!line) return;
+  if (sel?.transit) {
+    const dest = systemById(state, sel.transit.path[sel.transit.path.length - 1]);
+    line.textContent =
+      `Selected: ${sel.id} → ${dest?.name ?? '?'} (${Math.ceil(scoutEtaMs(state, sel) / 1000)}s)`;
+    line.className = 'panel__footer panel-note panel-note--muted';
+  } else if (sel) {
+    line.textContent =
+      `Selected: ${sel.id} @ ${systemById(state, sel.systemId)?.name ?? sel.systemId}`;
+    line.className = 'panel__footer panel-note panel-note--muted';
   } else {
-    renderGroupedHullButtons(actions, state, (hull) => {
-      const res = enqueueHull(state, hull);
-      if (!res.ok) toast(res.reason, 'error');
-      else toast(`Queued ${hull}`, 'ok');
-    });
+    line.textContent = 'Shift+click a star on the galaxy map to dispatch';
+    line.className = 'panel__footer panel-note panel-note--muted';
+  }
+}
+
+function updateScoutRosterLabels(state, selectedScoutId) {
+  const roster = el('scout-roster');
+  if (!roster) return;
+  for (const btn of roster.querySelectorAll('.scout-select-btn')) {
+    const scout = findScout(state, btn.dataset.scoutId);
+    if (!scout) continue;
+    btn.classList.toggle('list-row--selected', scout.id === selectedScoutId);
+    const icon = btn.querySelector('.list-row__icon');
+    if (icon) icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+    const sub = btn.querySelector('.list-row__sub');
+    if (!sub) continue;
+    if (scout.transit) {
+      const st = scout.transit;
+      const dest = systemById(state, st.path[st.path.length - 1]);
+      sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
+    } else {
+      const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
+      sub.textContent = `@ ${loc}`;
+    }
+  }
+  updateSelectedScoutLine(state, selectedScoutId);
+}
+
+function wireQueueCategoryToggle(container, e) {
+  const toggle = e.target.closest('.queue-category__toggle');
+  if (!toggle) return false;
+  const section = toggle.closest('.queue-category');
+  if (!section) return true;
+  section.classList.toggle('queue-category--collapsed');
+  const label = section.dataset.categoryLabel ?? '';
+  toggle.textContent = section.classList.contains('queue-category--collapsed')
+    ? `▸ ${label}`
+    : `▾ ${label}`;
+  return true;
+}
+
+function createFleetGroupIcon(selected = false) {
+  const wrap = document.createElement('span');
+  wrap.className = `fleet-group-icon${selected ? ' fleet-group-icon--selected' : ''}`;
+  wrap.setAttribute('aria-hidden', 'true');
+  wrap.innerHTML = `<svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+    <g fill="currentColor">
+      <path opacity="0.7" d="M5.1 14.4 6.9 10.4 6 10 4.2 13.6z"/>
+      <path opacity="0.7" d="M14.9 14.4 13.1 10.4 14 10 15.8 13.6z"/>
+      <path d="M10 2.8 13.4 4.9 12.8 9.1 11.3 9.6 10.8 6.4 9.2 6.4 8.7 9.6 7.2 9.1 6.6 4.9z"/>
+      <rect x="9.05" y="5.15" width="1.9" height="2.05" rx="0.25"/>
+      <path fill="none" stroke="currentColor" stroke-width="0.55" opacity="0.35"
+        d="M10 10.6v4.2M7.4 13.8l2.6-1.3 2.6 1.3"/>
+    </g>
+  </svg>`;
+  return wrap;
+}
+
+function renderFleetShipRow(ship, galaxy, state) {
+  const row = document.createElement('div');
+  row.className = 'list-row fleet-ship-row';
+  row.draggable = true;
+  row.dataset.shipId = ship.id;
+
+  const icon = document.createElement('span');
+  icon.className = 'list-row__icon';
+  icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
+
+  const main = document.createElement('span');
+  main.className = 'list-row__main';
+  const title = document.createElement('div');
+  title.className = 'list-row__title';
+  title.textContent = `${ship.id} · ${ship.hull}`;
+  const sub = document.createElement('div');
+  sub.className = 'list-row__sub';
+
+  if (ship.transit) {
+    const destId = ship.transit.path[ship.transit.path.length - 1];
+    const dest = systemById(state, destId);
+    sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
+  } else {
+    const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
+    sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+  }
+
+  main.appendChild(title);
+  main.appendChild(sub);
+  row.appendChild(icon);
+  row.appendChild(main);
+  return row;
+}
+
+function renderStrategicBuildButtons(container, state, systemId, planetId, droneCtx = null) {
+  if (!container) return;
+  clearChildren(container);
+  const owned = isPlayerOwned(state, systemId);
+  const outpostDroneCheck = !hasOutpost(state, systemId, planetId)
+    ? droneCtx?.canSendBuilderDrone?.(systemId, planetId, 'outpost')
+    : null;
+  const shipyardDroneCheck = hasOutpost(state, systemId, planetId) && !hasShipyard(state, systemId, planetId)
+    ? droneCtx?.canSendBuilderDrone?.(systemId, planetId, 'shipyard')
+    : null;
+  const hasDroneAction = !!(outpostDroneCheck?.ok || shipyardDroneCheck?.ok);
+  if (!owned && !hasDroneAction) {
+    container.classList.add('hidden');
+    return;
+  }
+  container.classList.remove('hidden');
+
+  if (hasDroneAction) {
+    const heading = document.createElement('div');
+    heading.className = 'intel-section-title';
+    heading.textContent = 'Builder Drones';
+    container.appendChild(heading);
+    const droneRows = [
+      ['outpost', 'Outpost', outpostDroneCheck],
+      ['shipyard', 'Shipyard', shipyardDroneCheck],
+    ];
+    for (const [type, label, check] of droneRows) {
+      if (!check?.ok) continue;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--block btn--sm';
+      btn.textContent = `Send Drone: ${label} (${check.totalCost} cr)`;
+      btn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, type);
+      container.appendChild(btn);
+    }
+  }
+
+  if (!owned) return;
+
+  const bodyRows = bodyStructureBuildRows(state, systemId, planetId);
+  const groups = [
+    ['surface', 'Surface Buildings'],
+    ['orbital', 'Orbital Buildings'],
+  ];
+  for (const [placement, title] of groups) {
+    const rows = bodyRows.filter((row) => row.placement === placement);
+    if (rows.length === 0) continue;
+    const heading = document.createElement('div');
+    heading.className = 'intel-section-title';
+    heading.textContent = title;
+    container.appendChild(heading);
+    for (const row of rows) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--block btn--sm';
+      btn.disabled = !row.check.ok;
+      btn.textContent = `${row.label} (${row.cost} cr)`;
+      btn.title = row.check.ok ? `${row.label} · ${placement}` : row.check.reason;
+      btn.onclick = () => {
+        const res = buildBodyStructure(state, systemId, planetId, row.type);
+        if (res.ok) toast(`${row.label} built`, 'ok');
+        else toast(res.reason, 'error');
+      };
+      container.appendChild(btn);
+
+      const droneCheck = droneCtx?.canSendBuilderDrone?.(systemId, planetId, row.type);
+      if (!row.check.ok && droneCheck?.ok) {
+        const droneBtn = document.createElement('button');
+        droneBtn.type = 'button';
+        droneBtn.className = 'btn btn--ghost btn--block btn--sm';
+        droneBtn.textContent = `Send Drone: ${row.label} (${droneCheck.totalCost} cr)`;
+        droneBtn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, row.type);
+        container.appendChild(droneBtn);
+      }
+    }
+  }
+
+  const strategicHeading = document.createElement('div');
+  strategicHeading.className = 'intel-section-title';
+  strategicHeading.textContent = 'Strategic Buildings';
+  container.appendChild(strategicHeading);
+  const labels = {
+    listening_post: 'Listening Post',
+    lane_relay: 'Lane Relay',
+    blockade_fort: 'Blockade Fort',
+    forward_base: 'Forward Base',
+    supply_cache: 'Supply Cache',
+    command_post: 'Command Post',
+  };
+  for (const type of Object.keys(STRUCTURE_DEFS)) {
+    const def = STRUCTURE_DEFS[type];
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--block btn--sm';
+    const pid = def.perBody ? planetId : null;
+    const check = canBuildStrategicStructure(state, systemId, type, pid);
+    btn.disabled = !check.ok;
+    btn.textContent = `${labels[type] ?? type} (${def.cost} cr)`;
+    btn.onclick = () => {
+      const res = buildStrategicStructure(state, systemId, type, pid);
+      if (res.ok) toast(`${labels[type] ?? type} built`, 'ok');
+      else toast(res.reason, 'error');
+    };
+    container.appendChild(btn);
   }
 }
 
 function renderFleetPanel(container, state, ctx) {
-  const { getSelectedScoutId, doSelectScout } = ctx;
+  const {
+    getSelectedScoutId,
+    doSelectScout,
+    getSelectedBattleGroupId,
+    doSelectBattleGroup,
+    createBattleGroup,
+    deleteBattleGroup,
+    builderDroneSummary,
+    cancelBuilderDrone,
+  } = ctx;
   clearChildren(container);
   const galaxy = getGraph(state);
   const selectedScoutId = getSelectedScoutId();
+  const selectedBattleGroupId = getSelectedBattleGroupId?.() ?? null;
 
-  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId);
+  const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
   const scouts = state.scouts ?? [];
   const yards = listPlayerShipyards(state);
   const queue = empireQueueSummary(state);
+  const battleGroups = battleGroupsForGalaxy(state);
+  const unassigned = unassignedPlayerShips(state);
+  const drones = builderDroneSummary?.(state);
 
   const stats = document.createElement('div');
   stats.className = 'fleet-stats';
-  const readyShips = playerShips.filter((s) => !s.transit && s.hp > 0).length;
+  const readyShips = playerShips.filter((s) => !s.transit).length;
   const transitShips = playerShips.filter((s) => s.transit).length;
   stats.innerHTML = `
     <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
+    <span>Fleets: <strong>${battleGroups.length}</strong></span>
     <span>Scouts: <strong>${scouts.length}</strong></span>
+    <span>Drones: <strong>${drones?.unlocked ? `${drones.idle}/${drones.capacity}` : 'locked'}</strong></span>
     <span>Shipyards: <strong>${yards.length}</strong></span>
     <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
   `;
   container.appendChild(stats);
 
-  const shipsTitle = document.createElement('div');
-  shipsTitle.className = 'intel-section-title';
-  shipsTitle.textContent = 'Combat Fleet';
-  container.appendChild(shipsTitle);
-
-  if (playerShips.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'panel-note panel-note--muted';
-    empty.textContent = 'No ships deployed — queue hulls from the Empire Build Queue.';
-    container.appendChild(empty);
-  } else {
-    const list = document.createElement('div');
-    list.className = 'list';
-    for (const ship of playerShips) {
+  if (drones?.unlocked) {
+    const droneTitle = document.createElement('div');
+    droneTitle.className = 'intel-section-title fleet-section-header';
+    droneTitle.textContent = 'Builder Drones';
+    container.appendChild(droneTitle);
+    const droneList = document.createElement('div');
+    droneList.className = 'list';
+    for (const drone of drones.drones) {
       const row = document.createElement('div');
-      row.className = 'list-row fleet-ship-row';
-
+      row.className = 'list-row';
       const icon = document.createElement('span');
       icon.className = 'list-row__icon';
-      icon.style.background = ship.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
-
+      icon.style.background = drone.status === 'idle' ? 'var(--accent-green)' : 'var(--accent-gold)';
       const main = document.createElement('span');
       main.className = 'list-row__main';
       const title = document.createElement('div');
       title.className = 'list-row__title';
-      title.textContent = `${ship.id} · ${ship.hull}`;
+      title.textContent = `${drone.id} · ${drone.status}`;
       const sub = document.createElement('div');
       sub.className = 'list-row__sub';
-
-      if (ship.transit) {
-        const st = playerShipStatus(ship, galaxy, state.time);
-        const destId = ship.transit.path[ship.transit.path.length - 1];
-        const dest = systemById(state, destId);
-        sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
-        if (st?.x != null) {
-          sub.textContent += ` · leg ${(ship.transit.legIndex ?? 0) + 1}`;
-        }
+      if (drone.status === 'building') {
+        sub.textContent = `${drone.buildType} · ${Math.round((drone.buildProgress ?? 0) * 100)}%`;
+      } else if (drone.etaMs != null) {
+        sub.textContent = `→ ${systemById(state, drone.targetSystemId)?.name ?? drone.targetSystemId ?? 'flagship'} · ${Math.ceil(drone.etaMs / 1000)}s`;
       } else {
-        const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
-        sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+        sub.textContent = `@ ${systemById(state, drone.systemId)?.name ?? drone.systemId ?? 'flagship'}`;
       }
-
       main.appendChild(title);
       main.appendChild(sub);
       row.appendChild(icon);
       row.appendChild(main);
-      list.appendChild(row);
+      if (drone.status !== 'idle' && drone.status !== 'building') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn--ghost btn--xs';
+        btn.textContent = 'Cancel';
+        btn.onclick = () => cancelBuilderDrone?.(drone.id);
+        row.appendChild(btn);
+      }
+      droneList.appendChild(row);
     }
-    container.appendChild(list);
+    container.appendChild(droneList);
   }
+
+  const groupsTitle = document.createElement('div');
+  groupsTitle.className = 'intel-section-title fleet-section-header';
+  groupsTitle.textContent = 'Battle Groups';
+  container.appendChild(groupsTitle);
+
+  const createBtn = document.createElement('button');
+  createBtn.type = 'button';
+  createBtn.className = 'btn btn--ghost btn--sm fleet-create-btn';
+  createBtn.dataset.fleetCreate = '1';
+  createBtn.textContent = 'Create Fleet';
+  container.appendChild(createBtn);
+
+  if (battleGroups.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = 'No battle groups — create a fleet and drag ships into it.';
+    container.appendChild(empty);
+  }
+
+  for (const group of battleGroups) {
+    const block = document.createElement('div');
+    block.className = 'fleet-group-block';
+    block.dataset.groupId = group.id;
+
+    const header = document.createElement('button');
+    header.type = 'button';
+    const selected = group.id === selectedBattleGroupId;
+    header.className = `list-row fleet-group-header${selected ? ' list-row--selected' : ''}`;
+    header.dataset.fleetSelect = group.id;
+
+    const icon = createFleetGroupIcon(selected);
+
+    const main = document.createElement('span');
+    main.className = 'list-row__main';
+    const title = document.createElement('div');
+    title.className = 'list-row__title';
+    title.textContent = formatFleetName(group.ordinal);
+    const sub = document.createElement('div');
+    sub.className = 'list-row__sub';
+    const shipCount = group.shipIds.length;
+    sub.textContent = `${shipCount} ship${shipCount === 1 ? '' : 's'} · ${fleetLocationSummary(state, group.id)}`;
+    main.appendChild(title);
+    main.appendChild(sub);
+
+    const del = document.createElement('span');
+    del.className = 'fleet-group-delete';
+    del.dataset.fleetDelete = group.id;
+    del.title = 'Delete fleet';
+    del.textContent = '×';
+    del.setAttribute('role', 'button');
+    del.setAttribute('aria-label', `Delete ${formatFleetName(group.ordinal)}`);
+
+    header.appendChild(icon);
+    header.appendChild(main);
+    header.appendChild(del);
+    block.appendChild(header);
+
+    const drop = document.createElement('div');
+    drop.className = 'fleet-drop-zone';
+    drop.dataset.dropTarget = group.id;
+    if (shipCount === 0) {
+      const hint = document.createElement('p');
+      hint.className = 'panel-note panel-note--muted fleet-drop-hint';
+      hint.textContent = 'Drop ships here';
+      drop.appendChild(hint);
+    } else {
+      const list = document.createElement('div');
+      list.className = 'list fleet-ship-list';
+      for (const shipId of group.shipIds) {
+        const ship = playerShips.find((s) => s.id === shipId);
+        if (ship) list.appendChild(renderFleetShipRow(ship, galaxy, state));
+      }
+      drop.appendChild(list);
+    }
+    block.appendChild(drop);
+
+    const anchorRow = document.createElement('div');
+    anchorRow.className = 'dev-row';
+    anchorRow.style.marginTop = '6px';
+    const anchorLabel = document.createElement('span');
+    anchorLabel.className = 'panel-note';
+    anchorLabel.textContent = 'Anchor to hero:';
+    const anchorSel = document.createElement('select');
+    anchorSel.className = 'btn btn--ghost btn--sm';
+    const noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = 'None';
+    anchorSel.appendChild(noneOpt);
+    for (const hero of heroFlagshipsSummary(state)) {
+      const opt = document.createElement('option');
+      opt.value = hero.id;
+      opt.textContent = `${hero.id} @ ${systemById(state, hero.systemId)?.name ?? hero.systemId}`;
+      if (group.anchorHeroId === hero.id) opt.selected = true;
+      anchorSel.appendChild(opt);
+    }
+    anchorSel.onchange = () => {
+      const res = setBattleGroupHeroAnchor(state, group.id, anchorSel.value || null);
+      if (!res.ok) toast(res.reason, 'error');
+    };
+    anchorRow.appendChild(anchorLabel);
+    anchorRow.appendChild(anchorSel);
+    block.appendChild(anchorRow);
+
+    container.appendChild(block);
+  }
+
+  const heroes = heroFlagshipsSummary(state);
+  if (heroes.length > 0) {
+    const heroTitle = document.createElement('div');
+    heroTitle.className = 'intel-section-title fleet-section-header';
+    heroTitle.textContent = 'Hero Flagships';
+    container.appendChild(heroTitle);
+    for (const hero of heroes) {
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      main.innerHTML = `<div class="list-row__title">${hero.id}</div><div class="list-row__sub">${systemById(state, hero.systemId)?.name ?? hero.systemId} · HP ${Math.ceil(hero.hp)} · rally ${hero.rallyStarId ?? '—'}</div>`;
+      row.appendChild(main);
+      const rallySel = document.createElement('select');
+      rallySel.className = 'btn btn--ghost btn--xs';
+      const graph = getGraph(state);
+      for (const star of graph.stars) {
+        const opt = document.createElement('option');
+        opt.value = star.id;
+        opt.textContent = star.name;
+        if (hero.rallyStarId === star.id) opt.selected = true;
+        rallySel.appendChild(opt);
+      }
+      rallySel.onchange = () => {
+        const res = setHeroRally(state, hero.id, rallySel.value);
+        if (!res.ok) toast(res.reason, 'error');
+      };
+      row.appendChild(rallySel);
+      container.appendChild(row);
+    }
+  }
+
+  const fleetHint = document.createElement('p');
+  fleetHint.className = 'panel-note panel-note--muted';
+  fleetHint.style.marginTop = '8px';
+  fleetHint.textContent = 'Click a map fleet to select it. Tab+click a star to dispatch the selected fleet. Shift+click still sends scouts.';
+  container.appendChild(fleetHint);
+
+  const unassignedTitle = document.createElement('div');
+  unassignedTitle.className = 'intel-section-title';
+  unassignedTitle.style.marginTop = '12px';
+  unassignedTitle.textContent = 'Unassigned Ships';
+  container.appendChild(unassignedTitle);
+
+  const unassignedDrop = document.createElement('div');
+  unassignedDrop.className = 'fleet-drop-zone fleet-drop-zone--unassigned';
+  unassignedDrop.dataset.dropTarget = 'unassigned';
+
+  if (unassigned.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'panel-note panel-note--muted';
+    empty.textContent = playerShips.length === 0
+      ? 'No ships deployed — queue hulls from the Empire Build Queue.'
+      : 'All ships are assigned to battle groups.';
+    unassignedDrop.appendChild(empty);
+  } else {
+    const list = document.createElement('div');
+    list.className = 'list';
+    for (const ship of unassigned) {
+      list.appendChild(renderFleetShipRow(ship, galaxy, state));
+    }
+    unassignedDrop.appendChild(list);
+  }
+  container.appendChild(unassignedDrop);
 
   const scoutTitle = document.createElement('div');
   scoutTitle.className = 'intel-section-title';
@@ -626,6 +1319,7 @@ function renderFleetPanel(container, state, ctx) {
       btn.type = 'button';
       const selected = scout.id === selectedScoutId;
       btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
+      btn.dataset.scoutId = scout.id;
 
       const icon = document.createElement('span');
       icon.className = 'list-row__icon';
@@ -889,6 +1583,11 @@ export function initUi(ctx) {
     getViewedSystemId,
     getSelectedScoutId,
     doSelectScout,
+    getSelectedBattleGroupId,
+    doSelectBattleGroup,
+    createBattleGroup,
+    deleteBattleGroup,
+    assignShipToGroup,
     doBuildOutpost,
     doBuildShipyard,
     doQueueScout,
@@ -907,10 +1606,18 @@ export function initUi(ctx) {
     enemyCombatPresence,
     battleSummaryForSystem,
     canQueueHull,
+    builderDroneSummary,
+    canSendBuilderDrone,
+    sendBuilderDrone,
+    cancelBuilderDrone,
     doBuildFoundry,
     doBuildLauncher,
     doEnterWormhole,
     doBuildWormholeAnchor,
+    getGalaxyTargetStar,
+    doStartNewGame,
+    getBootPhase,
+    setBootPhase,
   } = ctx;
 
   let sidePanel = null;
@@ -940,6 +1647,137 @@ export function initUi(ctx) {
     el('queue-scout-btn').after(hullBtnContainer);
   }
 
+  const uiSnapshots = {
+    empireQueueList: '',
+    empireQueueActions: '',
+    scoutRoster: '',
+    buildHullActions: '',
+    fleetPanel: '',
+  };
+
+  function queueHullFromUi(hull) {
+    const res = enqueueHull(getState(), hull);
+    if (!res.ok) toast(res.reason, 'error');
+    else toast(`Queued ${hull}`, 'ok');
+  }
+
+  function wireInteractivePanels() {
+    const onQueueMouseDown = (e) => {
+      if (e.button !== 0) return;
+      if (wireQueueCategoryToggle(e.currentTarget, e)) return;
+      const btn = e.target.closest('[data-queue-hull]');
+      if (!btn) return;
+      e.preventDefault();
+      queueHullFromUi(btn.dataset.queueHull);
+    };
+
+    el('empire-queue-actions')?.addEventListener('mousedown', onQueueMouseDown);
+    hullBtnContainer.addEventListener('mousedown', onQueueMouseDown);
+
+    el('empire-queue-list')?.addEventListener('change', (e) => {
+      const sel = e.target.closest('[data-queue-pin]');
+      if (!sel) return;
+      const res = pinQueueItem(getState(), sel.dataset.queuePin, sel.value || null);
+      if (!res.ok) toast(res.reason, 'error');
+    });
+    el('empire-queue-list')?.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const btn = e.target.closest('[data-queue-cancel]');
+      if (!btn) return;
+      e.preventDefault();
+      const res = cancelQueueItem(getState(), btn.dataset.queueCancel);
+      if (!res.ok) toast(res.reason, 'error');
+    });
+
+    el('scout-roster')?.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      const btn = e.target.closest('.scout-select-btn');
+      if (!btn?.dataset.scoutId) return;
+      e.preventDefault();
+      doSelectScout(btn.dataset.scoutId);
+    });
+
+    let fleetDragShipId = null;
+    let fleetDidDrag = false;
+    const fleetPanelBody = el('fleet-panel-body');
+
+    fleetPanelBody?.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (fleetDidDrag) {
+        fleetDidDrag = false;
+        return;
+      }
+      const createTarget = e.target.closest('[data-fleet-create]');
+      if (createTarget) {
+        e.preventDefault();
+        const group = createBattleGroup();
+        doSelectBattleGroup(group.id);
+        return;
+      }
+      const deleteTarget = e.target.closest('[data-fleet-delete]');
+      if (deleteTarget?.dataset.fleetDelete) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteBattleGroup(deleteTarget.dataset.fleetDelete);
+        return;
+      }
+      const selectTarget = e.target.closest('[data-fleet-select]');
+      if (selectTarget?.dataset.fleetSelect) {
+        e.preventDefault();
+        doSelectBattleGroup(selectTarget.dataset.fleetSelect);
+      }
+    });
+
+    fleetPanelBody?.addEventListener('dragstart', (e) => {
+      const row = e.target.closest('.fleet-ship-row');
+      if (!row?.dataset.shipId) return;
+      fleetDragShipId = row.dataset.shipId;
+      fleetDidDrag = false;
+      row.classList.add('list-row--dragging');
+      e.dataTransfer.setData('text/plain', fleetDragShipId);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    fleetPanelBody?.addEventListener('dragend', (e) => {
+      e.target.closest('.fleet-ship-row')?.classList.remove('list-row--dragging');
+      fleetPanelBody.querySelectorAll('.fleet-drop-zone--active').forEach((el) => {
+        el.classList.remove('fleet-drop-zone--active');
+      });
+      fleetDragShipId = null;
+    });
+
+    fleetPanelBody?.addEventListener('dragover', (e) => {
+      const zone = e.target.closest('.fleet-drop-zone');
+      if (!zone) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('fleet-drop-zone--active');
+    });
+
+    fleetPanelBody?.addEventListener('dragleave', (e) => {
+      const zone = e.target.closest('.fleet-drop-zone');
+      if (zone && !zone.contains(e.relatedTarget)) {
+        zone.classList.remove('fleet-drop-zone--active');
+      }
+    });
+
+    fleetPanelBody?.addEventListener('drop', (e) => {
+      const zone = e.target.closest('.fleet-drop-zone');
+      if (!zone) return;
+      e.preventDefault();
+      fleetDidDrag = true;
+      zone.classList.remove('fleet-drop-zone--active');
+      const shipId = e.dataTransfer.getData('text/plain') || fleetDragShipId;
+      if (!shipId) return;
+      const target = zone.dataset.dropTarget;
+      const groupId = target === 'unassigned' ? null : target;
+      const res = assignShipToGroup(shipId, groupId);
+      if (!res.ok) toast(res.reason, 'error');
+    });
+  }
+
+  wireInteractivePanels();
+
   el('pause-btn').addEventListener('click', doTogglePause);
   el('view-toggle-btn').addEventListener('click', doToggleView);
   el('tab-galaxy').addEventListener('click', () => {
@@ -965,6 +1803,14 @@ export function initUi(ctx) {
   el('tab-fleet')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'fleet' ? null : 'fleet';
+  });
+  el('tab-diplomacy')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'diplomacy' ? null : 'diplomacy';
+  });
+  el('tab-campaign')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'campaign' ? null : 'campaign';
   });
 
   el('build-trade-btn')?.addEventListener('click', () => {
@@ -1000,6 +1846,84 @@ export function initUi(ctx) {
     else toast('Queued scout', 'ok');
   });
 
+  el('sw-create-btn')?.addEventListener('click', () => {
+    const st = getState();
+    const anchor = getGalaxyTargetStar?.() ?? st.stronghold;
+    const res = superweaponCreate(st, anchor);
+    toast(res.ok ? 'Star created' : res.reason, res.ok ? 'ok' : 'error');
+  });
+  el('sw-destroy-btn')?.addEventListener('click', () => {
+    const target = getGalaxyTargetStar?.();
+    if (!target) { toast('Click a target star on the map', 'error'); return; }
+    const res = superweaponDestroy(getState(), target);
+    toast(res.ok ? 'System destroyed' : res.reason, res.ok ? 'ok' : 'error');
+  });
+  el('sw-jump-btn')?.addEventListener('click', () => {
+    const target = getGalaxyTargetStar?.();
+    if (!target) { toast('Click a target star on the map', 'error'); return; }
+    const res = superweaponJump(getState(), target);
+    toast(res.ok ? 'Jump complete' : res.reason, res.ok ? 'ok' : 'error');
+  });
+  el('clear-trade-routes-btn')?.addEventListener('click', () => {
+    const res = clearTradeRoutes(getState());
+    toast(`Cleared ${res.cleared ?? 0} routes`, 'ok');
+  });
+
+  const newGameModal = el('new-game-modal');
+  const newGameBackdrop = el('new-game-modal-backdrop');
+  const titleScreen = el('title-screen');
+
+  function openNewGameModal() {
+    titleScreen?.classList.add('hidden');
+    newGameModal?.classList.remove('hidden');
+    newGameBackdrop?.classList.remove('hidden');
+  }
+  function closeNewGameModal() {
+    newGameModal?.classList.add('hidden');
+    newGameBackdrop?.classList.add('hidden');
+    if (getBootPhase?.() === 'title') titleScreen?.classList.remove('hidden');
+  }
+  function showTitleScreen() {
+    titleScreen?.classList.remove('hidden');
+    setBootPhase?.('title');
+    getState().paused = true;
+  }
+
+  el('title-new-campaign-btn')?.addEventListener('click', openNewGameModal);
+  el('title-continue-btn')?.addEventListener('click', async () => {
+    titleScreen?.classList.add('hidden');
+    setBootPhase?.('playing');
+    getState().paused = false;
+    await doLoadSlot('autosave');
+  });
+  el('title-load-btn')?.addEventListener('click', () => {
+    titleScreen?.classList.add('hidden');
+    openSaveMenu();
+  });
+
+  readSlot('autosave').then((res) => {
+    const btn = el('title-continue-btn');
+    if (res.ok) btn?.classList.remove('hidden');
+    else btn?.classList.add('hidden');
+  });
+
+  showTitleScreen();
+  el('close-new-game-btn')?.addEventListener('click', closeNewGameModal);
+  newGameBackdrop?.addEventListener('click', closeNewGameModal);
+  el('new-game-sandbox-btn')?.addEventListener('click', () => {
+    const vt = el('new-game-victory')?.value ?? 'sandbox';
+    doStartNewGame?.({ mode: 'sandbox', victoryType: vt });
+    closeNewGameModal();
+  });
+  el('new-game-tutorial-btn')?.addEventListener('click', () => {
+    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+    closeNewGameModal();
+  });
+  el('new-game-missions-btn')?.addEventListener('click', () => {
+    doStartNewGame?.({ mode: 'mission', victoryType: 'dominion' });
+    closeNewGameModal();
+  });
+
   const saveMenu = el('save-menu');
   const saveBackdrop = el('save-menu-backdrop');
 
@@ -1012,6 +1936,7 @@ export function initUi(ctx) {
   function closeSaveMenu() {
     saveMenu.classList.add('hidden');
     saveBackdrop.classList.add('hidden');
+    if (getBootPhase?.() === 'title') titleScreen?.classList.remove('hidden');
   }
 
   async function refreshSaveMenu() {
@@ -1098,6 +2023,9 @@ export function initUi(ctx) {
   };
 
   function updateUi() {
+    const phase = getBootPhase?.() ?? 'playing';
+    el('hud')?.classList.toggle('hud--boot', phase !== 'playing');
+
     const state = getState();
     const selection = getSelection();
     const view = getView();
@@ -1135,9 +2063,21 @@ export function initUi(ctx) {
       tradeChip.classList.add('hidden');
     }
 
-    renderEmpireQueuePanel(state);
+    const listSnap = empireQueueListSnapshot(state);
+    if (listSnap !== uiSnapshots.empireQueueList) {
+      uiSnapshots.empireQueueList = listSnap;
+      renderEmpireQueueList(state);
+    }
+
+    const actionsSnap = empireQueueActionsSnapshot(state);
+    if (actionsSnap !== uiSnapshots.empireQueueActions) {
+      uiSnapshots.empireQueueActions = actionsSnap;
+      renderEmpireQueueActions(state);
+    }
 
     const techScreen = el('tech-screen');
+    const diploScreen = el('diplomacy-screen');
+    const campScreen = el('campaign-screen');
     el('tech-panel')?.classList.add('hidden');
     if (sidePanel === 'tech') {
       techScreen?.classList.remove('hidden');
@@ -1145,24 +2085,71 @@ export function initUi(ctx) {
     } else {
       techScreen?.classList.add('hidden');
     }
+    if (sidePanel === 'diplomacy') {
+      diploScreen?.classList.remove('hidden');
+      renderDiplomacyPanel(el('diplomacy-screen-body'), state);
+    } else {
+      diploScreen?.classList.add('hidden');
+    }
+    if (sidePanel === 'campaign') {
+      campScreen?.classList.remove('hidden');
+      renderCampaignPanel(el('campaign-screen-body'), state);
+    } else {
+      campScreen?.classList.add('hidden');
+    }
 
     const fleetPanel = el('fleet-panel');
     if (sidePanel === 'fleet') {
       fleetPanel?.classList.remove('hidden');
-      renderFleetPanel(el('fleet-panel-body'), state, {
-        getSelectedScoutId,
-        doSelectScout,
-      });
+      const fleetSnap = fleetPanelStructureSnapshot(state, getSelectedBattleGroupId?.() ?? null, selectedScoutId);
+      if (fleetSnap !== uiSnapshots.fleetPanel) {
+        uiSnapshots.fleetPanel = fleetSnap;
+        renderFleetPanel(el('fleet-panel-body'), state, {
+          getSelectedScoutId,
+          doSelectScout,
+          getSelectedBattleGroupId,
+          doSelectBattleGroup,
+          createBattleGroup,
+          deleteBattleGroup,
+        });
+      } else {
+        updateFleetPanelLabels(state, selectedScoutId, getSelectedBattleGroupId?.() ?? null);
+      }
     } else {
       fleetPanel?.classList.add('hidden');
+      uiSnapshots.fleetPanel = '';
     }
 
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
-    el('pause-overlay').classList.toggle('hidden', !state.paused);
+    el('pause-overlay').classList.toggle('hidden', !state.paused || phase !== 'playing');
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
     el('view-hint').textContent = HINTS[view];
     updateTabBar(view, sidePanel);
+
+    const swGalaxyPanel = el('superweapon-galaxy-panel');
+    const tradeRoutesPanel = el('trade-routes-panel');
+    const ms = milestonesSummary(state);
+    if (view === 'galaxy' && ms.superweaponUnlocked) {
+      swGalaxyPanel?.classList.remove('hidden');
+      const sw = superweaponSummary(state);
+      const targetId = getGalaxyTargetStar?.() ?? null;
+      const targetName = targetId ? (systemById(state, targetId)?.name ?? targetId) : '—';
+      el('superweapon-galaxy-body').innerHTML =
+        `<p class="panel-note">Target: <strong>${targetName}</strong></p>`
+        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'} · CD ${Math.ceil(sw.cooldownMs / 1000)}s</p>`;
+    } else {
+      swGalaxyPanel?.classList.add('hidden');
+    }
+    if (view === 'galaxy' && ms.diplomacyUnlocked) {
+      tradeRoutesPanel?.classList.remove('hidden');
+      const tr = tradeRoutesSummary(state);
+      el('trade-routes-body').innerHTML =
+        `<p class="panel-note">${tr.count}/${tr.max} routes · bonus ×${tr.bonus?.toFixed?.(2) ?? tr.bonus}</p>`
+        + (tr.routes?.map((r) => `<div class="intel-row">${r.from} ↔ ${r.to}</div>`).join('') ?? '');
+    } else {
+      tradeRoutesPanel?.classList.add('hidden');
+    }
 
     const dysonPanel = el('dyson-panel');
     if (sidePanel === 'dyson' && view === 'system') {
@@ -1203,60 +2190,17 @@ export function initUi(ctx) {
     const scoutPanel = el('scout-panel');
     if (state.scouts.length > 0 && sidePanel !== 'fleet') {
       scoutPanel.classList.remove('hidden');
-      const roster = el('scout-roster');
-      roster.innerHTML = '';
-      for (const scout of state.scouts) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        const selected = scout.id === selectedScoutId;
-        btn.className = `list-row scout-select-btn${selected ? ' list-row--selected' : ''}`;
-
-        const icon = document.createElement('span');
-        icon.className = 'list-row__icon';
-        icon.style.background = scout.transit ? 'var(--accent-gold)' : 'var(--accent-cyan)';
-
-        const main = document.createElement('span');
-        main.className = 'list-row__main';
-        const title = document.createElement('div');
-        title.className = 'list-row__title';
-        title.textContent = scout.id;
-        const sub = document.createElement('div');
-        sub.className = 'list-row__sub';
-
-        if (scout.transit) {
-          const st = scout.transit;
-          const dest = systemById(state, st.path[st.path.length - 1]);
-          sub.textContent = `→ ${dest?.name ?? '?'} · ${Math.ceil(scoutEtaMs(state, scout) / 1000)}s`;
-        } else {
-          const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
-          sub.textContent = `@ ${loc}`;
-        }
-
-        main.appendChild(title);
-        main.appendChild(sub);
-        btn.appendChild(icon);
-        btn.appendChild(main);
-        btn.addEventListener('click', () => doSelectScout(scout.id));
-        roster.appendChild(btn);
-      }
-
-      const sel = selectedScoutId ? findScout(state, selectedScoutId) : null;
-      const line = el('selected-scout-line');
-      if (sel?.transit) {
-        const dest = systemById(state, sel.transit.path[sel.transit.path.length - 1]);
-        line.textContent =
-          `Selected: ${sel.id} → ${dest?.name ?? '?'} (${Math.ceil(scoutEtaMs(state, sel) / 1000)}s)`;
-        line.className = 'panel__footer panel-note panel-note--muted';
-      } else if (sel) {
-        line.textContent =
-          `Selected: ${sel.id} @ ${systemById(state, sel.systemId)?.name ?? sel.systemId}`;
-        line.className = 'panel__footer panel-note panel-note--muted';
+      const rosterSnap = scoutRosterStructureSnapshot(state, selectedScoutId);
+      if (rosterSnap !== uiSnapshots.scoutRoster) {
+        uiSnapshots.scoutRoster = rosterSnap;
+        renderScoutRoster(state, selectedScoutId);
+        updateSelectedScoutLine(state, selectedScoutId);
       } else {
-        line.textContent = 'Shift+click a star on the galaxy map to dispatch';
-        line.className = 'panel__footer panel-note panel-note--muted';
+        updateScoutRosterLabels(state, selectedScoutId);
       }
     } else {
       scoutPanel.classList.add('hidden');
+      uiSnapshots.scoutRoster = '';
     }
 
     const intelPanel = el('intel-panel');
@@ -1404,12 +2348,13 @@ export function initUi(ctx) {
 
     hullBtnContainer.classList.toggle('hidden', !showQueueBtns);
     if (showQueueBtns) {
-      renderGroupedHullButtons(hullBtnContainer, state, (hull) => {
-        const res = enqueueHull(state, hull);
-        if (!res.ok) toast(res.reason, 'error');
-        else toast(`Queued ${hull}`, 'ok');
-      });
+      const hullSnap = empireQueueActionsSnapshot(state);
+      if (hullSnap !== uiSnapshots.buildHullActions) {
+        uiSnapshots.buildHullActions = hullSnap;
+        renderGroupedHullButtons(hullBtnContainer, state);
+      }
     } else {
+      uiSnapshots.buildHullActions = '';
       clearChildren(hullBtnContainer);
     }
 
@@ -1445,6 +2390,10 @@ export function initUi(ctx) {
     } else if (!tradeCheck.ok && hasOutpost(state, viewedSystemId, planet.id)) note = tradeCheck.reason;
     else if (!researchCheck.ok && isPlayerOwned(state, viewedSystemId)) note = researchCheck.reason;
     else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
+    renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id, {
+      canSendBuilderDrone,
+      sendBuilderDrone,
+    });
     el('build-panel-note').textContent = note;
   };
 

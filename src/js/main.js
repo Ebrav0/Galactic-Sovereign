@@ -54,8 +54,28 @@ import {
   canHoldCapture,
   enemyCombatPresence,
 } from './capture.js';
-import { spawnPirateFleets, forcePirateIntoSystem, pirateSystemsWithPresence, resetPirateIds, pirateFleetAtSystem } from './pirates.js';
+import {
+  spawnPirateFleets,
+  forcePirateIntoSystem,
+  pirateSystemsWithPresence,
+  resetPirateIds,
+  pirateFleetAtSystem,
+  pirateFleetEtaMs,
+  pirateFleetPower,
+  pirateFleetMarkersForGalaxy,
+  pirateFleetTransitMarkersForGalaxy,
+  ensurePiratesState,
+} from './pirates.js';
 import { orderShipTravel, resetShipIds, findPlayerShip, playerShipsAtSystem } from './fleets.js';
+import {
+  createBattleGroup,
+  deleteBattleGroup,
+  assignShipToGroup,
+  orderBattleGroupTravel,
+  resetBattleGroupIds,
+  battleGroupsForGalaxy,
+  formatFleetName,
+} from './battle-groups.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
@@ -74,6 +94,8 @@ import {
 import {
   drawSystem,
   drawGalaxy,
+  drawTitleBackground,
+  galaxyPerfSummary,
   follow,
   updateFollowCamera,
   snapCameraTo,
@@ -84,6 +106,16 @@ import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
 import { initUi, toast } from './ui.js';
 import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
+import { getBootPhase, setBootPhase, BOOT_PHASE } from './boot.js';
+import { startWarpIntro, drawWarpIntro } from './warp-intro.js';
+import {
+  devAction,
+  devGrantCredits,
+  devForceShellProgress as devForceShell,
+  devSpawnFriendlyShips,
+  devSpawnEnemyFleet,
+} from './dev.js';
+import { initDevPanel } from './dev-panel.js';
 import { getGraph, getActiveGalaxy, getGalaxyCount, hydratedGalaxyCount, setGalaxyCountForTests, getSystems } from './galaxy-scope.js';
 import { graphStats, galaxyGraphFingerprint, setGalaxyStarCountForTests } from './galaxy.js';
 import { abstractGalaxySummaries, wormholeSummary } from './abstract-galaxy.js';
@@ -111,19 +143,70 @@ import {
 import { startResearch, researchSummary, buildResearchStation, canBuildResearchStation, ensureResearchState } from './research.js';
 import { applyTechEffect } from './tech-web.js';
 import { buildTradeStation, canBuildTradeStation, tradeSummary } from './trade.js';
-import { aiFactionSummary, forceAiCapture } from './ai-faction.js';
+import { aiFactionSummary, forceAiCapture, listAiFactions } from './ai-faction.js';
 import { resetAiShipIds, aiShipsSummary } from './ai-ships.js';
 import { productionSlotSummary } from './production.js';
 import { allTechNodes, isTechUnlocked, techPrereqsMet } from './tech-web.js';
+import { milestonesSummary, setCompletedDysonsForTest } from './milestones.js';
+import {
+  buildSuperweaponCradle,
+  superweaponCreate,
+  superweaponDestroy,
+  superweaponJump,
+  superweaponSummary,
+  completeDysonShellForTest,
+  resetSuperweaponIds,
+} from './superweapon.js';
+import {
+  buildHeroFlagship,
+  spawnHeroFlagshipForTest,
+  setHeroRally,
+  orderHeroTravel,
+  heroFlagshipsSummary,
+  resetHeroFlagshipIds,
+} from './hero-flagships.js';
+import {
+  offerTreaty,
+  setRelation,
+  diplomacySummary,
+} from './diplomacy.js';
+import { addTradeRoute, clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
+import { setVictoryType, checkVictory, checkDefeat, campaignSummary } from './campaign.js';
+import { startMission, completeMissionForTest, advanceMissionObjective, missionsSummary } from './missions.js';
+import { getTutorialState, setTutorialStep, initTutorial } from './tutorial.js';
+import { buildStrategicStructure, strategicStructuresSummary } from './strategic-structures.js';
+import {
+  allBodyStructuresSummary,
+  bodyStructureBuildRows,
+  bodyStructuresSummary,
+  buildBodyStructure,
+} from './body-structures.js';
+import {
+  builderDroneSummary,
+  canSendBuilderDrone,
+  cancelBuilderDrone,
+  initBuilderDrones,
+  resetBuilderDroneIds,
+  sendBuilderDrone,
+} from './builder-drones.js';
+import { shellShieldBonus, shellRepairBonus } from './dyson.js';
+import { setBattleGroupHeroAnchor } from './battle-groups.js';
+import { tickContextualTips, resetContextualTips } from './tips.js';
 
 let state = createNewGame(DEFAULT_SEED);
 state.pirates = spawnPirateFleets(state);
 seedAiFaction(state, state.homeGalaxyId);
+initBuilderDrones(state);
+state.paused = true;
+setBootPhase(BOOT_PHASE.TITLE);
 let selection = null;
 let view = 'system';
 let viewedSystemId = state.stronghold;
 let lastFlagshipSystemId = state.flagship.systemId;
 let selectedScoutId = null;
+let selectedBattleGroupId = null;
+let galaxyTargetStarId = null;
+let tradeRoutePending = null;
 
 const canvas = document.getElementById('game-canvas');
 const ctx2d = canvas.getContext('2d');
@@ -152,6 +235,23 @@ function ensureSelectedScout() {
 function doSelectScout(scoutId) {
   if (scoutId && !findScout(state, scoutId)) return;
   selectedScoutId = scoutId;
+  selectedBattleGroupId = null;
+}
+
+function doSelectBattleGroup(groupId) {
+  if (groupId && !battleGroupsForGalaxy(state).some((g) => g.id === groupId)) return;
+  selectedBattleGroupId = groupId;
+  selectedScoutId = null;
+}
+
+function doDeleteBattleGroup(groupId) {
+  const res = deleteBattleGroup(state, groupId);
+  if (!res.ok) {
+    toast(res.reason, 'error');
+    return res;
+  }
+  if (selectedBattleGroupId === groupId) selectedBattleGroupId = null;
+  return res;
 }
 
 // --- Actions ---
@@ -235,6 +335,23 @@ function doOrderScoutTravel(targetId) {
   return res;
 }
 
+function doOrderBattleGroupTravel(targetId) {
+  if (!selectedBattleGroupId) {
+    toast('Select a fleet in Fleet Command first', 'error');
+    return { ok: false, reason: 'Select a fleet in Fleet Command first' };
+  }
+  const res = orderBattleGroupTravel(state, selectedBattleGroupId, targetId);
+  const dest = systemById(state, targetId);
+  const destName = dest?.name ?? targetId;
+  if (res.ok) {
+    const skipNote = res.skipped > 0 ? ` · ${res.skipped} skipped` : '';
+    toast(`${res.fleetName}: ${res.dispatched} dispatched to ${destName}${skipNote}`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+  return res;
+}
+
 function doBuildOutpost(planetId) {
   const res = buildOutpost(state, viewedSystemId, planetId);
   if (res.ok) {
@@ -303,6 +420,23 @@ function doBuildLauncher(bodyId) {
   return res;
 }
 
+function doSendBuilderDrone(systemId, bodyId, buildType) {
+  const res = sendBuilderDrone(state, systemId ?? viewedSystemId, bodyId ?? selection, buildType);
+  if (res.ok) {
+    const name = systemById(state, res.systemId)?.name ?? res.systemId;
+    toast(`Builder drone dispatched to ${name}`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+  return res;
+}
+
+function doCancelBuilderDrone(droneId) {
+  const res = cancelBuilderDrone(state, droneId);
+  toast(res.ok ? 'Builder drone recalled' : res.reason, res.ok ? 'ok' : 'error');
+  return res;
+}
+
 function doEnterWormhole(opts = {}) {
   const res = orderWormholeTravel(state, opts);
   if (res.ok) toast(`Wormhole transit — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
@@ -344,6 +478,10 @@ function doImportState(newState) {
   resetScoutIds(state);
   resetDroneIds(state);
   resetShipIds(state);
+  resetBattleGroupIds(state);
+  resetSuperweaponIds(state);
+  resetHeroFlagshipIds(state);
+  resetBuilderDroneIds(state);
   resetPirateIds(state);
   resetQueueIds(state);
   resetAiShipIds(state);
@@ -357,11 +495,17 @@ function doImportState(newState) {
   if (!newState.pirates?.fleets?.length) {
     newState.pirates = spawnPirateFleets(newState);
   }
+  ensurePiratesState(newState);
   if (!newState.activeGalaxyId) newState.activeGalaxyId = 'gal-0';
   if (!newState.homeGalaxyId) newState.homeGalaxyId = 'gal-0';
+  if (!newState.battleGroups) newState.battleGroups = [];
+  initBuilderDrones(state);
   ensureSelectedScout();
   const f = state.flagship;
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
+  setBootPhase(BOOT_PHASE.PLAYING);
+  state.paused = false;
+  document.getElementById('title-screen')?.classList.add('hidden');
 }
 
 function checkFlagshipArrival() {
@@ -390,6 +534,11 @@ const { updateUi, closeSidePanel } = initUi({
   getViewedSystemId: () => viewedSystemId,
   getSelectedScoutId: () => selectedScoutId,
   doSelectScout,
+  getSelectedBattleGroupId: () => selectedBattleGroupId,
+  doSelectBattleGroup,
+  createBattleGroup: () => createBattleGroup(state),
+  deleteBattleGroup: doDeleteBattleGroup,
+  assignShipToGroup: (shipId, groupId) => assignShipToGroup(state, shipId, groupId),
   doBuildOutpost,
   doBuildShipyard,
   doBuildFoundry,
@@ -412,6 +561,14 @@ const { updateUi, closeSidePanel } = initUi({
   enemyCombatPresence,
   battleSummaryForSystem,
   canQueueHull,
+  builderDroneSummary,
+  canSendBuilderDrone: (systemId, bodyId, buildType) => canSendBuilderDrone(state, systemId, bodyId, buildType),
+  sendBuilderDrone: doSendBuilderDrone,
+  cancelBuilderDrone: doCancelBuilderDrone,
+  getGalaxyTargetStar: () => galaxyTargetStarId,
+  doStartNewGame: (opts) => doStartNewGame(opts),
+  getBootPhase,
+  setBootPhase,
 });
 
 attachInput(canvas, {
@@ -426,11 +583,69 @@ attachInput(canvas, {
   onFlagshipInput: doFlagshipInput,
   onStarTravel: doOrderTravel,
   onScoutTravel: doOrderScoutTravel,
+  onBattleGroupTravel: doOrderBattleGroupTravel,
+  onBattleGroupSelect: doSelectBattleGroup,
   onStarView: doViewSystem,
   onScoutSelect: doSelectScout,
   onFollowRequest: () => { follow.enabled = true; },
   onToggleOrbit: doToggleOrbit,
+  onGalaxyStarClick: (starId) => { galaxyTargetStarId = starId; },
+  onTradeRouteClick: (starId) => {
+    if (!tradeRoutePending) {
+      tradeRoutePending = starId;
+      const name = systemById(state, starId)?.name ?? starId;
+      toast(`Trade route start: ${name}`, 'info');
+      return;
+    }
+    const res = addTradeRoute(state, tradeRoutePending, starId);
+    tradeRoutePending = null;
+    toast(res.ok ? 'Manual trade route added' : res.reason, res.ok ? 'ok' : 'error');
+  },
 });
+
+window.__devLastResult = null;
+let devPanel = null;
+
+function runDevAction(action, params = {}) {
+  const result = devAction(state, action, {
+    ...params,
+    systemId: params.systemId ?? viewedSystemId,
+    planetId: params.planetId ?? selection,
+  });
+  window.__devLastResult = result;
+  if (result.ok) {
+    checkFlagshipArrival();
+    ensureSelectedScout();
+  }
+  return result;
+}
+
+if (import.meta.env.DEV) {
+  devPanel = initDevPanel({
+    getState: () => state,
+    getViewedSystemId: () => viewedSystemId,
+    getSelection: () => selection,
+    getView: () => view,
+    toast,
+    runAction: runDevAction,
+    onResult: (result) => { window.__devLastResult = result; },
+  });
+
+  window.__toggleDevPanel = () => devPanel.toggle();
+  window.__devAction = (action, params) => runDevAction(action, params);
+
+  window.addEventListener('keydown', (e) => {
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key === '`' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      devPanel.toggle();
+    }
+    if (e.key === 'Escape' && devPanel.isOpen()) {
+      devPanel.toggle(false);
+    }
+  });
+}
 
 if (window.gameSave?.onExitSaveRequest) {
   window.gameSave.onExitSaveRequest(() => writeSlot('exit-save', state));
@@ -449,6 +664,21 @@ let lastAutosave = performance.now();
 function frame(now) {
   const dt = Math.min(now - lastFrame, 250);
   lastFrame = now;
+  const phase = getBootPhase();
+
+  if (phase === BOOT_PHASE.TITLE) {
+    drawTitleBackground(ctx2d, canvas, now);
+    updateUi();
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  if (phase === BOOT_PHASE.WARP_INTRO) {
+    drawWarpIntro(ctx2d, canvas, now);
+    updateUi();
+    requestAnimationFrame(frame);
+    return;
+  }
 
   if (!state.paused) state.meta.playTimeMs += dt;
   const tickEvents = step(state, accumulator + dt);
@@ -467,10 +697,26 @@ function frame(now) {
     const name = systemById(state, arrival.systemId)?.name ?? arrival.systemId;
     toast(`Intel gathered: ${name}`, 'ok');
   }
+  for (const arrival of tickEvents.pirateArrivals ?? []) {
+    const name = systemById(state, arrival.systemId)?.name ?? arrival.systemId;
+    toast(`Pirate fleet sighted at ${name}`, 'error');
+  }
+  for (const ev of tickEvents.pirateInterdictions ?? []) {
+    const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+    toast(`Pirates intercepted ${ev.shipId} near ${name}`, 'error');
+  }
   for (const battle of tickEvents.battleEvents ?? []) {
     const name = systemById(state, battle.systemId)?.name ?? battle.systemId;
     const outcome = battle.playerWins ? 'Victory' : 'Defeat';
     toast(`${outcome} at ${name} (${battle.mode})`, battle.playerWins ? 'ok' : 'error');
+  }
+  for (const ev of tickEvents.builderDroneEvents ?? []) {
+    if (ev.type === 'builder_drone_build_complete') {
+      const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+      toast(`Builder drone completed ${ev.buildType} at ${name}`, 'ok');
+    } else if (ev.type === 'builder_drone_build_failed') {
+      toast(`Builder drone failed: ${ev.reason}`, 'error');
+    }
   }
   for (const cap of tickEvents.captures ?? []) {
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
@@ -485,12 +731,23 @@ function frame(now) {
           ? `Dyson sphere complete at ${name}!`
           : `Shell #${ev.shellNumber} complete at ${name}`;
       toast(msg, 'ok');
+      for (const me of ev.milestoneEvents ?? []) {
+        if (me.milestone === 'diplomacy') toast('Diplomacy unlocked — treaties now available', 'ok');
+        if (me.milestone === 'superweapon') toast('Superweapon unlocked — build the cradle at your Stronghold', 'ok');
+      }
     }
   }
   for (const done of tickEvents.droneCompletions ?? []) {
     const label = done.structureType?.replace(/_/g, ' ') ?? 'Structure';
     toast(`${label} construction complete`, 'ok');
   }
+
+  for (const ev of tickEvents.campaignEvents ?? []) {
+    if (ev.type === 'victory') toast(`Victory: ${ev.victoryType}`, 'ok');
+    if (ev.type === 'defeat') toast(`Defeat: ${ev.reason}`, 'error');
+  }
+
+  tickContextualTips(state, toast);
 
   for (const wh of tickEvents.wormholeArrivals ?? []) {
     const destGal = getActiveGalaxy(state);
@@ -510,12 +767,13 @@ function frame(now) {
   }
 
   if (view === 'galaxy') {
-    drawGalaxy(ctx2d, state, selectedScoutId);
+    drawGalaxy(ctx2d, state, selectedScoutId, selectedBattleGroupId);
   } else {
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator);
   }
   updateUi();
+  if (devPanel?.isOpen()) devPanel.updateDevPanel();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -592,6 +850,7 @@ window.render_game_to_text = () => {
     wormholes: wormholeSummary(state),
     selection,
     selectedScoutId,
+    selectedBattleGroupId,
     incomePerSec: incomePerSecond(state),
     incomePerSecInViewedSystem: incomePerSecondInSystem(state, viewedSystemId),
     flagship: {
@@ -679,7 +938,15 @@ window.render_game_to_text = () => {
       etaMs: jobEtaMs(job, state),
       assignedDrones: job.assignedDroneIds?.length ?? 0,
     })),
-    factions: { ai: aiFactionSummary(state) },
+    factions: {
+      ai: aiFactionSummary(state),
+      list: listAiFactions(state).map((f) => ({
+        id: f.id,
+        name: f.name,
+        personality: f.personality,
+        homeSystemId: f.homeSystemId,
+      })),
+    },
     aiShips: aiShipsSummary(state),
     playerShips: (state.playerShips ?? [])
       .filter((ship) => ship.galaxyId === state.activeGalaxyId)
@@ -690,16 +957,33 @@ window.render_game_to_text = () => {
       inTransit: !!ship.transit,
       hp: ship.hp,
       maxHp: ship.maxHp,
+      weaponProfile: ship.weaponProfile ?? null,
+      wingState: ship.wingState ?? null,
     })),
+    battleGroups: battleGroupsForGalaxy(state).map((g) => ({
+      id: g.id,
+      name: formatFleetName(g.ordinal),
+      ordinal: g.ordinal,
+      shipIds: [...g.shipIds],
+      anchorHeroId: g.anchorHeroId ?? null,
+    })),
+    builderDrones: builderDroneSummary(state),
     pirates: {
       fleetCount: state.pirates?.fleets?.length ?? 0,
       inViewedSystem: pirateFleetAtSystem(state, viewedSystemId).length > 0,
       markers: pirateSystemsWithPresence(state),
+      galaxyMarkers: pirateFleetMarkersForGalaxy(state),
+      transitMarkers: pirateFleetTransitMarkersForGalaxy(state),
       fleets: (state.pirates?.fleets ?? []).map((fleet) => ({
         id: fleet.id,
         systemId: fleet.systemId,
         inTransit: !!fleet.transit,
+        destination: fleet.transit?.path?.length ? fleet.transit.path[fleet.transit.path.length - 1] : null,
+        etaMs: fleet.transit ? pirateFleetEtaMs(state, fleet) : null,
+        intent: fleet.intent?.type ?? 'wander',
+        targetSystemId: fleet.intent?.targetSystemId ?? null,
         shipCount: fleet.ships.filter((s) => s.hp > 0).length,
+        power: pirateFleetPower(fleet, state),
         totalHp: fleet.ships.reduce((n, s) => n + Math.max(0, s.hp), 0),
       })),
     },
@@ -711,6 +995,7 @@ window.render_game_to_text = () => {
       blackHole: graph.blackHole.id,
       galaxyId: state.activeGalaxyId,
       galaxyName: activeGal?.name ?? null,
+      perf: galaxyPerfSummary(),
     },
     bodies: (viewedSystem?.bodies ?? []).map((b) => ({
       id: b.id,
@@ -734,6 +1019,10 @@ window.render_game_to_text = () => {
       id: s.id,
       type: s.type,
       bodyId: s.bodyId,
+      placement: s.placement ?? null,
+      hp: s.hp ?? null,
+      maxHp: s.maxHp ?? null,
+      disabled: state.time < (s.disabledUntil ?? 0),
       underConstruction: !!s.construction,
       building: s.type === 'shipyard' && (!!s.build || !!s.construction),
       buildProgress: s.construction
@@ -750,6 +1039,7 @@ window.render_game_to_text = () => {
         count: sites.length,
         pads: sites.filter((s) => s.kind.endsWith('-pad')).length,
         rigs: sites.filter((s) => s.kind === 'moon-rig').length,
+        buildings: sites.filter((s) => s.kind.startsWith('surface-')).length,
         active: sites.filter((s) => s.active).length,
       };
     })(),
@@ -780,6 +1070,12 @@ window.render_game_to_text = () => {
             slotAngle: round(s.slotAngle * 1000) / 1000,
             firing: s.firing,
           })),
+        drydocks: sites
+          .filter((s) => s.kind === 'drydock')
+          .map((s) => ({ bodyId: s.bodyId, x: round(s.x), y: round(s.y), active: s.active })),
+        orbitalDefense: sites
+          .filter((s) => s.kind === 'orbital_defense')
+          .map((s) => ({ bodyId: s.bodyId, x: round(s.x), y: round(s.y), active: s.active })),
       };
     })(),
     sailShuttles: {
@@ -805,6 +1101,31 @@ window.render_game_to_text = () => {
     dysonVisuals: viewedSystem && hasIntel(state, viewedSystemId)
       ? dysonVisualSummary(state, viewedSystemId, viewedSystem.star.radius, camera.zoom)
       : null,
+    milestones: milestonesSummary(state),
+    diplomacy: diplomacySummary(state),
+    superweapon: superweaponSummary(state),
+    heroFlagships: heroFlagshipsSummary(state),
+    campaign: campaignSummary(state),
+    missions: missionsSummary(state),
+    tutorial: getTutorialState(state),
+    manualTradeRoutes: tradeRoutesSummary(state),
+    strategicStructures: strategicStructuresSummary(state),
+    bodyStructures: {
+      empire: allBodyStructuresSummary(state),
+      viewedSystem: bodyStructuresSummary(state, viewedSystemId),
+      buildRows: selection ? bodyStructureBuildRows(state, viewedSystemId, selection).map((row) => ({
+        type: row.type,
+        label: row.label,
+        placement: row.placement,
+        cost: row.cost,
+        canBuild: row.check.ok,
+        reason: row.check.ok ? null : row.check.reason,
+      })) : [],
+    },
+    shellBonuses: viewedSystem ? {
+      shield: shellShieldBonus(viewedSystem, state),
+      repair: shellRepairBonus(viewedSystem),
+    } : null,
     tickMs: TICK_MS,
   });
 };
@@ -817,8 +1138,15 @@ window.__buildShipyard = (id) => doBuildShipyard(id);
 window.__buildFoundry = (planetId) => doBuildFoundry(planetId ?? selection);
 window.__toggleOrbit = (planetId) => toggleFlagshipOrbit(state, planetId ?? selection);
 window.__buildLauncher = (bodyId) => doBuildLauncher(bodyId ?? selection);
-window.__grantCredits = (n) => { state.credits += n; return state.credits; };
-window.__forceShellProgress = (systemId, sails) => forceShellProgress(state, systemId, sails);
+window.__grantCredits = (n) => {
+  const res = devGrantCredits(state, n);
+  return res.ok ? res.details.after : state.credits;
+};
+window.__forceShellProgress = (systemId, sails) => devForceShell(state, systemId ?? viewedSystemId, sails);
+window.__spawnFriendlyShip = (hull, count = 1) =>
+  devSpawnFriendlyShips(state, viewedSystemId, hull, count, selection);
+window.__spawnEnemyFleet = (systemId) =>
+  devSpawnEnemyFleet(state, systemId ?? viewedSystemId);
 window.__fastForwardDyson = (ms) => window.advanceTime(ms);
 window.__queueScout = (shipyardId) => doQueueScout(shipyardId);
 window.__queueHull = (shipyardId, hull) => doQueueHull(shipyardId, hull);
@@ -872,6 +1200,18 @@ window.__seedTestShipyards = () => {
   return { ok: true, near, far };
 };
 window.__dispatchShip = (shipId, starId) => doDispatchShip(shipId, starId);
+window.__createBattleGroup = () => createBattleGroup(state);
+window.__selectBattleGroup = (groupId) => { doSelectBattleGroup(groupId); return selectedBattleGroupId; };
+window.__assignShipToGroup = (shipId, groupId) => assignShipToGroup(state, shipId, groupId);
+window.__orderBattleGroup = (starId) => doOrderBattleGroupTravel(starId);
+window.__deleteBattleGroup = (groupId) => doDeleteBattleGroup(groupId);
+window.__listBattleGroups = () => battleGroupsForGalaxy(state).map((g) => ({
+  id: g.id,
+  name: formatFleetName(g.ordinal),
+  ordinal: g.ordinal,
+  shipIds: [...g.shipIds],
+}));
+window.__formatFleetName = (ordinal) => formatFleetName(ordinal);
 window.__setBattleStance = (stance) => setBattleStance(state, stance);
 window.__forcePirateIntoSystem = (systemId) => {
   forcePirateIntoSystem(state, systemId);
@@ -879,13 +1219,64 @@ window.__forcePirateIntoSystem = (systemId) => {
 };
 window.__getBattleState = (systemId) => getBattleState(state, systemId);
 window.__getHullStats = () => ({ ...HULL_STATS });
-window.__newGame = (seed = DEFAULT_SEED) => {
+window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   resetWormholeJumpCounter(0);
   state = createNewGame(seed);
   state.pirates = spawnPirateFleets(state);
   seedAiFaction(state, state.homeGalaxyId);
+  resetContextualTips();
+  tradeRoutePending = null;
+  galaxyTargetStarId = state.stronghold;
+  if (opts.victoryType) setVictoryType(state, opts.victoryType, opts.mode ?? 'sandbox');
+  if (opts.mode === 'tutorial') initTutorial(state);
+  document.getElementById('new-game-modal')?.classList.add('hidden');
+  document.getElementById('new-game-modal-backdrop')?.classList.add('hidden');
   doImportState(state);
   return state;
+};
+
+function doStartNewGame(opts = {}) {
+  window.__newGame(DEFAULT_SEED, opts);
+  view = 'system';
+  viewedSystemId = state.stronghold;
+  selection = null;
+  selectedScoutId = null;
+  selectedBattleGroupId = null;
+  state.paused = true;
+  document.getElementById('title-screen')?.classList.add('hidden');
+  setBootPhase(BOOT_PHASE.WARP_INTRO);
+  startWarpIntro(ctx2d, canvas, {
+    onComplete: () => {
+      setBootPhase(BOOT_PHASE.PLAYING);
+      state.paused = false;
+      snapCameraTo(0, 0);
+      camera.zoom = CAMERA_DEFAULT_ZOOM;
+      follow.enabled = true;
+      toast(`New ${opts.mode ?? 'sandbox'} campaign started`, 'ok');
+    },
+    drawGameFrame: (ctx, fade, elapsed) => {
+      const dropT = Math.min(1, Math.max(0, (elapsed - 5200) / 1300));
+      const savedZoom = camera.zoom;
+      camera.zoom = 0.3 + (CAMERA_DEFAULT_ZOOM - 0.3) * dropT;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      drawSystem(ctx, state, viewedSystemId, selection, 0);
+      ctx.restore();
+      camera.zoom = savedZoom;
+    },
+  });
+}
+window.__setBootPhase = (phase) => setBootPhase(phase);
+window.__getBootPhase = () => getBootPhase();
+window.__startWarpIntro = () => {
+  document.getElementById('title-screen')?.classList.add('hidden');
+  setBootPhase(BOOT_PHASE.WARP_INTRO);
+  startWarpIntro(ctx2d, canvas, {
+    onComplete: () => {
+      setBootPhase(BOOT_PHASE.PLAYING);
+      state.paused = false;
+    },
+  });
 };
 window.__saveSlot = (slot) => doSaveSlot(slot);
 window.__loadSlot = (slot) => doLoadSlot(slot);
@@ -970,5 +1361,48 @@ window.__spawnBuilderShip = (systemId) => {
     maxHp: 200,
     transit: null,
   });
+  return { ok: true };
+};
+
+// --- Phase 6 test hooks ---
+window.__completeDysonShell = (systemId, shellNum) =>
+  completeDysonShellForTest(state, systemId ?? viewedSystemId, shellNum);
+window.__setCompletedDysons = (n) => setCompletedDysonsForTest(state, n);
+window.__buildSuperweaponCradle = () => buildSuperweaponCradle(state);
+window.__superweaponCreate = (anchorId) => superweaponCreate(state, anchorId ?? state.stronghold);
+window.__superweaponDestroy = (systemId) => superweaponDestroy(state, systemId);
+window.__superweaponJump = (starId) => superweaponJump(state, starId ?? state.stronghold);
+window.__buildHeroFlagship = (rallyStarId) => buildHeroFlagship(state, rallyStarId);
+window.__spawnHeroFlagship = (systemId) => spawnHeroFlagshipForTest(state, systemId ?? viewedSystemId);
+window.__setRelation = (factionId, status) => setRelation(state, factionId, status);
+window.__offerTreaty = (factionId, type) => offerTreaty(state, factionId, type);
+window.__addTradeRoute = (from, to) => addTradeRoute(state, from, to);
+window.__clearTradeRoutes = () => clearTradeRoutes(state);
+window.__startMission = (id) => startMission(state, id);
+window.__advanceMissionObjective = (missionId, objectiveId) =>
+  advanceMissionObjective(state, missionId, objectiveId);
+window.__completeMission = (id) => completeMissionForTest(state, id);
+window.__setTutorialStep = (n) => setTutorialStep(state, n);
+window.__getTutorialState = () => getTutorialState(state);
+window.__initTutorial = () => initTutorial(state);
+window.__setVictoryType = (type, mode) => setVictoryType(state, type, mode);
+window.__checkVictory = () => checkVictory(state);
+window.__checkDefeat = () => checkDefeat(state);
+window.__buildStrategicStructure = (type, planetId) =>
+  buildStrategicStructure(state, viewedSystemId, type, planetId ?? selection);
+window.__buildBodyStructure = (type, bodyId) =>
+  buildBodyStructure(state, viewedSystemId, bodyId ?? selection, type);
+window.__sendBuilderDrone = (systemId, bodyId, buildType) =>
+  doSendBuilderDrone(systemId ?? viewedSystemId, bodyId ?? selection, buildType);
+window.__listBuilderDrones = () => builderDroneSummary(state);
+window.__canSendBuilderDrone = (systemId, bodyId, buildType) =>
+  canSendBuilderDrone(state, systemId ?? viewedSystemId, bodyId ?? selection, buildType);
+window.__cancelBuilderDrone = (droneId) => doCancelBuilderDrone(droneId);
+window.__galaxyPerfSummary = () => galaxyPerfSummary();
+window.__setBattleGroupHeroAnchor = (groupId, heroId) =>
+  setBattleGroupHeroAnchor(state, groupId, heroId);
+window.__setHeroRally = (heroId, starId) => setHeroRally(state, heroId, starId);
+window.__destroyFlagship = () => {
+  state.flagship.hp = 0;
   return { ok: true };
 };

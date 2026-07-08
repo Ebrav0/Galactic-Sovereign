@@ -1,11 +1,11 @@
 // Canvas draw helpers for Dyson supply ties and hybrid sail dot / ring rendering.
 
 import {
-  SHELL_COUNT,
   SAIL_DOT_SIZE,
 } from './constants.js';
 import { THEME, hexToRgba } from './theme.js';
-import { shellOrbitRadius, sailDotDrawStride } from './dyson-visuals.js';
+import { sailDotDrawStride } from './dyson-visuals.js';
+import { drawDysonMegastructure } from './dyson-megastructure-render.js';
 
 export function drawFoundrySupplyTie(ctx, line, zoom, time = 0) {
   const from = { x: line.fromX, y: line.fromY };
@@ -36,36 +36,19 @@ export function drawCompletedShellRings(
   starRadius,
   time = 0,
   lastShellCompletedAt = null,
+  systemSeed = 0,
 ) {
-  if (completedShells <= 0) return;
-
-  const pulse = lastShellCompletedAt != null && time - lastShellCompletedAt < 1000
-    ? 1 + 0.15 * (1 - (time - lastShellCompletedAt) / 1000)
-    : 1;
-
-  ctx.save();
-  ctx.translate(starX, starY);
-
-  for (let tier = 1; tier <= Math.min(SHELL_COUNT, completedShells); tier++) {
-    const tierR = shellOrbitRadius(starRadius, tier) * zoom * pulse;
-    const alpha = 0.12 + tier * 0.04;
-    ctx.strokeStyle = `rgba(255, 210, 120, ${Math.min(0.85, alpha)})`;
-    ctx.lineWidth = Math.max(1, (1 + tier * 0.15) * zoom);
-    ctx.beginPath();
-    ctx.arc(0, 0, tierR, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  if (completedShells >= SHELL_COUNT) {
-    const r = shellOrbitRadius(starRadius, SHELL_COUNT) * zoom * pulse;
-    ctx.strokeStyle = 'rgba(255, 230, 160, 0.75)';
-    ctx.lineWidth = Math.max(2, 2.5 * zoom);
-    ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  ctx.restore();
+  drawDysonMegastructure(
+    ctx,
+    starX,
+    starY,
+    zoom,
+    completedShells,
+    starRadius,
+    time,
+    lastShellCompletedAt,
+    systemSeed,
+  );
 }
 
 export function drawInProgressSailDots(ctx, starX, starY, zoom, settled, inFlight, time = 0) {
@@ -93,21 +76,5 @@ export function drawInProgressSailDots(ctx, starX, starY, zoom, settled, inFligh
     ctx.fill();
   }
 
-  ctx.restore();
-}
-
-export function drawDysonStarGlow(ctx, starX, starY, zoom, completedShells, starRadius) {
-  if (completedShells < 4) return;
-
-  const r = starRadius * zoom;
-  ctx.save();
-  ctx.translate(starX, starY);
-  const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.6);
-  glow.addColorStop(0, `rgba(255, 200, 100, ${0.05 + completedShells * 0.015})`);
-  glow.addColorStop(1, 'rgba(255, 160, 60, 0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 1.6, 0, Math.PI * 2);
-  ctx.fill();
   ctx.restore();
 }

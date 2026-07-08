@@ -79,6 +79,68 @@ float siteHash(float i) {
   return fract(sin((u_seed * 0.000013 + i * 127.1) * 43758.5453));
 }
 
+float flarePulse(float phase) {
+  float strike = smoothstep(0.0, 0.06, phase) * (1.0 - smoothstep(0.08, 0.38, phase));
+  float ember = smoothstep(0.38, 0.44, phase) * (1.0 - smoothstep(0.44, 0.82, phase)) * 0.32;
+  return max(strike, ember);
+}
+
+float sunspotField(vec2 surfUV, float t) {
+  float shade = 0.0;
+  for (int i = 0; i < 6; i++) {
+    float fi = float(i);
+    float lat = mix(-0.52, 0.52, siteHash(fi + 210.0));
+    float lon = siteHash(fi + 230.0) * 6.2831853 + t * (0.18 + siteHash(fi + 250.0) * 0.08);
+    float band = sqrt(max(0.0, 1.0 - lat * lat));
+    vec2 site = vec2(cos(lon) * band, lat);
+    float visible = smoothstep(1.02, 0.78, length(site));
+    vec2 d = surfUV - site;
+    float rot = lon * 0.7 + fi;
+    mat2 m = mat2(cos(rot), -sin(rot), sin(rot), cos(rot));
+    d = m * d;
+    float scale = 0.075 + siteHash(fi + 270.0) * 0.07;
+    float ellipse = length(d / vec2(scale * 1.45, scale));
+    float umbra = exp(-ellipse * ellipse * 3.4);
+    float penumbra = exp(-ellipse * ellipse * 0.95);
+    shade = max(shade, (penumbra * 0.34 + umbra * 0.46) * visible);
+  }
+  return shade;
+}
+
+vec3 solarFlareJet(vec2 delta, float angle, float siteAngle, float idx, float t, vec3 hotTint) {
+  vec2 dir = vec2(cos(siteAngle), sin(siteAngle));
+  vec2 tangent = vec2(-dir.y, dir.x);
+  float along = dot(delta, dir);
+  float perp = dot(delta, tangent);
+  float rel = (along - u_radius * 0.93) / max(u_radius, 1.0);
+  if (rel < -0.02) return vec3(0.0);
+
+  float reach = 0.44 + siteHash(idx + 310.0) * 0.62;
+  if (rel > reach) return vec3(0.0);
+
+  float phase = fract(t * (0.12 + siteHash(idx + 330.0) * 0.18) + siteHash(idx + 350.0));
+  float pulse = flarePulse(phase);
+  float simmer = (0.15 + 0.1 * siteHash(idx + 370.0)) * (0.5 + 0.5 * sin(t * 0.9 + idx * 2.7));
+  float activity = max(pulse, simmer);
+
+  float curve = sin(rel * (4.8 + siteHash(idx + 390.0) * 3.0) + t * 1.1 + idx) * u_radius * 0.1 * max(rel, 0.0);
+  float ribbonW = u_radius * (0.045 + rel * 0.06 + siteHash(idx + 410.0) * 0.026);
+  float dRibbon = abs(perp - curve);
+  float core = exp(-pow(dRibbon / max(ribbonW * 0.28, 0.001), 2.0));
+  float veil = exp(-pow(dRibbon / max(ribbonW, 0.001), 2.0));
+  float taper = pow(max(0.0, 1.0 - rel / reach), 0.72);
+  float base = smoothstep(-0.02, 0.08, rel);
+  float fan = smoothstep(0.0, 0.38, rel) * (1.0 - smoothstep(reach * 0.55, reach, rel));
+  float angular = exp(-pow(angleDiff(angle, siteAngle) / (0.18 + rel * 0.44), 2.0));
+
+  vec3 whiteHot = vec3(1.0, 0.96, 0.84);
+  vec3 ember = mix(hotTint, vec3(1.0, 0.32, 0.16), 0.34);
+  vec3 coreCol = mix(ember, whiteHot, clamp(core * 0.34 + pulse * 0.12, 0.0, 0.62));
+  vec3 veilCol = mix(ember, hotTint, 0.35);
+  return (coreCol * core * 1.75 + veilCol * veil * 1.64 + ember * fan * 0.48)
+    * taper * base * angular * activity * 1.35;
+}
+
 // Ember particle swarm — sparks spiraling off the star on the solar wind.
 vec3 emberParticles(vec2 delta, float dist, float t, vec3 warmTint) {
   if (dist > u_radius * 3.4 || dist < u_radius * 0.92) return vec3(0.0);
@@ -263,6 +325,14 @@ void main() {
     }
   }
 
+  if (hasFeature(16)) {
+    for (int i = 0; i < 4; i++) {
+      float fi = float(i);
+      float fAngle = siteHash(fi + 300.0) * 6.2831853 + outerSpin * (0.025 + siteHash(fi + 301.0) * 0.035);
+      flareCol += solarFlareJet(delta, angle, fAngle, fi + 40.0, boltTime, plasmaHot) * (1.0 + u_turbulence * 0.55);
+    }
+  }
+
   vec3 starCol = vec3(0.0);
   float coreAlpha = 0.0;
 
@@ -284,18 +354,21 @@ void main() {
     if (hasFeature(1)) {
       float coarse = fbm(flow + u_seed * 0.001, 4);
       float fine = fbm(flow * 2.4 + vec2(anim * 0.2, 0.0) + u_seed * 0.002, 5);
-      float cells = smoothstep(-0.05, 0.35, coarse) * smoothstep(0.95, 0.45, fine);
-      gran = coarse * 0.26 + fine * 0.18;
-      granBright = cells * (0.65 + 0.35 * sin(anim * 1.5 + coarse * 8.0));
+      float micro = fbm(flow * 7.8 + vec2(-anim * 0.28, anim * 0.19) + u_seed * 0.004, 4);
+      float laneNet = 1.0 - smoothstep(0.08, 0.36, abs(coarse - fine * 0.72));
+      float cells = smoothstep(-0.12, 0.42, coarse + fine * 0.35) * smoothstep(0.92, 0.34, micro);
+      float faculae = smoothstep(0.58, 0.96, normDist) * smoothstep(0.18, 0.58, coarse + micro * 0.3);
+      gran = coarse * 0.24 + fine * 0.16 + micro * 0.08;
+      granBright = (cells * 0.82 + faculae * 0.55) * (0.72 + 0.28 * sin(anim * 1.5 + coarse * 8.0));
       // Dark intergranular lanes give the surface convection-cell depth.
-      granDark = smoothstep(0.15, -0.35, coarse + fine * 0.5) * 0.38;
+      granDark = max(smoothstep(0.15, -0.35, coarse + fine * 0.5) * 0.34, laneNet * 0.2);
     }
 
     float spotDark = 0.0;
     if (hasFeature(2)) {
       vec2 spotUV = surfUV + vec2(anim * 0.03, anim * 0.02);
       float spots = fbm(spotUV * 2.8 + vec2(u_seed * 0.003, 0.0), 3);
-      spotDark = smoothstep(0.38, 0.55, spots) * 0.32;
+      spotDark = sunspotField(surfUV, anim) + smoothstep(0.42, 0.62, spots) * 0.12;
     }
 
     vec3 centerHot = mix(u_color, vec3(1.0, 0.98, 0.92), u_temperature * 0.45 + gran * 0.5);
@@ -323,15 +396,6 @@ void main() {
     }
 
     coreAlpha = 1.0 - smoothstep(effectiveR * 0.94, effectiveR * 1.01, dist);
-  }
-
-  if (hasFeature(16)) {
-    float phase = fract(u_time * 0.0009 + u_seed * 0.00001);
-    if (phase < 0.1) {
-      float intensity = 1.0 - phase / 0.1;
-      bloomOut += vec3(1.0) * intensity * 0.75;
-      starCol += vec3(1.0) * intensity * 0.35;
-    }
   }
 
   if (hasFeature(4) && u_lensStrength > 0.0) {

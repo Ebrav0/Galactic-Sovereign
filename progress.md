@@ -340,3 +340,234 @@ Never delete prior entries.
 ### Suggested next
 - Dehydration overlay for pending construction jobs in abstract galaxies
 - Combat repair drone streams (healer tactical — GDD §2.7)
+
+---
+
+## Session 2026-07-06 — Cinematic visuals + large battle performance pass
+
+**Task claimed:** Visual overhaul for a more cinematic presentation; system-view battle rendering and tactical tick performance for large fights
+**Status:** complete
+
+### Done
+- Added cinematic palette hooks and tactical battle LOD constants.
+- Added a system-view cinematic backdrop/grade layer with nebula wash, dust bands, vignette, and battle-alert tint.
+- Added lightweight ship glyph rendering for high-density battles and ambient fleet clusters.
+- Added pooled tactical resolution for large battles, with individual unit drift/tracer cues preserved for the system view.
+- Updated medium tactical combat to reuse live-unit buckets and spatial target lookup.
+- Replaced all-system capture and AI neutral-capture tick scans with candidate-driven checks to keep large ship counts from slowing every fixed tick.
+- Strengthened HUD tokens, panel surfaces, button states, and viewport frame lighting.
+- Added `output/verify_cinematic_battle.mjs` for a 176-unit system-view stress scenario and screenshot capture.
+
+### Notes
+- Detailed ship sprites remain the close-up/default path; large fights switch to lighter glyph rendering by zoom and unit count.
+- Verification: `npm run build`; `node output/verify_cinematic_battle.mjs` (5/5, 5s large-battle sim in 538ms); `node output/verify_phase6.mjs` (41/41); `node output/verify_battle_groups.mjs` (19/19); targeted player/AI capture smoke tests.
+- Older `verify_phase1.mjs` and `verify_phase2.mjs` still reference pre-v9 direct state fields such as `state.galaxy`/`state.systems`; they fail before reaching current combat/capture coverage.
+
+---
+
+## Session 2026-07-06 — Detailed stars + working flares
+
+**Task claimed:** Make stars look more realistic/detailed and make stellar flares visibly work
+**Status:** complete
+
+### Done
+- `src/glsl/star.frag` — richer photosphere shader with layered convection cells, faculae, deterministic sunspot fields, warmer/broader solar flare jets, and stronger flare visibility at normal system zooms.
+- `src/js/star-types.js` — enabled `flareBursts` on active stellar profiles and added granulation/prominence coverage for flare stars and red dwarfs.
+- `src/js/celestial-render-canvas2d.js` — fixed fallback draw order so granulation is drawn over the core instead of hidden beneath it; wired the previously unused flare-burst fallback renderer.
+- `output/verify_star_visuals.mjs` — new Playwright visual check that captures yellow-dwarf and flare-star closeups and verifies corona/plume/detail pixels plus shader console health.
+
+### Verification
+- `npm run build`
+- Required `develop-web-game` Playwright client completed and produced `output/web-game/shot-0.png`
+- `node output/verify_star_visuals.mjs` — 4/4 pass
+- `node output/verify_phase6.mjs` — 41/41 pass
+- `node output/verify_cinematic_battle.mjs` — 5/5 pass
+
+### Notes
+- `output/verify_visuals.mjs` is still an older direct-state fixture and fails on `state.systems[...]` before exercising current visuals.
+
+---
+
+## Session 2026-07-05 — Phase 6 late game complete
+
+**Task claimed:** Phase 6 tasks 6.0–6.50
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=9`; `docs/schemas/save-v9.json`; `migrateV8toV9`
+- New modules: `milestones.js`, `superweapon.js`, `hero-flagships.js`, `diplomacy.js`, `trade-routes.js`, `campaign.js`, `missions.js`, `tutorial.js`, `strategic-structures.js`
+- Milestone gates: diplomacy at 1× Shell #8, superweapon at 3× distinct completed spheres
+- Wired shell #4 shield and #7 repair bonuses in `dyson.js`
+- 14 Phase 6 tech nodes (diplomacy, superweapon, flagship clusters) + UI cluster labels
+- Superweapon cradle, create/destroy/jump, Dyson shield counterplay, graph mutation
+- Hero flagships: build at cradle, lane transit, tactical anchor via `heroInSystem`
+- Diplomacy: truce/trade/alliance treaties; 3 AI factions; superweapon panic
+- Manual trade routes with income bonus; campaign victory/defeat; 6 missions; 8-step tutorial
+- Strategic structures module (listening post, lane relay, blockade fort, forward base, supply cache, command post)
+- UI: Diplomacy + Campaign tabs; extended `render_game_to_text()` Phase 6 blocks
+- `output/verify_phase6.mjs` — 28/28 pass; phase3/4/5/battle_groups regression updated for save-v9
+- `docs/IMPLEMENTATION_PLAN.md` §8 Phase 6 task table populated
+
+### Decisions
+- `factions.list[]` array for multi-AI with `factions.ai` alias to primary
+- Diplomacy trade bonus stacks with manual route bonus
+- Superweapon destroy triggers diplomacy panic (war with non-allies)
+- Campaign defeat on flagship HP = 0 via `__destroyFlagship` test hook
+
+### Suggested next
+- Post–Phase 6 polish: balance pass on strategic structure costs, additional mission chains
+
+---
+
+## Session 2026-07-06 — Phase 6 polish & complete plan
+
+**Task claimed:** Finish remaining Phase 6 gaps (UI wiring, strategic structure effects, hero anchoring, verify expansion)
+**Status:** complete
+
+### Done
+- `src/js/tips.js` — contextual milestone toasts (diplomacy, superweapon, manual trade routes)
+- Strategic structure effects wired: listening post intel extension, lane relay transit speed, blockade trade penalty, forward base/command post capture bonuses, supply cache repair multiplier
+- `trade.js` — `trade_lane_secured` bridge logic; blockade multiplier in trade graph
+- Hero battle-group anchoring: `anchorHeroId`, capture force from anchored groups, combat presence, fleet tab UI + rally picker
+- Galaxy UI: manual trade route drawing (Ctrl+click), superweapon panel, new-game modal, hero flagship sprites, superweapon cinematic glow placeholder
+- `constants.js` — `AI_FACTION_COUNT = 4`; per-faction AI diplomacy contest in `ai-faction.js`
+- `tutorial.js` — step 8 diplomacy beat; `output/verify_phase6.mjs` — **41/41** checks (jump, manual trade, treaties, tech gates, hero anchor, structures, missions, tutorial, 4 AI factions)
+
+### Decisions
+- New-game modal auto-shown on boot; `__newGame` closes it for headless verify
+- Strategic structure build buttons on planet panel when intel + selection present
+- Hero anchor contributes capture force via `captureForceFromAnchoredGroups` without duplicating hero tactical bonus
+
+### Known issues
+- Full regression suite (`verify_phase3`–`5`) is slow (~30+ min sequential); phase 6 verify is the Phase 6 exit gate
+
+### Suggested next
+- Electron packaging smoke test; optional Pixi migration if canvas profiling demands it
+
+---
+
+## Session 2026-07-07 — Tech unlock enforcement
+
+**Task claimed:** Ensure tech tree lock/unlock nodes enforce the behavior they describe
+**Status:** complete
+
+### Done
+- `src/js/tech-web.js` — added a shared `isEmpireHullUnlocked()` helper and tracked the Hero Flagship unlock flag without putting hero hulls into ordinary shipyard queues
+- `src/js/production.js` — local/direct shipyard hull queues now reject locked hulls, matching the empire queue UI
+- `src/js/diplomacy.js` — treaty actions now require their matching tech nodes before charging credits/Solarii: Truce Protocol, Trade Charter, Alliance Pact; Embassy Network now contributes its trade bonus
+- `output/verify_tech_unlocks.mjs` — focused unlock contract checks for hull gates, treaty gates, and hero queue separation
+- Updated affected verification setup in `output/verify_phase2.mjs` and `output/verify_phase6.mjs` so tests unlock tech before using gated actions
+
+### Verification
+- `node output/verify_tech_unlocks.mjs` — 13/13 pass
+- `npm run build` — pass
+- Web-game Playwright client — gameplay screenshot inspected at `output/web-game/tech-unlocks-client/shot-1.png`; no captured browser errors
+- `node output/verify_phase6.mjs` — 41/41 pass
+
+### Suggested next
+- Optional broader balance pass: several non-unlock tech effects, such as wormhole anchor discounts and generic credit modifiers, should be audited separately if the goal expands from unlock enforcement to every numeric tech bonus.
+
+---
+
+## Session 2026-07-07 — Buildings, carrier wings, and weapon profiles
+
+**Task claimed:** Implement post-Phase-6 building roster slice, carrier-deployed fighters, anti-fighter/specialized combat, and low-clutter visuals
+**Status:** partial
+
+### Done
+- `src/js/body-structures.js` — added tech-gated surface/orbital/star-node building definitions, build validation, costs/caps, HP defaults, economy/trade/defense effects, drydock repair, and fighter-factory wing replenishment.
+- `SAVE_VERSION=10`; `docs/schemas/save-v10.json`; `migrateV9toV10` backfills structure HP, ship weapon profiles, and carrier wing state.
+- Tech tree now includes mining, refinery, storage, asteroid harvesting, fighter factories, drydocks, orbital defenses, shields, ion batteries, carrier launch doctrine, point defense, beam/kinetic/ion/bomber upgrades.
+- Tactical combat now launches real carrier-derived fighter wing units, tracks wing losses, supports point-defense/torpedo/beam/ion/kinetic profiles, and exposes anti-fighter/bomber/defense summaries.
+- Build panel groups new Surface and Orbital building buttons ahead of Strategic buildings; `render_game_to_text()` reports body structures, build locks, wing state, weapon summaries, structure HP, and new visual-site counts.
+- Surface buildings draw as compact planet landmarks; drydock and orbital defense draw as small orbital structures to avoid orbit clutter.
+
+### Verification
+- `npm run build` — pass
+- `node output/verify_buildings_carriers.mjs` — 24/24 pass; screenshot inspected at `output/visuals/buildings-carriers.png`
+- `node output/verify_phase6.mjs` — 41/41 pass
+- `node output/verify_tech_unlocks.mjs` — 13/13 pass
+- `node output/verify_battle_groups.mjs` — 19/19 pass
+- develop-web-game Playwright client screenshots inspected under `output/web-game/buildings-carriers-*`
+
+### Known issues
+- Salvage yard remains deferred.
+- New numeric balance is first-pass only; wing replenishment currently supports fractional ready/lost values internally.
+- Phase 3–5 regression scripts were updated to expect save-v10 but were not rerun in this session due runtime cost.
+
+### Suggested next
+- Balance the new building costs/effects and clean up carrier wing readiness to display whole craft counts in UI.
+
+---
+
+## Session 2026-07-07 — Galaxy performance, fleet map commands, and builder drones
+
+**Task claimed:** Implement v11 Galaxy view performance pass, direct fleet selection/Tab+click dispatch, and flagship-launched reusable builder drones
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=11`; `docs/schemas/save-v11.json`; v10→v11 migration initializes `state.builderDrones`.
+- `src/js/builder-drones.js` — reusable two-drone roster unlocked by Builder Drones tech, lane transit, remote construction timers, return travel, cancellation, summaries, and test hooks.
+- Local construction rules remain unchanged by default; remote drone construction can build neutral outposts and owned-system shipyards/body structures while still enforcing tech/body/ownership gates.
+- Galaxy view now uses far/mid/close LOD, samples non-critical far-zoom stars/lanes, avoids WebGL black-hole bloom at far zoom, precomputes route/fleet/pirate sets, and exposes `__galaxyPerfSummary()`.
+- Fleet markers are directly clickable on the Galaxy map; selected fleets dispatch with `Tab+click` while `Alt+click` remains a compatibility fallback.
+- Builder drones render as small amber lane pips in Galaxy view and compact construction skiffs over target bodies in system view.
+- Fleet Command shows Builder Drones status, active build progress, ETA, and cancel buttons; build panels show Send Drone actions where remote construction is valid.
+
+### Verification
+- `npm run build` — pass
+- `git diff --check` — pass
+- `node output/verify_galaxy_fleets_drones.mjs` — 13/13 pass; screenshot inspected at `output/visuals/galaxy-fleets-drones.png`
+- `node output/verify_phase6.mjs` — 41/41 pass
+- `node output/verify_battle_groups.mjs` — 19/19 pass
+- `node output/verify_buildings_carriers.mjs` — 24/24 pass
+- develop-web-game Playwright client gameplay screenshot inspected at `output/web-game/galaxy-fleets-drones-gameplay3/shot-0.png`
+
+### Known issues
+- Headless first-frame Galaxy timing can still report a high warmup value, but the v11 summary confirms far-zoom drawn stars/lanes are bounded and the map no longer draws the full graph at widest zoom.
+- Carrier wing ready/lost values can still be fractional from the prior v10 building/carrier slice.
+
+## Session 2026-07-07 — Real tech-tree sections
+
+**Task claimed:** Make every top tech-tree ticker represent a real section
+**Status:** complete
+
+### Done
+- `src/js/tech-web-layout.js` — added a canonical nine-section cluster order and unique layout bands for Economy, Military, Dyson, Trade, Wormhole, Research, Diplomacy, Superweapon, and Flagship.
+- `src/js/tech-web-ui.js` — band labels now render from the real cluster order; section chips update node and connector filtering, and focus the viewport on the selected section.
+- `src/js/tech-web-viewport.js` — added `fitBounds()` so category chips can zoom/pan to their section instead of only dimming the full tree.
+- `src/css/style.css` — added filtered-edge styling for unrelated connector lanes.
+- `output/verify_tech_tree_sections.mjs` — static contract check for advertised chips, node clusters, and unique layout bands.
+- `output/verify_tech_tree_ui.mjs` — browser check that starts a sandbox game, opens Tech, clicks every section chip, verifies filtering/focus, and captures screenshots.
+
+### Verification
+- `node output/verify_tech_tree_sections.mjs` — 15/15 pass
+- `npm run build` — pass
+- develop-web-game Playwright client — title/game capture completed with no browser error artifact at `output/web-game/tech-tree-sections-client/`
+- `node output/verify_tech_tree_ui.mjs http://127.0.0.1:5173` — 58/58 pass; screenshots inspected at `output/web-game/tech-tree-sections-ui/tech-all.png` and `output/web-game/tech-tree-sections-ui/tech-superweapon.png`
+
+### Suggested next
+- Optional readability pass: when a late-game section is selected in a fresh save, most nodes are intentionally hidden as Unknown; a future UI pass could show locked late-game names after milestone discovery.
+
+---
+
+## Session 2026-07-07 — Fleet power markers, pirate raids, and lane interdictions
+
+**Task claimed:** Enemy fleets with icons/power levels; wandering attacking pirates; galaxy lane travel gameplay meaning
+**Status:** complete
+
+### Done
+- `src/js/fleet-power.js` — shared combat-power helper for player and pirate fleet marker numbers.
+- `src/js/pirates.js` — pirate fleets now carry `intent`, pick reachable player-held/defended raid targets over lanes, expose stationed/transit marker payloads, and trigger same-lane interdictions against player ships.
+- `src/js/simulation.js` — pirate interdictions run after transit movement and before combat, so lane dropouts can immediately start normal battles.
+- `src/js/render.js` + `src/js/ship-sprites.js` — galaxy map draws red pirate fleet badges with a raider glyph and `shipCount/power`; pirate transit lanes render as danger dashed lanes; raid destinations pulse.
+- `src/js/main.js` — toasts for pirate sightings/interdictions and `render_game_to_text()` now includes pirate power, intent, ETA, and marker payloads.
+- `output/verify_pirate_lanes.mjs` — focused Playwright verification for raid routing, power markers, lane interdiction, galaxy perf marker counts, and console errors.
+
+### Verification
+- `npm run build` — pass.
+- develop-web-game client — pass; latest gameplay state shows pirate `galaxyMarkers`/`transitMarkers` with power values.
+- `node output/verify_pirate_lanes.mjs` — 7/7 pass; screenshot: `output/visuals/pirate-raid-lanes.png`.
+
+### Known issues
+- `output/verify_phase2.mjs` is stale against the current state shape and fails early on `st.systems[...]`; current game state uses `st.galaxies[activeGalaxyId].systems[...]`.

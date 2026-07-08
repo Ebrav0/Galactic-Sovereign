@@ -22,6 +22,7 @@ import {
 import { shipyardBuildProgress } from './production.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import { jobProgress } from './drones.js';
+import { BODY_STRUCTURE_DEFS } from './body-structures.js';
 
 const STAR_X = 0;
 const STAR_Y = 0;
@@ -196,6 +197,34 @@ function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
   return sites;
 }
 
+function orbitalBuildingSitesForBody(state, systemId, bodyId, time = state.time) {
+  const system = systemById(state, systemId);
+  const world = bodyWorldPos(state, systemId, bodyId, time);
+  if (!system || !world) return [];
+  return system.structures
+    .filter((s) => {
+      const def = BODY_STRUCTURE_DEFS[s.type];
+      return def?.placement === 'orbital' && s.bodyId === bodyId;
+    })
+    .map((structure, idx) => {
+      const slotAngle = fixedSlotAngle(structure.id, 0x88) + idx * 0.45;
+      const pad = structure.type === 'drydock' ? SHIPYARD_ORBIT_PAD * 0.72 : LAUNCHER_ORBIT_PAD * 0.82;
+      const anchor = bodyOrbitAnchor(world.bodyPos, world.bodyRadius, pad, slotAngle);
+      return {
+        kind: structure.type,
+        structureType: structure.type,
+        structureId: structure.id,
+        planetId: world.hostPlanetId,
+        bodyId,
+        ...anchor,
+        heading: starHeading(anchor.x, anchor.y),
+        hubHeading: slotAngle + Math.PI / 2,
+        active: (structure.hp ?? 1) > 0 && state.time >= (structure.disabledUntil ?? 0),
+        seed: hashSeed(0xbeefcafe, structure.id) % 97,
+      };
+    });
+}
+
 /**
  * All orbital shipyard + launcher sites in a system.
  * @returns {Array<object>}
@@ -209,8 +238,10 @@ export function structureSites(state, systemId, time = state.time) {
     const sy = shipyardSite(state, systemId, planet, time);
     if (sy) sites.push(sy);
     sites.push(...researchStationSites(state, systemId, planet, time));
+    sites.push(...orbitalBuildingSitesForBody(state, systemId, planet.id, time));
     sites.push(...launcherSitesForBody(state, systemId, planet.id, time));
     for (const moon of planet.moons) {
+      sites.push(...orbitalBuildingSitesForBody(state, systemId, moon.id, time));
       sites.push(...launcherSitesForBody(state, systemId, moon.id, time));
     }
   }

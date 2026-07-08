@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 9",
+  "description": "Phase 6 late game: milestones, diplomacy, superweapon, hero flagships, campaign, manual trade routes.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 9 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "battleGroups", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked",
+        "empireQueue", "research", "factions", "aiShips",
+        "milestones", "campaign", "diplomacy", "superweapon", "heroFlagships", "manualTradeRoutes"
+      ],
+      "properties": {
+        "milestones": { "type": "object" },
+        "campaign": { "type": "object" },
+        "diplomacy": { "type": "object" },
+        "superweapon": { "type": "object" },
+        "heroFlagships": { "type": "array" },
+        "manualTradeRoutes": { "type": "array" },
+        "battleGroups": { "type": "array" }
+      }
+    }
+  }
+}

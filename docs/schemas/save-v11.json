@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 11",
+  "description": "Galaxy performance hooks, direct fleet map dispatch, and reusable builder drones.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 11 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "battleGroups", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked",
+        "empireQueue", "research", "factions", "aiShips",
+        "milestones", "campaign", "diplomacy", "superweapon", "heroFlagships",
+        "manualTradeRoutes", "builderDrones"
+      ],
+      "properties": {
+        "builderDrones": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "galaxyId", "status"],
+            "properties": {
+              "id": { "type": "string" },
+              "galaxyId": { "type": "string" },
+              "status": { "enum": ["idle", "outbound", "building", "returning"] },
+              "systemId": { "type": ["string", "null"] },
+              "targetSystemId": { "type": ["string", "null"] },
+              "targetBodyId": { "type": ["string", "null"] },
+              "buildType": { "type": ["string", "null"] },
+              "transit": { "type": ["object", "null"] },
+              "buildStartedAt": { "type": ["number", "null"] },
+              "buildDurationMs": { "type": ["number", "null"] },
+              "returnTransit": { "type": ["object", "null"] }
+            }
+          }
+        },
+        "playerShips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "weaponProfile": { "type": "string" },
+              "wingState": { "type": "object" }
+            }
+          }
+        },
+        "galaxies": { "type": "object" },
+        "milestones": { "type": "object" },
+        "campaign": { "type": "object" },
+        "diplomacy": { "type": "object" },
+        "superweapon": { "type": "object" },
+        "heroFlagships": { "type": "array" },
+        "manualTradeRoutes": { "type": "array" },
+        "battleGroups": { "type": "array" }
+      }
+    }
+  }
+}

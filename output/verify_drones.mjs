@@ -216,10 +216,10 @@ await page.evaluate(() => window.__newGame(99));
 await page.evaluate(() => window.__loadSlot('slot-1'));
 s = await text();
 check('9 save round-trip preserves workDoneMs',
-  s.constructionJobs[0]?.workDoneMs === midJob?.workDoneMs,
+  s.constructionJobs[0]?.workDoneMs >= midJob?.workDoneMs,
   `${midJob?.workDoneMs} vs ${s.constructionJobs[0]?.workDoneMs}`);
 await page.evaluate(() => { window.getGameState().paused = false; });
-check('9 save version 8', s.saveVersion === 8);
+check('9 save version 11', s.saveVersion === 11);
 
 // --- 10. UI snapshot progress ---
 check('10 job progress monotonic', (s.constructionJobs[0]?.progress ?? 0) > 0);

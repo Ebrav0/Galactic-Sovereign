@@ -12,6 +12,7 @@ import {
   hitTestPlanet,
   hitTestStar,
   hitTestScout,
+  hitTestFleetMarker,
 } from './render.js';
 
 const DRAG_THRESHOLD_PX = 5;
@@ -35,11 +36,15 @@ export function attachInput(canvas, ctx) {
     onFlagshipInput,
     onStarTravel,
     onScoutTravel,
+    onBattleGroupTravel,
+    onBattleGroupSelect,
     onStarView,
     onScoutSelect,
     onFollowRequest,
     onToggleOrbit,
     onCloseSidePanel,
+    onGalaxyStarClick,
+    onTradeRouteClick,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -92,6 +97,8 @@ export function attachInput(canvas, ctx) {
       held.clear();
       emitThrust();
     }
+    shiftHeld = false;
+    tabHeld = false;
   });
 
   let pointerDown = false;
@@ -100,12 +107,18 @@ export function attachInput(canvas, ctx) {
   let lastY = 0;
   let pendingStarClick = null;
   let shiftHeld = false;
+  let tabHeld = false;
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = true;
+    if (e.code === 'Tab') {
+      tabHeld = true;
+      if (getView() === 'galaxy') e.preventDefault();
+    }
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = false;
+    if (e.code === 'Tab') tabHeld = false;
   });
 
   canvas.addEventListener('mousedown', (e) => {
@@ -114,6 +127,7 @@ export function attachInput(canvas, ctx) {
     lastX = e.clientX;
     lastY = e.clientY;
     shiftHeld = e.shiftKey;
+    tabHeld = e.getModifierState?.('Tab') || tabHeld;
   });
 
   window.addEventListener('mousemove', (e) => {
@@ -133,7 +147,7 @@ export function attachInput(canvas, ctx) {
     } else {
       const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
       const hit = getView() === 'galaxy'
-        ? hitTestStar(getState(), w.x, w.y) ?? hitTestScout(getState(), w.x, w.y)
+        ? hitTestFleetMarker(getState(), w.x, w.y) ?? hitTestStar(getState(), w.x, w.y) ?? hitTestScout(getState(), w.x, w.y)
         : hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
       canvas.classList.toggle('hover-body', hit !== null);
     }
@@ -153,7 +167,13 @@ export function attachInput(canvas, ctx) {
       return;
     }
 
-    // Galaxy: scout click takes priority over star click.
+    // Galaxy: fleet/scout clicks take priority over star click.
+    const fleetHit = hitTestFleetMarker(getState(), w.x, w.y);
+    if (fleetHit && !e.shiftKey && !(e.ctrlKey || e.metaKey) && !(e.altKey || tabHeld)) {
+      onBattleGroupSelect?.(fleetHit);
+      return;
+    }
+
     const scoutHit = hitTestScout(getState(), w.x, w.y);
     if (scoutHit && !e.shiftKey) {
       onScoutSelect(scoutHit);
@@ -162,6 +182,16 @@ export function attachInput(canvas, ctx) {
 
     const starId = hitTestStar(getState(), w.x, w.y);
     if (!starId) return;
+
+    if (e.ctrlKey && onTradeRouteClick) {
+      onTradeRouteClick(starId);
+      return;
+    }
+
+    if ((e.altKey || tabHeld) && onBattleGroupTravel) {
+      onBattleGroupTravel(starId);
+      return;
+    }
 
     if (e.shiftKey || shiftHeld) {
       onScoutTravel(starId);
@@ -175,6 +205,7 @@ export function attachInput(canvas, ctx) {
       return;
     }
     if (pendingStarClick) clearTimeout(pendingStarClick.timer);
+    if (onGalaxyStarClick) onGalaxyStarClick(starId);
     pendingStarClick = {
       id: starId,
       timer: setTimeout(() => {

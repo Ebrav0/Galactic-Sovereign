@@ -14,6 +14,9 @@ import {
 } from './galaxy-scope.js';
 import { generateGalaxySystems } from './hydration.js';
 import { seedAiFaction } from './ai-faction.js';
+import { ensureStructureCombatFields } from './body-structures.js';
+import { defaultWeaponProfileForHull, normalizeCarrierWingState } from './hull.js';
+import { initBuilderDrones } from './builder-drones.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -63,6 +66,9 @@ function migrateSave(envelope) {
   if (e.saveVersion === 5) e = migrateV5toV6(e);
   if (e.saveVersion === 6) e = migrateV6toV7(e);
   if (e.saveVersion === 7) e = migrateV7toV8(e);
+  if (e.saveVersion === 8) e = migrateV8toV9(e);
+  if (e.saveVersion === 9) e = migrateV9toV10(e);
+  if (e.saveVersion === 10) e = migrateV10toV11(e);
   return e;
 }
 
@@ -375,16 +381,138 @@ function migrateV6toV7(envelope) {
   };
 }
 
-// v7 -> v8 (Phase 6 construction drones).
+// v7 -> v8 (player battle groups).
 function migrateV7toV8(envelope) {
   const state = envelope.state;
-  state.constructionJobs = state.constructionJobs ?? [];
-  state.drones = state.drones ?? [];
-  migrateShipyardsOnLoad(state);
+  state.battleGroups = state.battleGroups ?? [];
+  initConstructionDroneState(state);
 
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 8,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+function initConstructionDroneState(state) {
+  state.constructionJobs = state.constructionJobs ?? [];
+  state.drones = state.drones ?? [];
+  migrateShipyardsOnLoad(state);
+}
+
+function initPhase6State(state) {
+  initConstructionDroneState(state);
+  state.milestones = state.milestones ?? {
+    completedDysonSystems: [],
+    diplomacyUnlocked: false,
+    superweaponUnlocked: false,
+  };
+  state.campaign = state.campaign ?? {
+    mode: 'sandbox',
+    victoryType: 'sandbox',
+    defeated: false,
+    won: false,
+    tutorialStep: null,
+    activeMissionId: null,
+    completedMissions: [],
+    missionProgress: {},
+  };
+  state.diplomacy = state.diplomacy ?? { relations: {} };
+  state.superweapon = state.superweapon ?? {
+    cradleSystemId: null,
+    online: false,
+    cooldownUntil: 0,
+    jumpCooldownUntil: 0,
+    lastAction: null,
+    shieldCooldowns: {},
+    createCount: 0,
+  };
+  state.heroFlagships = state.heroFlagships ?? [];
+  state.manualTradeRoutes = state.manualTradeRoutes ?? [];
+  if (!state.factions?.list) {
+    state.factions = state.factions ?? {};
+    if (state.factions.ai) {
+      state.factions.list = [state.factions.ai];
+    } else {
+      state.factions.list = [{
+        id: 'ai-0',
+        name: 'Dominion of Helix',
+        personality: 'expansionist',
+        homeSystemId: null,
+        credits: 1200,
+        lastActionTick: 0,
+      }];
+    }
+    state.factions.ai = state.factions.list[0];
+  }
+}
+
+// v8 -> v9 (Phase 6 late game).
+function migrateV8toV9(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 9,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+function initPostPhase6BuildingsAndCombat(state) {
+  for (const gal of Object.values(state.galaxies ?? {})) {
+    for (const system of Object.values(gal.systems ?? {})) {
+      for (const structure of system.structures ?? []) {
+        ensureStructureCombatFields(state, system.id, structure);
+      }
+    }
+  }
+
+  for (const ship of state.playerShips ?? []) {
+    ship.weaponProfile = ship.weaponProfile ?? defaultWeaponProfileForHull(ship.hull);
+    normalizeCarrierWingState(ship, state);
+  }
+  for (const ship of state.aiShips ?? []) {
+    ship.weaponProfile = ship.weaponProfile ?? defaultWeaponProfileForHull(ship.hull);
+    normalizeCarrierWingState(ship, state);
+  }
+  for (const fleet of state.pirates?.fleets ?? []) {
+    for (const ship of fleet.ships ?? []) {
+      ship.weaponProfile = ship.weaponProfile ?? defaultWeaponProfileForHull(ship.hull);
+      normalizeCarrierWingState(ship, state);
+    }
+  }
+}
+
+// v9 -> v10 (post-Phase-6 buildings, carrier wings, weapon profiles).
+function migrateV9toV10(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+  initPostPhase6BuildingsAndCombat(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 10,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v10 -> v11 (galaxy performance hooks, map fleet selection, builder drones).
+function migrateV10toV11(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+  initPostPhase6BuildingsAndCombat(state);
+  initBuilderDrones(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 11,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,
@@ -426,6 +554,10 @@ export function deserialize(envelopeJson) {
   }
 
   initPhase5State(envelope.state);
+  initConstructionDroneState(envelope.state);
+  initPhase6State(envelope.state);
+  initPostPhase6BuildingsAndCombat(envelope.state);
+  initBuilderDrones(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
   envelope.state.constructionJobs = envelope.state.constructionJobs ?? [];
   envelope.state.drones = envelope.state.drones ?? [];

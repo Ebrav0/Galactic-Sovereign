@@ -6,7 +6,8 @@ import {
   SHUTTLE_MOON_DWELL_MS,
   SHUTTLE_PLANET_DWELL_MS,
 } from './constants.js';
-import { systemById, planetPosition, moonPosition, hasOutpost } from './state.js';
+import { systemById, planetPosition, moonPosition, hasOutpost, hashSeed } from './state.js';
+import { BODY_STRUCTURE_DEFS } from './body-structures.js';
 
 const CYCLE_MS =
   SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS + SHUTTLE_FLIGHT_MS + SHUTTLE_PLANET_DWELL_MS;
@@ -51,9 +52,30 @@ export function outpostSurfaceSites(state, systemId, time = state.time) {
   if (!system) return sites;
 
   for (const planet of system.bodies) {
-    if (!hasOutpost(state, systemId, planet.id) || planet.moons.length === 0) continue;
-
+    const surfaceStructures = system.structures.filter((s) => {
+      const def = BODY_STRUCTURE_DEFS[s.type];
+      return def?.placement === 'surface' && s.bodyId === planet.id;
+    });
     const planetPos = planetPosition(planet, time);
+    surfaceStructures.forEach((structure, idx) => {
+      const seed = hashSeed(0x51f15e, structure.id);
+      const angle = ((seed % 10000) / 10000) * Math.PI * 2 + idx * 0.31;
+      const r = planet.radius + 2.6 + (idx % 3) * 1.2;
+      sites.push({
+        kind: `surface-${structure.type}`,
+        structureType: structure.type,
+        structureId: structure.id,
+        placement: 'surface',
+        x: planetPos.x + Math.cos(angle) * r,
+        y: planetPos.y + Math.sin(angle) * r,
+        heading: angle + Math.PI / 2,
+        active: (structure.hp ?? 1) > 0 && state.time >= (structure.disabledUntil ?? 0),
+        planetId: planet.id,
+        seed: seed % 97,
+      });
+    });
+
+    if (!hasOutpost(state, systemId, planet.id) || planet.moons.length === 0) continue;
 
     planet.moons.forEach((moon, idx) => {
       const moonPos = moonPosition(planet, moon, time);

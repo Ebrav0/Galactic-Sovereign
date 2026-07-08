@@ -1,6 +1,7 @@
 // Tech web logic — effects, unlocks, and queries (GDD §10).
 
 import { TECH_NODES } from './tech-nodes.js';
+import { refreshMilestones } from './milestones.js';
 
 export { TECH_NODES };
 
@@ -8,11 +9,42 @@ export function techNode(nodeId) {
   return TECH_NODES[nodeId] ?? null;
 }
 
-export function techPrereqsMet(state, nodeId) {
+const techCache = new WeakMap();
+
+function cacheForState(state) {
+  let cache = techCache.get(state);
+  if (!cache) {
+    cache = {};
+    techCache.set(state, cache);
+  }
+  return cache;
+}
+
+function unlockedSet(state) {
+  const unlocked = state.research?.unlocked ?? [];
+  const cache = cacheForState(state);
+  if (cache.unlockedSetSource !== unlocked || cache.unlockedSetLength !== unlocked.length) {
+    cache.unlockedSetSource = unlocked;
+    cache.unlockedSetLength = unlocked.length;
+    cache.unlockedSet = new Set(unlocked);
+  }
+  return cache.unlockedSet;
+}
+
+export function techMilestoneMet(state, node, opts = {}) {
+  if (!node) return true;
+  if (!opts.skipRefresh) refreshMilestones(state);
+  if (node.requiresDiplomacy && !state.milestones?.diplomacyUnlocked) return false;
+  if (node.requiresSuperweapon && !state.milestones?.superweaponUnlocked) return false;
+  return true;
+}
+
+export function techPrereqsMet(state, nodeId, opts = {}) {
   const node = techNode(nodeId);
   if (!node) return false;
-  const unlocked = state.research?.unlocked ?? [];
-  return node.prereqs.every((p) => unlocked.includes(p));
+  if (!techMilestoneMet(state, node, opts)) return false;
+  const unlocked = unlockedSet(state);
+  return node.prereqs.every((p) => unlocked.has(p));
 }
 
 export function techCost(nodeId) {
@@ -29,11 +61,20 @@ export function derivedTier(nodeId) {
 }
 
 export function isTechUnlocked(state, nodeId) {
-  return (state.research?.unlocked ?? []).includes(nodeId);
+  return unlockedSet(state).has(nodeId);
 }
 
 export function techEffects(state) {
   const unlocked = state.research?.unlocked ?? [];
+  const cache = cacheForState(state);
+  if (
+    cache.effectsSource === unlocked
+    && cache.effectsLength === unlocked.length
+    && cache.effects
+  ) {
+    return cache.effects;
+  }
+
   const effects = {
     shipyardSlots: 1,
     unlockTradeStation: false,
@@ -49,7 +90,17 @@ export function techEffects(state) {
     unlockSensorShip: false,
     unlockBuilderShip: false,
     unlockCommandCruiser: false,
+    unlockHeroFlagship: false,
     unlockMinerHull: false,
+    unlockMiningComplex: false,
+    unlockRefinery: false,
+    unlockStorageDepot: false,
+    unlockAsteroidHarvester: false,
+    unlockFighterFactory: false,
+    unlockDrydock: false,
+    unlockOrbitalDefense: false,
+    unlockPlanetaryShield: false,
+    unlockIonBattery: false,
     unlockLightHauler: false,
     unlockBulkFreighter: false,
     unlockArmoredConvoy: false,
@@ -73,6 +124,13 @@ export function techEffects(state) {
     destroyerDpsMult: 1,
     battleshipDpsMult: 1,
     carrierDpsMult: 1,
+    carrierWings: false,
+    carrierWingCapacityMult: 1,
+    pointDefenseMult: 1,
+    kineticDamageMult: 1,
+    bomberDamageMult: 1,
+    beamDamageMult: 1,
+    ionDamageMult: 1,
     healerRepairMult: 1,
     scoutCostMult: 1,
     shipyardCostMult: 1,
@@ -119,7 +177,17 @@ export function techEffects(state) {
       case 'unlock_sensor_ship': effects.unlockSensorShip = true; break;
       case 'unlock_builder_ship': effects.unlockBuilderShip = true; break;
       case 'unlock_command_cruiser': effects.unlockCommandCruiser = true; break;
+      case 'unlock_hero_flagship': effects.unlockHeroFlagship = true; break;
       case 'unlock_miner_hull': effects.unlockMinerHull = true; break;
+      case 'unlock_mining_complex': effects.unlockMiningComplex = true; break;
+      case 'unlock_refinery': effects.unlockRefinery = true; break;
+      case 'unlock_storage_depot': effects.unlockStorageDepot = true; break;
+      case 'unlock_asteroid_harvester': effects.unlockAsteroidHarvester = true; break;
+      case 'unlock_fighter_factory': effects.unlockFighterFactory = true; break;
+      case 'unlock_drydock': effects.unlockDrydock = true; break;
+      case 'unlock_orbital_defense': effects.unlockOrbitalDefense = true; break;
+      case 'unlock_planetary_shield': effects.unlockPlanetaryShield = true; break;
+      case 'unlock_ion_battery': effects.unlockIonBattery = true; break;
       case 'unlock_light_hauler': effects.unlockLightHauler = true; break;
       case 'unlock_bulk_freighter': effects.unlockBulkFreighter = true; break;
       case 'unlock_armored_convoy': effects.unlockArmoredConvoy = true; break;
@@ -144,6 +212,12 @@ export function techEffects(state) {
       case 'destroyer_dps_10': effects.destroyerDpsMult *= 1.1; break;
       case 'battleship_dps_10': effects.battleshipDpsMult *= 1.1; break;
       case 'carrier_dps_10': effects.carrierDpsMult *= 1.1; break;
+      case 'carrier_wings': effects.carrierWings = true; break;
+      case 'point_defense_20': effects.pointDefenseMult *= 1.2; break;
+      case 'kinetic_damage_10': effects.kineticDamageMult *= 1.1; break;
+      case 'bomber_damage_20': effects.bomberDamageMult *= 1.2; effects.carrierWingCapacityMult *= 1.1; break;
+      case 'beam_damage_15': effects.beamDamageMult *= 1.15; break;
+      case 'ion_damage_15': effects.ionDamageMult *= 1.15; break;
       case 'healer_repair_10': effects.healerRepairMult *= 1.1; break;
       case 'healer_repair_15': effects.healerRepairMult *= 1.15; break;
       case 'capture_force_1': effects.captureForceBonus += 1; break;
@@ -159,9 +233,22 @@ export function techEffects(state) {
       case 'research_speed_20': effects.researchSpeedMult *= 1.2; break;
       case 'research_queue_2': effects.researchQueueDepth = Math.max(effects.researchQueueDepth, 2); break;
       case 'research_queue_3': effects.researchQueueDepth = Math.max(effects.researchQueueDepth, 3); break;
+      case 'unlock_superweapon_cradle': break;
+      case 'superweapon_create': break;
+      case 'superweapon_destroy': break;
+      case 'superweapon_jump': break;
+      case 'unlock_diplomacy': break;
+      case 'diplomacy_trade': break;
+      case 'diplomacy_alliance': break;
+      case 'diplomacy_trade_bonus': break;
+      case 'hero_rally_bonus': effects.captureForceBonus += 1; break;
+      case 'hero_combat_bonus': break;
       default: break;
     }
   }
+  cache.effectsSource = unlocked;
+  cache.effectsLength = unlocked.length;
+  cache.effects = effects;
   return effects;
 }
 
@@ -189,6 +276,10 @@ export function empireQueueHulls(state) {
   if (effects.unlockCommandCruiser) hulls.push('command_cruiser');
   if (effects.unlockMinerHull) hulls.push('miner');
   return hulls;
+}
+
+export function isEmpireHullUnlocked(state, hull) {
+  return empireQueueHulls(state).includes(hull);
 }
 
 export function applyTechEffect(state, nodeId) {

@@ -9,6 +9,7 @@ import {
   MOON_KEEP_OUT_PAD,
   AMBIENT_PATROL_RADIUS,
   AMBIENT_PATROL_OMEGA,
+  AMBIENT_KEEP_OUT_PASSES,
   FLEET_STATION_ORBIT_PAD,
   PLANET_ORBIT_BASE,
   KEEP_OUT_SOFT_ZONE,
@@ -95,8 +96,42 @@ function addStarRepulsion(ax, ay, x, y, system, strength) {
   };
 }
 
+/** Precomputed planet/moon positions for batch keep-out (one build per frame). */
+export function buildKeepOutBodyCache(system, time) {
+  const bodies = [];
+  for (const planet of system.bodies) {
+    const pp = planetPosition(planet, time);
+    bodies.push({
+      x: pp.x,
+      y: pp.y,
+      keep: planet.radius + PLANET_KEEP_OUT_PAD,
+    });
+    for (const moon of planet.moons) {
+      const mp = moonPosition(planet, moon, time);
+      bodies.push({
+        x: mp.x,
+        y: mp.y,
+        keep: moon.radius + MOON_KEEP_OUT_PAD,
+      });
+    }
+  }
+  return bodies;
+}
+
+function keepOutRepulsionFromCache(state, system, x, y, strength, bodyCache) {
+  let ax = 0;
+  let ay = 0;
+  ({ ax, ay } = addStarRepulsion(ax, ay, x, y, system, strength));
+  for (const body of bodyCache) {
+    ({ ax, ay } = addRepulsion(ax, ay, x, y, body.x, body.y, body.keep, strength));
+  }
+  return { ax, ay };
+}
+
 /** Soft radial push away from stars/planets/moons (accel units for physics, or displacement scale for nudge). */
-export function keepOutRepulsion(state, system, x, y, strength = KEEP_OUT_REPULSION, time = state.time) {
+export function keepOutRepulsion(state, system, x, y, strength = KEEP_OUT_REPULSION, time = state.time, bodyCache = null) {
+  if (bodyCache) return keepOutRepulsionFromCache(state, system, x, y, strength, bodyCache);
+
   let ax = 0;
   let ay = 0;
 
@@ -118,19 +153,19 @@ export function keepOutRepulsion(state, system, x, y, strength = KEEP_OUT_REPULS
 }
 
 /** Integrate soft repulsion for render-only / kinematic poses. */
-export function softKeepOut(state, system, x, y, passes = 10, time = state.time) {
+export function softKeepOut(state, system, x, y, passes = 10, time = state.time, bodyCache = null) {
   let px = x;
   let py = y;
   const step = TICK_MS / 1000;
   for (let i = 0; i < passes; i++) {
-    const { ax, ay } = keepOutRepulsion(state, system, px, py, KEEP_OUT_NUDGE_STRENGTH, time);
+    const { ax, ay } = keepOutRepulsion(state, system, px, py, KEEP_OUT_NUDGE_STRENGTH, time, bodyCache);
     px += ax * step;
     py += ay * step;
   }
   return { x: px, y: py };
 }
 
-export function ambientShipPose(state, system, ship, idx, total, time = state.time) {
+export function ambientShipPose(state, system, ship, idx, total, time = state.time, bodyCache = null) {
   const base = stationedShipPose(state, system, ship, idx, total, time);
   const patrol = patrolOffset(time, ship.id, 1);
   const raw = {
@@ -138,7 +173,7 @@ export function ambientShipPose(state, system, ship, idx, total, time = state.ti
     y: base.y + patrol.cy,
     heading: patrol.heading,
   };
-  const safe = softKeepOut(state, system, raw.x, raw.y, 10, time);
+  const safe = softKeepOut(state, system, raw.x, raw.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 
@@ -153,7 +188,7 @@ export function pirateStationPose(state, system, idx, total) {
   };
 }
 
-export function ambientPiratePose(state, system, ship, fleetId, idx, total, time = state.time) {
+export function ambientPiratePose(state, system, ship, fleetId, idx, total, time = state.time, bodyCache = null) {
   const base = pirateStationPose(state, system, idx, total);
   const patrol = patrolOffset(time, `${fleetId}:${ship.id}`, 1.15);
   const raw = {
@@ -161,12 +196,12 @@ export function ambientPiratePose(state, system, ship, fleetId, idx, total, time
     y: base.y + patrol.cy,
     heading: patrol.heading,
   };
-  const safe = softKeepOut(state, system, raw.x, raw.y, 10, time);
+  const safe = softKeepOut(state, system, raw.x, raw.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 
-export function nudgeUnitKeepOut(state, system, unit) {
-  const rep = keepOutRepulsion(state, system, unit.x, unit.y, KEEP_OUT_NUDGE_STRENGTH);
+export function nudgeUnitKeepOut(state, system, unit, bodyCache = null) {
+  const rep = keepOutRepulsion(state, system, unit.x, unit.y, KEEP_OUT_NUDGE_STRENGTH, state.time, bodyCache);
   const dt = TICK_MS / 1000;
   unit.x += rep.ax * dt;
   unit.y += rep.ay * dt;

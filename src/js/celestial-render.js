@@ -36,12 +36,24 @@ function hexToRgba(hex, alpha) {
 
 /** Dyson shell glow on star (tier rings + dots moved to dyson-render.js). */
 export function drawStarOverlays(ctx, opts) {
-  const { completedShells = 0, starRadius = 40, x = 0, y = 0, zoom = 1 } = opts;
+  const { completedShells = 0, starRadius = 40, x = 0, y = 0, zoom = 1, time = 0 } = opts;
   if (completedShells < 4) return;
 
   const r = starRadius * zoom;
   ctx.save();
   ctx.translate(x, y);
+
+  if (completedShells >= 7) {
+    const dim = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.85);
+    dim.addColorStop(0, 'rgba(8, 10, 18, 0.28)');
+    dim.addColorStop(0.45, 'rgba(8, 10, 18, 0.12)');
+    dim.addColorStop(1, 'rgba(8, 10, 18, 0)');
+    ctx.fillStyle = dim;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   const glow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 1.6);
   glow.addColorStop(0, `rgba(255, 200, 100, ${0.05 + completedShells * 0.015})`);
   glow.addColorStop(1, 'rgba(255, 160, 60, 0)');
@@ -49,6 +61,17 @@ export function drawStarOverlays(ctx, opts) {
   ctx.beginPath();
   ctx.arc(0, 0, r * 1.6, 0, Math.PI * 2);
   ctx.fill();
+
+  if (completedShells >= 8) {
+    const pulse = 0.65 + 0.35 * Math.sin(time / 620);
+    const accR = r * 0.38;
+    ctx.strokeStyle = `rgba(255, 210, 140, ${0.4 * pulse})`;
+    ctx.lineWidth = Math.max(1, 1.4 * zoom);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, accR * 1.2, accR * 0.45, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 

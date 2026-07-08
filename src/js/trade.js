@@ -8,6 +8,8 @@ import {
   STRUCTURE_BUILD_MS,
 } from './constants.js';
 import { shellTradeBonus } from './dyson.js';
+import { diplomaticTradeBonus } from './diplomacy.js';
+import { manualRouteBonus } from './trade-routes.js';
 import { allocateStructureId } from './economy.js';
 import {
   findPlanet,
@@ -22,6 +24,11 @@ import { neighborsOf } from './galaxy.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingJob, queueConstructionJob } from './drones.js';
+import { blockadeTradeMultiplier } from './strategic-structures.js';
+import {
+  bodyStructureBlockadeMultiplier,
+  bodyStructureTradeMultiplier,
+} from './body-structures.js';
 
 export function tradeStationCount(state, systemId) {
   const system = systemById(state, systemId);
@@ -90,8 +97,14 @@ function canConnect(graph, owned, a, b, allowNeutralBridge) {
   if (!neighborsOf(graph, a).includes(b)) return false;
   if (owned.has(a) && owned.has(b)) return true;
   if (!allowNeutralBridge) return false;
-  // One-hop neutral bridge: owned — neutral — owned
-  return false; // simplified: only direct owned adjacency in Phase 5 base; bridge via tech
+  const sysA = owned.has(a);
+  const sysB = owned.has(b);
+  if (sysA || sysB) {
+    const mid = sysA ? b : a;
+    const midSys = graph.stars.find((s) => s.id === mid);
+    if (midSys && !owned.has(mid)) return true;
+  }
+  return false;
 }
 
 export function buildTradeGraph(state) {
@@ -100,7 +113,8 @@ export function buildTradeGraph(state) {
   const owned = new Set(
     Object.values(getSystems(state)).filter((s) => s.owner === 'player').map((s) => s.id),
   );
-  const allowBridge = false; // trade_lane_secured expands later
+  const allowBridge = techEffects(state).tradeNeutralBridge
+    || isTechUnlocked(state, 'trade_lane_secured');
 
   const visited = new Set();
   const components = [];
@@ -115,7 +129,7 @@ export function buildTradeGraph(state) {
       component.push(cur);
       for (const next of neighborsOf(graph, cur)) {
         if (!tradeNodes.has(next) || visited.has(next)) continue;
-        if (!owned.has(next)) continue;
+        if (!canConnect(graph, owned, cur, next, allowBridge)) continue;
         visited.add(next);
         queue.push(next);
       }
@@ -147,7 +161,20 @@ export function tradeIncomePerSecondSync(state) {
     if (stationCount === 0) continue;
     const connectivity = 1 + TRADE_CONNECTIVITY_BONUS * Math.max(0, component.length - 1);
     const avgShell = shellMultSum / stationCount;
-    total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult;
+    let blockadeMult = 1;
+    for (let i = 0; i < component.length - 1; i++) {
+      for (let j = i + 1; j < component.length; j++) {
+        if (neighborsOf(getGraph(state), component[i]).includes(component[j])) {
+          let laneMult = blockadeTradeMultiplier(state, component[i], component[j]);
+          laneMult = bodyStructureBlockadeMultiplier(state, component[i], laneMult);
+          laneMult = bodyStructureBlockadeMultiplier(state, component[j], laneMult);
+          blockadeMult = Math.min(blockadeMult, laneMult);
+        }
+      }
+    }
+    const refineryMult = component.reduce((m, sysId) => m * bodyStructureTradeMultiplier(state, sysId), 1);
+    total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult * blockadeMult * refineryMult
+      * manualRouteBonus(state) * diplomaticTradeBonus(state);
   }
   return total;
 }
