@@ -497,3 +497,48 @@ Never delete prior entries.
 ### Known issues
 - Headless first-frame Galaxy timing can still report a high warmup value, but the v11 summary confirms far-zoom drawn stars/lanes are bounded and the map no longer draws the full graph at widest zoom.
 - Carrier wing ready/lost values can still be fractional from the prior v10 building/carrier slice.
+
+## Session 2026-07-07 — Real tech-tree sections
+
+**Task claimed:** Make every top tech-tree ticker represent a real section
+**Status:** complete
+
+### Done
+- `src/js/tech-web-layout.js` — added a canonical nine-section cluster order and unique layout bands for Economy, Military, Dyson, Trade, Wormhole, Research, Diplomacy, Superweapon, and Flagship.
+- `src/js/tech-web-ui.js` — band labels now render from the real cluster order; section chips update node and connector filtering, and focus the viewport on the selected section.
+- `src/js/tech-web-viewport.js` — added `fitBounds()` so category chips can zoom/pan to their section instead of only dimming the full tree.
+- `src/css/style.css` — added filtered-edge styling for unrelated connector lanes.
+- `output/verify_tech_tree_sections.mjs` — static contract check for advertised chips, node clusters, and unique layout bands.
+- `output/verify_tech_tree_ui.mjs` — browser check that starts a sandbox game, opens Tech, clicks every section chip, verifies filtering/focus, and captures screenshots.
+
+### Verification
+- `node output/verify_tech_tree_sections.mjs` — 15/15 pass
+- `npm run build` — pass
+- develop-web-game Playwright client — title/game capture completed with no browser error artifact at `output/web-game/tech-tree-sections-client/`
+- `node output/verify_tech_tree_ui.mjs http://127.0.0.1:5173` — 58/58 pass; screenshots inspected at `output/web-game/tech-tree-sections-ui/tech-all.png` and `output/web-game/tech-tree-sections-ui/tech-superweapon.png`
+
+### Suggested next
+- Optional readability pass: when a late-game section is selected in a fresh save, most nodes are intentionally hidden as Unknown; a future UI pass could show locked late-game names after milestone discovery.
+
+---
+
+## Session 2026-07-07 — Fleet power markers, pirate raids, and lane interdictions
+
+**Task claimed:** Enemy fleets with icons/power levels; wandering attacking pirates; galaxy lane travel gameplay meaning
+**Status:** complete
+
+### Done
+- `src/js/fleet-power.js` — shared combat-power helper for player and pirate fleet marker numbers.
+- `src/js/pirates.js` — pirate fleets now carry `intent`, pick reachable player-held/defended raid targets over lanes, expose stationed/transit marker payloads, and trigger same-lane interdictions against player ships.
+- `src/js/simulation.js` — pirate interdictions run after transit movement and before combat, so lane dropouts can immediately start normal battles.
+- `src/js/render.js` + `src/js/ship-sprites.js` — galaxy map draws red pirate fleet badges with a raider glyph and `shipCount/power`; pirate transit lanes render as danger dashed lanes; raid destinations pulse.
+- `src/js/main.js` — toasts for pirate sightings/interdictions and `render_game_to_text()` now includes pirate power, intent, ETA, and marker payloads.
+- `output/verify_pirate_lanes.mjs` — focused Playwright verification for raid routing, power markers, lane interdiction, galaxy perf marker counts, and console errors.
+
+### Verification
+- `npm run build` — pass.
+- develop-web-game client — pass; latest gameplay state shows pirate `galaxyMarkers`/`transitMarkers` with power values.
+- `node output/verify_pirate_lanes.mjs` — 7/7 pass; screenshot: `output/visuals/pirate-raid-lanes.png`.
+
+### Known issues
+- `output/verify_phase2.mjs` is stale against the current state shape and fails early on `st.systems[...]`; current game state uses `st.galaxies[activeGalaxyId].systems[...]`.
