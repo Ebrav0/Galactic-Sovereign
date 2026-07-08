@@ -21,6 +21,10 @@ import { getGraph, getSystems } from './galaxy-scope.js';
 import { neighborsOf } from './galaxy.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
 import { blockadeTradeMultiplier } from './strategic-structures.js';
+import {
+  bodyStructureBlockadeMultiplier,
+  bodyStructureTradeMultiplier,
+} from './body-structures.js';
 
 function flagshipInSystem(state, systemId) {
   const f = state.flagship;
@@ -155,11 +159,15 @@ export function tradeIncomePerSecondSync(state) {
     for (let i = 0; i < component.length - 1; i++) {
       for (let j = i + 1; j < component.length; j++) {
         if (neighborsOf(getGraph(state), component[i]).includes(component[j])) {
-          blockadeMult = Math.min(blockadeMult, blockadeTradeMultiplier(state, component[i], component[j]));
+          let laneMult = blockadeTradeMultiplier(state, component[i], component[j]);
+          laneMult = bodyStructureBlockadeMultiplier(state, component[i], laneMult);
+          laneMult = bodyStructureBlockadeMultiplier(state, component[j], laneMult);
+          blockadeMult = Math.min(blockadeMult, laneMult);
         }
       }
     }
-    total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult * blockadeMult
+    const refineryMult = component.reduce((m, sysId) => m * bodyStructureTradeMultiplier(state, sysId), 1);
+    total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult * blockadeMult * refineryMult
       * manualRouteBonus(state) * diplomaticTradeBonus(state);
   }
   return total;

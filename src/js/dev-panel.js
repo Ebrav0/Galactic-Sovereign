@@ -18,6 +18,7 @@ import {
 } from './dev.js';
 
 const el = (id) => document.getElementById(id);
+const PASSIVE_REFRESH_MS = 250;
 
 function clampCountInput(input) {
   let v = parseInt(input.value, 10);
@@ -80,6 +81,7 @@ export function initDevPanel(ctx) {
   populateTechSelect(techSelect);
 
   let isOpen = false;
+  let lastPassiveRefreshAt = 0;
 
   function setStatus(result) {
     if (!statusEl) return;
@@ -114,7 +116,7 @@ export function initDevPanel(ctx) {
     } else {
       toast(result.reason, 'error');
     }
-    updateDevPanel();
+    updateDevPanel(true);
     return result;
   }
 
@@ -197,14 +199,18 @@ export function initDevPanel(ctx) {
     backdrop?.classList.toggle('hidden', !isOpen);
     badge?.classList.toggle('hidden', !isOpen);
     if (isOpen) {
-      updateDevPanel();
+      updateDevPanel(true);
       const first = panel?.querySelector('button, select, input');
       first?.focus();
     }
   }
 
-  function updateDevPanel() {
+  function updateDevPanel(force = false) {
     if (!isOpen) return;
+    const now = performance.now();
+    if (!force && now - lastPassiveRefreshAt < PASSIVE_REFRESH_MS) return;
+    lastPassiveRefreshAt = now;
+
     const state = getState();
     const systemId = getViewedSystemId();
     const selection = getSelection();

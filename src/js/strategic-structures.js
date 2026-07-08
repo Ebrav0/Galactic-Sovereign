@@ -23,6 +23,7 @@ import {
   systemById,
 } from './state.js';
 import { isTechUnlocked } from './tech-web.js';
+import { invalidateIntelCache } from './intel.js';
 
 function flagshipInSystem(state, systemId) {
   const f = state.flagship;
@@ -119,6 +120,7 @@ export function buildStrategicStructure(state, systemId, type, planetId = null) 
     bodyId: def.perBody ? planetId : null,
     builtAtTime: state.time,
   });
+  if (type === 'listening_post') invalidateIntelCache(state);
   return { ok: true, type, systemId };
 }
 

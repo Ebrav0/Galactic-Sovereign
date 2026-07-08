@@ -8,6 +8,7 @@ import {
   DIPLOMACY_TRADE_INCOME_BONUS,
 } from './constants.js';
 import { refreshMilestones } from './milestones.js';
+import { isTechUnlocked } from './tech-web.js';
 
 export const RELATION_WAR = 'war';
 export const RELATION_NEUTRAL = 'neutral';
@@ -39,10 +40,34 @@ export function isDiplomacyUnlocked(state) {
   return !!state.milestones?.diplomacyUnlocked;
 }
 
+function requiredTreatyTech(statusOrType) {
+  switch (statusOrType) {
+    case 'truce':
+      return { id: 'dip_truce_protocol', label: 'Truce Protocol' };
+    case 'trade':
+      return { id: 'dip_trade_charter', label: 'Trade Charter' };
+    case 'alliance':
+      return { id: 'dip_alliance_pact', label: 'Alliance Pact' };
+    default:
+      return null;
+  }
+}
+
+function treatyTechCheck(state, statusOrType) {
+  const req = requiredTreatyTech(statusOrType);
+  if (!req) return { ok: true };
+  if (!isTechUnlocked(state, req.id)) {
+    return { ok: false, reason: `Research ${req.label} first` };
+  }
+  return { ok: true };
+}
+
 export function setRelation(state, factionId, status) {
   if (!isDiplomacyUnlocked(state) && status !== RELATION_WAR) {
     return { ok: false, reason: 'Diplomacy locked — complete a Dyson sphere first' };
   }
+  const tech = treatyTechCheck(state, status);
+  if (!tech.ok) return tech;
   ensureDiplomacy(state);
   const rel = getRelation(state, factionId);
   rel.status = status;
@@ -64,6 +89,8 @@ export function offerTreaty(state, factionId, type) {
   }
   const faction = listAiFactionsFromState(state).find((f) => f.id === factionId);
   if (!faction) return { ok: false, reason: 'Unknown faction' };
+  const tech = treatyTechCheck(state, type);
+  if (!tech.ok) return tech;
 
   if (type === 'truce') {
     if (state.credits < DIPLOMACY_TRUCE_COST) {
@@ -115,6 +142,9 @@ export function diplomaticTradeBonus(state) {
     if (rel.status === RELATION_TRADE || rel.status === RELATION_ALLIANCE) {
       bonus += DIPLOMACY_TRADE_INCOME_BONUS;
     }
+  }
+  if (isTechUnlocked(state, 'dip_embassy_network')) {
+    bonus += DIPLOMACY_TRADE_INCOME_BONUS;
   }
   return 1 + bonus;
 }

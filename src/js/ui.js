@@ -71,6 +71,11 @@ import {
   buildStrategicStructure,
   STRUCTURE_DEFS,
 } from './strategic-structures.js';
+import {
+  bodyStructureBuildRows,
+  buildBodyStructure,
+  bodyStructuresSummary,
+} from './body-structures.js';
 import { allTechNodes, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
@@ -92,7 +97,7 @@ const el = (id) => document.getElementById(id);
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Alt+click: fleet · Shift+click: scout · Ctrl+click: trade route · double-click: view · M: system',
+  galaxy: 'Click star: travel · Tab+click: fleet · Shift+click: scout · Ctrl+click: trade route · double-click: view · M: system',
 };
 
 const PLANET_DOT = {
@@ -261,6 +266,7 @@ function renderCaptureBody(container, state, systemId, req, ctx) {
 
 function renderBuildBody(container, planet, state, systemId) {
   clearChildren(container);
+  const bodySummary = bodyStructuresSummary(state, systemId);
 
   const header = document.createElement('div');
   header.className = 'build-header';
@@ -289,6 +295,8 @@ function renderBuildBody(container, planet, state, systemId) {
       label: 'Sail Foundry',
       built: hasFoundry(state, systemId) && foundryHostPlanet(state, systemId)?.id === planet.id,
     },
+    { label: 'Surface', value: String(bodySummary.byPlacement.surface) },
+    { label: 'Orbital', value: String(bodySummary.byPlacement.orbital) },
   ];
 
   for (const row of rows) {
@@ -592,6 +600,13 @@ function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScout
       selected: s.id === selectedScoutId,
       transit: !!s.transit,
       loc: s.transit ? s.transit.path[s.transit.path.length - 1] : s.systemId,
+    })),
+    drones: (state.builderDrones ?? []).map((d) => ({
+      id: d.id,
+      status: d.status,
+      target: d.targetSystemId,
+      buildType: d.buildType,
+      buildStartedAt: d.buildStartedAt,
     })),
     yards: listPlayerShipyards(state).length,
     queuePending: empireQueueSummary(state).filter((q) => q.status === 'pending').length,
@@ -919,14 +934,87 @@ function renderFleetShipRow(ship, galaxy, state) {
   return row;
 }
 
-function renderStrategicBuildButtons(container, state, systemId, planetId) {
+function renderStrategicBuildButtons(container, state, systemId, planetId, droneCtx = null) {
   if (!container) return;
   clearChildren(container);
-  if (!isPlayerOwned(state, systemId)) {
+  const owned = isPlayerOwned(state, systemId);
+  const outpostDroneCheck = !hasOutpost(state, systemId, planetId)
+    ? droneCtx?.canSendBuilderDrone?.(systemId, planetId, 'outpost')
+    : null;
+  const shipyardDroneCheck = hasOutpost(state, systemId, planetId) && !hasShipyard(state, systemId, planetId)
+    ? droneCtx?.canSendBuilderDrone?.(systemId, planetId, 'shipyard')
+    : null;
+  const hasDroneAction = !!(outpostDroneCheck?.ok || shipyardDroneCheck?.ok);
+  if (!owned && !hasDroneAction) {
     container.classList.add('hidden');
     return;
   }
   container.classList.remove('hidden');
+
+  if (hasDroneAction) {
+    const heading = document.createElement('div');
+    heading.className = 'intel-section-title';
+    heading.textContent = 'Builder Drones';
+    container.appendChild(heading);
+    const droneRows = [
+      ['outpost', 'Outpost', outpostDroneCheck],
+      ['shipyard', 'Shipyard', shipyardDroneCheck],
+    ];
+    for (const [type, label, check] of droneRows) {
+      if (!check?.ok) continue;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--block btn--sm';
+      btn.textContent = `Send Drone: ${label} (${check.totalCost} cr)`;
+      btn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, type);
+      container.appendChild(btn);
+    }
+  }
+
+  if (!owned) return;
+
+  const bodyRows = bodyStructureBuildRows(state, systemId, planetId);
+  const groups = [
+    ['surface', 'Surface Buildings'],
+    ['orbital', 'Orbital Buildings'],
+  ];
+  for (const [placement, title] of groups) {
+    const rows = bodyRows.filter((row) => row.placement === placement);
+    if (rows.length === 0) continue;
+    const heading = document.createElement('div');
+    heading.className = 'intel-section-title';
+    heading.textContent = title;
+    container.appendChild(heading);
+    for (const row of rows) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--block btn--sm';
+      btn.disabled = !row.check.ok;
+      btn.textContent = `${row.label} (${row.cost} cr)`;
+      btn.title = row.check.ok ? `${row.label} · ${placement}` : row.check.reason;
+      btn.onclick = () => {
+        const res = buildBodyStructure(state, systemId, planetId, row.type);
+        if (res.ok) toast(`${row.label} built`, 'ok');
+        else toast(res.reason, 'error');
+      };
+      container.appendChild(btn);
+
+      const droneCheck = droneCtx?.canSendBuilderDrone?.(systemId, planetId, row.type);
+      if (!row.check.ok && droneCheck?.ok) {
+        const droneBtn = document.createElement('button');
+        droneBtn.type = 'button';
+        droneBtn.className = 'btn btn--ghost btn--block btn--sm';
+        droneBtn.textContent = `Send Drone: ${row.label} (${droneCheck.totalCost} cr)`;
+        droneBtn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, row.type);
+        container.appendChild(droneBtn);
+      }
+    }
+  }
+
+  const strategicHeading = document.createElement('div');
+  strategicHeading.className = 'intel-section-title';
+  strategicHeading.textContent = 'Strategic Buildings';
+  container.appendChild(strategicHeading);
   const labels = {
     listening_post: 'Listening Post',
     lane_relay: 'Lane Relay',
@@ -961,6 +1049,8 @@ function renderFleetPanel(container, state, ctx) {
     doSelectBattleGroup,
     createBattleGroup,
     deleteBattleGroup,
+    builderDroneSummary,
+    cancelBuilderDrone,
   } = ctx;
   clearChildren(container);
   const galaxy = getGraph(state);
@@ -973,6 +1063,7 @@ function renderFleetPanel(container, state, ctx) {
   const queue = empireQueueSummary(state);
   const battleGroups = battleGroupsForGalaxy(state);
   const unassigned = unassignedPlayerShips(state);
+  const drones = builderDroneSummary?.(state);
 
   const stats = document.createElement('div');
   stats.className = 'fleet-stats';
@@ -982,10 +1073,55 @@ function renderFleetPanel(container, state, ctx) {
     <span>Ships: <strong>${readyShips}</strong>${transitShips ? ` +${transitShips} transit` : ''}</span>
     <span>Fleets: <strong>${battleGroups.length}</strong></span>
     <span>Scouts: <strong>${scouts.length}</strong></span>
+    <span>Drones: <strong>${drones?.unlocked ? `${drones.idle}/${drones.capacity}` : 'locked'}</strong></span>
     <span>Shipyards: <strong>${yards.length}</strong></span>
     <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
   `;
   container.appendChild(stats);
+
+  if (drones?.unlocked) {
+    const droneTitle = document.createElement('div');
+    droneTitle.className = 'intel-section-title fleet-section-header';
+    droneTitle.textContent = 'Builder Drones';
+    container.appendChild(droneTitle);
+    const droneList = document.createElement('div');
+    droneList.className = 'list';
+    for (const drone of drones.drones) {
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const icon = document.createElement('span');
+      icon.className = 'list-row__icon';
+      icon.style.background = drone.status === 'idle' ? 'var(--accent-green)' : 'var(--accent-gold)';
+      const main = document.createElement('span');
+      main.className = 'list-row__main';
+      const title = document.createElement('div');
+      title.className = 'list-row__title';
+      title.textContent = `${drone.id} · ${drone.status}`;
+      const sub = document.createElement('div');
+      sub.className = 'list-row__sub';
+      if (drone.status === 'building') {
+        sub.textContent = `${drone.buildType} · ${Math.round((drone.buildProgress ?? 0) * 100)}%`;
+      } else if (drone.etaMs != null) {
+        sub.textContent = `→ ${systemById(state, drone.targetSystemId)?.name ?? drone.targetSystemId ?? 'flagship'} · ${Math.ceil(drone.etaMs / 1000)}s`;
+      } else {
+        sub.textContent = `@ ${systemById(state, drone.systemId)?.name ?? drone.systemId ?? 'flagship'}`;
+      }
+      main.appendChild(title);
+      main.appendChild(sub);
+      row.appendChild(icon);
+      row.appendChild(main);
+      if (drone.status !== 'idle' && drone.status !== 'building') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn--ghost btn--xs';
+        btn.textContent = 'Cancel';
+        btn.onclick = () => cancelBuilderDrone?.(drone.id);
+        row.appendChild(btn);
+      }
+      droneList.appendChild(row);
+    }
+    container.appendChild(droneList);
+  }
 
   const groupsTitle = document.createElement('div');
   groupsTitle.className = 'intel-section-title fleet-section-header';
@@ -1128,7 +1264,7 @@ function renderFleetPanel(container, state, ctx) {
   const fleetHint = document.createElement('p');
   fleetHint.className = 'panel-note panel-note--muted';
   fleetHint.style.marginTop = '8px';
-  fleetHint.textContent = 'Alt+click a star on the galaxy map to dispatch the selected fleet. Shift+click still sends scouts.';
+  fleetHint.textContent = 'Click a map fleet to select it. Tab+click a star to dispatch the selected fleet. Shift+click still sends scouts.';
   container.appendChild(fleetHint);
 
   const unassignedTitle = document.createElement('div');
@@ -1464,6 +1600,10 @@ export function initUi(ctx) {
     enemyCombatPresence,
     battleSummaryForSystem,
     canQueueHull,
+    builderDroneSummary,
+    canSendBuilderDrone,
+    sendBuilderDrone,
+    cancelBuilderDrone,
     doBuildFoundry,
     doBuildLauncher,
     doEnterWormhole,
@@ -2221,7 +2361,10 @@ export function initUi(ctx) {
     } else if (!tradeCheck.ok && hasOutpost(state, viewedSystemId, planet.id)) note = tradeCheck.reason;
     else if (!researchCheck.ok && isPlayerOwned(state, viewedSystemId)) note = researchCheck.reason;
     else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
-    renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id);
+    renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id, {
+      canSendBuilderDrone,
+      sendBuilderDrone,
+    });
     el('build-panel-note').textContent = note;
   };
 

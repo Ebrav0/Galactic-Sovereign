@@ -47,28 +47,33 @@ function flagshipInSystem(state, systemId) {
 }
 
 // Returns {ok} or {ok:false, reason} — UI displays the reason verbatim.
-export function canBuildOutpost(state, systemId, planetId) {
+export function canBuildOutpost(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
-  if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
+  const remote = !!opts.remote;
+  if (!isPlayerOwned(state, systemId)) {
+    if (!remote || system.owner !== 'neutral') return { ok: false, reason: 'System not under your control' };
+  }
   const planet = findPlanet(state, systemId, planetId);
   if (!planet) return { ok: false, reason: 'No such planet' };
   if (planet.type === 'gas') return { ok: false, reason: 'Gas giants have no surface — orbital structures only' };
   if (planet.type === 'barren') return { ok: false, reason: 'Barren world — cannot support an outpost (v0)' };
   if (hasOutpost(state, systemId, planetId)) return { ok: false, reason: 'Outpost already built' };
-  if (!flagshipInSystem(state, systemId)) {
+  if (!remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (state.credits < OUTPOST_COST) return { ok: false, reason: `Need ${OUTPOST_COST} credits` };
+  if (!opts.ignoreCredits && state.credits < OUTPOST_COST) return { ok: false, reason: `Need ${OUTPOST_COST} credits` };
   return { ok: true };
 }
 
-export function buildOutpost(state, systemId, planetId) {
-  const check = canBuildOutpost(state, systemId, planetId);
+export function buildOutpost(state, systemId, planetId, opts = {}) {
+  const check = canBuildOutpost(state, systemId, planetId, opts);
   if (!check.ok) return check;
 
-  state.credits -= OUTPOST_COST;
-  systemById(state, systemId).structures.push({
+  if (!opts.alreadyPaid) state.credits -= OUTPOST_COST;
+  const system = systemById(state, systemId);
+  if (opts.remote && system.owner === 'neutral') system.owner = 'player';
+  system.structures.push({
     id: allocateStructureId(),
     type: 'outpost',
     bodyId: planetId,

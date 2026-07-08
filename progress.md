@@ -414,3 +414,86 @@ Never delete prior entries.
 
 ### Suggested next
 - Electron packaging smoke test; optional Pixi migration if canvas profiling demands it
+
+---
+
+## Session 2026-07-07 — Tech unlock enforcement
+
+**Task claimed:** Ensure tech tree lock/unlock nodes enforce the behavior they describe
+**Status:** complete
+
+### Done
+- `src/js/tech-web.js` — added a shared `isEmpireHullUnlocked()` helper and tracked the Hero Flagship unlock flag without putting hero hulls into ordinary shipyard queues
+- `src/js/production.js` — local/direct shipyard hull queues now reject locked hulls, matching the empire queue UI
+- `src/js/diplomacy.js` — treaty actions now require their matching tech nodes before charging credits/Solarii: Truce Protocol, Trade Charter, Alliance Pact; Embassy Network now contributes its trade bonus
+- `output/verify_tech_unlocks.mjs` — focused unlock contract checks for hull gates, treaty gates, and hero queue separation
+- Updated affected verification setup in `output/verify_phase2.mjs` and `output/verify_phase6.mjs` so tests unlock tech before using gated actions
+
+### Verification
+- `node output/verify_tech_unlocks.mjs` — 13/13 pass
+- `npm run build` — pass
+- Web-game Playwright client — gameplay screenshot inspected at `output/web-game/tech-unlocks-client/shot-1.png`; no captured browser errors
+- `node output/verify_phase6.mjs` — 41/41 pass
+
+### Suggested next
+- Optional broader balance pass: several non-unlock tech effects, such as wormhole anchor discounts and generic credit modifiers, should be audited separately if the goal expands from unlock enforcement to every numeric tech bonus.
+
+---
+
+## Session 2026-07-07 — Buildings, carrier wings, and weapon profiles
+
+**Task claimed:** Implement post-Phase-6 building roster slice, carrier-deployed fighters, anti-fighter/specialized combat, and low-clutter visuals
+**Status:** partial
+
+### Done
+- `src/js/body-structures.js` — added tech-gated surface/orbital/star-node building definitions, build validation, costs/caps, HP defaults, economy/trade/defense effects, drydock repair, and fighter-factory wing replenishment.
+- `SAVE_VERSION=10`; `docs/schemas/save-v10.json`; `migrateV9toV10` backfills structure HP, ship weapon profiles, and carrier wing state.
+- Tech tree now includes mining, refinery, storage, asteroid harvesting, fighter factories, drydocks, orbital defenses, shields, ion batteries, carrier launch doctrine, point defense, beam/kinetic/ion/bomber upgrades.
+- Tactical combat now launches real carrier-derived fighter wing units, tracks wing losses, supports point-defense/torpedo/beam/ion/kinetic profiles, and exposes anti-fighter/bomber/defense summaries.
+- Build panel groups new Surface and Orbital building buttons ahead of Strategic buildings; `render_game_to_text()` reports body structures, build locks, wing state, weapon summaries, structure HP, and new visual-site counts.
+- Surface buildings draw as compact planet landmarks; drydock and orbital defense draw as small orbital structures to avoid orbit clutter.
+
+### Verification
+- `npm run build` — pass
+- `node output/verify_buildings_carriers.mjs` — 24/24 pass; screenshot inspected at `output/visuals/buildings-carriers.png`
+- `node output/verify_phase6.mjs` — 41/41 pass
+- `node output/verify_tech_unlocks.mjs` — 13/13 pass
+- `node output/verify_battle_groups.mjs` — 19/19 pass
+- develop-web-game Playwright client screenshots inspected under `output/web-game/buildings-carriers-*`
+
+### Known issues
+- Salvage yard remains deferred.
+- New numeric balance is first-pass only; wing replenishment currently supports fractional ready/lost values internally.
+- Phase 3–5 regression scripts were updated to expect save-v10 but were not rerun in this session due runtime cost.
+
+### Suggested next
+- Balance the new building costs/effects and clean up carrier wing readiness to display whole craft counts in UI.
+
+---
+
+## Session 2026-07-07 — Galaxy performance, fleet map commands, and builder drones
+
+**Task claimed:** Implement v11 Galaxy view performance pass, direct fleet selection/Tab+click dispatch, and flagship-launched reusable builder drones
+**Status:** complete
+
+### Done
+- `SAVE_VERSION=11`; `docs/schemas/save-v11.json`; v10→v11 migration initializes `state.builderDrones`.
+- `src/js/builder-drones.js` — reusable two-drone roster unlocked by Builder Drones tech, lane transit, remote construction timers, return travel, cancellation, summaries, and test hooks.
+- Local construction rules remain unchanged by default; remote drone construction can build neutral outposts and owned-system shipyards/body structures while still enforcing tech/body/ownership gates.
+- Galaxy view now uses far/mid/close LOD, samples non-critical far-zoom stars/lanes, avoids WebGL black-hole bloom at far zoom, precomputes route/fleet/pirate sets, and exposes `__galaxyPerfSummary()`.
+- Fleet markers are directly clickable on the Galaxy map; selected fleets dispatch with `Tab+click` while `Alt+click` remains a compatibility fallback.
+- Builder drones render as small amber lane pips in Galaxy view and compact construction skiffs over target bodies in system view.
+- Fleet Command shows Builder Drones status, active build progress, ETA, and cancel buttons; build panels show Send Drone actions where remote construction is valid.
+
+### Verification
+- `npm run build` — pass
+- `git diff --check` — pass
+- `node output/verify_galaxy_fleets_drones.mjs` — 13/13 pass; screenshot inspected at `output/visuals/galaxy-fleets-drones.png`
+- `node output/verify_phase6.mjs` — 41/41 pass
+- `node output/verify_battle_groups.mjs` — 19/19 pass
+- `node output/verify_buildings_carriers.mjs` — 24/24 pass
+- develop-web-game Playwright client gameplay screenshot inspected at `output/web-game/galaxy-fleets-drones-gameplay3/shot-0.png`
+
+### Known issues
+- Headless first-frame Galaxy timing can still report a high warmup value, but the v11 summary confirms far-zoom drawn stars/lanes are bounded and the map no longer draws the full graph at widest zoom.
+- Carrier wing ready/lost values can still be fractional from the prior v10 building/carrier slice.

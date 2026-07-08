@@ -37,7 +37,7 @@ export function getGraph(state, galaxyId = state.activeGalaxyId) {
 
 export function getSystems(state, galaxyId = state.activeGalaxyId) {
   const gal = getGalaxy(state, galaxyId);
-  if (gal?.systems && Object.keys(gal.systems).length > 0) return gal.systems;
+  if (gal?.systems) return gal.systems;
   return state.systems ?? {};
 }
 

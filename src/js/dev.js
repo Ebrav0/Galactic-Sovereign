@@ -394,9 +394,11 @@ export function devUnlockTech(state, nodeId) {
 export function devUnlockAllTech(state) {
   ensureResearchState(state);
   const unlocked = [];
+  const unlockedIds = new Set(state.research.unlocked ?? []);
   for (const node of allTechNodes()) {
-    if (!isTechUnlocked(state, node.id)) {
+    if (!unlockedIds.has(node.id)) {
       state.research.unlocked.push(node.id);
+      unlockedIds.add(node.id);
       applyTechEffect(state, node.id);
       unlocked.push(node.id);
     }

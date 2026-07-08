@@ -12,7 +12,7 @@ try {
   ({ chromium } = createRequire(path.join(__dir, '../package.json'))('playwright'));
 }
 
-const SAVE_VERSION = 9;
+const SAVE_VERSION = 11;
 
 const results = [];
 const check = (name, cond, detail = '') => {
@@ -184,7 +184,7 @@ await page.evaluate(() => window.__saveSlot('slot-1'));
 await page.evaluate(() => window.__newGame(99));
 await page.evaluate(() => window.__loadSlot('slot-1'));
 snap = await text();
-check('4.1 save version 9', snap.saveVersion === SAVE_VERSION, `version=${snap.saveVersion}`);
+check('4.1 save version 11', snap.saveVersion === SAVE_VERSION, `version=${snap.saveVersion}`);
 check('4.2 load restores battle groups',
   snap.battleGroups.length >= 1 && snap.battleGroups.some((g) => g.shipIds.includes('save-ship')));
 

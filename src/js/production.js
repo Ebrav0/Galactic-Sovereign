@@ -6,7 +6,7 @@ import {
   SCOUT_BUILD_MS,
   SHIPYARD_COMBAT_HULLS,
 } from './constants.js';
-import { hullStats } from './hull.js';
+import { hullStats, hullQueueCost, shipyardStructureCost } from './hull.js';
 import { getSystems } from './galaxy-scope.js';
 import {
   systemById,
@@ -23,6 +23,7 @@ import {
   completeQueueItem,
   shipyardSlots,
 } from './empire-queue.js';
+import { isEmpireHullUnlocked } from './tech-web.js';
 
 function flagshipInSystem(state, systemId) {
   const f = state.flagship;
@@ -30,7 +31,7 @@ function flagshipInSystem(state, systemId) {
     && f.systemId === systemId && !f.transit && !f.wormholeTransit;
 }
 
-export function canBuildShipyard(state, systemId, planetId) {
+export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
@@ -39,18 +40,18 @@ export function canBuildShipyard(state, systemId, planetId) {
   if (planet.type === 'gas') return { ok: false, reason: 'Gas giants have no surface — orbital structures only' };
   if (planet.type === 'barren') return { ok: false, reason: 'Barren world — cannot support a shipyard (v0)' };
   if (hasShipyard(state, systemId, planetId)) return { ok: false, reason: 'Shipyard already built' };
-  if (!flagshipInSystem(state, systemId)) {
+  if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (state.credits < SHIPYARD_COST) return { ok: false, reason: `Need ${SHIPYARD_COST} credits` };
+  if (!opts.ignoreCredits && state.credits < SHIPYARD_COST) return { ok: false, reason: `Need ${SHIPYARD_COST} credits` };
   return { ok: true };
 }
 
-export function buildShipyard(state, systemId, planetId) {
-  const check = canBuildShipyard(state, systemId, planetId);
+export function buildShipyard(state, systemId, planetId, opts = {}) {
+  const check = canBuildShipyard(state, systemId, planetId, opts);
   if (!check.ok) return check;
 
-  state.credits -= SHIPYARD_COST;
+  if (!opts.alreadyPaid) state.credits -= SHIPYARD_COST;
   systemById(state, systemId).structures.push({
     id: allocateStructureId(),
     type: 'shipyard',
@@ -87,6 +88,7 @@ export function canQueueScout(state, shipyardId, systemId) {
 export function canQueueHull(state, shipyardId, systemId, hull) {
   if (hull === 'scout') return canQueueScout(state, shipyardId, systemId);
   if (!SHIPYARD_COMBAT_HULLS.includes(hull)) return { ok: false, reason: 'Hull not available at shipyard' };
+  if (!isEmpireHullUnlocked(state, hull)) return { ok: false, reason: 'Hull not unlocked' };
   return canQueueHullType(state, shipyardId, systemId, hull);
 }
 

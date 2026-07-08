@@ -26,6 +26,22 @@ export const TECH_NODES = {
     id: 'eco_moon_rights', cluster: 'economy', name: 'Lunar Claim Charters',
     prereqs: ['eco_outpost_2', 'eco_miner_hull'], creditCost: 550, solariiCost: 0, researchMs: 50000, effect: 'moon_yield_10',
   },
+  eco_mining_complex: {
+    id: 'eco_mining_complex', cluster: 'economy', name: 'Mining Complexes',
+    prereqs: ['eco_miner_hull'], creditCost: 520, solariiCost: 0, researchMs: 50000, effect: 'unlock_mining_complex',
+  },
+  eco_refinery: {
+    id: 'eco_refinery', cluster: 'economy', name: 'Refinery Chains',
+    prereqs: ['eco_mining_complex', 'trade_tariff_law'], creditCost: 720, solariiCost: 0, researchMs: 56000, effect: 'unlock_refinery',
+  },
+  eco_storage_depot: {
+    id: 'eco_storage_depot', cluster: 'economy', name: 'Storage Depots',
+    prereqs: ['eco_refinery'], creditCost: 760, solariiCost: 1, researchMs: 62000, effect: 'unlock_storage_depot',
+  },
+  eco_asteroid_harvester: {
+    id: 'eco_asteroid_harvester', cluster: 'economy', name: 'Asteroid Harvesters',
+    prereqs: ['eco_mining_complex', 'wh_scout_range'], creditCost: 680, solariiCost: 1, researchMs: 62000, effect: 'unlock_asteroid_harvester',
+  },
   eco_trade_hub: {
     id: 'eco_trade_hub', cluster: 'economy', name: 'Trade Hub Protocol',
     prereqs: ['eco_outpost_2', 'trade_tariff_law'], creditCost: 600, solariiCost: 0, researchMs: 54000, effect: 'unlock_trade_station',
@@ -92,6 +108,14 @@ export const TECH_NODES = {
     id: 'mil_torpedo_bays', cluster: 'military', name: 'Torpedo Bays',
     prereqs: ['mil_destroyer_unlock'], creditCost: 1000, solariiCost: 1, researchMs: 62000, effect: 'destroyer_dps_10',
   },
+  mil_point_defense: {
+    id: 'mil_point_defense', cluster: 'military', name: 'Point Defense Grid',
+    prereqs: ['mil_patrol_cutter'], creditCost: 850, solariiCost: 1, researchMs: 60000, effect: 'point_defense_20',
+  },
+  mil_kinetic_batteries: {
+    id: 'mil_kinetic_batteries', cluster: 'military', name: 'Kinetic Batteries',
+    prereqs: ['mil_frigate_unlock'], creditCost: 900, solariiCost: 1, researchMs: 62000, effect: 'kinetic_damage_10',
+  },
   mil_light_carrier: {
     id: 'mil_light_carrier', cluster: 'military', name: 'Light Carrier',
     prereqs: ['mil_parallel_dock', 'mil_frigate_unlock'], creditCost: 1400, solariiCost: 2, researchMs: 78750, effect: 'unlock_light_carrier_queue',
@@ -100,13 +124,33 @@ export const TECH_NODES = {
     id: 'mil_hangar_deck', cluster: 'military', name: 'Hangar Decks',
     prereqs: ['mil_light_carrier'], creditCost: 1600, solariiCost: 2, researchMs: 80000, effect: 'carrier_dps_10',
   },
+  mil_carrier_launch_doctrine: {
+    id: 'mil_carrier_launch_doctrine', cluster: 'military', name: 'Carrier Launch Doctrine',
+    prereqs: ['mil_light_carrier'], creditCost: 1500, solariiCost: 2, researchMs: 78000, effect: 'carrier_wings',
+  },
+  mil_interceptor_screens: {
+    id: 'mil_interceptor_screens', cluster: 'military', name: 'Interceptor Screens',
+    prereqs: ['mil_carrier_launch_doctrine', 'mil_hangar_deck'], creditCost: 1700, solariiCost: 2, researchMs: 82000, effect: 'point_defense_20',
+  },
+  mil_bomber_bays: {
+    id: 'mil_bomber_bays', cluster: 'military', name: 'Bomber Bays',
+    prereqs: ['mil_carrier_launch_doctrine', 'mil_torpedo_bays'], creditCost: 1900, solariiCost: 3, researchMs: 90000, effect: 'bomber_damage_20',
+  },
   mil_cruiser_unlock: {
     id: 'mil_cruiser_unlock', cluster: 'military', name: 'Cruiser Blueprints',
     prereqs: ['mil_frigate_unlock', 'mil_armor_alloy'], creditCost: 1500, solariiCost: 2, researchMs: 78750, effect: 'unlock_cruiser_queue',
   },
+  mil_beam_lances: {
+    id: 'mil_beam_lances', cluster: 'military', name: 'Beam Lances',
+    prereqs: ['mil_cruiser_unlock', 'mega_shell_precision'], creditCost: 1800, solariiCost: 3, researchMs: 92000, effect: 'beam_damage_15',
+  },
   mil_battleship_unlock: {
     id: 'mil_battleship_unlock', cluster: 'military', name: 'Battleship Hulls',
     prereqs: ['mil_cruiser_unlock', 'mil_torpedo_bays'], creditCost: 2000, solariiCost: 3, researchMs: 90000, effect: 'unlock_battleship_queue',
+  },
+  mil_ion_disruptors: {
+    id: 'mil_ion_disruptors', cluster: 'military', name: 'Ion Disruptors',
+    prereqs: ['mil_beam_lances', 'mega_orbital_shield'], creditCost: 2100, solariiCost: 4, researchMs: 100000, effect: 'ion_damage_15',
   },
   mil_siege_platform: {
     id: 'mil_siege_platform', cluster: 'military', name: 'Siege Platforms',
@@ -143,6 +187,26 @@ export const TECH_NODES = {
   mil_tri_dock: {
     id: 'mil_tri_dock', cluster: 'military', name: 'Tri-Stream Docking',
     prereqs: ['mil_parallel_dock', 'mega_foundry_3'], creditCost: 2000, solariiCost: 3, researchMs: 90000, effect: 'shipyard_slots_3',
+  },
+  mil_fighter_factory: {
+    id: 'mil_fighter_factory', cluster: 'military', name: 'Fighter Factories',
+    prereqs: ['mil_carrier_launch_doctrine', 'eco_industrial_chain'], creditCost: 1500, solariiCost: 2, researchMs: 85000, effect: 'unlock_fighter_factory',
+  },
+  mil_drydock: {
+    id: 'mil_drydock', cluster: 'military', name: 'Orbital Drydocks',
+    prereqs: ['mil_field_hospital', 'mil_parallel_dock'], creditCost: 1200, solariiCost: 2, researchMs: 78000, effect: 'unlock_drydock',
+  },
+  mil_orbital_defense: {
+    id: 'mil_orbital_defense', cluster: 'military', name: 'Orbital Defense Platforms',
+    prereqs: ['mil_point_defense', 'mil_drydock'], creditCost: 1500, solariiCost: 3, researchMs: 90000, effect: 'unlock_orbital_defense',
+  },
+  mil_shield_generator: {
+    id: 'mil_shield_generator', cluster: 'military', name: 'Planetary Shield Generators',
+    prereqs: ['mil_orbital_defense', 'mega_orbital_shield'], creditCost: 1900, solariiCost: 4, researchMs: 105000, effect: 'unlock_planetary_shield',
+  },
+  mil_ion_battery: {
+    id: 'mil_ion_battery', cluster: 'military', name: 'Ion Batteries',
+    prereqs: ['mil_ion_disruptors', 'mil_shield_generator'], creditCost: 2200, solariiCost: 5, researchMs: 112500, effect: 'unlock_ion_battery',
   },
 
   // ─── Megastructure / Dyson ───

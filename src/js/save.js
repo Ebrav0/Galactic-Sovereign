@@ -14,6 +14,9 @@ import {
 } from './galaxy-scope.js';
 import { generateGalaxySystems } from './hydration.js';
 import { seedAiFaction } from './ai-faction.js';
+import { ensureStructureCombatFields } from './body-structures.js';
+import { defaultWeaponProfileForHull, normalizeCarrierWingState } from './hull.js';
+import { initBuilderDrones } from './builder-drones.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -64,6 +67,8 @@ function migrateSave(envelope) {
   if (e.saveVersion === 6) e = migrateV6toV7(e);
   if (e.saveVersion === 7) e = migrateV7toV8(e);
   if (e.saveVersion === 8) e = migrateV8toV9(e);
+  if (e.saveVersion === 9) e = migrateV9toV10(e);
+  if (e.saveVersion === 10) e = migrateV10toV11(e);
   return e;
 }
 
@@ -450,6 +455,62 @@ function migrateV8toV9(envelope) {
   };
 }
 
+function initPostPhase6BuildingsAndCombat(state) {
+  for (const gal of Object.values(state.galaxies ?? {})) {
+    for (const system of Object.values(gal.systems ?? {})) {
+      for (const structure of system.structures ?? []) {
+        ensureStructureCombatFields(state, system.id, structure);
+      }
+    }
+  }
+
+  for (const ship of state.playerShips ?? []) {
+    ship.weaponProfile = ship.weaponProfile ?? defaultWeaponProfileForHull(ship.hull);
+    normalizeCarrierWingState(ship, state);
+  }
+  for (const ship of state.aiShips ?? []) {
+    ship.weaponProfile = ship.weaponProfile ?? defaultWeaponProfileForHull(ship.hull);
+    normalizeCarrierWingState(ship, state);
+  }
+  for (const fleet of state.pirates?.fleets ?? []) {
+    for (const ship of fleet.ships ?? []) {
+      ship.weaponProfile = ship.weaponProfile ?? defaultWeaponProfileForHull(ship.hull);
+      normalizeCarrierWingState(ship, state);
+    }
+  }
+}
+
+// v9 -> v10 (post-Phase-6 buildings, carrier wings, weapon profiles).
+function migrateV9toV10(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+  initPostPhase6BuildingsAndCombat(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 10,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v10 -> v11 (galaxy performance hooks, map fleet selection, builder drones).
+function migrateV10toV11(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+  initPostPhase6BuildingsAndCombat(state);
+  initBuilderDrones(state);
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 11,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -486,6 +547,8 @@ export function deserialize(envelopeJson) {
 
   initPhase5State(envelope.state);
   initPhase6State(envelope.state);
+  initPostPhase6BuildingsAndCombat(envelope.state);
+  initBuilderDrones(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
 
   return { ok: true, state: envelope.state };

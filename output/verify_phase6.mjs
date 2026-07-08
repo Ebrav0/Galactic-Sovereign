@@ -46,7 +46,7 @@ await page.evaluate(() => window.__newGame(42));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 9', s.saveVersion === 9);
+check('1.1 saveVersion is 11', s.saveVersion === 11);
 check('1.2 milestones object', s.milestones != null);
 check('1.3 campaign object', s.campaign != null);
 check('1.4 diplomacy object', s.diplomacy != null);
@@ -84,7 +84,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-v8',
 })), [v8Json, crc32(v8Json)]);
 await page.evaluate(() => window.__loadSlot('slot-v8'));
 s = await text();
-check('1.9 v8 migrates to v9', s.saveVersion === 9 && s.milestones != null);
+check('1.9 v8 migrates to v11', s.saveVersion === 11 && s.milestones != null);
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));
@@ -163,6 +163,9 @@ check('6.2 hero in summary', s.heroFlagships.length >= 1);
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));
+await page.evaluate(() => {
+  window.getGameState().research.unlocked.push('dip_truce_protocol', 'dip_trade_charter');
+});
 const treaty = await page.evaluate(() => window.__offerTreaty('ai-0', 'trade'));
 check('7.1 trade treaty', treaty.ok);
 s = await text();
@@ -242,11 +245,15 @@ check('8.2 manual routes in summary', routeSetup.count >= 1);
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));
+await page.evaluate(() => {
+  window.getGameState().research.unlocked.push('dip_truce_protocol');
+});
 const truce = await page.evaluate(() => window.__offerTreaty('ai-0', 'truce'));
 check('7.3 truce treaty', truce.ok);
 const alliance = await page.evaluate(() => {
   window.getGameState().credits = 5000;
   window.getGameState().solarii = 10;
+  window.getGameState().research.unlocked.push('dip_alliance_pact');
   return window.__offerTreaty('ai-0', 'alliance');
 });
 check('7.4 alliance treaty', alliance.ok);

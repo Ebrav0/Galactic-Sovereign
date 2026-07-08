@@ -3,7 +3,30 @@
 import { neighborsOf } from './galaxy.js';
 import { systemById, isPlayerOwned } from './state.js';
 import { getGalaxyIntel, getGraph, getSystems } from './galaxy-scope.js';
-import { listeningPostCount } from './strategic-structures.js';
+
+const listeningCoverageCache = new WeakMap();
+
+export function invalidateIntelCache(state) {
+  listeningCoverageCache.delete(state);
+}
+
+function listeningPostCoverage(state) {
+  const galaxyId = state.activeGalaxyId;
+  const cached = listeningCoverageCache.get(state);
+  if (cached && cached.galaxyId === galaxyId && cached.time === state.time) return cached.coverage;
+
+  const graph = getGraph(state);
+  const coverage = new Set();
+  if (graph) {
+    for (const system of Object.values(getSystems(state))) {
+      if (!isPlayerOwned(state, system.id)) continue;
+      if (!system.structures?.some((s) => s.type === 'listening_post')) continue;
+      for (const neighborId of neighborsOf(graph, system.id)) coverage.add(neighborId);
+    }
+  }
+  listeningCoverageCache.set(state, { galaxyId, time: state.time, coverage });
+  return coverage;
+}
 
 export function hasIntel(state, systemId) {
   if (systemId === state.stronghold) return true;
@@ -11,13 +34,7 @@ export function hasIntel(state, systemId) {
 
   const graph = getGraph(state);
   if (!graph) return false;
-
-  for (const system of Object.values(getSystems(state))) {
-    if (!isPlayerOwned(state, system.id)) continue;
-    if (listeningPostCount(state, system.id) <= 0) continue;
-    if (neighborsOf(graph, system.id).includes(systemId)) return true;
-  }
-  return false;
+  return listeningPostCoverage(state).has(systemId);
 }
 
 export function gatherIntel(state, systemId) {

@@ -193,6 +193,61 @@ export function drawSailLauncher(ctx, x, y, scale, site, time = 0) {
   ctx.restore();
 }
 
+export function drawDrydockStation(ctx, x, y, scale, site, time = 0) {
+  const r = SHIPYARD_WORLD_RADIUS * 0.72 * scale;
+  const pulse = site.active ? 0.55 + 0.45 * Math.sin(time / 520 + site.seed) : 0.25;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(site.hubHeading);
+  ctx.globalAlpha = site.active ? 1 : 0.6;
+  ctx.strokeStyle = hexToRgba('#7ddfff', 0.55 + pulse * 0.25);
+  ctx.lineWidth = Math.max(0.8, 1.2 * scale);
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.7, Math.PI * 0.18, Math.PI * 1.82);
+  ctx.stroke();
+  for (let i = -1; i <= 1; i++) {
+    const yOff = i * r * 0.42;
+    ctx.strokeStyle = i === 0 ? hexToRgba('#d8f4ff', 0.55) : hexToRgba(THEME.accentCyan, 0.5);
+    ctx.beginPath();
+    ctx.moveTo(-r * 1.05, yOff);
+    ctx.lineTo(r * 1.05, yOff);
+    ctx.stroke();
+  }
+  ctx.fillStyle = `rgba(125, 223, 255, ${0.16 + pulse * 0.18})`;
+  ctx.fillRect(-r * 0.46, -r * 0.16, r * 0.92, r * 0.32);
+  ctx.restore();
+}
+
+export function drawOrbitalDefensePlatform(ctx, x, y, scale, site, time = 0) {
+  const r = SHIPYARD_WORLD_RADIUS * 0.48 * scale;
+  const pulse = site.active ? 0.5 + 0.5 * Math.sin(time / 360 + site.seed) : 0.2;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(site.hubHeading + time / 1800);
+  ctx.globalAlpha = site.active ? 1 : 0.58;
+  drawHubRing(
+    ctx,
+    r,
+    hexToRgba('#ff6f7d', 0.65),
+    'rgba(28, 18, 26, 0.92)',
+    Math.max(0.8, scale),
+  );
+  ctx.strokeStyle = hexToRgba('#ffd8de', 0.55 + pulse * 0.25);
+  ctx.lineWidth = Math.max(0.9, 1.3 * scale);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r * 0.42, Math.sin(a) * r * 0.42);
+    ctx.lineTo(Math.cos(a) * r * 1.45, Math.sin(a) * r * 1.45);
+    ctx.stroke();
+  }
+  ctx.fillStyle = `rgba(255, 111, 125, ${0.14 + pulse * 0.22})`;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 export function drawLaunchMuzzleFlash(ctx, site, scale, camera, canvas, worldToScreen) {
   if (!site.firing) return;
   const fade = 1 - (site.fireAge ?? 0) / LAUNCHER_BURST_MS;

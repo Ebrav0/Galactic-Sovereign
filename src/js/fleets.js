@@ -60,7 +60,7 @@ export function stationedShipPose(state, system, ship, idx, total, time = state.
 
 export function spawnPlayerShip(state, systemId, hull, anchorBodyId = null) {
   const ship = {
-    ...createShipInstance(`ship-${nextShipId++}`, hull),
+    ...createShipInstance(`ship-${nextShipId++}`, hull, state),
     galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,

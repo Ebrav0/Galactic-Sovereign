@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 11;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -54,6 +54,21 @@ export const HULL_STATS = {
 /** Carrier-supplied wing craft — not built at shipyards. */
 export const CARRIER_WING_HULLS = ['fighter', 'interceptor', 'heavy_fighter', 'bomber'];
 
+export const CARRIER_WING_SPECS = {
+  light_carrier: { interceptor: 3, fighter: 2 },
+  fleet_carrier: { interceptor: 4, fighter: 3, heavy_fighter: 2 },
+  super_carrier: { interceptor: 5, fighter: 4, heavy_fighter: 3, bomber: 3 },
+};
+
+export const WEAPON_PROFILES = {
+  point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 2.8, antiCapital: 0.55, structure: 0.35 },
+  kinetic: { label: 'Kinetic Batteries', range: 280, cooldownMs: 760, antiFighter: 0.85, antiCapital: 1.0, structure: 0.9 },
+  torpedo: { label: 'Torpedo Bays', range: 340, cooldownMs: 1100, antiFighter: 0.25, antiCapital: 1.65, structure: 1.7 },
+  beam_lance: { label: 'Beam Lance', range: 360, cooldownMs: 980, antiFighter: 0.7, antiCapital: 1.35, structure: 1.15 },
+  ion: { label: 'Ion Disruptor', range: 300, cooldownMs: 900, antiFighter: 1.25, antiCapital: 1.45, structure: 0.75, disrupt: 0.28 },
+  repair: { label: 'Repair Drones', range: 230, cooldownMs: 600, antiFighter: 0, antiCapital: 0, structure: 0 },
+};
+
 export const COMBAT_HULL_TYPES = [
   'corvette', 'patrol_cutter', 'frigate', 'destroyer', 'cruiser', 'battleship', 'dreadnought',
   'light_carrier', 'fleet_carrier', 'super_carrier', 'healer', 'sensor_ship', 'builder_ship',
@@ -77,6 +92,16 @@ export const SHIP_LANE_SPEED = 100;
 export const FLEET_STATION_ORBIT_PAD = 300;   // min distance beyond star edge for idle formation
 export const FLEET_STATION_BODY_PAD = 95;     // orbit offset from shipyard planet
 export const SHIP_LANE_MIN_LEG_MS = 2000;
+
+// --- Flagship builder drones ---
+export const BUILDER_DRONE_CAPACITY = 2;
+export const BUILDER_DRONE_DEPLOY_COST = 40;
+export const BUILDER_DRONE_LANE_SPEED = 150;
+export const BUILDER_DRONE_LANE_MIN_LEG_MS = 1500;
+export const BUILDER_DRONE_BUILD_TIME_MULT = 1.25;
+export const BUILDER_DRONE_OUTPOST_BUILD_MS = 12000;
+export const BUILDER_DRONE_SHIPYARD_BUILD_MS = 18000;
+export const BUILDER_DRONE_BODY_STRUCTURE_BUILD_MS = 14000;
 
 // --- Ship motion (ambient patrol + keep-out) ---
 export const STAR_KEEP_OUT_PAD = 120;
@@ -110,6 +135,9 @@ export const HEALER_AUTO_COEF = 0.25;
 // --- Pirates (Phase 2 test faction) ---
 export const PIRATE_FLEET_COUNT = 2;
 export const PIRATE_WANDER_MS = 45000;
+export const PIRATE_RAID_CHANCE = 0.7;
+export const PIRATE_RAID_MAX_HOPS = 5;
+export const PIRATE_INTERDICTION_PROGRESS_DELTA = 0.16;
 export const PIRATE_RESPAWN_MS = 120000;
 export const PIRATE_LANE_SPEED = 85;
 export const PIRATE_LANE_MIN_LEG_MS = 2200;
@@ -132,9 +160,18 @@ export const CAPTURE_PER_PLANET = 1;
 export const CAPTURE_PER_MOON = 0.5;
 export const CAPTURE_STRUCTURE_WEIGHT = {
   outpost: 2,
+  mining_complex: 2,
+  refinery: 3,
+  storage_depot: 2,
+  fighter_factory: 4,
+  planetary_shield: 5,
+  ion_battery: 4,
   shipyard: 4,
+  drydock: 4,
+  orbital_defense: 5,
   sail_foundry: 6,
   dyson_launcher: 3,
+  asteroid_harvester: 2,
   trade_station: 3,
   research_station: 4,
   listening_post: 1,
@@ -287,6 +324,23 @@ export const RESEARCH_BASE_MS = 45000;
 export const TRADE_STATION_COST = 450;
 export const TRADE_BASE_INCOME = 1.5;
 export const TRADE_CONNECTIVITY_BONUS = 0.1;
+export const MINING_COMPLEX_COST = 360;
+export const REFINERY_COST = 520;
+export const STORAGE_DEPOT_COST = 420;
+export const FIGHTER_FACTORY_COST = 650;
+export const PLANETARY_SHIELD_COST = 900;
+export const ION_BATTERY_COST = 760;
+export const DRYDOCK_COST = 700;
+export const ORBITAL_DEFENSE_COST = 850;
+export const ASTEROID_HARVESTER_COST = 480;
+export const MINING_COMPLEX_INCOME_BONUS = 0.35;
+export const REFINERY_TRADE_BONUS = 0.22;
+export const STORAGE_BLOCKADE_REDUCTION = 0.18;
+export const FIGHTER_FACTORY_REPLENISH_PER_SEC = 0.08;
+export const DRYDOCK_REPAIR_PER_SEC = 4;
+export const ORBITAL_DEFENSE_POWER = 32;
+export const SHIELD_STRUCTURE_HP_MULT = 1.35;
+export const ION_BATTERY_POWER = 26;
 export const SHELL_TRADE_BONUS = 1.25;
 export const SHELL_RESEARCH_BONUS = 1.2;
 export const AI_STARTING_CREDITS = 1200;

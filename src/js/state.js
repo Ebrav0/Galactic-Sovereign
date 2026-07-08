@@ -339,6 +339,7 @@ export function createNewGame(seed) {
       orbit: null,
     },
     scouts: [],
+    builderDrones: [],
     playerShips: [],
     battleGroups: [],
     pirates: { fleets: [], pendingRespawn: [] },

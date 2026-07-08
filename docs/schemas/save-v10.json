@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 10",
+  "description": "Post-Phase-6 buildings, carrier wing state, structure HP, and weapon profiles.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 10 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "scouts", "playerShips", "battleGroups", "pirates",
+        "systemBattles", "battleStance", "solarii", "solariiUnlocked",
+        "empireQueue", "research", "factions", "aiShips",
+        "milestones", "campaign", "diplomacy", "superweapon", "heroFlagships", "manualTradeRoutes"
+      ],
+      "properties": {
+        "playerShips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "weaponProfile": { "type": "string" },
+              "wingState": { "type": "object" }
+            }
+          }
+        },
+        "galaxies": { "type": "object" },
+        "milestones": { "type": "object" },
+        "campaign": { "type": "object" },
+        "diplomacy": { "type": "object" },
+        "superweapon": { "type": "object" },
+        "heroFlagships": { "type": "array" },
+        "manualTradeRoutes": { "type": "array" },
+        "battleGroups": { "type": "array" }
+      }
+    }
+  }
+}
