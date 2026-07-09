@@ -5,6 +5,7 @@ import {
   SCOUT_HULL_COST,
   SCOUT_BUILD_MS,
   SHIPYARD_COMBAT_HULLS,
+  STRUCTURE_BUILD_MS,
 } from './constants.js';
 import { hullStats, hullQueueCost, shipyardStructureCost } from './hull.js';
 import { getSystems } from './galaxy-scope.js';
@@ -14,6 +15,8 @@ import {
   hasShipyard,
   findStructure,
   isPlayerOwned,
+  isStructureActive,
+  pendingStructureOnBody,
 } from './state.js';
 import { allocateStructureId } from './economy.js';
 import { spawnScout } from './scout.js';
@@ -23,13 +26,9 @@ import {
   completeQueueItem,
   shipyardSlots,
 } from './empire-queue.js';
+import { flagshipInSystem } from './flagship-presence.js';
+import { hasPendingJob, queueConstructionJob } from './drones.js';
 import { isEmpireHullUnlocked } from './tech-web.js';
-
-function flagshipInSystem(state, systemId) {
-  const f = state.flagship;
-  return f.galaxyId === state.activeGalaxyId
-    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
-}
 
 export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
@@ -40,6 +39,12 @@ export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   if (planet.type === 'gas') return { ok: false, reason: 'Gas giants have no surface — orbital structures only' };
   if (planet.type === 'barren') return { ok: false, reason: 'Barren world — cannot support a shipyard (v0)' };
   if (hasShipyard(state, systemId, planetId)) return { ok: false, reason: 'Shipyard already built' };
+  if (pendingStructureOnBody(state, systemId, planetId, 'shipyard')) {
+    return { ok: false, reason: 'Shipyard construction already in progress' };
+  }
+  if (hasPendingJob(state, systemId, planetId, 'shipyard')) {
+    return { ok: false, reason: 'Shipyard construction already in progress' };
+  }
   if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
@@ -50,6 +55,17 @@ export function canBuildShipyard(state, systemId, planetId, opts = {}) {
 export function buildShipyard(state, systemId, planetId, opts = {}) {
   const check = canBuildShipyard(state, systemId, planetId, opts);
   if (!check.ok) return check;
+
+  if (!opts.remote) {
+    return queueConstructionJob(state, {
+      systemId,
+      structureType: 'shipyard',
+      bodyId: planetId,
+      creditCost: SHIPYARD_COST,
+      durationMs: STRUCTURE_BUILD_MS.shipyard,
+      extraStructureFields: { builds: [] },
+    });
+  }
 
   if (!opts.alreadyPaid) state.credits -= SHIPYARD_COST;
   systemById(state, systemId).structures.push({
@@ -69,7 +85,9 @@ function canQueueHullType(state, shipyardId, systemId, hull) {
   if (!system) return { ok: false, reason: 'No such system' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
   const shipyard = findStructure(state, systemId, shipyardId);
-  if (!shipyard || shipyard.type !== 'shipyard') return { ok: false, reason: 'No such shipyard' };
+  if (!shipyard || shipyard.type !== 'shipyard' || !isStructureActive(shipyard)) {
+    return { ok: false, reason: 'No such shipyard' };
+  }
   normalizeShipyardBuilds(shipyard);
   const slots = shipyardSlots(state);
   if (shipyard.builds.length >= slots) return { ok: false, reason: 'Shipyard slots full' };
@@ -125,7 +143,7 @@ export function tickProduction(state) {
   const completed = [];
   for (const system of Object.values(getSystems(state))) {
     for (const structure of system.structures) {
-      if (structure.type !== 'shipyard') continue;
+      if (structure.type !== 'shipyard' || !isStructureActive(structure)) continue;
       normalizeShipyardBuilds(structure);
       const remaining = [];
       for (const build of structure.builds) {
@@ -153,7 +171,7 @@ export function tickProduction(state) {
 export function shipyardCount(state) {
   let count = 0;
   for (const system of Object.values(getSystems(state))) {
-    count += system.structures.filter((s) => s.type === 'shipyard').length;
+    count += system.structures.filter((s) => s.type === 'shipyard' && isStructureActive(s)).length;
   }
   return count;
 }

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Galactic Sovereign save file — version 8",
-  "description": "Player battle groups for fleet command (manual groups + group dispatch).",
+  "description": "Player battle groups plus construction drones for timed structure builds.",
   "type": "object",
   "required": ["saveVersion", "checksum", "savedAt", "state"],
   "properties": {
@@ -14,7 +14,7 @@
         "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
         "galaxies", "wormholes", "flagship", "scouts", "playerShips", "battleGroups", "pirates",
         "systemBattles", "battleStance", "solarii", "solariiUnlocked",
-        "empireQueue", "research", "factions", "aiShips"
+        "empireQueue", "research", "factions", "aiShips", "constructionJobs", "drones"
       ],
       "properties": {
         "battleGroups": {
@@ -33,7 +33,9 @@
         "empireQueue": { "type": "array" },
         "research": { "type": "object" },
         "factions": { "type": "object" },
-        "aiShips": { "type": "array" }
+        "aiShips": { "type": "array" },
+        "constructionJobs": { "type": "array" },
+        "drones": { "type": "array" }
       }
     }
   }

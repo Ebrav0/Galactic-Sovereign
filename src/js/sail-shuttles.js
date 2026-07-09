@@ -14,8 +14,8 @@ import {
 import {
   systemById,
   planetPosition,
+  findPlanet,
   hasFoundry,
-  findFoundry,
   foundryHostPlanet,
   dysonLaunchers,
   hashSeed,
@@ -54,8 +54,10 @@ export function foundryRingMotion(foundryId, time) {
 /** Sail foundry — animated orbital ring station around its host planet. */
 export function foundryAnchor(state, systemId, time = state.time) {
   const system = systemById(state, systemId);
-  const foundry = findFoundry(state, systemId);
-  const planet = foundryHostPlanet(state, systemId);
+  const foundry = system?.structures.find((s) => s.type === 'sail_foundry') ?? null;
+  const planet = foundry?.bodyId
+    ? findPlanet(state, systemId, foundry.bodyId)
+    : foundryHostPlanet(state, systemId);
   if (!system || !foundry || !planet) {
     return { x: 0, y: 0, ringR: 0, planetId: null, planetX: 0, planetY: 0, foundryId: null };
   }

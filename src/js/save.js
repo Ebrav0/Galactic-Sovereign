@@ -385,6 +385,7 @@ function migrateV6toV7(envelope) {
 function migrateV7toV8(envelope) {
   const state = envelope.state;
   state.battleGroups = state.battleGroups ?? [];
+  initConstructionDroneState(state);
 
   const stateJson = JSON.stringify(state);
   return {
@@ -395,7 +396,14 @@ function migrateV7toV8(envelope) {
   };
 }
 
+function initConstructionDroneState(state) {
+  state.constructionJobs = state.constructionJobs ?? [];
+  state.drones = state.drones ?? [];
+  migrateShipyardsOnLoad(state);
+}
+
 function initPhase6State(state) {
+  initConstructionDroneState(state);
   state.milestones = state.milestones ?? {
     completedDysonSystems: [],
     diplomacyUnlocked: false,
@@ -546,10 +554,13 @@ export function deserialize(envelopeJson) {
   }
 
   initPhase5State(envelope.state);
+  initConstructionDroneState(envelope.state);
   initPhase6State(envelope.state);
   initPostPhase6BuildingsAndCombat(envelope.state);
   initBuilderDrones(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
+  envelope.state.constructionJobs = envelope.state.constructionJobs ?? [];
+  envelope.state.drones = envelope.state.drones ?? [];
 
   return { ok: true, state: envelope.state };
 }

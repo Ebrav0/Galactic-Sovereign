@@ -22,7 +22,7 @@ const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()))
 
 // --- 1. Initial state ---
 let s = await text();
-check('starts with 500 credits', s.credits === 500, `credits=${s.credits}`);
+check('starts with 900 credits', s.credits === 900, `credits=${s.credits}`);
 check('stronghold flagged', s.strongholdSystem === 'sys-home');
 check('has a habitable planet', s.bodies.some((b) => b.type === 'habitable' && b.moonCount > 0));
 check('no income before outpost', s.incomePerSec === 0);
@@ -36,9 +36,10 @@ check('planet selectable', s.selection === habitable.id);
 const btnEnabled = await page.locator('#build-outpost-btn').isEnabled();
 check('build button enabled for habitable', btnEnabled);
 await page.click('#build-outpost-btn');
+await page.evaluate(() => window.advanceTime(20000));
 s = await text();
-check('outpost built', s.structures.some((st) => st.type === 'outpost' && st.bodyId === habitable.id));
-check('credits deducted (500-300=200)', Math.floor(s.credits) === 200, `credits=${s.credits}`);
+check('outpost built', s.structures.some((st) => st.type === 'outpost' && st.bodyId === habitable.id && !st.underConstruction));
+check('credits deducted (900-300=600)', Math.floor(s.credits) === 600, `credits=${s.credits}`);
 const expectedIncome = 2 * (1 + 0.5 * habitable.moonCount);
 check('income scales with moons', Math.abs(s.incomePerSec - expectedIncome) < 1e-9,
   `income=${s.incomePerSec} expected=${expectedIncome} moons=${habitable.moonCount}`);
@@ -86,6 +87,7 @@ async function deterministicRun() {
   await p.goto('http://localhost:5173');
   await p.waitForFunction(() => typeof window.render_game_to_text === 'function');
   await p.evaluate((id) => window.__buildOutpost(id), habitable.id);
+  await p.evaluate(() => window.advanceTime(20000));
   await p.evaluate(() => window.advanceTime(30000));
   const out = await p.evaluate(() => {
     const o = JSON.parse(window.render_game_to_text());

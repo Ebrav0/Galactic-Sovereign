@@ -12,7 +12,7 @@ import {
   HERO_FLAGSHIP_CAPTURE_FORCE,
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
-import { systemById } from './state.js';
+import { systemById, isStructureActive } from './state.js';
 import { getGalaxyCapture, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
 import { totalCaptureForceFromShips, captureForceFromAnchoredGroups } from './fleets.js';
@@ -34,6 +34,7 @@ export function captureRequirement(state, systemId) {
     req += body.moons.length * CAPTURE_PER_MOON;
   }
   for (const s of system.structures) {
+    if (!isStructureActive(s)) continue;
     req += CAPTURE_STRUCTURE_WEIGHT[s.type] ?? 1;
   }
   const shells = system.dyson?.completedShells ?? 0;

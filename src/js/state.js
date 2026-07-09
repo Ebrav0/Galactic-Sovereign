@@ -366,6 +366,8 @@ export function createNewGame(seed) {
       ai: null,
     },
     aiShips: [],
+    constructionJobs: [],
+    drones: [],
     milestones: {
       completedDysonSystems: [],
       diplomacyUnlocked: false,
@@ -457,16 +459,26 @@ export function structuresOn(state, systemId, bodyId, galaxyId = state.activeGal
   return system ? system.structures.filter((s) => s.bodyId === bodyId) : [];
 }
 
+export function isStructureActive(structure) {
+  return !structure?.construction;
+}
+
 export function hasOutpost(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
-  return structuresOn(state, systemId, planetId, galaxyId).some((s) => s.type === 'outpost');
+  return structuresOn(state, systemId, planetId, galaxyId).some(
+    (s) => s.type === 'outpost' && isStructureActive(s),
+  );
 }
 
 export function hasShipyard(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
-  return structuresOn(state, systemId, planetId, galaxyId).some((s) => s.type === 'shipyard');
+  return structuresOn(state, systemId, planetId, galaxyId).some(
+    (s) => s.type === 'shipyard' && isStructureActive(s),
+  );
 }
 
 export function findShipyardOnPlanet(state, systemId, planetId, galaxyId = state.activeGalaxyId) {
-  return structuresOn(state, systemId, planetId, galaxyId).find((s) => s.type === 'shipyard') ?? null;
+  return structuresOn(state, systemId, planetId, galaxyId).find(
+    (s) => s.type === 'shipyard' && isStructureActive(s),
+  ) ?? null;
 }
 
 export function findStructure(state, systemId, structureId, galaxyId = state.activeGalaxyId) {
@@ -501,12 +513,14 @@ export function isCapturableTarget(state, systemId, galaxyId = state.activeGalax
 
 export function hasFoundry(state, systemId, galaxyId = state.activeGalaxyId) {
   const system = systemById(state, systemId, galaxyId);
-  return system?.structures.some((s) => s.type === 'sail_foundry') ?? false;
+  return system?.structures.some((s) => s.type === 'sail_foundry' && isStructureActive(s)) ?? false;
 }
 
 export function findFoundry(state, systemId, galaxyId = state.activeGalaxyId) {
   const system = systemById(state, systemId, galaxyId);
-  return system?.structures.find((s) => s.type === 'sail_foundry') ?? null;
+  return system?.structures.find(
+    (s) => s.type === 'sail_foundry' && isStructureActive(s),
+  ) ?? null;
 }
 
 /** Planet the sail foundry ring orbits (legacy saves without bodyId use the first habitable world). */
@@ -526,7 +540,17 @@ export function launcherCountOnBody(state, systemId, bodyId, galaxyId = state.ac
 
 export function dysonLaunchers(state, systemId, galaxyId = state.activeGalaxyId) {
   const system = systemById(state, systemId, galaxyId);
-  return system?.structures.filter((s) => s.type === 'dyson_launcher') ?? [];
+  return system?.structures.filter(
+    (s) => s.type === 'dyson_launcher' && isStructureActive(s),
+  ) ?? [];
+}
+
+export function pendingStructureOnBody(state, systemId, bodyId, structureType, galaxyId = state.activeGalaxyId) {
+  const system = systemById(state, systemId, galaxyId);
+  if (!system) return null;
+  return system.structures.find(
+    (s) => s.bodyId === bodyId && s.type === structureType && s.construction,
+  ) ?? null;
 }
 
 export function dysonSummary(state, systemId, galaxyId = state.activeGalaxyId) {

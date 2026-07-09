@@ -19,6 +19,15 @@ import {
 import { step, advance, togglePaused } from './simulation.js';
 import { buildOutpost, canBuildOutpost, incomePerSecond, incomePerSecondInSystem, resetStructureIds } from './economy.js';
 import {
+  activeJobsInSystem,
+  droneCapacity,
+  droneSummaryForSystem,
+  jobEtaMs,
+  jobProgress,
+  resetDroneIds,
+} from './drones.js';
+import { dronePoses } from './drone-motion.js';
+import {
   buildShipyard,
   queueScout,
   queueHull,
@@ -131,7 +140,8 @@ import {
   migrateShipyardBuilds,
   listPlayerShipyards,
 } from './empire-queue.js';
-import { startResearch, researchSummary, buildResearchStation, canBuildResearchStation } from './research.js';
+import { startResearch, researchSummary, buildResearchStation, canBuildResearchStation, ensureResearchState } from './research.js';
+import { applyTechEffect } from './tech-web.js';
 import { buildTradeStation, canBuildTradeStation, tradeSummary } from './trade.js';
 import { aiFactionSummary, forceAiCapture, listAiFactions } from './ai-faction.js';
 import { resetAiShipIds, aiShipsSummary } from './ai-ships.js';
@@ -466,6 +476,7 @@ function doImportState(newState) {
   follow.enabled = true;
   resetStructureIds(state);
   resetScoutIds(state);
+  resetDroneIds(state);
   resetShipIds(state);
   resetBattleGroupIds(state);
   resetSuperweaponIds(state);
@@ -478,6 +489,8 @@ function doImportState(newState) {
   if (!newState.empireQueue) newState.empireQueue = [];
   if (!newState.research) newState.research = { activeNodeId: null, progress: 0, unlocked: ['eco_baseline'], queue: [] };
   if (!newState.aiShips) newState.aiShips = [];
+  if (!newState.constructionJobs) newState.constructionJobs = [];
+  if (!newState.drones) newState.drones = [];
   if (!newState.factions?.ai?.homeSystemId) seedAiFaction(newState, newState.homeGalaxyId ?? 'gal-0');
   if (!newState.pirates?.fleets?.length) {
     newState.pirates = spawnPirateFleets(newState);
@@ -724,6 +737,10 @@ function frame(now) {
       }
     }
   }
+  for (const done of tickEvents.droneCompletions ?? []) {
+    const label = done.structureType?.replace(/_/g, ' ') ?? 'Structure';
+    toast(`${label} construction complete`, 'ok');
+  }
 
   for (const ev of tickEvents.campaignEvents ?? []) {
     if (ev.type === 'victory') toast(`Victory: ${ev.victoryType}`, 'ok');
@@ -893,6 +910,34 @@ window.render_game_to_text = () => {
     empireQueue: empireQueueSummary(state),
     research: researchSummary(state),
     trade: tradeSummary(state),
+    drones: (() => {
+      const summary = droneSummaryForSystem(state, viewedSystemId);
+      const poses = dronePoses(state, viewedSystemId, state.time).map((dp) => ({
+        id: dp.drone.id,
+        jobId: dp.jobId,
+        phase: dp.phase,
+        x: Math.round(dp.x * 10) / 10,
+        y: Math.round(dp.y * 10) / 10,
+        heading: Math.round(dp.heading * 1000) / 1000,
+      }));
+      return {
+        capacity: droneCapacity(state, viewedSystemId),
+        ...summary,
+        inViewedSystem: poses,
+      };
+    })(),
+    constructionJobs: activeJobsInSystem(state, viewedSystemId).map((job) => ({
+      id: job.id,
+      structureType: job.structureType,
+      bodyId: job.bodyId,
+      structureId: job.structureId,
+      progress: Math.round(jobProgress(job) * 1000) / 1000,
+      status: job.status,
+      workDoneMs: job.workDoneMs,
+      workRequiredMs: job.workRequiredMs,
+      etaMs: jobEtaMs(job, state),
+      assignedDrones: job.assignedDroneIds?.length ?? 0,
+    })),
     factions: {
       ai: aiFactionSummary(state),
       list: listAiFactions(state).map((f) => ({
@@ -978,8 +1023,11 @@ window.render_game_to_text = () => {
       hp: s.hp ?? null,
       maxHp: s.maxHp ?? null,
       disabled: state.time < (s.disabledUntil ?? 0),
-      building: s.type === 'shipyard' && !!s.build,
-      buildProgress: s.type === 'shipyard' ? shipyardBuildProgress(s, state.time) : null,
+      underConstruction: !!s.construction,
+      building: s.type === 'shipyard' && (!!s.build || !!s.construction),
+      buildProgress: s.construction
+        ? jobProgress((state.constructionJobs ?? []).find((j) => j.id === s.construction.jobId))
+        : (s.type === 'shipyard' ? shipyardBuildProgress(s, state.time) : null),
     })),
     shuttles: {
       active: activeShuttleCount(state, viewedSystemId) > 0,
@@ -1288,6 +1336,33 @@ window.__completeWormholeTransit = () => {
   return arrival ? { ok: true, ...arrival } : { ok: false, reason: 'Transit incomplete' };
 };
 window.__listGalaxyIds = () => Object.keys(state.galaxies ?? {});
+window.__queueOutpost = (planetId) => buildOutpost(state, viewedSystemId, planetId ?? selection);
+window.__droneSummary = () => ({
+  capacity: droneCapacity(state, viewedSystemId),
+  jobs: activeJobsInSystem(state, viewedSystemId),
+  summary: droneSummaryForSystem(state, viewedSystemId),
+});
+window.__forceResearch = (nodeId) => {
+  ensureResearchState(state);
+  if (!state.research.unlocked.includes(nodeId)) {
+    state.research.unlocked.push(nodeId);
+    applyTechEffect(state, nodeId);
+  }
+  return { ok: true, unlocked: state.research.unlocked };
+};
+window.__spawnBuilderShip = (systemId) => {
+  const sysId = systemId ?? viewedSystemId ?? state.stronghold;
+  state.playerShips.push({
+    id: `ship-test-${state.playerShips.length + 1}`,
+    hull: 'builder_ship',
+    galaxyId: state.activeGalaxyId,
+    systemId: sysId,
+    hp: 200,
+    maxHp: 200,
+    transit: null,
+  });
+  return { ok: true };
+};
 
 // --- Phase 6 test hooks ---
 window.__completeDysonShell = (systemId, shellNum) =>

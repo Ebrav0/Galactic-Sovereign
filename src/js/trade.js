@@ -5,6 +5,7 @@ import {
   TRADE_BASE_INCOME,
   TRADE_CONNECTIVITY_BONUS,
   TICK_MS,
+  STRUCTURE_BUILD_MS,
 } from './constants.js';
 import { shellTradeBonus } from './dyson.js';
 import { diplomaticTradeBonus } from './diplomacy.js';
@@ -14,28 +15,27 @@ import {
   findPlanet,
   hasOutpost,
   isPlayerOwned,
+  isStructureActive,
   structuresOn,
   systemById,
 } from './state.js';
 import { getGraph, getSystems } from './galaxy-scope.js';
 import { neighborsOf } from './galaxy.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
+import { flagshipInSystem } from './flagship-presence.js';
+import { hasPendingJob, queueConstructionJob } from './drones.js';
 import { blockadeTradeMultiplier } from './strategic-structures.js';
 import {
   bodyStructureBlockadeMultiplier,
   bodyStructureTradeMultiplier,
 } from './body-structures.js';
 
-function flagshipInSystem(state, systemId) {
-  const f = state.flagship;
-  return f.galaxyId === state.activeGalaxyId
-    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
-}
-
 export function tradeStationCount(state, systemId) {
   const system = systemById(state, systemId);
   if (!system) return 0;
-  return system.structures.filter((s) => s.type === 'trade_station').length;
+  return system.structures.filter(
+    (s) => s.type === 'trade_station' && isStructureActive(s),
+  ).length;
 }
 
 export function canBuildTradeStation(state, systemId, planetId) {
@@ -52,8 +52,15 @@ export function canBuildTradeStation(state, systemId, planetId) {
   if (!hasOutpost(state, systemId, planetId)) {
     return { ok: false, reason: 'Outpost required before trade station' };
   }
-  if (structuresOn(state, systemId, planetId).some((s) => s.type === 'trade_station')) {
+  if (structuresOn(state, systemId, planetId).some(
+    (s) => s.type === 'trade_station' && isStructureActive(s),
+  )) {
     return { ok: false, reason: 'Trade station already built on this body' };
+  }
+  if (structuresOn(state, systemId, planetId).some(
+    (s) => s.type === 'trade_station' && s.construction,
+  ) || hasPendingJob(state, systemId, planetId, 'trade_station')) {
+    return { ok: false, reason: 'Trade station construction already in progress' };
   }
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
@@ -68,14 +75,13 @@ export function buildTradeStation(state, systemId, planetId) {
   const check = canBuildTradeStation(state, systemId, planetId);
   if (!check.ok) return check;
 
-  state.credits -= TRADE_STATION_COST;
-  systemById(state, systemId).structures.push({
-    id: allocateStructureId(),
-    type: 'trade_station',
+  return queueConstructionJob(state, {
+    systemId,
+    structureType: 'trade_station',
     bodyId: planetId,
-    builtAtTime: state.time,
+    creditCost: TRADE_STATION_COST,
+    durationMs: STRUCTURE_BUILD_MS.trade_station,
   });
-  return { ok: true };
 }
 
 function systemsWithTrade(state) {

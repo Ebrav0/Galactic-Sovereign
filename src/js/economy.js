@@ -1,15 +1,19 @@
 // Economy: outpost/shipyard construction and credit income (GDD §6).
 // May mutate state.credits and system structures. Never touches DOM/canvas.
 
-import { OUTPOST_COST, OUTPOST_BASE_INCOME, MOON_YIELD_BONUS, TICK_MS } from './constants.js';
+import { OUTPOST_COST, OUTPOST_BASE_INCOME, MOON_YIELD_BONUS, TICK_MS, STRUCTURE_BUILD_MS } from './constants.js';
 import {
   systemById,
   findPlanet,
   hasOutpost,
   isPlayerOwned,
+  isStructureActive,
+  pendingStructureOnBody,
 } from './state.js';
 import { shellCreditBonus } from './dyson.js';
 import { getSystems } from './galaxy-scope.js';
+import { flagshipInSystem } from './flagship-presence.js';
+import { hasPendingJob, queueConstructionJob } from './drones.js';
 
 let nextStructureId = 1;
 
@@ -40,12 +44,6 @@ export function allocateStructureId() {
   return `st${nextStructureId++}`;
 }
 
-function flagshipInSystem(state, systemId) {
-  const f = state.flagship;
-  return f.galaxyId === state.activeGalaxyId
-    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
-}
-
 // Returns {ok} or {ok:false, reason} — UI displays the reason verbatim.
 export function canBuildOutpost(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
@@ -59,6 +57,12 @@ export function canBuildOutpost(state, systemId, planetId, opts = {}) {
   if (planet.type === 'gas') return { ok: false, reason: 'Gas giants have no surface — orbital structures only' };
   if (planet.type === 'barren') return { ok: false, reason: 'Barren world — cannot support an outpost (v0)' };
   if (hasOutpost(state, systemId, planetId)) return { ok: false, reason: 'Outpost already built' };
+  if (pendingStructureOnBody(state, systemId, planetId, 'outpost')) {
+    return { ok: false, reason: 'Outpost construction already in progress' };
+  }
+  if (hasPendingJob(state, systemId, planetId, 'outpost')) {
+    return { ok: false, reason: 'Outpost construction already in progress' };
+  }
   if (!remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
@@ -69,6 +73,16 @@ export function canBuildOutpost(state, systemId, planetId, opts = {}) {
 export function buildOutpost(state, systemId, planetId, opts = {}) {
   const check = canBuildOutpost(state, systemId, planetId, opts);
   if (!check.ok) return check;
+
+  if (!opts.remote) {
+    return queueConstructionJob(state, {
+      systemId,
+      structureType: 'outpost',
+      bodyId: planetId,
+      creditCost: OUTPOST_COST,
+      durationMs: STRUCTURE_BUILD_MS.outpost,
+    });
+  }
 
   if (!opts.alreadyPaid) state.credits -= OUTPOST_COST;
   const system = systemById(state, systemId);
@@ -89,7 +103,7 @@ export function incomePerSecond(state) {
     if (!isPlayerOwned(state, system.id)) continue;
     const creditMult = shellCreditBonus(system);
     for (const s of system.structures) {
-      if (s.type !== 'outpost') continue;
+      if (s.type !== 'outpost' || !isStructureActive(s)) continue;
       const planet = system.bodies.find((b) => b.id === s.bodyId);
       const moons = planet ? planet.moons.length : 0;
       total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons) * creditMult;
@@ -105,7 +119,7 @@ export function incomePerSecondInSystem(state, systemId) {
   const creditMult = shellCreditBonus(system);
   let total = 0;
   for (const s of system.structures) {
-    if (s.type !== 'outpost') continue;
+    if (s.type !== 'outpost' || !isStructureActive(s)) continue;
     const planet = system.bodies.find((b) => b.id === s.bodyId);
     const moons = planet ? planet.moons.length : 0;
     total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons) * creditMult;

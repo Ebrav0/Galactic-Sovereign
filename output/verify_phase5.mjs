@@ -129,8 +129,11 @@ await page.evaluate(() => {
   window.getGameState().research.unlocked.push('res_lab_1', 'res_station_protocol');
 });
 await page.evaluate(() => window.__buildResearchStation());
+await page.evaluate(() => window.advanceTime(30000));
 await page.evaluate(() => window.__buildResearchStation());
+await page.evaluate(() => window.advanceTime(30000));
 await page.evaluate(() => window.__buildResearchStation());
+await page.evaluate(() => window.advanceTime(30000));
 const r3 = await page.evaluate(() => window.__buildResearchStation());
 check('5.1 cap at 3', !r3.ok);
 check('5.2 station count', (await text()).research.stationCount === 3);

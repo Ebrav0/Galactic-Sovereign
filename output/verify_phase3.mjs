@@ -69,12 +69,16 @@ async function setupDysonInStronghold() {
   await page.evaluate(() => {
     const st = window.getGameState();
     st.credits = 20000;
+    window.__forceResearch('mega_foundry_unlock');
+    window.__forceResearch('mil_builder_ship');
   });
   await unlockDysonBuildTech();
   const foundry = await page.evaluate(() => window.__buildFoundry());
+  await page.evaluate(() => window.advanceTime(50000));
   const planetId = (await text()).bodies.find((b) => b.type === 'habitable')?.id;
   await page.evaluate((id) => window.__selectPlanet(id), planetId);
   const launcher = await page.evaluate(([id]) => window.__buildLauncher(id), [planetId]);
+  await page.evaluate(() => window.advanceTime(40000));
   return { foundry, launcher, planetId };
 }
 
@@ -142,8 +146,9 @@ await page.evaluate(() => { window.getGameState().credits = 5000; });
 await unlockDysonBuildTech();
 const f1 = await page.evaluate(() => window.__buildFoundry());
 check('2.1 build foundry succeeds', f1.ok);
+await page.evaluate(() => window.advanceTime(50000));
 s = await text();
-check('2.2 foundry in structures', s.structures.some((x) => x.type === 'sail_foundry'));
+check('2.2 foundry in structures', s.structures.some((x) => x.type === 'sail_foundry' && !x.underConstruction));
 const f2 = await page.evaluate(() => window.__buildFoundry());
 check('2.3 second foundry rejected', !f2.ok);
 
@@ -151,12 +156,14 @@ check('2.3 second foundry rejected', !f2.ok);
 const planetId = s.bodies.find((b) => b.type === 'habitable')?.id;
 const l1 = await page.evaluate(([id]) => window.__buildLauncher(id), [planetId]);
 check('3.1 build launcher succeeds', l1.ok);
+await page.evaluate(() => window.advanceTime(40000));
 s = await text();
 check('3.2 launcher count is 1', s.dyson.launcherCount === 1);
 check('3.3 body launcherCount field', s.bodies.find((b) => b.id === planetId)?.launcherCount === 1);
 
 for (let i = 0; i < LAUNCHERS_PER_BODY_MAX - 1; i++) {
   await page.evaluate(([id]) => window.__buildLauncher(id), [planetId]);
+  await page.evaluate(() => window.advanceTime(40000));
 }
 const lCap = await page.evaluate(([id]) => window.__buildLauncher(id), [planetId]);
 check('3.4 launcher cap at 3/body', !lCap.ok);

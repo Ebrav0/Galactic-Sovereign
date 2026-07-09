@@ -179,7 +179,11 @@ const fRes = await page.evaluate(() => window.__buildFoundry());
 check('4.1 foundry builds', fRes.ok);
 const planetId = (await text()).bodies.find((b) => b.type === 'habitable')?.id;
 await page.evaluate((id) => window.__selectPlanet(id), [planetId]);
-check('4.2 outpost on habitable', (await page.evaluate(([id]) => window.__buildOutpost(id), [planetId])).ok);
+check('4.2 outpost on habitable', (await page.evaluate(async ([id]) => {
+  const res = window.__buildOutpost(id);
+  if (res.ok) window.advanceTime(20000);
+  return res.ok;
+}, [planetId])));
 
 // --- Section 5: abstract tick ---
 const absBefore = (await text()).abstractGalaxies[0]?.aiCredits ?? 0;
