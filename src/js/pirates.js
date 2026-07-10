@@ -164,6 +164,7 @@ function pickRaidTarget(state, fleet) {
 
 function orderFleetTravel(state, fleet, targetId, intentType = 'wander') {
   if (fleet.transit || !targetId || targetId === fleet.systemId) return false;
+  if (fleet.systemId && state.systemBattles?.[fleet.systemId]?.active) return false;
   const path = findPath(getGraph(state), fleet.systemId, targetId);
   if (!path || path.length < 2) return false;
 

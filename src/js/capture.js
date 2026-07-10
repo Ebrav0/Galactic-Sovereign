@@ -12,7 +12,7 @@ import {
   HERO_FLAGSHIP_CAPTURE_FORCE,
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
-import { systemById, isStructureActive } from './state.js';
+import { systemById } from './state.js';
 import { getGalaxyCapture, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
 import { totalCaptureForceFromShips, captureForceFromAnchoredGroups } from './fleets.js';
@@ -24,6 +24,7 @@ import {
 } from './strategic-structures.js';
 import { heroesInSystem } from './hero-flagships.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
+import { isOperationalStructure, reconcileStructureTechnology } from './body-structures.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -34,7 +35,7 @@ export function captureRequirement(state, systemId) {
     req += body.moons.length * CAPTURE_PER_MOON;
   }
   for (const s of system.structures) {
-    if (!isStructureActive(s)) continue;
+    if (!isOperationalStructure(state, s, { systemId })) continue;
     req += CAPTURE_STRUCTURE_WEIGHT[s.type] ?? 1;
   }
   const shells = system.dyson?.completedShells ?? 0;
@@ -127,9 +128,17 @@ export function tickCapture(state) {
       capture[systemId] = entry;
 
       if (entry.progressMs >= CAPTURE_HOLD_MS) {
-        systemById(state, systemId).owner = 'player';
+        const system = systemById(state, systemId);
+        system.owner = 'player';
+        system.factionId = null;
+        for (const structure of system.structures ?? []) structure.factionId = null;
+        const technology = reconcileStructureTechnology(state, systemId, { owner: 'player' });
         delete capture[systemId];
-        return { captured: systemId };
+        return {
+          captured: systemId,
+          mothballed: technology.mothballed ?? [],
+          reactivated: technology.reactivated ?? [],
+        };
       }
     } else if (capture[systemId]) {
       delete capture[systemId];

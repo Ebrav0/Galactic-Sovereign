@@ -57,6 +57,10 @@ import {
   drawLaunchMuzzleFlash,
   drawDrydockStation,
   drawOrbitalDefensePlatform,
+  drawOrbitalBuilding,
+  drawStarNodeBuilding,
+  ORBITAL_BUILDING_VISUAL_TYPES,
+  STAR_NODE_BUILDING_VISUAL_TYPES,
 } from './structure-render.js';
 import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
 import { dronePoses } from './drone-motion.js';
@@ -570,7 +574,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       const shipScreen = worldToScreen(camera, stagingX, stagingY, canvas);
       drawHullSpriteLite(ctx, shipScreen.x, shipScreen.y, 'freighter', Math.max(4, 8 * z), {
         heading: depotPose.heading,
-        side: 'player',
+        side: convoy.ownerId === 'player' ? 'player' : 'ai',
       });
       drawSpaceCompressionJump(
         ctx,
@@ -586,6 +590,15 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
   const surfaceSites = intel ? outpostSurfaceSites(state, systemId, t) : [];
   const orbitalStructures = intel ? structureSites(state, systemId, t) : [];
+
+  if (intel) {
+    for (const st of orbitalStructures) {
+      if (!STAR_NODE_BUILDING_VISUAL_TYPES.includes(st.kind)) continue;
+      const ss = worldToScreen(camera, st.x, st.y, canvas);
+      drawOrbitRing(ctx, starScreen.x, starScreen.y, st.orbitR * z, 0.08);
+      drawStarNodeBuilding(ctx, ss.x, ss.y, z, st, t);
+    }
+  }
 
   for (const planet of sortedPlanets) {
     const wp = planetPosition(planet, t);
@@ -631,6 +644,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
               active: site.active,
               time: t,
               seed: site.seed,
+              level: site.level,
             });
           } else {
             drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
@@ -643,9 +657,19 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
       if (intel) {
         for (const st of orbitalStructures) {
-          if (st.kind !== 'launcher' || st.bodyId !== moon.id) continue;
+          if (st.bodyId !== moon.id) continue;
           const ls = worldToScreen(camera, st.x, st.y, canvas);
-          drawSailLauncher(ctx, ls.x, ls.y, z, st, t);
+          if (st.kind === 'launcher') {
+            drawSailLauncher(ctx, ls.x, ls.y, z, st, t);
+          } else if (st.kind === 'drydock') {
+            drawDrydockStation(ctx, ls.x, ls.y, z, st, t);
+          } else if (st.kind === 'orbital_defense') {
+            drawOrbitalDefensePlatform(ctx, ls.x, ls.y, z, st, t);
+          } else if (st.kind === 'research_station') {
+            drawResearchStation(ctx, ls.x, ls.y, z, st, t);
+          } else if (ORBITAL_BUILDING_VISUAL_TYPES.includes(st.kind)) {
+            drawOrbitalBuilding(ctx, ls.x, ls.y, z, st, t);
+          }
         }
       }
     }
@@ -664,12 +688,22 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
     if (intel && hasOutpost(state, systemId, planet.id)) {
       for (const site of surfaceSites) {
-        if (site.planetId !== planet.id || site.kind !== 'planet-pad') continue;
+        if (site.planetId !== planet.id || site.moonId) continue;
         const ss = worldToScreen(camera, site.x, site.y, canvas);
-        drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
-          active: site.active,
-          time: t,
-        });
+        if (site.kind === 'planet-pad') {
+          drawLandingPad(ctx, ss.x, ss.y, site.heading, z, {
+            active: site.active,
+            time: t,
+          });
+        } else if (site.kind.startsWith('surface-')) {
+          drawSurfaceBuilding(ctx, ss.x, ss.y, site.heading, z, {
+            type: site.structureType,
+            active: site.active,
+            time: t,
+            seed: site.seed,
+            level: site.level,
+          });
+        }
       }
 
       drawGlowRing(ctx, sp.x, sp.y, pr + 6 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.85);
@@ -689,7 +723,9 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
           drawResearchStation(ctx, ss.x, ss.y, z, st, t);
           const label = researchStationLabelAnchor(ss.x, ss.y, z);
           drawResearchStationLabel(ctx, label, z);
-        } else if (st.bodyId === planet.id) {
+        } else if (ORBITAL_BUILDING_VISUAL_TYPES.includes(st.kind)) {
+          drawOrbitalBuilding(ctx, ss.x, ss.y, z, st, t);
+        } else if (st.kind === 'launcher' && st.bodyId === planet.id) {
           drawSailLauncher(ctx, ss.x, ss.y, z, st, t);
         }
       }
@@ -1712,13 +1748,20 @@ export function drawGalaxy(
     const heading = Number.isFinite(status.angle) ? status.angle : 0;
     drawHullSpriteLite(ctx, s.x, s.y, 'freighter', Math.max(3.5, 7.5 * z), {
       heading,
-      side: status.phase === 'paused' ? 'ai' : 'player',
+      side: convoy.ownerId === 'player' && status.phase !== 'paused' ? 'player' : 'ai',
     });
     if (status.phase === 'jumping') {
       drawSpaceCompressionJump(ctx, s.x, s.y, heading, Math.max(10, 23 * z), status.progress);
     }
     if (tier === 'close') {
-      labelText(ctx, convoy.id.toUpperCase(), s.x, s.y + Math.max(15, 21 * z), Math.max(7, 8 * z), '#76ddff');
+      labelText(
+        ctx,
+        convoy.id.toUpperCase(),
+        s.x,
+        s.y + Math.max(15, 21 * z),
+        Math.max(7, 8 * z),
+        convoy.ownerId === 'player' ? '#76ddff' : '#ff7a7a',
+      );
     }
   }
 

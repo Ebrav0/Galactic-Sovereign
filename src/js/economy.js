@@ -1,7 +1,7 @@
 // Economy: outpost/shipyard construction and credit income (GDD §6).
 // May mutate state.credits and system structures. Never touches DOM/canvas.
 
-import { OUTPOST_COST, OUTPOST_BASE_INCOME, MOON_YIELD_BONUS, TICK_MS, STRUCTURE_BUILD_MS } from './constants.js';
+import { OUTPOST_COST, OUTPOST_PASSIVE_INCOME, TICK_MS, STRUCTURE_BUILD_MS } from './constants.js';
 import {
   systemById,
   findPlanet,
@@ -10,7 +10,6 @@ import {
   isStructureActive,
   pendingStructureOnBody,
 } from './state.js';
-import { shellCreditBonus } from './dyson.js';
 import { getSystems } from './galaxy-scope.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingJob, queueConstructionJob } from './drones.js';
@@ -22,7 +21,11 @@ export function resetStructureIds(state) {
   let max = 0;
   if (state.galaxies) {
     for (const gal of Object.values(state.galaxies)) {
-      for (const system of Object.values(gal.systems ?? {})) {
+      const systemRecords = [
+        ...Object.values(gal.systems ?? {}),
+        ...Object.values(gal.abstract?.systemOverlays ?? {}),
+      ];
+      for (const system of systemRecords) {
         for (const s of system.structures) {
           const n = parseInt(String(s.id).replace('st', ''), 10);
           if (Number.isFinite(n)) max = Math.max(max, n);
@@ -92,10 +95,13 @@ export function buildOutpost(state, systemId, planetId, opts = {}) {
     type: 'outpost',
     bodyId: planetId,
     builtAtTime: state.time,
+    level: 1,
+    hp: 240,
+    maxHp: 240,
+    operational: true,
   });
-  // Physical logistics replaces passive outpost income. The first outpost in a
-  // normal stellar system commissions one system-wide orbital export depot so
-  // cargo can visibly move outpost -> depot -> Trade Nexus.
+  // The flat passive stipend coexists with the physical cargo chain. The first
+  // outpost in a normal system commissions one system-wide export depot.
   if (system.star?.kind !== 'trade_nexus'
       && !system.structures.some((structure) => structure.type === 'export_depot')) {
     system.structures.push({
@@ -111,40 +117,63 @@ export function buildOutpost(state, systemId, planetId, opts = {}) {
   return { ok: true };
 }
 
-// Credits per second from player-owned outposts only; yield scales with moon count.
-export function incomePerSecond(state) {
-  let total = 0;
-  for (const system of Object.values(getSystems(state))) {
-    if (!isPlayerOwned(state, system.id)) continue;
-    const creditMult = shellCreditBonus(system);
-    for (const s of system.structures) {
-      if (s.type !== 'outpost' || !isStructureActive(s)) continue;
-      const planet = system.bodies.find((b) => b.id === s.bodyId);
-      const moons = planet ? planet.moons.length : 0;
-      total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons) * creditMult;
+export function isOperationalOutpost(state, structure) {
+  return structure?.type === 'outpost'
+    && isStructureActive(structure)
+    && structure.operational !== false
+    && (structure.hp ?? 1) > 0
+    && (state.time ?? 0) >= (structure.disabledUntil ?? 0)
+    && !structure.mothballed;
+}
+
+function persistentSystems(state) {
+  if (!state.galaxies) return Object.values(getSystems(state));
+  const systems = [];
+  for (const galaxy of Object.values(state.galaxies)) {
+    const hydrated = Object.values(galaxy.systems ?? {});
+    if (hydrated.length > 0) {
+      systems.push(...hydrated);
+      continue;
+    }
+    for (const [systemId, overlay] of Object.entries(galaxy.abstract?.systemOverlays ?? {})) {
+      systems.push({
+        id: systemId,
+        owner: overlay.owner,
+        factionId: overlay.factionId ?? null,
+        structures: overlay.structures ?? [],
+        dyson: overlay.dyson ?? null,
+      });
     }
   }
-  return total;
+  return systems;
+}
+
+export function operationalOutpostCount(state) {
+  let count = 0;
+  for (const system of persistentSystems(state)) {
+    if (system.owner !== 'player') continue;
+    count += (system.structures ?? []).filter((structure) => isOperationalOutpost(state, structure)).length;
+  }
+  return count;
+}
+
+// Flat passive Credits from every operational player outpost. Cargo, moons,
+// technology, buildings, and Dyson shells never modify this rate.
+export function incomePerSecond(state) {
+  return operationalOutpostCount(state) * OUTPOST_PASSIVE_INCOME;
 }
 
 /** Credit income from outposts in one system (for UI / tests). */
 export function incomePerSecondInSystem(state, systemId) {
   const system = systemById(state, systemId);
   if (!system || !isPlayerOwned(state, systemId)) return 0;
-  const creditMult = shellCreditBonus(system);
-  let total = 0;
-  for (const s of system.structures) {
-    if (s.type !== 'outpost' || !isStructureActive(s)) continue;
-    const planet = system.bodies.find((b) => b.id === s.bodyId);
-    const moons = planet ? planet.moons.length : 0;
-    total += OUTPOST_BASE_INCOME * (1 + MOON_YIELD_BONUS * moons) * creditMult;
-  }
-  return total;
+  const count = system.structures.filter((structure) => isOperationalOutpost(state, structure)).length;
+  return count * OUTPOST_PASSIVE_INCOME;
 }
 
 export function applyIncomeTick(state) {
-  // Credits are now awarded by logistics.js only when a physical convoy
-  // reaches a Trade Nexus. Keep this function as a compatibility no-op for
-  // older callers and UI projections.
-  return 0;
+  if (state.paused) return 0;
+  const awarded = incomePerSecond(state) * (TICK_MS / 1000);
+  state.credits += awarded;
+  return awarded;
 }

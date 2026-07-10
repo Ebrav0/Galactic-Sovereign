@@ -411,6 +411,7 @@ export function createNewGame(seed) {
     stronghold: strongholdStarId,
     galaxies,
     wormholes,
+    wormholeJumpCounter: 0,
     flagship: {
       galaxyId: homeGalaxyId,
       systemId: strongholdStarId,
@@ -441,6 +442,7 @@ export function createNewGame(seed) {
       unlocked: ['eco_baseline'],
       queue: [],
     },
+    aiDifficulty: 'normal',
     factions: {
       list: [{
         id: 'ai-0',
@@ -448,6 +450,15 @@ export function createNewGame(seed) {
         personality: 'expansionist',
         homeSystemId: null,
         credits: 1200,
+        solarii: 0,
+        research: {
+          activeNodeId: null,
+          progress: 0,
+          unlocked: ['eco_baseline'],
+          queue: [],
+        },
+        productionQueue: [],
+        logistics: null,
         lastActionTick: 0,
       }],
       ai: null,

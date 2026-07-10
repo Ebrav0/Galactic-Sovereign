@@ -30,7 +30,9 @@ export const TECH_CLUSTERS = {
 
 /** Infer display icon from node effect/category. */
 function nodeIcon(node) {
-  const fx = node.effect ?? '';
+  const fx = [node.effect, ...(node.effects ?? []).map((effect) => effect.type ?? effect.effect ?? '')]
+    .filter(Boolean)
+    .join(' ');
   if (fx.includes('frigate') || fx.includes('corvette') || fx.includes('carrier') || fx.includes('cruiser') || fx.includes('battleship') || fx.includes('dreadnought') || fx.includes('patrol') || fx.includes('sensor') || fx.includes('builder_ship') || fx.includes('command') || fx.includes('healer') || fx.includes('miner_hull')) return '▲';
   if (fx.includes('foundry') || fx.includes('launcher') || fx.includes('solarii') || fx.includes('shell')) return '☀';
   if (fx.includes('trade') || fx.includes('hauler') || fx.includes('freighter') || fx.includes('convoy')) return '⇄';
@@ -57,6 +59,28 @@ function isNodeHidden(state, nodeId) {
     if (!isTechUnlocked(state, p) && !techPrereqsMet(state, p)) return true;
   }
   return false;
+}
+
+function nodeSearchText(node) {
+  return [
+    node.id,
+    node.name,
+    node.description,
+    node.cluster,
+    node.effect,
+    ...(node.tags ?? []),
+    ...(node.unlocks ?? []),
+    ...(node.effects ?? []).flatMap((effect) => [effect.type, effect.target, effect.label]),
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function nodeMatchesFilters(state, node, summary, filters = {}) {
+  if (filters.cluster && node.cluster !== filters.cluster) return false;
+  if (filters.tier && derivedTier(node.id) !== Number(filters.tier)) return false;
+  const status = isNodeHidden(state, node.id) ? 'hidden' : nodeState(state, node.id, summary);
+  if (filters.state && status !== filters.state) return false;
+  const query = String(filters.query ?? '').trim().toLowerCase();
+  return !query || nodeSearchText(node).includes(query);
 }
 
 function costLabel(node) {
@@ -97,7 +121,7 @@ function createBandLabels(svg, bandCenters) {
 function buildSvgGraph(state, summary, opts = {}) {
   const nodes = allTechNodes();
   const { positions, width, height, bandCenters } = layoutHorizontalTree(nodes);
-  const clusterFilter = opts.clusterFilter ?? null;
+  const filters = opts.filters ?? { cluster: opts.clusterFilter ?? null };
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', 'tech-web-graph');
@@ -145,7 +169,7 @@ function buildSvgGraph(state, summary, opts = {}) {
     if (!pos) continue;
     const cluster = TECH_CLUSTERS[node.cluster] ?? TECH_CLUSTERS.economy;
     const hidden = isNodeHidden(state, node.id);
-    const filtered = clusterFilter && node.cluster !== clusterFilter;
+    const filtered = !nodeMatchesFilters(state, node, summary, filters);
 
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('class', 'tech-web-node tech-web-node--locked');
@@ -221,7 +245,7 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const summarySafe = summary ?? { activeNodeId: null, queue: [], progress: 0 };
   const hoverId = opts.hoverNodeId ?? null;
-  const clusterFilter = opts.clusterFilter ?? null;
+  const filters = opts.filters ?? { cluster: opts.clusterFilter ?? null };
   const pathIds = hoverId
     ? new Set(ancestorChain(hoverId, techNode))
     : new Set(
@@ -252,7 +276,7 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
     const hidden = isNodeHidden(state, node.id);
     const status = hidden ? 'hidden' : nodeState(state, node.id, summarySafe);
     const onPath = pathIds.has(node.id);
-    const filtered = clusterFilter && node.cluster !== clusterFilter;
+    const filtered = !nodeMatchesFilters(state, node, summarySafe, filters);
 
     g.setAttribute('class', [
       'tech-web-node',
@@ -319,15 +343,56 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
     const key = `${fromId}->${toId}`;
     const bothUnlocked = isTechUnlocked(state, fromId) && isTechUnlocked(state, toId);
     const onPath = pathEdges.has(key);
-    const filtered = clusterFilter
-      && fromNode?.cluster !== clusterFilter
-      && toNode?.cluster !== clusterFilter;
+    const filtered = !nodeMatchesFilters(state, fromNode, summarySafe, filters)
+      && !nodeMatchesFilters(state, toNode, summarySafe, filters);
     let cls = 'tech-web-edge';
     if (filtered) cls += ' tech-web-edge--filtered';
     if (onPath) cls += ' tech-web-edge--path';
     else if (bothUnlocked) cls += ' tech-web-edge--lit';
     path.setAttribute('class', cls);
   }
+}
+
+function nodeBounds(positions, nodeId, padding = 38) {
+  const pos = positions.get(nodeId);
+  if (!pos) return null;
+  const half = NODE_SIZE / 2 + padding;
+  return { x1: pos.x - half, y1: pos.y - half, x2: pos.x + half, y2: pos.y + half };
+}
+
+function createTechMinimap(host, positions, nodes, width, height, onReset) {
+  const mini = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  mini.setAttribute('class', 'tech-web-minimap');
+  mini.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  mini.setAttribute('role', 'button');
+  mini.setAttribute('aria-label', 'Technology web minimap; click to fit the full web');
+  mini.tabIndex = 0;
+  const background = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  background.setAttribute('width', String(width));
+  background.setAttribute('height', String(height));
+  background.setAttribute('rx', '18');
+  background.setAttribute('class', 'tech-web-minimap__background');
+  mini.appendChild(background);
+  for (const node of nodes) {
+    const pos = positions.get(node.id);
+    if (!pos) continue;
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', String(pos.x));
+    dot.setAttribute('cy', String(pos.y));
+    dot.setAttribute('r', String(Math.max(8, NODE_SIZE * 0.16)));
+    dot.setAttribute('fill', TECH_CLUSTERS[node.cluster]?.color ?? '#7ad0ff');
+    dot.setAttribute('class', 'tech-web-minimap__node');
+    mini.appendChild(dot);
+  }
+  mini.addEventListener('click', onReset);
+  mini.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onReset();
+    }
+  });
+  host.appendChild(mini);
+  return mini;
 }
 
 function clusterBounds(positions, nodes, clusterId) {
@@ -368,8 +433,9 @@ export function mountTechWebGraph(container, state, opts = {}) {
   container.appendChild(graphHost);
 
   let hoverNodeId = null;
+  opts.filters = { cluster: opts.clusterFilter ?? null, ...(opts.filters ?? {}) };
   const graphOpts = () => ({
-    clusterFilter: opts.clusterFilter ?? null,
+    filters: opts.filters,
     hoverNodeId,
   });
 
@@ -388,6 +454,7 @@ export function mountTechWebGraph(container, state, opts = {}) {
       opts.onHoverNode?.(nodeId);
     },
   });
+  createTechMinimap(graphHost, positions, nodes, width, height, viewport.fitView);
 
   return {
     svg,
@@ -395,9 +462,29 @@ export function mountTechWebGraph(container, state, opts = {}) {
     fitView: viewport.fitView,
     setClusterFilter: (filter) => {
       opts.clusterFilter = filter;
+      opts.filters = { ...opts.filters, cluster: filter };
       updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
       if (filter) viewport.fitBounds(clusterBounds(positions, nodes, filter));
       else viewport.fitView();
+    },
+    setFilters: (filters = {}) => {
+      opts.filters = { ...opts.filters, ...filters };
+      opts.clusterFilter = opts.filters.cluster ?? null;
+      updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
+    },
+    focusNode: (nodeId) => {
+      if (!positions.has(nodeId)) return false;
+      hoverNodeId = nodeId;
+      updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
+      viewport.fitBounds(nodeBounds(positions, nodeId), 90);
+      opts.onHoverNode?.(nodeId);
+      return true;
+    },
+    resetView: () => {
+      hoverNodeId = null;
+      viewport.fitView();
+      updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
+      opts.onHoverNode?.(null);
     },
     refresh: (st, sum) => {
       currentState = st;

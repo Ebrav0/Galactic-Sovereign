@@ -101,6 +101,9 @@ export function orderShipTravel(state, shipId, targetId) {
   if (ship.galaxyId !== state.activeGalaxyId) return { ok: false, reason: 'Ship not in active galaxy' };
   if (ship.transit) return { ok: false, reason: 'Ship is already in transit' };
   if (!ship.systemId) return { ok: false, reason: 'Ship has no location' };
+  if (state.systemBattles?.[ship.systemId]?.active) {
+    return { ok: false, reason: 'Ship is engaged in combat — issue an emergency retreat order' };
+  }
   if (targetId === ship.systemId) return { ok: false, reason: 'Ship is already at that star' };
 
   const path = findPath(galaxy, ship.systemId, targetId);
@@ -165,10 +168,15 @@ export function totalCaptureForceFromShips(state, systemId) {
 export function captureForceFromAnchoredGroups(state, systemId) {
   let force = 0;
   for (const group of battleGroupsForGalaxy(state)) {
-    if (!group.anchorHeroId) continue;
-    const hero = findHeroFlagship(state, group.anchorHeroId);
-    if (!hero || hero.transit || hero.systemId !== systemId) continue;
-    if (state.time < (hero.buildCompleteAt ?? 0)) continue;
+    const hero = group.anchorHeroId ? findHeroFlagship(state, group.anchorHeroId) : null;
+    const anchorPresent = group.anchorFlagship
+      ? state.flagship?.galaxyId === state.activeGalaxyId
+        && !state.flagship.transit
+        && !state.flagship.wormholeTransit
+        && state.flagship.systemId === systemId
+      : !!hero && !hero.transit && hero.systemId === systemId
+        && state.time >= (hero.buildCompleteAt ?? 0);
+    if (!anchorPresent) continue;
     for (const ship of shipsInBattleGroup(state, group.id)) {
       if (ship.transit || ship.hp <= 0 || !isCombatHull(ship.hull)) continue;
       if (ship.systemId === systemId) continue;
@@ -181,10 +189,15 @@ export function captureForceFromAnchoredGroups(state, systemId) {
 export function anchoredCombatShipsAtSystem(state, systemId) {
   const out = [];
   for (const group of battleGroupsForGalaxy(state)) {
-    if (!group.anchorHeroId) continue;
-    const hero = findHeroFlagship(state, group.anchorHeroId);
-    if (!hero || hero.transit || hero.systemId !== systemId) continue;
-    if (state.time < (hero.buildCompleteAt ?? 0)) continue;
+    const hero = group.anchorHeroId ? findHeroFlagship(state, group.anchorHeroId) : null;
+    const anchorPresent = group.anchorFlagship
+      ? state.flagship?.galaxyId === state.activeGalaxyId
+        && !state.flagship.transit
+        && !state.flagship.wormholeTransit
+        && state.flagship.systemId === systemId
+      : !!hero && !hero.transit && hero.systemId === systemId
+        && state.time >= (hero.buildCompleteAt ?? 0);
+    if (!anchorPresent) continue;
     for (const ship of shipsInBattleGroup(state, group.id)) {
       if (ship.transit || ship.hp <= 0 || !isCombatHull(ship.hull)) continue;
       if (ship.systemId !== systemId) out.push(ship);

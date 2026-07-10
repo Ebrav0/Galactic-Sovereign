@@ -26,6 +26,7 @@ import { defaultWeaponProfileForHull, normalizeCarrierWingState } from './hull.j
 import { initBuilderDrones } from './builder-drones.js';
 import { ensureLogisticsState, resetLogisticsIds } from './logistics.js';
 import { createSolCommanderState } from './sol-commander.js';
+import { allTechNodes } from './tech-web.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -90,6 +91,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 9) e = migrateV9toV10(e);
   if (e.saveVersion === 10) e = migrateV10toV11(e);
   if (e.saveVersion === 11) e = migrateV11toV12(e);
+  if (e.saveVersion === 12) e = migrateV12toV13(e);
   return e;
 }
 
@@ -690,6 +692,177 @@ function migrateV11toV12(envelope) {
   };
 }
 
+const V13_PERSONALITY_CLUSTER_ORDER = {
+  expansionist: ['military', 'economy', 'wormhole', 'research', 'trade', 'megastructure', 'flagship', 'diplomacy', 'superweapon'],
+  economic: ['economy', 'trade', 'research', 'megastructure', 'diplomacy', 'military', 'wormhole', 'flagship', 'superweapon'],
+  megastructure: ['megastructure', 'research', 'economy', 'trade', 'military', 'wormhole', 'diplomacy', 'flagship', 'superweapon'],
+  wormhole: ['wormhole', 'military', 'research', 'trade', 'economy', 'megastructure', 'flagship', 'diplomacy', 'superweapon'],
+};
+
+function v13FactionResearchState(faction) {
+  faction.solarii = Number.isFinite(faction.solarii) ? faction.solarii : 0;
+  faction.research = faction.research ?? {
+    activeNodeId: null,
+    progress: 0,
+    unlocked: ['eco_baseline'],
+    queue: [],
+  };
+  faction.research.activeNodeId ??= null;
+  faction.research.progress = Number.isFinite(faction.research.progress) ? faction.research.progress : 0;
+  faction.research.unlocked = Array.isArray(faction.research.unlocked)
+    ? [...new Set(['eco_baseline', ...faction.research.unlocked])]
+    : ['eco_baseline'];
+  faction.research.queue = Array.isArray(faction.research.queue) ? faction.research.queue : [];
+  faction.productionQueue = Array.isArray(faction.productionQueue) ? faction.productionQueue : [];
+  faction.logistics = faction.logistics ?? null;
+  return faction.research;
+}
+
+function backfillFactionResearch(state, faction, budget) {
+  const research = v13FactionResearchState(faction);
+  const unlocked = new Set(research.unlocked);
+  const clusterOrder = V13_PERSONALITY_CLUSTER_ORDER[faction.personality]
+    ?? V13_PERSONALITY_CLUSTER_ORDER.expansionist;
+  const clusterRank = new Map(clusterOrder.map((cluster, index) => [cluster, index]));
+  const nodes = allTechNodes();
+  let remaining = Math.max(0, budget - Math.max(0, unlocked.size - 1));
+  while (remaining > 0) {
+    const candidates = nodes.filter((node) => {
+      if (unlocked.has(node.id) || node.id === 'eco_baseline') return false;
+      if (node.requiresDiplomacy && !state.milestones?.diplomacyUnlocked) return false;
+      if (node.requiresSuperweapon && !state.milestones?.superweaponUnlocked) return false;
+      return (node.prereqs ?? []).every((id) => unlocked.has(id));
+    });
+    if (!candidates.length) break;
+    candidates.sort((a, b) => {
+      const clusterDelta = (clusterRank.get(a.cluster) ?? 99) - (clusterRank.get(b.cluster) ?? 99);
+      if (clusterDelta !== 0) return clusterDelta;
+      const costDelta = (a.creditCost ?? 0) - (b.creditCost ?? 0);
+      return costDelta !== 0 ? costDelta : a.id.localeCompare(b.id);
+    });
+    unlocked.add(candidates[0].id);
+    remaining -= 1;
+  }
+  research.unlocked = [...unlocked];
+}
+
+function graphDistances(graph, sourceId) {
+  const adjacency = new Map();
+  for (const star of graph?.stars ?? []) adjacency.set(star.id, []);
+  for (const lane of graph?.lanes ?? []) {
+    const a = lane.a ?? lane[0];
+    const b = lane.b ?? lane[1];
+    if (!adjacency.has(a)) adjacency.set(a, []);
+    if (!adjacency.has(b)) adjacency.set(b, []);
+    adjacency.get(a).push(b);
+    adjacency.get(b).push(a);
+  }
+  const distance = new Map([[sourceId, 0]]);
+  const queue = [sourceId];
+  while (queue.length) {
+    const current = queue.shift();
+    for (const next of adjacency.get(current) ?? []) {
+      if (distance.has(next)) continue;
+      distance.set(next, distance.get(current) + 1);
+      queue.push(next);
+    }
+  }
+  return distance;
+}
+
+function assignV13FactionIds(state) {
+  const factions = state.factions?.list ?? [];
+  if (!factions.length) return;
+  for (const galaxy of Object.values(state.galaxies ?? {})) {
+    const homes = factions
+      .filter((faction) => galaxy.graph?.stars?.some((star) => star.id === faction.homeSystemId))
+      .map((faction) => ({ faction, distances: graphDistances(galaxy.graph, faction.homeSystemId) }));
+    const assignSystem = (system, systemId = system.id) => {
+      if (system.owner !== 'ai') return;
+      if (!system.factionId) {
+        const ranked = (homes.length ? homes : factions.map((faction) => ({ faction, distances: new Map() })))
+          .map((entry) => ({
+            id: entry.faction.id,
+            distance: entry.distances.get(systemId) ?? Number.MAX_SAFE_INTEGER,
+          }))
+          .sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id));
+        system.factionId = ranked[0]?.id ?? factions[0].id;
+      }
+      for (const structure of system.structures ?? []) {
+        structure.level = Math.max(1, Math.min(3, Math.round(structure.level ?? 1)));
+        structure.factionId = structure.factionId ?? system.factionId;
+        if (structure.operational == null) structure.operational = (structure.hp ?? 1) > 0;
+      }
+    };
+    for (const system of Object.values(galaxy.systems ?? {})) {
+      assignSystem(system, system.id);
+    }
+    for (const [systemId, overlay] of Object.entries(galaxy.abstract?.systemOverlays ?? {})) {
+      assignSystem(overlay, systemId);
+    }
+  }
+  for (const ship of state.aiShips ?? []) {
+    if (!ship.factionId) {
+      const system = state.galaxies?.[ship.galaxyId ?? state.activeGalaxyId]?.systems?.[ship.systemId];
+      ship.factionId = system?.factionId ?? factions[0].id;
+    }
+    ship.owner = 'ai';
+    ship.veterancy = Math.max(0, Math.min(3, Math.round(ship.veterancy ?? 0)));
+    ship.experience = Math.max(0, Number(ship.experience ?? 0));
+  }
+  for (const ship of state.playerShips ?? []) {
+    ship.veterancy = Math.max(0, Math.min(3, Math.round(ship.veterancy ?? 0)));
+    ship.experience = Math.max(0, Number(ship.experience ?? 0));
+  }
+}
+
+export function initV13State(state, { backfillResearch = false } = {}) {
+  state.wormholeJumpCounter = Math.max(0, Math.floor(state.wormholeJumpCounter ?? 0));
+  state.aiDifficulty = ['easy', 'normal', 'hard', 'sovereign'].includes(state.aiDifficulty)
+    ? state.aiDifficulty
+    : 'normal';
+  initPhase5State(state);
+  initPhase6State(state);
+  const factions = state.factions?.list ?? [];
+  const aiSystemCount = Object.values(state.galaxies ?? {}).reduce(
+    (total, galaxy) => total + Object.values(galaxy.systems ?? {}).filter((system) => system.owner === 'ai').length,
+    0,
+  );
+  const budget = Math.min(60, Math.floor(Math.max(0, state.time ?? 0) / 90000) + Math.ceil(aiSystemCount / Math.max(1, factions.length)));
+  for (const faction of factions) {
+    v13FactionResearchState(faction);
+    if (backfillResearch) backfillFactionResearch(state, faction, budget);
+  }
+  if (state.factions) state.factions.ai = factions[0] ?? state.factions.ai ?? null;
+  assignV13FactionIds(state);
+  for (const galaxy of Object.values(state.galaxies ?? {})) {
+    const systemRecords = [
+      ...Object.values(galaxy.systems ?? {}),
+      ...Object.values(galaxy.abstract?.systemOverlays ?? {}),
+    ];
+    for (const system of systemRecords) {
+      for (const structure of system.structures ?? []) {
+        structure.level = Math.max(1, Math.min(3, Math.round(structure.level ?? 1)));
+        if (structure.operational == null) structure.operational = (structure.hp ?? 1) > 0;
+      }
+    }
+  }
+  return state;
+}
+
+// v12 -> v13 (expanded technology web, tiered infrastructure, faction AI parity).
+function migrateV12toV13(envelope) {
+  const state = envelope.state;
+  initV13State(state, { backfillResearch: true });
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 13,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -741,6 +914,7 @@ export function deserialize(envelopeJson) {
     envelope.state.flagship.hp = envelope.state.flagship.hp ?? FLAGSHIP_HP;
     envelope.state.flagship.maxHp = envelope.state.flagship.maxHp ?? FLAGSHIP_HP;
   }
+  initV13State(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
   envelope.state.constructionJobs = envelope.state.constructionJobs ?? [];
   envelope.state.drones = envelope.state.drones ?? [];

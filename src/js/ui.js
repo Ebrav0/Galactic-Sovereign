@@ -84,10 +84,16 @@ import {
 } from './strategic-structures.js';
 import {
   bodyStructureBuildRows,
+  starNodeStructureBuildRows,
   buildBodyStructure,
   bodyStructuresSummary,
+  bodyStructureDef,
+  structureUpgradeDef,
+  structureIconGlyph,
+  canUpgradeBodyStructure,
+  upgradeBodyStructure,
 } from './body-structures.js';
-import { allTechNodes, techNode } from './tech-web.js';
+import { allTechNodes, derivedTier, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
@@ -101,6 +107,8 @@ import {
   unassignedPlayerShips,
   fleetLocationSummary,
   setBattleGroupHeroAnchor,
+  setBattleGroupFlagshipAnchor,
+  autoAssignShipsToFleets,
 } from './battle-groups.js';
 import { getGraph } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
@@ -411,7 +419,9 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
   const summary = logisticsSummary(state);
   const metrics = document.createElement('div');
   metrics.className = 'metric-grid';
+  appendMetric(metrics, 'Outposts', `${incomePerSecond(state).toFixed(1)} cr/s`);
   appendMetric(metrics, 'Throughput', `${summary.throughputCreditsPerMinute.toFixed(1)} cr/min`);
+  appendMetric(metrics, 'Projected total', `${(incomePerSecond(state) + summary.throughputCreditsPerMinute / 60).toFixed(1)} cr/s`);
   appendMetric(metrics, 'In transit', `${cargoTotal(summary.cargoInTransit).toFixed(1)} cargo`);
   appendMetric(metrics, 'Trade Nexuses', `${summary.availableNexusCount}/${summary.nexusCount}`);
   appendMetric(metrics, 'Blockades', String(summary.laneBlockadeCount + summary.systemBlockadeCount));
@@ -832,6 +842,8 @@ function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScout
       id: g.id,
       ordinal: g.ordinal,
       shipIds: g.shipIds,
+      anchorHeroId: g.anchorHeroId ?? null,
+      anchorFlagship: !!g.anchorFlagship,
       selected: g.id === selectedBattleGroupId,
     })),
     unassigned: unassignedPlayerShips(state).map((s) => s.id),
@@ -1180,6 +1192,100 @@ function renderFleetShipRow(ship, galaxy, state) {
   return row;
 }
 
+function decorateStructureButton(button, row, { action = 'Build', subtext = null } = {}) {
+  clearChildren(button);
+  button.classList.add('structure-build-card');
+  const def = bodyStructureDef(row.type);
+  const icon = document.createElement('span');
+  icon.className = 'structure-build-card__icon';
+  icon.textContent = structureIconGlyph(row.type);
+  icon.style.color = def?.visual?.color ?? 'var(--accent-cyan)';
+  icon.setAttribute('aria-hidden', 'true');
+
+  const copy = document.createElement('span');
+  copy.className = 'structure-build-card__copy';
+  const title = document.createElement('span');
+  title.className = 'structure-build-card__title';
+  title.textContent = `${action} ${row.label}${row.cost != null ? ` · ${row.cost} cr` : ''}`;
+  const detail = document.createElement('span');
+  detail.className = 'structure-build-card__detail';
+  detail.textContent = subtext ?? (row.check?.ok
+    ? row.description ?? row.effects?.join(' · ') ?? row.placement
+    : row.check?.reason ?? 'Unavailable');
+  copy.append(title, detail);
+  button.append(icon, copy);
+}
+
+function renderStructureUpgradeButtons(container, state, systemId, bodyId = undefined) {
+  const system = systemById(state, systemId);
+  if (!system) return;
+  const structures = (system.structures ?? []).filter((structure) => {
+    if (!structureUpgradeDef(structure.type)) return false;
+    if (bodyId === undefined) return structure.bodyId == null;
+    return structure.bodyId === bodyId;
+  });
+  if (structures.length === 0) return;
+
+  const heading = document.createElement('div');
+  heading.className = 'intel-section-title';
+  heading.textContent = 'Infrastructure Upgrades';
+  container.appendChild(heading);
+  for (const structure of structures) {
+    const def = bodyStructureDef(structure.type);
+    const label = def?.label ?? structure.type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const check = canUpgradeBodyStructure(state, systemId, structure.id);
+    const level = Math.max(1, Math.min(3, Number(structure.level ?? 1)));
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--block btn--sm';
+    btn.disabled = !check.ok;
+    decorateStructureButton(btn, {
+      type: structure.type,
+      label: `${label} L${level} → L${Math.min(3, level + 1)}`,
+      cost: check.cost ?? null,
+      check,
+      description: `Retains structure identity and current damage ratio.`,
+    }, { action: 'Upgrade' });
+    btn.title = check.ok ? `Upgrade ${label} to level ${check.nextLevel}` : check.reason;
+    btn.onclick = () => {
+      const result = upgradeBodyStructure(state, systemId, structure.id);
+      if (result.ok) toast(
+        result.queued ? `${label} level ${result.level} upgrade queued` : `${label} upgraded to level ${result.level}`,
+        'ok',
+      );
+      else toast(result.reason, 'error');
+    };
+    container.appendChild(btn);
+  }
+}
+
+function renderStarNodeBuildButtons(container, state, systemId, { includeHeading = true, filter = null } = {}) {
+  if (!container) return;
+  const rows = starNodeStructureBuildRows(state, systemId).filter((row) => !filter || filter(row));
+  if (rows.length === 0) return;
+  if (includeHeading) {
+    const heading = document.createElement('div');
+    heading.className = 'intel-section-title';
+    heading.textContent = 'Star-Node Buildings';
+    container.appendChild(heading);
+  }
+  for (const row of rows) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--block btn--sm';
+    btn.disabled = !row.check.ok;
+    decorateStructureButton(btn, row);
+    btn.title = row.check.ok ? row.description : row.check.reason;
+    btn.onclick = () => {
+      const result = buildBodyStructure(state, systemId, null, row.type);
+      if (result.ok) toast(result.queued ? `${row.label} construction queued` : `${row.label} built`, 'ok');
+      else toast(result.reason, 'error');
+    };
+    container.appendChild(btn);
+  }
+  renderStructureUpgradeButtons(container, state, systemId);
+}
+
 function renderStrategicBuildButtons(container, state, systemId, planetId, droneCtx = null) {
   if (!container) return;
   clearChildren(container);
@@ -1236,11 +1342,11 @@ function renderStrategicBuildButtons(container, state, systemId, planetId, drone
       btn.type = 'button';
       btn.className = 'btn btn--ghost btn--block btn--sm';
       btn.disabled = !row.check.ok;
-      btn.textContent = `${row.label} (${row.cost} cr)`;
+      decorateStructureButton(btn, row);
       btn.title = row.check.ok ? `${row.label} · ${placement}` : row.check.reason;
       btn.onclick = () => {
         const res = buildBodyStructure(state, systemId, planetId, row.type);
-        if (res.ok) toast(`${row.label} built`, 'ok');
+        if (res.ok) toast(res.queued ? `${row.label} construction queued` : `${row.label} built`, 'ok');
         else toast(res.reason, 'error');
       };
       container.appendChild(btn);
@@ -1256,6 +1362,9 @@ function renderStrategicBuildButtons(container, state, systemId, planetId, drone
       }
     }
   }
+
+  renderStructureUpgradeButtons(container, state, systemId, planetId);
+  renderStarNodeBuildButtons(container, state, systemId);
 
   const strategicHeading = document.createElement('div');
   strategicHeading.className = 'intel-section-title';
@@ -1381,6 +1490,31 @@ function renderFleetPanel(container, state, ctx) {
   createBtn.textContent = 'Create Fleet';
   container.appendChild(createBtn);
 
+  const autoAssignBtn = document.createElement('button');
+  autoAssignBtn.type = 'button';
+  autoAssignBtn.className = 'btn btn--primary btn--sm fleet-auto-assign-btn';
+  autoAssignBtn.dataset.fleetAutoAssign = '1';
+  autoAssignBtn.disabled = unassigned.length === 0;
+  autoAssignBtn.textContent = unassigned.length > 0
+    ? `Auto Assign ${unassigned.length} Ship${unassigned.length === 1 ? '' : 's'}`
+    : 'All Ships Assigned';
+  autoAssignBtn.onclick = () => {
+    const result = autoAssignShipsToFleets(state, { preferredGroupId: selectedBattleGroupId });
+    if (!result.ok) {
+      toast(result.reason, 'error');
+      return;
+    }
+    const selectedId = result.groupIds[0] ?? result.createdGroupIds[0];
+    if (selectedId) doSelectBattleGroup?.(selectedId);
+    toast(
+      result.assigned > 0
+        ? `${result.assigned} ship${result.assigned === 1 ? '' : 's'} assigned to fleets`
+        : 'All ships are already assigned',
+      result.assigned > 0 ? 'ok' : 'info',
+    );
+  };
+  container.appendChild(autoAssignBtn);
+
   if (battleGroups.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'panel-note panel-note--muted';
@@ -1450,23 +1584,37 @@ function renderFleetPanel(container, state, ctx) {
     anchorRow.style.marginTop = '6px';
     const anchorLabel = document.createElement('span');
     anchorLabel.className = 'panel-note';
-    anchorLabel.textContent = 'Anchor to hero:';
+    anchorLabel.textContent = 'Anchor:';
     const anchorSel = document.createElement('select');
     anchorSel.className = 'btn btn--ghost btn--sm';
     const noneOpt = document.createElement('option');
     noneOpt.value = '';
     noneOpt.textContent = 'None';
     anchorSel.appendChild(noneOpt);
+    const flagshipOpt = document.createElement('option');
+    flagshipOpt.value = 'player-flagship';
+    flagshipOpt.textContent = `Player Flagship @ ${systemById(state, state.flagship?.systemId)?.name ?? (state.flagship?.transit ? 'in transit' : 'unknown')}`;
+    flagshipOpt.selected = !!group.anchorFlagship;
+    anchorSel.appendChild(flagshipOpt);
     for (const hero of heroFlagshipsSummary(state)) {
       const opt = document.createElement('option');
-      opt.value = hero.id;
+      opt.value = `hero:${hero.id}`;
       opt.textContent = `${hero.id} @ ${systemById(state, hero.systemId)?.name ?? hero.systemId}`;
       if (group.anchorHeroId === hero.id) opt.selected = true;
       anchorSel.appendChild(opt);
     }
     anchorSel.onchange = () => {
-      const res = setBattleGroupHeroAnchor(state, group.id, anchorSel.value || null);
+      let res;
+      if (anchorSel.value === 'player-flagship') {
+        res = setBattleGroupFlagshipAnchor(state, group.id, true);
+      } else if (anchorSel.value.startsWith('hero:')) {
+        res = setBattleGroupHeroAnchor(state, group.id, anchorSel.value.slice(5));
+      } else {
+        setBattleGroupFlagshipAnchor(state, group.id, false);
+        res = setBattleGroupHeroAnchor(state, group.id, null);
+      }
       if (!res.ok) toast(res.reason, 'error');
+      else toast(`${formatFleetName(group.ordinal)} anchor updated`, 'ok');
     };
     anchorRow.appendChild(anchorLabel);
     anchorRow.appendChild(anchorSel);
@@ -1625,6 +1773,13 @@ function renderFleetPanel(container, state, ctx) {
 function renderTechScreen(container, state, techUiState) {
   const summary = researchSummary(state);
   const snapshot = researchSnapshotKey(summary);
+  const focusedControl = document.activeElement?.dataset?.techControl ?? null;
+  const focusedSelection = focusedControl === 'search'
+    ? [document.activeElement.selectionStart, document.activeElement.selectionEnd]
+    : null;
+  techUiState.searchQuery ??= '';
+  techUiState.tierFilter ??= '';
+  techUiState.stateFilter ??= '';
 
   let chrome = container.querySelector('.tech-screen__chrome');
   if (!chrome) {
@@ -1713,12 +1868,121 @@ function renderTechScreen(container, state, techUiState) {
 
   const toolbar = document.createElement('div');
   toolbar.className = 'tech-screen__toolbar';
+
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'tech-screen__search';
+  search.placeholder = 'Search technologies, effects, buildings…';
+  search.setAttribute('aria-label', 'Search technology web');
+  search.dataset.techControl = 'search';
+  search.value = techUiState.searchQuery;
+
+  const resultSelect = document.createElement('select');
+  resultSelect.className = 'tech-screen__select tech-screen__results';
+  resultSelect.setAttribute('aria-label', 'Matching technologies');
+  resultSelect.dataset.techControl = 'results';
+  const matchingNodes = () => {
+    const query = techUiState.searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    return allTechNodes().filter((node) => [
+      node.id,
+      node.name,
+      node.description,
+      node.cluster,
+      node.effect,
+      ...(node.tags ?? []),
+      ...(node.unlocks ?? []),
+      ...(node.effects ?? []).flatMap((effect) => [effect.type, effect.target, effect.label]),
+    ].filter(Boolean).join(' ').toLowerCase().includes(query));
+  };
+  const populateResults = () => {
+    resultSelect.innerHTML = '';
+    const matches = matchingNodes();
+    const lead = document.createElement('option');
+    lead.value = '';
+    lead.textContent = matches.length ? `${matches.length} match${matches.length === 1 ? '' : 'es'}` : 'No matches';
+    resultSelect.appendChild(lead);
+    for (const node of matches.slice(0, 40)) {
+      const option = document.createElement('option');
+      option.value = node.id;
+      option.textContent = `${node.name} · T${derivedTier(node.id)}`;
+      resultSelect.appendChild(option);
+    }
+  };
+  populateResults();
+  search.addEventListener('input', () => {
+    techUiState.searchQuery = search.value;
+    populateResults();
+    techUiState.graphHandle?.setFilters({ query: techUiState.searchQuery });
+  });
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const first = matchingNodes()[0];
+    if (first) techUiState.graphHandle?.focusNode(first.id);
+  });
+  resultSelect.addEventListener('change', () => {
+    if (resultSelect.value) techUiState.graphHandle?.focusNode(resultSelect.value);
+  });
+  toolbar.append(search, resultSelect);
+
+  const tierSelect = document.createElement('select');
+  tierSelect.className = 'tech-screen__select';
+  tierSelect.setAttribute('aria-label', 'Filter technology tier');
+  tierSelect.dataset.techControl = 'tier';
+  const maxTier = Math.max(...allTechNodes().map((node) => derivedTier(node.id)));
+  tierSelect.innerHTML = '<option value="">All tiers</option>'
+    + Array.from({ length: maxTier }, (_, index) => `<option value="${index + 1}">Tier ${index + 1}</option>`).join('');
+  tierSelect.value = String(techUiState.tierFilter ?? '');
+  tierSelect.addEventListener('change', () => {
+    techUiState.tierFilter = tierSelect.value;
+    techUiState.graphHandle?.setFilters({ tier: tierSelect.value || null });
+  });
+  toolbar.appendChild(tierSelect);
+
+  const stateSelect = document.createElement('select');
+  stateSelect.className = 'tech-screen__select';
+  stateSelect.setAttribute('aria-label', 'Filter technology state');
+  stateSelect.dataset.techControl = 'state';
+  stateSelect.innerHTML = [
+    ['', 'All states'],
+    ['available', 'Available'],
+    ['active', 'Researching'],
+    ['queued', 'Queued'],
+    ['unlocked', 'Unlocked'],
+    ['locked', 'Locked'],
+    ['hidden', 'Unknown'],
+  ].map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+  stateSelect.value = techUiState.stateFilter;
+  stateSelect.addEventListener('change', () => {
+    techUiState.stateFilter = stateSelect.value;
+    techUiState.graphHandle?.setFilters({ state: stateSelect.value || null });
+  });
+  toolbar.appendChild(stateSelect);
+
   const fitBtn = document.createElement('button');
   fitBtn.type = 'button';
   fitBtn.className = 'btn btn--ghost btn--sm';
   fitBtn.textContent = 'Fit View';
   fitBtn.onclick = () => techUiState.fitView?.();
   toolbar.appendChild(fitBtn);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'btn btn--ghost btn--sm';
+  resetBtn.textContent = 'Reset';
+  resetBtn.onclick = () => {
+    techUiState.searchQuery = '';
+    techUiState.tierFilter = '';
+    techUiState.stateFilter = '';
+    techUiState.clusterFilter = null;
+    search.value = '';
+    tierSelect.value = '';
+    stateSelect.value = '';
+    populateResults();
+    techUiState.graphHandle?.setFilters({ query: null, tier: null, state: null, cluster: null });
+    techUiState.graphHandle?.resetView();
+  };
+  toolbar.appendChild(resetBtn);
   chrome.appendChild(toolbar);
 
   if (!techUiState.detailEl) {
@@ -1748,8 +2012,16 @@ function renderTechScreen(container, state, techUiState) {
     const node = techNode(nodeId);
     if (!node) return;
     const prereqNames = node.prereqs.map((p) => techNode(p)?.name ?? p).join(', ') || 'None';
-    techUiState.detailEl.textContent =
-      `${node.name} · ${costLabelFromNode(node)} · Requires: ${prereqNames}`;
+    const effects = (node.effects ?? [])
+      .map((effect) => effect.label ?? effect.type ?? effect.effect)
+      .filter(Boolean)
+      .join(', ');
+    techUiState.detailEl.textContent = [
+      `${node.name} · Tier ${derivedTier(node.id)} · ${costLabelFromNode(node)}`,
+      node.description,
+      effects ? `Effects: ${effects}` : null,
+      `Requires: ${prereqNames}`,
+    ].filter(Boolean).join(' · ');
   };
 
   if (!techUiState.mounted) {
@@ -1760,6 +2032,12 @@ function renderTechScreen(container, state, techUiState) {
     const handle = mountTechWebGraph(mount, state, {
       summary,
       clusterFilter: techUiState.clusterFilter,
+      filters: {
+        cluster: techUiState.clusterFilter,
+        query: techUiState.searchQuery || null,
+        tier: techUiState.tierFilter || null,
+        state: techUiState.stateFilter || null,
+      },
       onResearch,
       onHoverNode,
     });
@@ -1771,6 +2049,14 @@ function renderTechScreen(container, state, techUiState) {
   } else if (techUiState.lastSnapshot !== snapshot && techUiState.svg) {
     techUiState.graphHandle?.refresh(state, summary);
     techUiState.lastSnapshot = snapshot;
+  }
+
+  if (focusedControl) {
+    const control = chrome.querySelector(`[data-tech-control="${focusedControl}"]`);
+    control?.focus();
+    if (focusedSelection && control?.setSelectionRange) {
+      control.setSelectionRange(focusedSelection[0], focusedSelection[1]);
+    }
   }
 }
 
@@ -1866,7 +2152,18 @@ export function initUi(ctx) {
   } = ctx;
 
   let sidePanel = null;
-  const techUiState = { mounted: false, lastSnapshot: '', svg: null, fitView: null, graphWrap: null, detailEl: null };
+  const techUiState = {
+    mounted: false,
+    lastSnapshot: '',
+    svg: null,
+    fitView: null,
+    graphWrap: null,
+    detailEl: null,
+    clusterFilter: null,
+    searchQuery: '',
+    tierFilter: '',
+    stateFilter: '',
+  };
 
   function resetTechUiState() {
     techUiState.mounted = false;
@@ -1901,7 +2198,41 @@ export function initUi(ctx) {
     tutorialGuide: '',
     logisticsPanel: '',
     combatCommand: '',
+    techPanel: '',
+    diplomacyPanel: '',
+    campaignPanel: '',
+    dysonPanel: '',
+    buildPanel: '',
+    starBuildPanel: '',
+    wormholeBuildPanel: '',
   };
+  let uiPointerActive = false;
+  window.addEventListener('pointerdown', () => { uiPointerActive = true; }, true);
+  window.addEventListener('pointerup', () => { uiPointerActive = false; }, true);
+  window.addEventListener('pointercancel', () => { uiPointerActive = false; }, true);
+
+  function constructionUiSnapshot(state, systemId, bodyId = null) {
+    const system = systemById(state, systemId);
+    return JSON.stringify({
+      systemId,
+      bodyId,
+      owner: system?.owner,
+      factionId: system?.factionId ?? null,
+      credits: Math.floor((state.credits ?? 0) / 10),
+      unlockedCount: state.research?.unlocked?.length ?? 0,
+      flagship: [state.flagship?.galaxyId, state.flagship?.systemId, !!state.flagship?.transit, !!state.flagship?.wormholeTransit],
+      structures: (system?.structures ?? []).map((structure) => [
+        structure.id, structure.type, structure.bodyId ?? null, structure.level ?? 1,
+        !!structure.construction, (structure.hp ?? 1) > 0,
+        (structure.disabledUntil ?? 0) > state.time, !!structure.mothballed, structure.operational !== false,
+      ]),
+      jobs: (state.constructionJobs ?? [])
+        .filter((job) => job.systemId === systemId)
+        .map((job) => [job.id, job.structureType, job.bodyId, job.status]),
+      drones: (state.builderDrones ?? []).map((drone) => [drone.id, drone.status, drone.targetSystemId, drone.buildType]),
+      dyson: [system?.dyson?.completedShells ?? 0, !!system?.dyson?.disabled],
+    });
+  }
 
   function setTutorialTarget(targetId) {
     document.querySelectorAll('.tutorial-target').forEach((node) => {
@@ -2276,15 +2607,18 @@ export function initUi(ctx) {
   newGameBackdrop?.addEventListener('click', closeNewGameModal);
   el('new-game-sandbox-btn')?.addEventListener('click', () => {
     const vt = el('new-game-victory')?.value ?? 'sandbox';
-    doStartNewGame?.({ mode: 'sandbox', victoryType: vt });
+    const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
+    doStartNewGame?.({ mode: 'sandbox', victoryType: vt, aiDifficulty });
     closeNewGameModal();
   });
   el('new-game-tutorial-btn')?.addEventListener('click', () => {
-    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+    const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
+    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', aiDifficulty });
     closeNewGameModal();
   });
   el('new-game-missions-btn')?.addEventListener('click', () => {
-    doStartNewGame?.({ mode: 'mission', victoryType: 'dominion' });
+    const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
+    doStartNewGame?.({ mode: 'mission', victoryType: 'dominion', aiDifficulty });
     closeNewGameModal();
   });
 
@@ -2399,15 +2733,13 @@ export function initUi(ctx) {
 
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
     const logistics = logisticsSummary(state);
-    el('income-value').textContent = (logistics.throughputCreditsPerMinute / 60).toFixed(1);
+    el('income-value').textContent = incomePerSecond(state).toFixed(1);
 
-    const droneStrip = el('view-hint');
+    let contextualViewHint = HINTS[view];
     if (view === 'system' && viewedSystemId && isPlayerOwned(state, viewedSystemId)) {
       const ds = droneSummaryForSystem(state, viewedSystemId);
       const jobs = activeJobsInSystem(state, viewedSystemId);
-      droneStrip.textContent = `Drones: ${ds.active}/${ds.capacity} active · ${jobs.length} job${jobs.length === 1 ? '' : 's'}`;
-    } else if (view === 'system') {
-      droneStrip.textContent = '';
+      contextualViewHint += ` · Drones ${ds.active}/${ds.capacity} · ${jobs.length} job${jobs.length === 1 ? '' : 's'}`;
     }
 
     const solariiChip = el('solarii-chip');
@@ -2419,9 +2751,9 @@ export function initUi(ctx) {
       solariiChip.classList.add('hidden');
     }
 
-    const trade = tradeSummary(state);
     const tradeChip = el('trade-chip');
-    tradeChip.classList.add('hidden');
+    tradeChip.classList.toggle('hidden', logistics.depotCount === 0 && logistics.deliveredCredits === 0);
+    el('trade-income-value').textContent = (logistics.throughputCreditsPerMinute / 60).toFixed(1);
     const logisticsChip = el('logistics-chip');
     logisticsChip?.classList.toggle('hidden', logistics.depotCount === 0 && logistics.activeConvoyCount === 0);
     if (el('cargo-transit-value')) el('cargo-transit-value').textContent = String(logistics.activeConvoyCount);
@@ -2444,21 +2776,57 @@ export function initUi(ctx) {
     el('tech-panel')?.classList.add('hidden');
     if (sidePanel === 'tech') {
       techScreen?.classList.remove('hidden');
-      renderTechScreen(el('tech-screen-body'), state, techUiState);
+      const summary = researchSummary(state);
+      const techSnap = JSON.stringify({
+        unlocked: summary.unlocked,
+        active: summary.activeNodeId,
+        queue: summary.queue,
+        stations: summary.stationCount,
+        speed: summary.speedMult,
+      });
+      if (techSnap !== uiSnapshots.techPanel && !uiPointerActive) {
+        uiSnapshots.techPanel = techSnap;
+        renderTechScreen(el('tech-screen-body'), state, techUiState);
+      } else {
+        const progressFill = techScreen?.querySelector('.progress-block .progress__fill');
+        if (progressFill) progressFill.style.width = `${Math.round(summary.progress * 100)}%`;
+      }
     } else {
       techScreen?.classList.add('hidden');
+      uiSnapshots.techPanel = '';
     }
     if (sidePanel === 'diplomacy') {
       diploScreen?.classList.remove('hidden');
-      renderDiplomacyPanel(el('diplomacy-screen-body'), state);
+      const diploSnap = JSON.stringify(diplomacySummary(state));
+      if (diploSnap !== uiSnapshots.diplomacyPanel && !uiPointerActive) {
+        uiSnapshots.diplomacyPanel = diploSnap;
+        renderDiplomacyPanel(el('diplomacy-screen-body'), state);
+      }
     } else {
       diploScreen?.classList.add('hidden');
+      uiSnapshots.diplomacyPanel = '';
     }
     if (sidePanel === 'campaign') {
       campScreen?.classList.remove('hidden');
-      renderCampaignPanel(el('campaign-screen-body'), state);
+      const campaignSuperweapon = superweaponSummary(state);
+      const campaignSnap = JSON.stringify({
+        campaign: campaignSummary(state),
+        milestones: milestonesSummary(state),
+        superweapon: {
+          online: campaignSuperweapon.online,
+          cradleSystemId: campaignSuperweapon.cradleSystemId,
+          createCount: campaignSuperweapon.createCount,
+          lastAction: campaignSuperweapon.lastAction,
+        },
+        missions: state.missions,
+      });
+      if (campaignSnap !== uiSnapshots.campaignPanel && !uiPointerActive) {
+        uiSnapshots.campaignPanel = campaignSnap;
+        renderCampaignPanel(el('campaign-screen-body'), state);
+      }
     } else {
       campScreen?.classList.add('hidden');
+      uiSnapshots.campaignPanel = '';
     }
 
     const fleetPanel = el('fleet-panel');
@@ -2523,7 +2891,7 @@ export function initUi(ctx) {
     el('pause-overlay').classList.toggle('hidden', !state.paused || phase !== 'playing');
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
-    el('view-hint').textContent = HINTS[view];
+    el('view-hint').textContent = contextualViewHint;
     updateTabBar(view, sidePanel);
     const overlays = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
     el('overlay-controls')?.classList.toggle('hidden', view !== 'galaxy');
@@ -2576,9 +2944,22 @@ export function initUi(ctx) {
     const dysonPanel = el('dyson-panel');
     if (sidePanel === 'dyson' && view === 'system') {
       dysonPanel.classList.remove('hidden');
-      renderDysonPanel(el('dyson-panel-body'), state, viewedSystemId);
+      const system = systemById(state, viewedSystemId);
+      const dysonSnap = JSON.stringify({
+        systemId: viewedSystemId,
+        second: Math.floor(state.time / 1000),
+        structures: system?.structures?.map((structure) => [structure.id, structure.type, structure.level, !!structure.construction]),
+        shells: system?.dyson?.completedShells,
+        sails: Math.floor(system?.dyson?.shellSails ?? 0),
+        stock: Math.floor(system?.dyson?.foundryStock ?? 0),
+      });
+      if (dysonSnap !== uiSnapshots.dysonPanel && !uiPointerActive) {
+        uiSnapshots.dysonPanel = dysonSnap;
+        renderDysonPanel(el('dyson-panel-body'), state, viewedSystemId);
+      }
     } else {
       dysonPanel.classList.add('hidden');
+      uiSnapshots.dysonPanel = '';
     }
 
     el('system-name').textContent = view === 'galaxy'
@@ -2669,6 +3050,15 @@ export function initUi(ctx) {
     if (view === 'system' && viewedSystemId === BLACK_HOLE_ID && sidePanel !== 'dyson') {
       panel.classList.add('hidden');
       wormholePanel?.classList.remove('hidden');
+      const wormholeStructures = el('wormhole-structure-build-btns');
+      const wormholeSnap = `${constructionUiSnapshot(state, viewedSystemId)}|${JSON.stringify(state.wormholes)}`;
+      if (wormholeStructures && wormholeSnap !== uiSnapshots.wormholeBuildPanel && !uiPointerActive) {
+        uiSnapshots.wormholeBuildPanel = wormholeSnap;
+        clearChildren(wormholeStructures);
+        renderStarNodeBuildButtons(wormholeStructures, state, viewedSystemId, {
+          filter: (row) => row.type === 'wormhole_observatory',
+        });
+      }
       const enterBtn = el('enter-wormhole-btn');
       const anchorBtn = el('build-anchor-btn');
       const anchorSelect = el('anchor-target-select');
@@ -2676,7 +3066,8 @@ export function initUi(ctx) {
         enterBtn.disabled = !canEnterWormhole(state).ok;
         enterBtn.onclick = () => doEnterWormhole({});
       }
-      if (anchorSelect) {
+      if (anchorSelect && wormholeSnap === uiSnapshots.wormholeBuildPanel
+          && anchorSelect.options.length === 0 && !uiPointerActive) {
         anchorSelect.innerHTML = '';
         for (const [gid, gal] of Object.entries(state.galaxies ?? {})) {
           if (gid === state.activeGalaxyId) continue;
@@ -2690,18 +3081,53 @@ export function initUi(ctx) {
         const target = anchorSelect?.value;
         const canAnchor = canBuildWormholeAnchor(state).ok && target;
         anchorBtn.disabled = !canAnchor;
-        anchorBtn.textContent = `Build Anchor (${WORMHOLE_ANCHOR_COST} cr)`;
+        anchorBtn.textContent = `Build Anchor (${canBuildWormholeAnchor(state).cost ?? WORMHOLE_ANCHOR_COST} cr)`;
         anchorBtn.onclick = () => doBuildWormholeAnchor(target);
       }
       return;
     }
     wormholePanel?.classList.add('hidden');
+    uiSnapshots.wormholeBuildPanel = '';
 
     if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || sidePanel === 'fleet'
-        || sidePanel === 'logistics' || !selection) {
+        || sidePanel === 'logistics') {
       panel.classList.add('hidden');
       return;
     }
+    if (!selection) {
+      const showStarConstruction = isPlayerOwned(state, viewedSystemId);
+      if (!showStarConstruction) {
+        panel.classList.add('hidden');
+        return;
+      }
+      panel.classList.remove('hidden');
+      const starBuildSnap = constructionUiSnapshot(state, viewedSystemId);
+      if (starBuildSnap !== uiSnapshots.starBuildPanel && !uiPointerActive) {
+        uiSnapshots.starBuildPanel = starBuildSnap;
+        el('build-panel-title').textContent = `${viewedSystem?.name ?? 'System'} Star Node`;
+        const body = el('build-panel-body');
+        clearChildren(body);
+        const note = document.createElement('p');
+        note.className = 'panel-note panel-note--muted';
+        note.textContent = 'System-scale installations orbit the star and do not require a selected planet.';
+        body.appendChild(note);
+        for (const id of [
+          'build-outpost-btn', 'build-shipyard-btn', 'build-foundry-btn', 'build-launcher-btn',
+          'build-trade-btn', 'build-research-btn', 'queue-scout-btn',
+        ]) el(id)?.classList.add('hidden');
+        hullBtnContainer.classList.add('hidden');
+        setProgressBar('build-progress', 'build-progress-fill', 'build-progress-pct', 0, false);
+        const buildButtons = el('strategic-build-btns');
+        clearChildren(buildButtons);
+        buildButtons.classList.remove('hidden');
+        renderStarNodeBuildButtons(buildButtons, state, viewedSystemId, {
+          filter: (row) => row.type !== 'wormhole_observatory',
+        });
+        el('build-panel-note').textContent = '';
+      }
+      return;
+    }
+    uiSnapshots.starBuildPanel = '';
     const planet = findPlanet(state, viewedSystemId, selection);
     if (!planet) {
       setSelection(null);
@@ -2711,7 +3137,15 @@ export function initUi(ctx) {
 
     panel.classList.remove('hidden');
     el('build-panel-title').textContent = planet?.name ?? 'Planet';
-    renderBuildBody(el('build-panel-body'), planet, state, viewedSystemId);
+    const buildPanelSnap = constructionUiSnapshot(state, viewedSystemId, planet.id);
+    if (buildPanelSnap !== uiSnapshots.buildPanel && !uiPointerActive) {
+      uiSnapshots.buildPanel = buildPanelSnap;
+      renderBuildBody(el('build-panel-body'), planet, state, viewedSystemId);
+      renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id, {
+        canSendBuilderDrone,
+        sendBuilderDrone,
+      });
+    }
 
     const outpostCheck = canBuildOutpost(state, viewedSystemId, planet.id);
     const shipyardCheck = canBuildShipyard(state, viewedSystemId, planet.id);
@@ -2761,7 +3195,7 @@ export function initUi(ctx) {
       !hasOutpost(state, viewedSystemId, planet.id) || hasShipyard(state, viewedSystemId, planet.id),
     );
     shipyardBtn.disabled = !shipyardCheck.ok;
-    shipyardBtn.textContent = `Build Shipyard (${SHIPYARD_COST} cr)`;
+    shipyardBtn.textContent = `Build Shipyard (${shipyardCheck.cost ?? SHIPYARD_COST} cr)`;
 
     if (shipyard) normalizeShipyardBuilds(shipyard);
     const hasYards = listPlayerShipyards(state).length > 0;
@@ -2815,10 +3249,6 @@ export function initUi(ctx) {
     } else if (!tradeCheck.ok && hasOutpost(state, viewedSystemId, planet.id)) note = tradeCheck.reason;
     else if (!researchCheck.ok && isPlayerOwned(state, viewedSystemId)) note = researchCheck.reason;
     else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
-    renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id, {
-      canSendBuilderDrone,
-      sendBuilderDrone,
-    });
     el('build-panel-note').textContent = note;
   };
 

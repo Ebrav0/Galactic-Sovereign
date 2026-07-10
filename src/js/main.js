@@ -35,7 +35,13 @@ import {
   foundryHostPlanet,
 } from './state.js';
 import { step, advance, togglePaused } from './simulation.js';
-import { buildOutpost, canBuildOutpost, resetStructureIds } from './economy.js';
+import {
+  buildOutpost,
+  canBuildOutpost,
+  incomePerSecond,
+  incomePerSecondInSystem,
+  resetStructureIds,
+} from './economy.js';
 import {
   activeJobsInSystem,
   droneCapacity,
@@ -93,6 +99,9 @@ import {
   resetBattleGroupIds,
   battleGroupsForGalaxy,
   formatFleetName,
+  autoAssignShipsToFleets,
+  setBattleGroupFlagshipAnchor,
+  syncFlagshipAnchoredFleets,
 } from './battle-groups.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
 import { applyFleetOrder } from './combat-orders.js';
@@ -189,7 +198,7 @@ import {
   setRelation,
   diplomacySummary,
 } from './diplomacy.js';
-import { addTradeRoute, clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
+import { addTradeRoute, clearTradeRoutes, resetTradeRouteIds, tradeRoutesSummary } from './trade-routes.js';
 import { setVictoryType, checkVictory, checkDefeat, campaignSummary } from './campaign.js';
 import { startMission, completeMissionForTest, advanceMissionObjective, missionsSummary } from './missions.js';
 import {
@@ -403,6 +412,7 @@ function doToggleOrbit() {
 function doOrderTravel(targetId) {
   const res = orderTravel(state, targetId);
   if (res.ok) {
+    syncFlagshipAnchoredFleets(state);
     const dest = systemById(state, targetId);
     toast(`Course set: ${dest.name} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
   } else {
@@ -579,6 +589,8 @@ function doImportState(newState) {
   resetPirateIds(state);
   resetQueueIds(state);
   resetAiShipIds(state);
+  resetTradeRouteIds(state);
+  resetWormholeJumpCounter(state.wormholeJumpCounter ?? 0, state);
   migrateShipyardBuilds(state);
   if (!newState.empireQueue) newState.empireQueue = [];
   if (!newState.research) newState.research = { activeNodeId: null, progress: 0, unlocked: ['eco_baseline'], queue: [] };
@@ -935,6 +947,7 @@ function frame(now) {
     }
   }
   for (const ev of tickEvents.logisticsEvents ?? []) {
+    if (ev.ownerId && ev.ownerId !== 'player') continue;
     if (ev.type === 'convoy_dispatched') {
       toast(`${ev.convoyId} completed space-compression jump prep`, 'info');
     } else if (ev.type === 'convoy_delivered') {
@@ -1068,10 +1081,13 @@ window.render_game_to_text = () => {
   const foundryPose = foundryAnchor(state, viewedSystemId);
   const orbitTarget = orbitTargetLabel(state);
 
+  const passiveOutpostCreditsPerSecond = incomePerSecond(state);
+  const cargoDeliveryCreditsPerSecond = logisticsSummary(state).throughputCreditsPerMinute / 60;
   return JSON.stringify({
     saveVersion: SAVE_VERSION,
     time: state.time,
     paused: state.paused,
+    aiDifficulty: state.aiDifficulty ?? 'normal',
     credits: state.credits,
     solarii: state.solarii ?? 0,
     solariiUnlocked: !!state.solariiUnlocked,
@@ -1095,8 +1111,11 @@ window.render_game_to_text = () => {
     selection,
     selectedScoutId,
     selectedBattleGroupId,
-    incomePerSec: logisticsSummary(state).throughputCreditsPerMinute / 60,
-    incomePerSecInViewedSystem: 0,
+    passiveOutpostCreditsPerSecond,
+    cargoDeliveryCreditsPerSecond,
+    totalProjectedCreditsPerSecond: passiveOutpostCreditsPerSecond + cargoDeliveryCreditsPerSecond,
+    incomePerSec: passiveOutpostCreditsPerSecond + cargoDeliveryCreditsPerSecond,
+    incomePerSecInViewedSystem: incomePerSecondInSystem(state, viewedSystemId),
     flagship: {
       galaxyId: f.galaxyId,
       hp: f.hp,
@@ -1197,6 +1216,7 @@ window.render_game_to_text = () => {
       })),
       convoys: activeConvoys(state).map((convoy) => ({
         id: convoy.id,
+        ownerId: convoy.ownerId ?? 'player',
         status: convoy.status,
         fromSystemId: convoy.fromSystemId,
         destinationSystemId: convoy.destinationSystemId,
@@ -1242,6 +1262,7 @@ window.render_game_to_text = () => {
       ordinal: g.ordinal,
       shipIds: [...g.shipIds],
       anchorHeroId: g.anchorHeroId ?? null,
+      anchorFlagship: !!g.anchorFlagship,
     })),
     builderDrones: builderDroneSummary(state),
     pirates: {
@@ -1298,9 +1319,12 @@ window.render_game_to_text = () => {
       type: s.type,
       bodyId: s.bodyId,
       placement: s.placement ?? null,
+      level: s.level ?? 1,
       hp: s.hp ?? null,
       maxHp: s.maxHp ?? null,
       disabled: state.time < (s.disabledUntil ?? 0),
+      operational: s.operational !== false && (s.hp ?? 1) > 0 && state.time >= (s.disabledUntil ?? 0),
+      mothballed: !!s.mothballed,
       underConstruction: !!s.construction,
       building: s.type === 'shipyard' && (!!s.build || !!s.construction),
       buildProgress: s.construction
@@ -1481,6 +1505,10 @@ window.__dispatchShip = (shipId, starId) => doDispatchShip(shipId, starId);
 window.__createBattleGroup = () => createBattleGroup(state);
 window.__selectBattleGroup = (groupId) => { doSelectBattleGroup(groupId); return selectedBattleGroupId; };
 window.__assignShipToGroup = (shipId, groupId) => assignShipToGroup(state, shipId, groupId);
+window.__autoAssignShipsToFleets = (options = {}) => autoAssignShipsToFleets(state, options);
+window.__setBattleGroupFlagshipAnchor = (groupId, anchored = true) =>
+  setBattleGroupFlagshipAnchor(state, groupId, anchored);
+window.__syncFlagshipAnchoredFleets = () => syncFlagshipAnchoredFleets(state);
 window.__orderBattleGroup = (starId) => doOrderBattleGroupTravel(starId);
 window.__deleteBattleGroup = (groupId) => doDeleteBattleGroup(groupId);
 window.__listBattleGroups = () => battleGroupsForGalaxy(state).map((g) => ({
@@ -1488,6 +1516,8 @@ window.__listBattleGroups = () => battleGroupsForGalaxy(state).map((g) => ({
   name: formatFleetName(g.ordinal),
   ordinal: g.ordinal,
   shipIds: [...g.shipIds],
+  anchorHeroId: g.anchorHeroId ?? null,
+  anchorFlagship: !!g.anchorFlagship,
 }));
 window.__formatFleetName = (ordinal) => formatFleetName(ordinal);
 window.__setBattleStance = (stance) => setBattleStance(state, stance);
@@ -1515,6 +1545,9 @@ window.__getHullStats = () => ({ ...HULL_STATS });
 window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   resetWormholeJumpCounter(0);
   state = createNewGame(seed);
+  state.aiDifficulty = ['easy', 'normal', 'hard', 'sovereign'].includes(opts.aiDifficulty)
+    ? opts.aiDifficulty
+    : 'normal';
   state.pirates = spawnPirateFleets(state);
   seedAiFaction(state, state.homeGalaxyId);
   resetContextualTips();
@@ -1620,7 +1653,7 @@ window.__getGalaxyFingerprint = (galaxyId) => {
   return g ? galaxyGraphFingerprint(g) : null;
 };
 window.__getStrongholdComposition = () => strongholdComposition(state);
-window.__resetWormholeJumpCounter = (n = 0) => resetWormholeJumpCounter(n);
+window.__resetWormholeJumpCounter = (n = 0) => resetWormholeJumpCounter(n, state);
 window.__completeWormholeTransit = () => {
   const wt = state.flagship?.wormholeTransit;
   if (!wt) return { ok: false, reason: 'No wormhole transit' };

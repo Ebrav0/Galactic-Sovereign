@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 12;
+export const SAVE_VERSION = 13;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -14,6 +14,7 @@ export const DEFAULT_SEED = 1;
 // --- Economy (GDD §6) ---
 export const OUTPOST_COST = 300;             // credits
 export const OUTPOST_BASE_INCOME = 2;        // credits per second, before moon bonus
+export const OUTPOST_PASSIVE_INCOME = 40;     // exact credits/second per operational player outpost
 export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the same planet
 
 // --- Physical logistics (Unified Overhaul / save-v12) ---
@@ -228,6 +229,21 @@ export const CAPTURE_STRUCTURE_WEIGHT = {
   sail_foundry: 6,
   dyson_launcher: 3,
   asteroid_harvester: 2,
+  power_grid: 3,
+  orbital_habitat: 3,
+  nanoforge: 4,
+  fleet_academy: 4,
+  missile_silo: 4,
+  interdiction_array: 5,
+  carrier_command: 5,
+  sensor_array: 3,
+  solar_collector: 4,
+  logistics_hub: 4,
+  galactic_exchange: 4,
+  salvage_yard: 3,
+  wormhole_observatory: 5,
+  quantum_archive: 4,
+  embassy_complex: 3,
   trade_station: 3,
   research_station: 4,
   listening_post: 1,
@@ -397,6 +413,91 @@ export const DRYDOCK_REPAIR_PER_SEC = 4;
 export const ORBITAL_DEFENSE_POWER = 32;
 export const SHIELD_STRUCTURE_HP_MULT = 1.35;
 export const ION_BATTERY_POWER = 26;
+
+// --- Save-v13 building web + structure tiers ---
+export const V13_BUILDING_COSTS = Object.freeze({
+  power_grid: 600,
+  orbital_habitat: 850,
+  nanoforge: 900,
+  fleet_academy: 950,
+  missile_silo: 800,
+  interdiction_array: 1200,
+  carrier_command: 1100,
+  sensor_array: 650,
+  solar_collector: 1250,
+  logistics_hub: 900,
+  galactic_exchange: 1100,
+  salvage_yard: 750,
+  wormhole_observatory: 1600,
+  quantum_archive: 1000,
+  embassy_complex: 900,
+});
+
+export const V13_BUILDING_HP = Object.freeze({
+  power_grid: 300,
+  orbital_habitat: 460,
+  nanoforge: 380,
+  fleet_academy: 400,
+  missile_silo: 340,
+  interdiction_array: 500,
+  carrier_command: 480,
+  sensor_array: 300,
+  solar_collector: 520,
+  logistics_hub: 450,
+  galactic_exchange: 420,
+  salvage_yard: 380,
+  wormhole_observatory: 600,
+  quantum_archive: 390,
+  embassy_complex: 360,
+});
+
+export const VETERANCY_XP_THRESHOLDS = Object.freeze([0, 50, 150, 300]);
+export const VETERANCY_BONUS_PER_LEVEL = 0.05;
+export const SALVAGE_HULL_RECOVERY_RATE = 0.2;
+export const SALVAGE_CARRIER_CRAFT_RECOVERY_RATE = 0.25;
+
+export const V13_BUILDING_EFFECTS = Object.freeze({
+  powerGridCargo: 1.15,
+  powerGridIndustry: 1.15,
+  powerGridShieldHp: 1.2,
+  habitatCargo: 1.1,
+  habitatResearch: 1.1,
+  nanoforgeThroughput: 1.15,
+  academyStartingVeterancy: 1,
+  academyMaxVeterancy: 3,
+  veterancyBonusPerLevel: VETERANCY_BONUS_PER_LEVEL,
+  missileAutoResolvePower: 12,
+  interdictionRetreatCharge: 1.5,
+  carrierWingCapacity: 1.25,
+  carrierReplenishment: 1.25,
+  sensorIntelHops: 1,
+  sensorWeaponRange: 1.1,
+  collectorFoundry: 1.15,
+  collectorLauncher: 1.1,
+  collectorSolarii: 1.05,
+  logisticsDepotCapacity: 100,
+  logisticsDispatchInterval: 0.8,
+  logisticsConvoyRoutes: 1,
+  exchangeNexusValue: 1.15,
+  exchangeManualRoutes: 2,
+  salvageHullRate: SALVAGE_HULL_RECOVERY_RATE,
+  salvageCarrierRate: SALVAGE_CARRIER_CRAFT_RECOVERY_RATE,
+  observatoryChargeRate: 1.25,
+  archiveResearch: 1.15,
+  archiveQueueSlots: 1,
+  embassyTreatyCost: 0.8,
+  embassyTreatyEffect: 1.1,
+});
+
+// Index is the stored level. Level 0 is unused but kept neutral for direct lookup.
+export const STRUCTURE_LEVEL_EFFECT_MULTIPLIERS = Object.freeze([1, 1, 1.5, 2]);
+export const STRUCTURE_LEVEL_HP_MULTIPLIERS = Object.freeze([1, 1, 1.5, 2]);
+export const STRUCTURE_UPGRADE_COST_MULTIPLIERS = Object.freeze({ 2: 0.75, 3: 1.25 });
+export const OUTPOST_LEVEL_CARGO_MULTIPLIERS = Object.freeze([1, 1, 1.25, 1.6]);
+export const OUTPOST_LEVEL_STOCK_CAPACITY = Object.freeze([120, 120, 160, 220]);
+export const SHIPYARD_LEVEL_BUILD_TIME_MULTIPLIERS = Object.freeze([1, 1, 0.9, 0.8]);
+export const SHIPYARD_LEVEL_EXTRA_SLOTS = Object.freeze([0, 0, 1, 1]);
+
 export const SHELL_TRADE_BONUS = 1.25;
 export const SHELL_RESEARCH_BONUS = 1.2;
 export const AI_STARTING_CREDITS = 1200;

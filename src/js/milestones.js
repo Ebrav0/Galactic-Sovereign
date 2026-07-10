@@ -2,6 +2,7 @@
 
 import { SHELL_COUNT } from './constants.js';
 import { ensureDyson } from './state.js';
+import { persistentSystemRecords } from './galaxy-scope.js';
 
 export function ensureMilestones(state) {
   if (!state.milestones) {
@@ -15,11 +16,9 @@ export function ensureMilestones(state) {
 
 export function countCompletedDysons(state) {
   const systems = [];
-  for (const [galId, gal] of Object.entries(state.galaxies ?? {})) {
-    for (const [sysId, sys] of Object.entries(gal.systems ?? {})) {
-      if ((sys.dyson?.completedShells ?? 0) >= SHELL_COUNT) {
-        systems.push(`${galId}:${sysId}`);
-      }
+  for (const { galaxyId, systemId, system } of persistentSystemRecords(state)) {
+    if ((system.dyson?.completedShells ?? 0) >= SHELL_COUNT) {
+      systems.push(`${galaxyId}:${systemId}`);
     }
   }
   return systems;

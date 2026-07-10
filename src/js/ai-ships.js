@@ -15,6 +15,7 @@ import {
   transitStatus as transitStatusCore,
   advanceTransit,
 } from './transit.js';
+import { factionTechContext } from './ai-tech.js';
 
 let nextAiShipId = 1;
 
@@ -27,28 +28,68 @@ export function resetAiShipIds(state) {
   nextAiShipId = max + 1;
 }
 
-export function spawnAiShip(state, systemId, hull, anchorBodyId = null) {
+export function aiShipFactionId(state, ship, fallback = 'ai-0') {
+  if (ship?.factionId) return ship.factionId;
+  const system = state.galaxies?.[ship?.galaxyId ?? state.activeGalaxyId]?.systems?.[ship?.systemId];
+  return system?.factionId ?? state.factions?.ai?.id ?? fallback;
+}
+
+export function assignAiShipFactionIds(state, fallback = 'ai-0') {
+  for (const ship of state.aiShips ?? []) {
+    ship.owner = 'ai';
+    ship.factionId = aiShipFactionId(state, ship, fallback);
+  }
+  return state.aiShips ?? [];
+}
+
+/**
+ * Backward compatible signature: the fifth argument may be a faction id or an
+ * options object. Existing four-argument callers inherit the system faction.
+ */
+export function spawnAiShip(state, systemId, hull, anchorBodyId = null, factionIdOrOpts = null) {
   if (!state.aiShips) state.aiShips = [];
+  const opts = factionIdOrOpts && typeof factionIdOrOpts === 'object'
+    ? factionIdOrOpts
+    : { factionId: factionIdOrOpts };
+  const system = state.galaxies?.[state.activeGalaxyId]?.systems?.[systemId];
+  const factionId = opts.factionId
+    ?? system?.factionId
+    ?? state.factions?.ai?.id
+    ?? 'ai-0';
+  const faction = state.factions?.list?.find((candidate) => candidate.id === factionId)
+    ?? (state.factions?.ai?.id === factionId ? state.factions.ai : null);
+  const instance = createShipInstance(
+    `ai-ship-${nextAiShipId++}`,
+    hull,
+    faction ? factionTechContext(faction) : null,
+  );
+  if (!instance) return null;
   const ship = {
-    ...createShipInstance(`ai-ship-${nextAiShipId++}`, hull),
-    galaxyId: state.activeGalaxyId,
+    ...instance,
+    galaxyId: opts.galaxyId ?? state.activeGalaxyId,
     systemId,
     owner: 'ai',
+    factionId,
     anchorBodyId,
     transit: null,
   };
+  if (Number.isFinite(opts.veterancy)) ship.veterancy = Math.max(0, Math.min(3, opts.veterancy));
   state.aiShips.push(ship);
   return ship;
 }
 
-export function aiShipsInSystem(state, systemId) {
+export function aiShipsInSystem(state, systemId, factionId = null) {
   return (state.aiShips ?? []).filter(
-    (s) => s.galaxyId === state.activeGalaxyId && s.systemId === systemId && !s.transit && s.hp > 0,
+    (s) => s.galaxyId === state.activeGalaxyId
+      && s.systemId === systemId
+      && !s.transit
+      && s.hp > 0
+      && (!factionId || aiShipFactionId(state, s) === factionId),
   );
 }
 
-export function aiCombatPresence(state, systemId) {
-  return aiShipsInSystem(state, systemId).reduce(
+export function aiCombatPresence(state, systemId, factionId = null) {
+  return aiShipsInSystem(state, systemId, factionId).reduce(
     (n, s) => n + captureForceForShip(s),
     0,
   );
@@ -60,6 +101,9 @@ export function aiShipLaneSpeed(hull) {
 }
 
 export function orderAiShipTravel(state, ship, targetId) {
+  if (ship?.systemId && state.systemBattles?.[ship.systemId]?.active) {
+    return { ok: false, reason: 'Fleet is engaged in combat' };
+  }
   const galaxy = getGraph(state);
   const path = findPath(galaxy, ship.systemId, targetId);
   if (!path || path.length < 2) return { ok: false, reason: 'No path' };
@@ -74,11 +118,12 @@ export function orderAiShipTravel(state, ship, targetId) {
   );
   ship.transit = {
     path,
-    pathIndex: 0,
+    legIndex: 0,
     legStartTime: state.time,
     legDurationMs: legMs,
     destId: targetId,
   };
+  ship.systemId = null;
   return { ok: true, path, etaMs: legMs };
 }
 
@@ -87,13 +132,19 @@ export function tickAiShips(state, onArrival) {
   for (const ship of state.aiShips ?? []) {
     if (ship.galaxyId !== state.activeGalaxyId || !ship.transit) continue;
     const galaxy = getGraph(state);
-    const done = advanceTransit(ship, galaxy, state.time, aiShipLaneSpeed(ship.hull), AI_LANE_MIN_LEG_MS);
-    if (done) {
-      ship.systemId = ship.transit.destId;
-      ship.transit = null;
-      arrivals.push(ship);
-      if (onArrival) onArrival(ship.systemId);
-    }
+    advanceTransit(
+      ship.transit,
+      galaxy,
+      state.time,
+      aiShipLaneSpeed(ship.hull),
+      AI_LANE_MIN_LEG_MS,
+      (destId) => {
+        ship.systemId = destId;
+        ship.transit = null;
+        arrivals.push(ship);
+        onArrival?.(destId, ship);
+      },
+    );
   }
   return arrivals;
 }
@@ -114,8 +165,8 @@ export function stationedAiPose(state, system, ship, idx, total) {
   return { x: Math.cos(angle) * minOrbit, y: Math.sin(angle) * minOrbit };
 }
 
-export function aiFleetPowerInSystem(state, systemId) {
-  return aiShipsInSystem(state, systemId).reduce((n, s) => n + Math.max(0, s.hp), 0);
+export function aiFleetPowerInSystem(state, systemId, factionId = null) {
+  return aiShipsInSystem(state, systemId, factionId).reduce((n, s) => n + Math.max(0, s.hp), 0);
 }
 
 export function aiShipsSummary(state) {
@@ -124,6 +175,8 @@ export function aiShipsSummary(state) {
     .map((s) => ({
       id: s.id,
       hull: s.hull,
+      owner: 'ai',
+      factionId: aiShipFactionId(state, s),
       systemId: s.systemId,
       inTransit: !!s.transit,
       hp: s.hp,

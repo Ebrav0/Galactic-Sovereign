@@ -31,6 +31,18 @@ import {
   laneControlPoint,
 } from './galaxy.js';
 import { getGraph, getSystems } from './galaxy-scope.js';
+import {
+  outpostCargoProductionMultiplier,
+  outpostStockCapacity,
+  isOperationalStructure,
+  structureActiveConvoyRouteBonus,
+  structureCargoProductionMultiplier,
+  structureDepotCapacityBonus,
+  structureDispatchIntervalMultiplier,
+  structureNexusDeliveryMultiplier,
+} from './body-structures.js';
+import { techEffects } from './tech-web.js';
+import { factionTechContext } from './ai-tech.js';
 
 export const CARGO_TYPES = Object.freeze([
   'rawMaterials',
@@ -43,6 +55,19 @@ const BASE_PRODUCTION_RATES = Object.freeze({
   barren: Object.freeze({ ...LOGISTICS_PRODUCTION_RATES.barren }),
   gas: Object.freeze({ ...LOGISTICS_PRODUCTION_RATES.gas }),
 });
+
+function ownerContext(state, ownerId = 'player') {
+  if (!ownerId || ownerId === 'player') return { techState: state, effectOpts: {} };
+  const faction = state.factions?.list?.find((candidate) => candidate.id === ownerId);
+  return {
+    techState: faction ? factionTechContext(faction) : null,
+    effectOpts: { owner: 'ai', factionId: ownerId },
+  };
+}
+
+function systemOwnerContext(state, system) {
+  return ownerContext(state, system?.owner === 'player' ? 'player' : system?.factionId ?? 'ai-0');
+}
 
 export const DEFAULT_LOGISTICS_CONFIG = Object.freeze({
   productionRates: BASE_PRODUCTION_RATES,
@@ -192,6 +217,7 @@ export function createDefaultLogisticsState() {
       deliveredCargo: emptyCargo(),
       lostCargo: emptyCargo(),
       deliveredCredits: 0,
+      deliveredCreditsByOwner: {},
       convoysDispatched: 0,
       convoysDelivered: 0,
       convoysLost: 0,
@@ -231,6 +257,9 @@ export function ensureLogisticsState(state) {
   logistics.stats.lostCargo = normalizeCargo(logistics.stats.lostCargo);
   logistics.stats.recentDeliveries = Array.isArray(logistics.stats.recentDeliveries)
     ? logistics.stats.recentDeliveries : [];
+  logistics.stats.deliveredCreditsByOwner = logistics.stats.deliveredCreditsByOwner
+    && typeof logistics.stats.deliveredCreditsByOwner === 'object'
+    ? logistics.stats.deliveredCreditsByOwner : {};
   logistics.events = Array.isArray(logistics.events) ? logistics.events : [];
   logistics.lastTickAt = Number.isFinite(logistics.lastTickAt) ? logistics.lastTickAt : null;
   return logistics;
@@ -388,15 +417,21 @@ export function routeEtaMs(graph, path, options = {}) {
   return eta;
 }
 
-export function nexusAcceptsPlayerCargo(system) {
+export function nexusAcceptsCargo(system, ownerId = 'player') {
   if (system?.star?.kind !== 'trade_nexus') return false;
+  if (system.tradeNexus?.blockedOwners?.includes?.(ownerId)) return false;
+  if (ownerId !== 'player') return system.tradeNexus?.openAccess !== false;
   if (system.tradeNexus?.acceptsPlayerTrade === false) return false;
   if (system.owner === 'ai' && system.tradeNexus?.allied !== true) return false;
   return true;
 }
 
+export function nexusAcceptsPlayerCargo(system) {
+  return nexusAcceptsCargo(system, 'player');
+}
+
 /** Returns every generated nexus; available indicates whether it currently accepts player cargo. */
-export function discoverTradeNexuses(state, galaxyId = state.activeGalaxyId) {
+export function discoverTradeNexuses(state, galaxyId = state.activeGalaxyId, ownerId = 'player') {
   return Object.values(getSystems(state, galaxyId))
     .filter((system) => system?.star?.kind === 'trade_nexus')
     .map((system) => ({
@@ -404,7 +439,7 @@ export function discoverTradeNexuses(state, galaxyId = state.activeGalaxyId) {
       systemId: system.id,
       name: system.name,
       owner: system.owner,
-      available: nexusAcceptsPlayerCargo(system),
+      available: nexusAcceptsCargo(system, ownerId),
     }))
     .sort((a, b) => a.systemId.localeCompare(b.systemId));
 }
@@ -413,7 +448,7 @@ function bestNexusRoute(state, galaxyId, fromSystemId, options = {}) {
   const graph = getGraph(state, galaxyId);
   const blockades = routeBlockades(state, galaxyId);
   const requested = options.destinationSystemId ?? null;
-  const candidates = discoverTradeNexuses(state, galaxyId)
+  const candidates = discoverTradeNexuses(state, galaxyId, options.ownerId ?? 'player')
     .filter((nexus) => nexus.available && (!requested || nexus.systemId === requested));
   const routes = [];
   for (const nexus of candidates) {
@@ -450,6 +485,9 @@ export function registerExportDepot(state, galaxyId, systemId, options = {}) {
   const logistics = ensureLogisticsState(state);
   const config = configFrom(options);
   const id = options.id ?? exportDepotId(galaxyId, systemId);
+  const ownerId = options.ownerId
+    ?? (system.owner === 'player' ? 'player' : system.factionId ?? 'ai-0');
+  const { effectOpts } = ownerContext(state, ownerId);
   const existing = logistics.depots[id];
   if (existing) {
     if (options.structureId) {
@@ -457,7 +495,9 @@ export function registerExportDepot(state, galaxyId, systemId, options = {}) {
       existing.source = 'structure';
     }
     existing.operational = options.operational ?? true;
-    existing.capacity = options.capacity ?? existing.capacity ?? config.depotCapacity;
+    existing.capacity = options.capacity
+      ?? config.depotCapacity + structureDepotCapacityBonus(state, systemId, { ...effectOpts, galaxyId });
+    existing.ownerId = ownerId;
     return { ok: true, depot: existing, created: false };
   }
 
@@ -465,10 +505,12 @@ export function registerExportDepot(state, galaxyId, systemId, options = {}) {
     id,
     galaxyId,
     systemId,
+    ownerId,
     structureId: options.structureId ?? null,
     source: options.structureId ? 'structure' : (options.source ?? 'registered'),
     operational: options.operational ?? true,
-    capacity: options.capacity ?? config.depotCapacity,
+    capacity: options.capacity
+      ?? config.depotCapacity + structureDepotCapacityBonus(state, systemId, { ...effectOpts, galaxyId }),
     inventory: normalizeCargo(options.inventory),
     preferredNexusId: options.preferredNexusId ?? null,
     routePaused: false,
@@ -486,12 +528,34 @@ export function syncExportDepots(state, galaxyId = state.activeGalaxyId, options
   const seen = new Set();
   const registered = [];
   for (const system of Object.values(getSystems(state, galaxyId))) {
+    const { effectOpts } = systemOwnerContext(state, system);
+    const developed = ['player', 'ai'].includes(system.owner)
+      && system.star?.kind !== 'trade_nexus'
+      && (system.structures ?? []).some((structure) => structure.type === 'outpost'
+        && isOperationalStructure(state, structure, { ...effectOpts, systemId: system.id, galaxyId }));
+    if (developed && !(system.structures ?? []).some((structure) => structure.type === 'export_depot')) {
+      system.structures.push({
+        id: `depot-auto-${galaxyId}-${system.id}`,
+        type: 'export_depot',
+        bodyId: null,
+        builtAtTime: state.time ?? 0,
+        level: 1,
+        hp: 520,
+        maxHp: 520,
+        operational: true,
+        factionId: system.owner === 'ai' ? system.factionId ?? 'ai-0' : undefined,
+      });
+    }
     for (const structure of system.structures ?? []) {
       if (structure.type !== 'export_depot') continue;
       const result = registerExportDepot(state, galaxyId, system.id, {
         ...options,
+        allowNonPlayer: options.allowNonPlayer ?? system.owner === 'ai',
+        ownerId: system.owner === 'player' ? 'player' : system.factionId ?? 'ai-0',
         structureId: structure.id,
-        operational: structure.operational !== false,
+        operational: isOperationalStructure(state, structure, { ...effectOpts, systemId: system.id, galaxyId }),
+        capacity: configFrom(options).depotCapacity
+          + structureDepotCapacityBonus(state, system.id, { ...effectOpts, galaxyId }),
         createdAt: structure.builtAtTime,
       });
       if (!result.ok) continue;
@@ -565,7 +629,7 @@ function outpostStockId(galaxyId, systemId, outpostId) {
   return `${galaxyId}:${systemId}:${outpostId}`;
 }
 
-function ensureOutpostStock(logistics, galaxyId, system, outpost, config) {
+function ensureOutpostStock(logistics, galaxyId, system, outpost, config, capacityBonus = 0) {
   const id = outpostStockId(galaxyId, system.id, outpost.id);
   if (!logistics.outpostStock[id]) {
     logistics.outpostStock[id] = {
@@ -574,13 +638,17 @@ function ensureOutpostStock(logistics, galaxyId, system, outpost, config) {
       systemId: system.id,
       outpostId: outpost.id,
       bodyId: outpost.bodyId,
-      capacity: config.outpostStockCapacity,
+      ownerId: system.owner === 'player' ? 'player' : system.factionId ?? 'ai-0',
+      capacity: outpostStockCapacity(outpost) + capacityBonus,
       inventory: emptyCargo(),
       producedTotal: emptyCargo(),
       lastProducedAt: null,
       lastLocalDispatchAt: null,
     };
   }
+  logistics.outpostStock[id].ownerId = system.owner === 'player'
+    ? 'player' : system.factionId ?? logistics.outpostStock[id].ownerId ?? 'ai-0';
+  logistics.outpostStock[id].capacity = outpostStockCapacity(outpost) + capacityBonus;
   return logistics.outpostStock[id];
 }
 
@@ -590,10 +658,17 @@ export function cargoProductionForOutpost(system, outpost, deltaMs = TICK_MS, op
   const planet = system?.bodies?.find((body) => body.id === outpost?.bodyId);
   if (!planet || outpost?.type !== 'outpost') return emptyCargo();
   const rates = config.productionRates[planet.type] ?? config.productionRates.habitable;
-  const moonMultiplier = 1 + config.moonProductionBonus * (planet.moons?.length ?? 0);
+  const moonMultiplier = 1 + config.moonProductionBonus
+    * (planet.moons?.length ?? 0)
+    * Math.max(0, Number(options.moonYieldMultiplier ?? 1) || 1);
   const configuredMultiplier = Number(outpost.productionMultiplier);
-  const structureMultiplier = Number.isFinite(configuredMultiplier) ? Math.max(0, configuredMultiplier) : 1;
-  return scaleCargo(rates, (Math.max(0, deltaMs) / 1000) * moonMultiplier * structureMultiplier);
+  const legacyMultiplier = Number.isFinite(configuredMultiplier) ? Math.max(0, configuredMultiplier) : 1;
+  const levelMultiplier = outpostCargoProductionMultiplier(outpost);
+  const systemMultiplier = Math.max(0, Number(options.systemProductionMultiplier ?? 1) || 1);
+  return scaleCargo(
+    rates,
+    (Math.max(0, deltaMs) / 1000) * moonMultiplier * legacyMultiplier * levelMultiplier * systemMultiplier,
+  );
 }
 
 export function systemCargoProduction(system, deltaMs = TICK_MS, options = {}) {
@@ -614,11 +689,31 @@ export function tickOutpostProduction(state, options = {}) {
   let produced = emptyCargo();
   for (const galaxyId of galaxyIdsForState(state, options.galaxyIds ?? options.galaxyId)) {
     for (const system of Object.values(getSystems(state, galaxyId))) {
-      if (system.owner !== 'player' || system.star?.kind === 'trade_nexus') continue;
+      if (!['player', 'ai'].includes(system.owner) || system.star?.kind === 'trade_nexus') continue;
+      const { techState, effectOpts } = systemOwnerContext(state, system);
+      const effects = techEffects(techState);
       for (const outpost of system.structures ?? []) {
-        if (outpost.type !== 'outpost') continue;
-        const stock = ensureOutpostStock(logistics, galaxyId, system, outpost, config);
-        const delta = cargoProductionForOutpost(system, outpost, deltaMs, config);
+        if (outpost.type !== 'outpost' || !isOperationalStructure(state, outpost, {
+          ...effectOpts,
+          systemId: system.id,
+          galaxyId,
+        })) continue;
+        const stock = ensureOutpostStock(
+          logistics,
+          galaxyId,
+          system,
+          outpost,
+          config,
+          effects.outpostStockCapacityBonus,
+        );
+        const delta = cargoProductionForOutpost(system, outpost, deltaMs, {
+          ...config,
+          moonYieldMultiplier: effects.moonYieldMult,
+          systemProductionMultiplier: structureCargoProductionMultiplier(state, system.id, {
+            ...effectOpts,
+            galaxyId,
+          }) * effects.cargoProductionMult * effects.outpostCargoOutputMult,
+        });
         const accepted = cargoManifestFromInventory(delta, cargoRoom(stock.inventory, stock.capacity));
         mutateCargo(stock.inventory, addCargo(stock.inventory, accepted));
         mutateCargo(stock.producedTotal, addCargo(stock.producedTotal, accepted));
@@ -649,6 +744,7 @@ export function localTransportStatus(transport, time) {
   const sampleTime = transport.status === 'inbound' ? time : (transport.completedAt ?? time);
   return {
     id: transport.id,
+    ownerId: transport.ownerId ?? 'player',
     galaxyId: transport.galaxyId,
     systemId: transport.systemId,
     fromBodyId: transport.fromBodyId,
@@ -705,13 +801,28 @@ export function tickLocalTransports(state, options = {}) {
   const stocks = Object.values(logistics.outpostStock)
     .sort((a, b) => a.id.localeCompare(b.id));
   for (const stock of stocks) {
+    const stockSystem = getSystems(state, stock.galaxyId)[stock.systemId];
+    const stockOutpost = stockSystem?.structures?.find((structure) => structure.id === stock.outpostId);
+    const stockContext = systemOwnerContext(state, stockSystem);
+    if (!stockOutpost || !isOperationalStructure(state, stockOutpost, {
+      ...stockContext.effectOpts,
+      systemId: stock.systemId,
+      galaxyId: stock.galaxyId,
+    })) continue;
     const depot = Object.values(logistics.depots)
       .filter((candidate) => candidate.galaxyId === stock.galaxyId && candidate.systemId === stock.systemId)
       .sort((a, b) => a.id.localeCompare(b.id))[0];
     if (!depot?.operational) continue;
     if (cargoTotal(stock.inventory) + EPSILON < config.localDispatchCargo) continue;
+    const { techState, effectOpts } = ownerContext(state, stock.ownerId ?? depot.ownerId ?? 'player');
+    const localInterval = config.localDispatchIntervalMs
+      * structureDispatchIntervalMultiplier(state, stock.systemId, 'local', {
+        ...effectOpts,
+        galaxyId: stock.galaxyId,
+      })
+      * techEffects(techState).logisticsDispatchIntervalMult;
     if (stock.lastLocalDispatchAt !== null
-      && now - stock.lastLocalDispatchAt < config.localDispatchIntervalMs) continue;
+      && now - stock.lastLocalDispatchAt < localInterval) continue;
     if (logistics.localTransports.some(
       (transport) => transport.stockId === stock.id && localTransportActive(transport),
     )) continue;
@@ -725,6 +836,7 @@ export function tickLocalTransports(state, options = {}) {
       galaxyId: stock.galaxyId,
       systemId: stock.systemId,
       stockId: stock.id,
+      ownerId: stock.ownerId ?? depot.ownerId ?? 'player',
       outpostId: stock.outpostId,
       fromBodyId: stock.bodyId,
       depotId: depot.id,
@@ -759,16 +871,33 @@ export function dispatchDepot(state, depotId, options = {}) {
   if (cargoTotal(depot.inventory) + EPSILON < config.minDispatchCargo) {
     return { ok: false, reason: `Need ${config.minDispatchCargo} cargo to dispatch` };
   }
+  const { techState, effectOpts } = ownerContext(state, depot.ownerId ?? 'player');
+  const routeCapacity = 1
+    + Math.max(0, Math.floor(techEffects(techState).convoyRouteBonus ?? 0))
+    + Math.max(0, Math.floor(structureActiveConvoyRouteBonus(state, depot.systemId, {
+      ...effectOpts,
+      galaxyId: depot.galaxyId,
+    })));
+  const activeFromDepot = logistics.convoys.filter((convoy) => convoy.depotId === depot.id
+    && !['delivered', 'intercepted'].includes(convoy.status)).length;
+  if (activeFromDepot >= routeCapacity) {
+    return { ok: false, reason: `Active convoy route capacity reached (${routeCapacity})` };
+  }
 
   const destinationSystemId = options.destinationSystemId ?? depot.preferredNexusId;
-  const route = bestNexusRoute(state, depot.galaxyId, depot.systemId, { destinationSystemId });
+  const route = bestNexusRoute(state, depot.galaxyId, depot.systemId, {
+    destinationSystemId,
+    ownerId: depot.ownerId ?? 'player',
+  });
   if (!route) {
-    const hasNexus = discoverTradeNexuses(state, depot.galaxyId).some((nexus) => nexus.available);
+    const hasNexus = discoverTradeNexuses(state, depot.galaxyId, depot.ownerId ?? 'player')
+      .some((nexus) => nexus.available);
     return { ok: false, reason: hasNexus ? 'No unblocked route to a Trade Nexus' : 'No available Trade Nexus' };
   }
   const routeRecord = logistics.routes.find((entry) => entry.depotId === depot.id) ?? {
     id: `route:${depot.id}`,
     depotId: depot.id,
+    ownerId: depot.ownerId ?? 'player',
     galaxyId: depot.galaxyId,
     fromSystemId: depot.systemId,
     createdAt: state.time ?? 0,
@@ -788,6 +917,7 @@ export function dispatchDepot(state, depotId, options = {}) {
     id: `convoy-${logistics.nextConvoyId++}`,
     galaxyId: depot.galaxyId,
     depotId: depot.id,
+    ownerId: depot.ownerId ?? 'player',
     fromSystemId: depot.systemId,
     destinationSystemId: route.nexus.systemId,
     path: route.path,
@@ -815,7 +945,7 @@ export function dispatchDepot(state, depotId, options = {}) {
   logistics.stats.convoysDispatched += 1;
   const event = {
     type: 'convoy_dispatched', at: now, convoyId: convoy.id, depotId: depot.id,
-    destinationSystemId: convoy.destinationSystemId, path: [...convoy.path], manifest,
+    ownerId: convoy.ownerId, destinationSystemId: convoy.destinationSystemId, path: [...convoy.path], manifest,
   };
   recordEvent(logistics, event, config);
   return { ok: true, convoy, event };
@@ -829,8 +959,15 @@ export function tickDepotDispatch(state, options = {}) {
   const depots = Object.values(logistics.depots).sort((a, b) => a.id.localeCompare(b.id));
   for (const depot of depots) {
     if (!depot.operational || depot.routePaused) continue;
+    const { techState, effectOpts } = ownerContext(state, depot.ownerId ?? 'player');
+    const interval = config.convoyDispatchIntervalMs
+      * structureDispatchIntervalMultiplier(state, depot.systemId, 'convoy', {
+        ...effectOpts,
+        galaxyId: depot.galaxyId,
+      })
+      * techEffects(techState).logisticsDispatchIntervalMult;
     if (depot.lastDispatchAt !== null
-      && now - depot.lastDispatchAt < config.convoyDispatchIntervalMs) continue;
+      && now - depot.lastDispatchAt < interval) continue;
     const result = dispatchDepot(state, depot.id, config);
     if (result.ok) events.push(result.event);
   }
@@ -919,7 +1056,10 @@ export function rerouteConvoy(state, convoyId, destinationSystemId = null, optio
   const now = state.time ?? 0;
   const origin = convoyAtRouteNode(convoy, now);
   if (!origin.ok) return origin;
-  const route = bestNexusRoute(state, convoy.galaxyId, origin.systemId, { destinationSystemId });
+  const route = bestNexusRoute(state, convoy.galaxyId, origin.systemId, {
+    destinationSystemId,
+    ownerId: convoy.ownerId ?? 'player',
+  });
   if (!route) return { ok: false, reason: 'No unblocked route to an available Trade Nexus' };
 
   const config = configFrom(options);
@@ -988,9 +1128,13 @@ export function interceptConvoy(state, convoyId, options = {}) {
     return { ok: true, destroyed: false, repelled: true, convoy, event };
   }
 
-  const lossFraction = options.destroyed === true
+  const { techState } = ownerContext(state, convoy.ownerId ?? 'player');
+  const baseLossFraction = options.destroyed === true
     ? 1
     : Math.max(0, Math.min(1, options.cargoLossFraction ?? 1));
+  const lossFraction = Math.max(0, Math.min(1,
+    baseLossFraction * techEffects(techState).cargoLossMult,
+  ));
   const lostCargo = scaleCargo(convoy.manifest, lossFraction);
   mutateCargo(convoy.manifest, subtractCargo(convoy.manifest, lostCargo));
   convoy.deliveryValue = cargoCreditValue(convoy.manifest, config.cargoValues);
@@ -1015,14 +1159,35 @@ export function interceptConvoy(state, convoyId, options = {}) {
 }
 
 function nexusStillAvailable(state, convoy) {
-  return nexusAcceptsPlayerCargo(getSystems(state, convoy.galaxyId)[convoy.destinationSystemId]);
+  return nexusAcceptsCargo(
+    getSystems(state, convoy.galaxyId)[convoy.destinationSystemId],
+    convoy.ownerId ?? 'player',
+  );
 }
 
 function deliverConvoy(state, convoy, config) {
   const logistics = ensureLogisticsState(state);
   const now = state.time ?? 0;
-  const credits = cargoCreditValue(convoy.manifest, config.cargoValues);
-  state.credits = (Number(state.credits) || 0) + credits;
+  const depot = findExportDepot(state, convoy.depotId);
+  const systemId = depot?.systemId ?? convoy.fromSystemId;
+  const system = getSystems(state, convoy.galaxyId)[systemId];
+  const ownerId = convoy.ownerId ?? depot?.ownerId ?? 'player';
+  const { techState, effectOpts } = ownerContext(state, ownerId);
+  const deliveryMultiplier = Math.max(0, Number(
+    (depot?.deliveryMultiplier ?? system?.deliveryMultiplier ?? 1)
+      * structureNexusDeliveryMultiplier(state, systemId, {
+        ...effectOpts,
+        galaxyId: convoy.galaxyId,
+      })
+      * techEffects(techState).nexusDeliveryValueMult,
+  ) || 1);
+  const credits = roundCargo(cargoCreditValue(convoy.manifest, config.cargoValues) * deliveryMultiplier);
+  if (ownerId === 'player') {
+    state.credits = (Number(state.credits) || 0) + credits;
+  } else {
+    const faction = state.factions?.list?.find((candidate) => candidate.id === ownerId);
+    if (faction) faction.credits = (Number(faction.credits) || 0) + credits;
+  }
   convoy.status = 'delivered';
   convoy.systemId = convoy.destinationSystemId;
   convoy.currentNodeId = convoy.destinationSystemId;
@@ -1030,14 +1195,19 @@ function deliverConvoy(state, convoy, config) {
   convoy.deliveryValue = credits;
   logistics.stats.convoysDelivered += 1;
   logistics.stats.deliveredCredits = roundCargo(logistics.stats.deliveredCredits + credits);
+  logistics.stats.deliveredCreditsByOwner[ownerId] = roundCargo(
+    (logistics.stats.deliveredCreditsByOwner[ownerId] ?? 0) + credits,
+  );
   logistics.stats.lastDeliveryAt = now;
   mutateCargo(logistics.stats.deliveredCargo, addCargo(logistics.stats.deliveredCargo, convoy.manifest));
-  logistics.stats.recentDeliveries.push({ at: now, convoyId: convoy.id, credits, cargo: normalizeCargo(convoy.manifest) });
+  logistics.stats.recentDeliveries.push({
+    at: now, convoyId: convoy.id, ownerId, credits, cargo: normalizeCargo(convoy.manifest),
+  });
   const cutoff = now - config.recentDeliveryWindowMs * 2;
   logistics.stats.recentDeliveries = logistics.stats.recentDeliveries.filter((delivery) => delivery.at >= cutoff);
   return recordEvent(logistics, {
     type: 'convoy_delivered', at: now, convoyId: convoy.id,
-    destinationSystemId: convoy.destinationSystemId, manifest: normalizeCargo(convoy.manifest), credits,
+    ownerId, destinationSystemId: convoy.destinationSystemId, manifest: normalizeCargo(convoy.manifest), credits,
   }, config);
 }
 
@@ -1054,7 +1224,7 @@ function tickOneConvoy(state, convoy, config, events) {
     if (convoy.pauseReason === 'blockade' || convoy.pauseReason === 'no_destination') {
       const location = convoyAtRouteNode(convoy, now);
       const system = location.ok ? getSystems(state, convoy.galaxyId)[location.systemId] : null;
-      if (location.ok && nexusAcceptsPlayerCargo(system)) {
+      if (location.ok && nexusAcceptsCargo(system, convoy.ownerId ?? 'player')) {
         convoy.destinationSystemId = location.systemId;
         events.push(deliverConvoy(state, convoy, config));
       } else {
@@ -1239,6 +1409,7 @@ export function depotSummary(state, depotId, options = {}) {
     id: depot.id,
     galaxyId: depot.galaxyId,
     systemId: depot.systemId,
+    ownerId: depot.ownerId ?? 'player',
     operational: depot.operational,
     routePaused: depot.routePaused,
     pauseReason: depot.pauseReason,
@@ -1255,27 +1426,42 @@ export function depotSummary(state, depotId, options = {}) {
 export function logisticsSummary(state, galaxyId = state.activeGalaxyId, options = {}) {
   const logistics = ensureLogisticsState(state);
   const config = configFrom(options);
-  const depots = Object.values(logistics.depots).filter((depot) => depot.galaxyId === galaxyId);
-  const convoys = logistics.convoys.filter((convoy) => convoy.galaxyId === galaxyId);
-  const outpostStock = Object.values(logistics.outpostStock).filter((stock) => stock.galaxyId === galaxyId);
+  const ownerId = options.ownerId === undefined ? 'player' : options.ownerId;
+  const ownerMatches = (entry) => ownerId == null || (entry.ownerId ?? 'player') === ownerId;
+  const depots = Object.values(logistics.depots).filter(
+    (depot) => depot.galaxyId === galaxyId && ownerMatches(depot),
+  );
+  const convoys = logistics.convoys.filter(
+    (convoy) => convoy.galaxyId === galaxyId && ownerMatches(convoy),
+  );
+  const outpostStock = Object.values(logistics.outpostStock).filter(
+    (stock) => stock.galaxyId === galaxyId && ownerMatches(stock),
+  );
   const cargoAtOutposts = outpostStock.reduce((total, stock) => addCargo(total, stock.inventory), emptyCargo());
   const cargoAtDepots = depots.reduce((total, depot) => addCargo(total, depot.inventory), emptyCargo());
   const cargoInTransit = convoys
     .filter((convoy) => !['delivered', 'intercepted'].includes(convoy.status))
     .reduce((total, convoy) => addCargo(total, convoy.manifest), emptyCargo());
   const cutoff = (state.time ?? 0) - config.recentDeliveryWindowMs;
-  const recent = logistics.stats.recentDeliveries.filter((delivery) => delivery.at >= cutoff);
+  const recent = logistics.stats.recentDeliveries.filter(
+    (delivery) => delivery.at >= cutoff && ownerMatches(delivery),
+  );
   const throughputCreditsPerMinute = roundCargo(recent.reduce((sum, delivery) => sum + delivery.credits, 0)
     * (60000 / config.recentDeliveryWindowMs));
   const statuses = {};
   for (const convoy of convoys) statuses[convoy.status] = (statuses[convoy.status] ?? 0) + 1;
   return {
     galaxyId,
-    nexusCount: discoverTradeNexuses(state, galaxyId).length,
-    availableNexusCount: discoverTradeNexuses(state, galaxyId).filter((nexus) => nexus.available).length,
+    ownerId,
+    nexusCount: discoverTradeNexuses(state, galaxyId, ownerId ?? 'player').length,
+    availableNexusCount: discoverTradeNexuses(state, galaxyId, ownerId ?? 'player').filter((nexus) => nexus.available).length,
     depotCount: depots.length,
     operationalDepotCount: depots.filter((depot) => depot.operational).length,
     pausedRouteCount: depots.filter((depot) => depot.routePaused).length,
+    activeConvoyRouteCapacity: depots.length + depots.reduce(
+      (total, depot) => total + structureActiveConvoyRouteBonus(state, depot.systemId),
+      0,
+    ),
     convoyCount: convoys.length,
     activeConvoyCount: convoys.filter((convoy) => !['delivered', 'intercepted'].includes(convoy.status)).length,
     convoyStatuses: statuses,
@@ -1284,7 +1470,9 @@ export function logisticsSummary(state, galaxyId = state.activeGalaxyId, options
     cargoInTransit,
     storedCargo: roundCargo(cargoTotal(cargoAtOutposts) + cargoTotal(cargoAtDepots)),
     throughputCreditsPerMinute,
-    deliveredCredits: logistics.stats.deliveredCredits,
+    deliveredCredits: ownerId == null
+      ? logistics.stats.deliveredCredits
+      : logistics.stats.deliveredCreditsByOwner[ownerId] ?? 0,
     lostCargo: normalizeCargo(logistics.stats.lostCargo),
     laneBlockadeCount: logistics.blockades.lanes.filter((key) => key.startsWith(`${galaxyId}:`)).length,
     systemBlockadeCount: logistics.blockades.systems.filter((key) => key.startsWith(`${galaxyId}:`)).length,

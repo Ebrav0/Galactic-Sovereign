@@ -7,7 +7,7 @@ import {
   VICTORY_SCULPTOR_ACTIONS,
   SHELL_COUNT,
 } from './constants.js';
-import { getGraph, getSystems } from './galaxy-scope.js';
+import { getSystems, persistentSystemRecords } from './galaxy-scope.js';
 import { superweaponSummary } from './superweapon.js';
 import { countCompletedDysons } from './milestones.js';
 import { listAiFactionsFromState } from './diplomacy.js';
@@ -71,7 +71,8 @@ export function checkDefeat(state) {
     return { type: 'defeat', reason: 'flagship_destroyed' };
   }
 
-  const stronghold = getSystems(state)[state.stronghold];
+  const stronghold = persistentSystemRecords(state)
+    .find((record) => record.galaxyId === state.homeGalaxyId && record.systemId === state.stronghold)?.system;
   if (stronghold && stronghold.owner !== 'player') {
     state.campaign.defeated = true;
     return { type: 'defeat', reason: 'stronghold_lost' };
@@ -101,9 +102,11 @@ export function checkVictory(state) {
   const vt = state.campaign.victoryType;
   if (vt === 'sandbox') return null;
 
-  const graph = getGraph(state);
-  const playerSystems = Object.values(getSystems(state)).filter((s) => s.owner === 'player').length;
-  const totalStars = graph.stars.length;
+  const systems = persistentSystemRecords(state);
+  const playerSystems = systems.filter(({ system }) => system.owner === 'player').length;
+  const totalStars = Object.values(state.galaxies ?? {})
+    .reduce((sum, galaxy) => sum + (galaxy.graph?.stars?.length ?? 0), 0)
+    || systems.length;
 
   if (vt === 'dominion') {
     const threshold = Math.ceil(totalStars * VICTORY_DOMINION_THRESHOLD);
@@ -123,7 +126,7 @@ export function checkVictory(state) {
   }
 
   if (vt === 'annihilation') {
-    const aiOwned = Object.values(getSystems(state)).filter((s) => s.owner === 'ai').length;
+    const aiOwned = systems.filter(({ system }) => system.owner === 'ai').length;
     if (aiOwned === 0 && listAiFactionsFromState(state).length > 0) {
       state.campaign.won = true;
       return { type: 'victory', victoryType: vt };

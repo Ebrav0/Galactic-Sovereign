@@ -19,6 +19,7 @@ import {
   effectiveDamageAgainst,
   healRateForShip,
   createFlagshipCombatUnit,
+  grantShipExperience,
   hullStats,
   maxCarrierWingCount,
   normalizeCarrierWingState,
@@ -35,10 +36,21 @@ import { softKeepOut, nudgeUnitKeepOut, buildKeepOutBodyCache } from './ship-mot
 import { getSystems } from './galaxy-scope.js';
 import { systemById } from './state.js';
 import {
+  bodyStructureDef,
   bodyStructureDefensePower,
   bodyStructureIonPower,
+  isOperationalStructure,
+  structureCarrierRecoveryRate,
+  structureCarrierWingCapacityMultiplier,
+  structureHullSalvageRate,
+  structureEnemyRetreatChargeMultiplier,
+  structureLevelHpMultiplier,
+  structureMaxHp,
+  structureWeaponRangeMultiplier,
 } from './body-structures.js';
 import { techEffects } from './tech-web.js';
+import { factionTechContext } from './ai-tech.js';
+import { isAtWar } from './diplomacy.js';
 import {
   activeFleetOrders,
   applyFleetOrder,
@@ -57,6 +69,13 @@ import {
   convoyTransitStatus,
   interceptConvoy,
 } from './logistics.js';
+
+function techStateForUnit(state, unit) {
+  if (unit?.side === 'player') return state;
+  if (!unit?.factionId) return unit?.side === 'enemy' || unit?.side === 'ai' ? null : state;
+  const faction = state.factions?.list?.find((candidate) => candidate.id === unit.factionId);
+  return faction ? factionTechContext(faction) : null;
+}
 
 function seededEntryVector(seed, systemId, time) {
   let h = (seed ^ systemId.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) >>> 0;
@@ -94,13 +113,19 @@ function playerForcesInSystem(state, systemId) {
 }
 
 function shouldBattle(state, systemId) {
-  const pirates = pirateFleetAtSystem(state, systemId);
-  const aiShips = aiShipsInSystem(state, systemId);
+  const pirates = pirateFleetAtSystem(state, systemId)
+    .filter((fleet) => fleet.ships?.some((ship) => ship.hp > 0));
+  const aiShips = aiShipsInSystem(state, systemId)
+    .filter((ship) => isAtWar(state, ship.factionId ?? 'ai-0'));
   const system = getSystems(state)[systemId];
-  if (!pirates.length && !aiShips.length) return false;
   const { ships, hasFlagship } = playerForcesInSystem(state, systemId);
-  if (ships.length > 0 || hasFlagship || heroInSystem(state, systemId)) return true;
-  if (system?.owner === 'player' || system?.owner === 'ai') return true;
+  const playerPresent = ships.length > 0 || hasFlagship || heroInSystem(state, systemId);
+  const hostileToPlayer = pirates.length > 0 || aiShips.length > 0;
+  if (playerPresent && hostileToPlayer) return true;
+  if (system?.owner === 'player' && hostileToPlayer) return true;
+  // AI-held systems only auto-resolve when pirates are actually attacking;
+  // the faction's own stationed ships are not an opposing force.
+  if (system?.owner === 'ai' && pirates.length > 0) return true;
   return false;
 }
 
@@ -115,10 +140,18 @@ function collectEnemyShips(state, systemId) {
   const playerPresent = playerForcesInSystem(state, systemId).ships.length > 0
     || flagshipInSystem(state, systemId) || heroInSystem(state, systemId);
   if (playerPresent) {
-    for (const ship of aiShipsInSystem(state, systemId)) {
+    for (const ship of aiShipsInSystem(state, systemId)
+      .filter((candidate) => isAtWar(state, candidate.factionId ?? 'ai-0'))) {
       out.push({ ...ship, side: 'enemy' });
     }
-    if (system?.owner === 'ai') out.push(...combatStructureUnits(system, 'enemy'));
+    if (system?.owner === 'ai' && isAtWar(state, system.factionId ?? 'ai-0')) {
+      out.push(...combatStructureUnits(state, system, 'enemy'));
+    }
+    for (const convoy of activeConvoys(state)) {
+      if ((convoy.ownerId ?? 'player') === 'player' || !convoyAtSystem(state, convoy, systemId)) continue;
+      if (!isAtWar(state, convoy.ownerId ?? 'ai-0')) continue;
+      out.push(convoyCombatUnit(convoy, 'enemy'));
+    }
   }
   return out;
 }
@@ -133,24 +166,74 @@ const TACTICAL_STRUCTURE_PROFILES = Object.freeze({
   shipyard: { hull: 'bulk_freighter', hp: 600, weaponProfile: 'kinetic' },
 });
 
-function combatStructureUnits(system, side) {
+function tacticalStructureProfile(structure) {
+  const fixed = TACTICAL_STRUCTURE_PROFILES[structure.type];
+  if (fixed) return fixed;
+  const def = bodyStructureDef(structure.type);
+  if (!def) return null;
+  const weaponProfile = def.combat?.weapon ?? (
+    ['military', 'control', 'defense'].some((token) => String(def.aiPriority ?? def.combat?.role).includes(token))
+      ? 'kinetic' : 'point_defense'
+  );
+  const hull = weaponProfile === 'torpedo' ? 'destroyer'
+    : weaponProfile === 'ion' ? 'sensor_ship'
+      : def.combat?.role === 'carrier-command' ? 'light_carrier'
+        : 'bulk_freighter';
+  return {
+    hull,
+    hp: Math.round((def.hp ?? 240) * structureLevelHpMultiplier(structure)),
+    weaponProfile,
+  };
+}
+
+function combatStructureUnits(state, system, side) {
   const units = [];
   for (const structure of system?.structures ?? []) {
-    const profile = TACTICAL_STRUCTURE_PROFILES[structure.type];
-    if (!profile || structure.hp === 0) continue;
+    const profile = tacticalStructureProfile(structure);
+    if (!profile || !isOperationalStructure(state, structure, { systemId: system.id })) continue;
+    const effectiveMaxHp = structureMaxHp(state, system.id, structure)
+      ?? structure.maxHp
+      ?? profile.hp;
+    const storedMaxHp = structure.maxHp ?? effectiveMaxHp;
+    const hpRatio = storedMaxHp > 0
+      ? Math.max(0, Math.min(1, (structure.hp ?? storedMaxHp) / storedMaxHp))
+      : 0;
     units.push({
       id: structure.id,
       hull: profile.hull,
-      hp: structure.hp ?? structure.maxHp ?? profile.hp,
-      maxHp: structure.maxHp ?? profile.hp,
+      hp: Math.round(effectiveMaxHp * hpRatio),
+      maxHp: effectiveMaxHp,
       side,
       isStructure: true,
       isObjective: true,
       structureType: structure.type,
+      level: structure.level ?? 1,
+      factionId: system.factionId ?? null,
       weaponProfile: profile.weaponProfile,
     });
   }
   return units;
+}
+
+function convoyAtSystem(state, convoy, systemId) {
+  const status = convoyTransitStatus(state, convoy);
+  return (status?.phase === 'jumping' && convoy.fromSystemId === systemId)
+    || convoy.currentNodeId === systemId;
+}
+
+function convoyCombatUnit(convoy, side) {
+  return {
+    id: convoy.id,
+    hull: 'bulk_freighter',
+    hp: convoy.armor ?? 120,
+    maxHp: convoy.armor ?? 120,
+    side,
+    factionId: convoy.ownerId === 'player' ? null : convoy.ownerId,
+    isConvoy: true,
+    isObjective: true,
+    convoyId: convoy.id,
+    weaponProfile: 'point_defense',
+  };
 }
 
 function collectAllyShips(state, systemId) {
@@ -162,14 +245,20 @@ function collectAllyShips(state, systemId) {
     for (const ship of aiShipsInSystem(state, systemId)) {
       out.push({ ...ship, side: 'ai' });
     }
-    out.push(...combatStructureUnits(system, 'ai'));
+    out.push(...combatStructureUnits(state, system, 'ai'));
     return out;
   }
   for (const ship of ships) {
     out.push({ ...ship, side: 'player' });
   }
+  if (playerPresent) {
+    for (const ship of aiShipsInSystem(state, systemId)) {
+      if (isAtWar(state, ship.factionId ?? 'ai-0')) continue;
+      out.push({ ...ship, side: 'ai' });
+    }
+  }
   if (hasFlagship) {
-    const existing = state.systemBattles[systemId]?.flagshipHp ?? FLAGSHIP_HP;
+    const existing = state.flagship?.hp ?? state.systemBattles[systemId]?.flagshipHp ?? FLAGSHIP_HP;
     out.push({
       ...createFlagshipCombatUnit(),
       hp: existing,
@@ -178,46 +267,50 @@ function collectAllyShips(state, systemId) {
     });
   }
   if (system?.owner === 'player' || (system?.star?.kind === 'trade_nexus' && playerPresent)) {
-    out.push(...combatStructureUnits(system, 'player'));
+    out.push(...combatStructureUnits(state, system, 'player'));
+  } else if (playerPresent && system?.owner === 'ai'
+      && !isAtWar(state, system.factionId ?? 'ai-0')) {
+    out.push(...combatStructureUnits(state, system, 'ai'));
   }
   for (const convoy of activeConvoys(state)) {
-    const status = convoyTransitStatus(state, convoy);
-    const atSystem = (status?.phase === 'jumping' && convoy.fromSystemId === systemId)
-      || convoy.currentNodeId === systemId;
-    if (!atSystem) continue;
-    out.push({
-      id: convoy.id,
-      hull: 'bulk_freighter',
-      hp: convoy.armor ?? 120,
-      maxHp: convoy.armor ?? 120,
-      side: 'player',
-      isConvoy: true,
-      isObjective: true,
-      convoyId: convoy.id,
-      weaponProfile: 'point_defense',
-    });
+    const ownerId = convoy.ownerId ?? 'player';
+    const friendly = playerPresent
+      ? ownerId === 'player' || !isAtWar(state, ownerId)
+      : ownerId === system?.factionId;
+    if (!friendly || !convoyAtSystem(state, convoy, systemId)) continue;
+    out.push(convoyCombatUnit(convoy, playerPresent && ownerId === 'player' ? 'player' : 'ai'));
   }
   return out;
 }
 
 function launchCarrierWings(state, battle, carrier, side, ordinal) {
   if (!carrier || carrier.hp <= 0) return [];
-  if (!carrierWingLoadout(carrier, state).length) return [];
-  if (side !== 'enemy' && !techEffects(state).carrierWings) return [];
+  const techState = techStateForUnit(state, { ...carrier, side });
+  const localCapacityMultiplier = side === 'player'
+    ? structureCarrierWingCapacityMultiplier(state, battle.systemId)
+    : structureCarrierWingCapacityMultiplier(state, battle.systemId, {
+      owner: 'ai',
+      factionId: carrier.factionId,
+    });
+  if (!carrierWingLoadout(carrier, techState, localCapacityMultiplier).length) return [];
+  if (side === 'player' && !techEffects(state).carrierWings) return [];
+  if (carrier.factionId && (!techState || !techEffects(techState).carrierWings)) return [];
 
   const source = side === 'player'
     ? state.playerShips?.find((s) => s.id === carrier.id)
     : null;
-  const legacyWing = source ? normalizeCarrierWingState(source, state) : normalizeCarrierWingState(carrier, state);
+  const legacyWing = source
+    ? normalizeCarrierWingState(source, state, localCapacityMultiplier)
+    : normalizeCarrierWingState(carrier, techState, localCapacityMultiplier);
   const wingState = normalizeFighterWingState(legacyWing, {
-    capacity: maxCarrierWingCount(carrier, state),
+    capacity: maxCarrierWingCount(carrier, techState, localCapacityMultiplier),
     ammoPerCraft: 8,
     fuelPerCraft: 100,
   });
-  const ready = Math.floor(wingState?.ready ?? maxCarrierWingCount(carrier, state));
+  const ready = Math.floor(wingState?.ready ?? maxCarrierWingCount(carrier, techState, localCapacityMultiplier));
   if (ready <= 0) return [];
 
-  const loadout = carrierWingLoadout(carrier, state).slice(0, ready);
+  const loadout = carrierWingLoadout(carrier, techState, localCapacityMultiplier).slice(0, ready);
   battle.wingLaunches = battle.wingLaunches ?? {};
   battle.wingLaunches[carrier.id] = (battle.wingLaunches[carrier.id] ?? 0) + loadout.length;
   if (wingState) {
@@ -337,6 +430,7 @@ function startBattle(state, systemId) {
   const tactical = tacticalAnchorInSystem(state, systemId);
   const battle = {
     id: `battle-${systemId}-${state.time}`,
+    systemId,
     active: true,
     mode: tactical ? 'tactical' : 'auto',
     startedAt: state.time,
@@ -372,7 +466,7 @@ function startBattle(state, systemId) {
 }
 
 function applyCasualtiesToState(state, systemId, battle) {
-  const pirateLosses = battle.lastResolve?.enemyCasualties ?? 0;
+  const pirateLosses = battle.casualtiesApplied ? 0 : (battle.lastResolve?.enemyCasualties ?? 0);
   const fleets = pirateFleetAtSystem(state, systemId);
   let removed = 0;
   for (const fleet of fleets) {
@@ -396,8 +490,14 @@ function applyCasualtiesToState(state, systemId, battle) {
         const structure = system?.structures.find((s) => s.id === unit.id);
         if (structure) {
           structure.hp = Math.max(0, unit.hp);
+          structure.maxHp = unit.maxHp;
           structure.disabledUntil = structure.hp <= 0 ? state.time + 60000 : (structure.disabledUntil ?? 0);
         }
+        continue;
+      }
+      if (unit.side === 'enemy' && unit.factionId && !unit.isWing) {
+        const aiShip = state.aiShips?.find((ship) => ship.id === unit.id);
+        if (aiShip) aiShip.hp = Math.max(0, unit.hp);
         continue;
       }
       if (unit.side !== 'player' || unit.hull === 'flagship') continue;
@@ -406,14 +506,27 @@ function applyCasualtiesToState(state, systemId, battle) {
       if (ship) ship.hp = Math.max(0, unit.hp);
     }
     const flagshipUnit = battle.units.find((u) => u.hull === 'flagship');
-    if (flagshipUnit) battle.flagshipHp = flagshipUnit.hp;
+    if (flagshipUnit) {
+      battle.flagshipHp = Math.max(0, flagshipUnit.hp);
+      state.flagship.hp = battle.flagshipHp;
+      state.flagship.maxHp ??= FLAGSHIP_HP;
+    }
 
     for (const [carrierId, launched] of Object.entries(battle.wingLaunches ?? {})) {
-      const ship = state.playerShips.find((s) => s.id === carrierId);
+      const ship = state.playerShips.find((s) => s.id === carrierId)
+        ?? state.aiShips?.find((s) => s.id === carrierId);
       if (!ship) continue;
-      const legacyWing = normalizeCarrierWingState(ship, state);
+      const side = state.playerShips.includes(ship) ? 'player' : 'enemy';
+      const techState = techStateForUnit(state, { ...ship, side });
+      const localCapacityMultiplier = side === 'player'
+        ? structureCarrierWingCapacityMultiplier(state, systemId)
+        : structureCarrierWingCapacityMultiplier(state, systemId, {
+          owner: 'ai',
+          factionId: ship.factionId,
+        });
+      const legacyWing = normalizeCarrierWingState(ship, techState, localCapacityMultiplier);
       const wing = normalizeFighterWingState(legacyWing, {
-        capacity: maxCarrierWingCount(ship, state),
+        capacity: maxCarrierWingCount(ship, techState, localCapacityMultiplier),
         ammoPerCraft: 8,
         fuelPerCraft: 100,
       });
@@ -422,7 +535,15 @@ function applyCasualtiesToState(state, systemId, battle) {
       const lost = Math.max(0, launched - surviving);
       wing.ammo = survivors.reduce((sum, unit) => sum + Math.max(0, unit.ammo ?? 0), 0);
       wing.fuel = survivors.reduce((sum, unit) => sum + Math.max(0, unit.fuel ?? 0), 0);
-      recoverFighters(wing, { returned: surviving, lost }, { capacity: maxCarrierWingCount(ship, state) });
+      const recoveryRate = side === 'player' && battle.winner === 'player'
+        ? structureCarrierRecoveryRate(state, systemId)
+        : 0;
+      const recoveredCraft = Math.min(lost, Math.round(lost * recoveryRate));
+      recoverFighters(
+        wing,
+        { returned: surviving + recoveredCraft, lost: Math.max(0, lost - recoveredCraft) },
+        { capacity: maxCarrierWingCount(ship, techState, localCapacityMultiplier) },
+      );
     }
   }
 }
@@ -439,6 +560,14 @@ function endBattle(state, systemId, winner) {
       });
       const enemyLosses = (battle.initialUnits ?? []).filter((unit) => unit.side === 'enemy'
         && !(battle.units ?? []).some((final) => final.id === unit.id && final.hp > 0)).length;
+      const survivingIds = new Set((battle.units ?? []).filter((unit) => unit.hp > 0).map((unit) => unit.id));
+      const destroyedFriendlyHullCost = (battle.initialUnits ?? [])
+        .filter((unit) => unit.side === 'player' && !unit.isWing && unit.hull !== 'flagship'
+          && state.playerShips?.some((ship) => ship.id === unit.id) && !survivingIds.has(unit.id))
+        .reduce((sum, unit) => sum + (hullStats(unit.hull)?.cost ?? 0), 0);
+      const hullRecovery = winner === 'player'
+        ? Math.round(destroyedFriendlyHullCost * structureHullSalvageRate(state, systemId))
+        : 0;
       const report = createPostBattleReport({
         battleId: battle.id,
         systemId,
@@ -449,12 +578,34 @@ function endBattle(state, systemId, winner) {
         finalUnits: battle.units ?? [],
         objectives,
         events: battle.events ?? [],
-        salvage: { credits: enemyLosses * 12, materials: enemyLosses * 4, fuel: enemyLosses * 1.5 },
+        salvage: {
+          credits: enemyLosses * 12 + hullRecovery,
+          materials: enemyLosses * 4,
+          fuel: enemyLosses * 1.5,
+          recoveredHullCredits: hullRecovery,
+        },
       });
       state.battleReports = [...(state.battleReports ?? []), report].slice(-50);
       state.credits += report.salvage.credits;
+    } else if (winner === 'player') {
+      const recoveredHullCredits = Math.round(
+        (battle.destroyedFriendlyHullCost ?? 0) * structureHullSalvageRate(state, systemId),
+      );
+      state.credits += recoveredHullCredits;
+      battle.lastResolve = { ...battle.lastResolve, recoveredHullCredits };
     }
     applyCasualtiesToState(state, systemId, battle);
+    if (winner === 'player') {
+      const participantIds = battle.mode === 'tactical'
+        ? (battle.initialUnits ?? []).filter((unit) => unit.side === 'player' && !unit.isWing).map((unit) => unit.id)
+        : (battle.playerParticipantIds ?? []);
+      const xp = (20 + Math.max(0, battle.lastResolve?.enemyCasualties ?? 0) * 5)
+        * techEffects(state).veterancyExperienceMult;
+      for (const shipId of participantIds) {
+        const ship = state.playerShips?.find((entry) => entry.id === shipId && entry.hp > 0);
+        if (ship) grantShipExperience(ship, xp);
+      }
+    }
   }
   delete state.systemBattles[systemId];
   pruneBattleGroups(state);
@@ -467,14 +618,15 @@ function totalPower(units, state = null) {
   let antiFighter = 0;
   let bomber = 0;
   for (const u of units) {
-    dps += effectiveDps(u, state);
+    const techState = state ? techStateForUnit(state, u) : null;
+    dps += effectiveDps(u, techState);
     hp += u.hp;
-    heal += healRateForShip(u, state);
+    heal += healRateForShip(u, techState);
     if ((u.weaponProfile ?? '') === 'point_defense' || CARRIER_WING_HULLS.includes(u.hull)) {
-      antiFighter += effectiveDps(u, state) * (weaponProfile(u.weaponProfile ?? 'kinetic').antiFighter ?? 1);
+      antiFighter += effectiveDps(u, techState) * (weaponProfile(u.weaponProfile ?? 'kinetic').antiFighter ?? 1);
     }
     if (u.hull === 'bomber' || (u.weaponProfile ?? '') === 'torpedo') {
-      bomber += effectiveDps(u, state);
+      bomber += effectiveDps(u, techState);
     }
   }
   return { dps, hp, heal, antiFighter, bomber };
@@ -483,12 +635,20 @@ function totalPower(units, state = null) {
 function resolveAutoBattle(state, systemId, battle) {
   const allies = collectAllyShips(state, systemId);
   const enemies = collectEnemyShips(state, systemId);
+  battle.playerParticipantIds = allies
+    .filter((unit) => state.playerShips?.some((ship) => ship.id === unit.id))
+    .map((unit) => unit.id);
   const stance = STANCE_MODIFIERS[state.battleStance ?? 'balanced'] ?? 1;
   const ally = totalPower(allies, state);
   const enemy = totalPower(enemies, state);
-  const defense = bodyStructureDefensePower(state, systemId) + bodyStructureIonPower(state, systemId);
+  const defense = (bodyStructureDefensePower(state, systemId) + bodyStructureIonPower(state, systemId))
+    * techEffects(state).defensePowerMult;
 
-  const allyScore = ((ally.dps + defense) * stance + ally.heal * HEALER_AUTO_COEF * 100) * (1 + ally.hp / 500);
+  const alliedCompact = allies.some((unit) => unit.side === 'ai')
+    ? techEffects(state).alliedDefenseMult
+    : 1;
+  const allyScore = ((ally.dps + defense) * stance + ally.heal * HEALER_AUTO_COEF * 100)
+    * (1 + ally.hp / 500) * alliedCompact;
   const enemyScore = enemy.dps * (1 + enemy.hp / 500);
 
   const ratio = allyScore / Math.max(1, enemyScore);
@@ -520,19 +680,58 @@ function resolveAutoBattle(state, systemId, battle) {
     stance: state.battleStance ?? 'balanced',
   };
 
+  const destroyUnit = (unit) => {
+    if (!unit) return;
+    if (unit.isConvoy) {
+      interceptConvoy(state, unit.convoyId ?? unit.id, { destroyed: true });
+      return;
+    }
+    if (unit.isStructure) {
+      const structure = systemById(state, systemId)?.structures?.find((entry) => entry.id === unit.id);
+      if (structure) {
+        structure.hp = 0;
+        structure.disabledUntil = state.time + 60000;
+      }
+      return;
+    }
+    const playerShip = state.playerShips?.find((entry) => entry.id === unit.id);
+    if (playerShip) {
+      battle.destroyedFriendlyHullCost = (battle.destroyedFriendlyHullCost ?? 0)
+        + (hullStats(playerShip.hull)?.cost ?? 0);
+      playerShip.hp = 0;
+      return;
+    }
+    const aiShip = state.aiShips?.find((entry) => entry.id === unit.id);
+    if (aiShip) {
+      aiShip.hp = 0;
+      return;
+    }
+    if (unit.fleetId) removePirateShip(state, unit.fleetId, unit.id);
+  };
+
   let pc = finalPlayerCas;
   for (const ship of [...allies].filter((s) => s.hull !== 'flagship')) {
     if (pc <= 0) break;
-    const ps = state.playerShips.find((s) => s.id === ship.id);
-    if (ps) { ps.hp = 0; pc--; }
+    destroyUnit(ship);
+    pc--;
   }
 
   let ec = enemyCas;
   for (const ship of enemies) {
     if (ec <= 0) break;
-    removePirateShip(state, ship.fleetId, ship.id);
+    destroyUnit(ship);
     ec--;
   }
+
+  if (allies.some((unit) => unit.hull === 'flagship')) {
+    if (!playerWins) {
+      state.flagship.hp = 0;
+    } else {
+      const damageFraction = Math.min(0.45, enemyScore / Math.max(1, allyScore + enemyScore));
+      state.flagship.hp = Math.max(1, (state.flagship.hp ?? FLAGSHIP_HP) - Math.round(FLAGSHIP_HP * damageFraction));
+    }
+  }
+  battle.casualtiesApplied = true;
 
   endBattle(state, systemId, playerWins ? 'player' : 'enemy');
   return battle.lastResolve;
@@ -575,7 +774,11 @@ function considerTarget(unit, candidate, best, state) {
   const d2 = dx * dx + dy * dy;
   const range = weaponProfile(unit.weaponProfile ?? 'kinetic').range ?? TACTICAL_WEAPON_RANGE;
   const inRangeBias = d2 <= range * range ? 0.45 : 1;
-  const damageBias = Math.max(0.2, effectiveDamageAgainst(unit, candidate, state) / Math.max(1, effectiveDps(unit, state)));
+  const techState = techStateForUnit(state, unit);
+  const damageBias = Math.max(
+    0.2,
+    effectiveDamageAgainst(unit, candidate, techState) / Math.max(1, effectiveDps(unit, techState)),
+  );
   const score = d2 * inRangeBias / damageBias;
   if (score < best.score) return { target: candidate, d2, score };
   return best;
@@ -638,9 +841,9 @@ function priorityTarget(unit, context, spatialIndex, state, battle, environment 
   });
 }
 
-function healAllies(unit, allies, repairMult) {
+function healAllies(unit, allies, repairMult, techState = null) {
   if (!allies?.length) return;
-  const delta = (healRateForShip(unit) * repairMult * TICK_MS) / 1000;
+  const delta = (healRateForShip(unit, techState) * repairMult * TICK_MS) / 1000;
   if (delta <= 0) return;
   for (const ally of allies) {
     if (ally.id === unit.id || ally.hp <= 0 || ally.hp >= ally.maxHp) continue;
@@ -762,8 +965,25 @@ function tickTacticalBattle(state, systemId, battle) {
   const system = getSystems(state)[systemId];
   const retreatOrder = activeFleetOrders(battle, 'player').find((order) => order.type === 'emergency_retreat');
   if (retreatOrder) {
-    battle.retreatStartedAt ??= state.time;
-    if (state.time - battle.retreatStartedAt >= 1500) {
+    const hostileInterdiction = (battle.units ?? []).some(
+      (unit) => unit.side !== 'player' && unit.isStructure
+        && unit.structureType === 'interdiction_array' && unit.hp > 0,
+    );
+    if (hostileInterdiction) {
+      battle.retreatStartedAt = null;
+      battle.retreatBlockedBy = 'interdiction_array';
+    } else {
+      battle.retreatBlockedBy = null;
+      battle.retreatStartedAt ??= state.time;
+    }
+    const hostileFactionId = (battle.units ?? []).find((unit) => unit.side !== 'player' && unit.factionId)?.factionId;
+    const retreatChargeMs = 1500 * (hostileFactionId
+      ? structureEnemyRetreatChargeMultiplier(state, systemId, {
+        owner: 'ai',
+        factionId: hostileFactionId,
+      })
+      : 1);
+    if (!hostileInterdiction && state.time - battle.retreatStartedAt >= retreatChargeMs) {
       battle.lastResolve = { mode: 'tactical', playerWins: false, retreated: true, playerCasualties: 0 };
       endBattle(state, systemId, 'retreated');
       return;
@@ -821,9 +1041,10 @@ function tickTacticalBattle(state, systemId, battle) {
       }
     }
 
-    const healRate = healRateForShip(unit);
+    const unitTechState = techStateForUnit(state, unit);
+    const healRate = healRateForShip(unit, unitTechState);
     if (healRate > 0) {
-      healAllies(unit, context.bySide.get(unit.side), repairMult);
+      healAllies(unit, context.bySide.get(unit.side), repairMult, unitTechState);
     } else {
       const target = priorityTarget(unit, context, spatialIndex, state, battle, environment);
       if (!target) continue;
@@ -832,7 +1053,10 @@ function tickTacticalBattle(state, systemId, battle) {
       const dist = Math.hypot(dx, dy) || 1;
       const speed = TACTICAL_SHIP_SPEED * environment.speed * damageStateModifiers(unit).speed * (TICK_MS / 1000);
       const profile = weaponProfile(unit.weaponProfile ?? 'kinetic');
-      const range = (profile.range ?? TACTICAL_WEAPON_RANGE) * environment.range;
+      const localRangeMultiplier = unit.side === 'player'
+        ? structureWeaponRangeMultiplier(state, systemId) * techEffects(state).weaponRangeMult
+        : 1;
+      const range = (profile.range ?? TACTICAL_WEAPON_RANGE) * environment.range * localRangeMultiplier;
       if (['screen', 'protect', 'escort_convoy'].includes(order?.type)) {
         const anchorId = order.type === 'escort_convoy' ? order.convoyId : order.targetId;
         const anchor = battle.units.find((candidate) => candidate.id === anchorId && candidate.hp > 0);
@@ -884,8 +1108,8 @@ function tickTacticalBattle(state, systemId, battle) {
         unit.x += (dx / dist) * speed;
         unit.y += (dy / dist) * speed;
         unit.heading = Math.atan2(dy, dx);
-      } else if (unit.cooldownMs <= 0 && effectiveDps(unit, state) > 0) {
-        const damage = effectiveDamageAgainst(unit, target, state) * environment.damage
+      } else if (unit.cooldownMs <= 0 && effectiveDps(unit, unitTechState) > 0) {
+        const damage = effectiveDamageAgainst(unit, target, unitTechState) * environment.damage
           * damageStateModifiers(unit).damage * (TICK_MS / 1000);
         const hit = applyFacedDamage(target, damage, unit);
         battle.events = battle.events ?? [];

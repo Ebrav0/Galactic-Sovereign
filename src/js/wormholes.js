@@ -16,17 +16,21 @@ import {
   entitiesInActiveGalaxy,
 } from './galaxy-scope.js';
 import { dehydrateGalaxy, hydrateGalaxy } from './hydration.js';
+import { techEffects } from './tech-web.js';
+import { empireStructureEffectValue } from './body-structures.js';
 
 let wormholeJumpCounter = 0;
 
-export function resetWormholeJumpCounter(n = 0) {
+export function resetWormholeJumpCounter(n = 0, state = null) {
   wormholeJumpCounter = n;
+  if (state) state.wormholeJumpCounter = n;
 }
 
 export function canEnterWormhole(state) {
   const f = state.flagship;
   if (!f || f.transit || f.wormholeTransit) return { ok: false, reason: 'Flagship busy' };
   if (f.systemId !== BLACK_HOLE_ID) return { ok: false, reason: 'Must be at galactic core' };
+  if (state.systemBattles?.[BLACK_HOLE_ID]?.active) return { ok: false, reason: 'Cannot enter a wormhole during combat' };
   if (f.galaxyId !== state.activeGalaxyId) return { ok: false, reason: 'Wrong galaxy' };
   return { ok: true };
 }
@@ -34,7 +38,10 @@ export function canEnterWormhole(state) {
 export function pickUnanchoredExit(state, fromWhId) {
   const ids = allWormholeIds(state).filter((id) => id !== fromWhId);
   if (ids.length === 0) return fromWhId;
-  const idx = hashSeed(state.meta.seed, `wh-jump:${wormholeJumpCounter}`) % ids.length;
+  const counter = Number.isInteger(state.wormholeJumpCounter)
+    ? state.wormholeJumpCounter
+    : wormholeJumpCounter;
+  const idx = hashSeed(state.meta.seed, `wh-jump:${counter}`) % ids.length;
   return ids[idx];
 }
 
@@ -75,17 +82,29 @@ export function orderWormholeTravel(state, { targetGalaxyId = null, forceAnchore
 
   if (toWh === fromWh) return { ok: false, reason: 'No valid exit wormhole' };
 
-  wormholeJumpCounter++;
+  const counter = Number.isInteger(state.wormholeJumpCounter)
+    ? state.wormholeJumpCounter
+    : wormholeJumpCounter;
+  wormholeJumpCounter = counter + 1;
+  state.wormholeJumpCounter = counter + 1;
+  const chargeRate = techEffects(state).wormholeChargeRateMult
+    * empireStructureEffectValue(state, 'wormholeChargeRateMult', { base: 1, op: 'mult' });
+  const durationMs = Math.max(1000, Math.round(
+    WORMHOLE_TRANSIT_MS / Math.max(
+      0.1,
+      chargeRate * techEffects(state).wormholeTransitMult * techEffects(state).flagshipJumpChargeMult,
+    ),
+  ));
   state.flagship.wormholeTransit = {
     fromWh,
     toWh,
     startTime: state.time,
-    durationMs: WORMHOLE_TRANSIT_MS,
+    durationMs,
   };
   state.credits = Math.max(0, state.credits - WORMHOLE_HAZARD_CREDIT_COST);
 
   const targetGal = state.wormholes[toWh]?.galaxyId;
-  return { ok: true, fromWh, toWh, targetGalaxyId: targetGal, etaMs: WORMHOLE_TRANSIT_MS };
+  return { ok: true, fromWh, toWh, targetGalaxyId: targetGal, etaMs: durationMs };
 }
 
 export function tickWormholeTransit(state) {
@@ -134,8 +153,9 @@ export function canBuildWormholeAnchor(state) {
   if (core?.structures.some((s) => s.type === 'wormhole_anchor')) {
     return { ok: false, reason: 'Anchor already built' };
   }
-  if (state.credits < WORMHOLE_ANCHOR_COST) return { ok: false, reason: 'Not enough credits' };
-  return { ok: true };
+  const cost = Math.ceil(WORMHOLE_ANCHOR_COST * techEffects(state).anchorCostMult);
+  if (state.credits < cost) return { ok: false, reason: `Need ${cost} credits` };
+  return { ok: true, cost };
 }
 
 export function buildWormholeAnchor(state, targetGalaxyId) {
@@ -153,7 +173,7 @@ export function buildWormholeAnchor(state, targetGalaxyId) {
   if (state.wormholes[fromWh]?.anchor) return { ok: false, reason: 'Already anchored' };
   if (state.wormholes[toWh]?.anchor) return { ok: false, reason: 'Target wormhole already anchored' };
 
-  state.credits -= WORMHOLE_ANCHOR_COST;
+  state.credits -= check.cost;
   const core = getSystems(state)[BLACK_HOLE_ID];
   core.structures.push({
     id: `wha-${state.time}`,

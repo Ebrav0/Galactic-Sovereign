@@ -190,6 +190,7 @@ export function superweaponCreate(state, anchorSystemId) {
   });
   sysRng(); // consume
   gal.systems[newId].owner = 'player';
+  gal.systems[newId].createdBySuperweapon = true;
 
   state.solarii -= SUPERWEAPON_CREATE_SOLARII;
   state.superweapon.cooldownUntil = state.time + SUPERWEAPON_COOLDOWN_MS;
@@ -234,13 +235,22 @@ export function superweaponDestroy(state, targetSystemId) {
 }
 
 function purgeSystemEntities(state, systemId) {
-  state.playerShips = (state.playerShips ?? []).filter((s) => s.systemId !== systemId);
-  state.aiShips = (state.aiShips ?? []).filter((s) => s.systemId !== systemId);
-  state.scouts = (state.scouts ?? []).filter((s) => s.systemId !== systemId && s.transit?.path?.every?.((id) => id !== systemId));
-  if (state.flagship.systemId === systemId && !state.flagship.transit) {
+  const referencesSystem = (entity) => entity?.systemId === systemId
+    || entity?.targetSystemId === systemId
+    || entity?.rallyStarId === systemId
+    || entity?.transit?.path?.includes?.(systemId)
+    || entity?.returnTransit?.path?.includes?.(systemId);
+  state.playerShips = (state.playerShips ?? []).filter((entity) => !referencesSystem(entity));
+  state.aiShips = (state.aiShips ?? []).filter((entity) => !referencesSystem(entity));
+  state.scouts = (state.scouts ?? []).filter((entity) => !referencesSystem(entity));
+  if (referencesSystem(state.flagship)) {
     state.flagship.systemId = state.stronghold;
+    state.flagship.transit = null;
+    state.flagship.wormholeTransit = null;
     state.flagship.x = 0;
     state.flagship.y = -200;
+    state.flagship.vx = 0;
+    state.flagship.vy = 0;
   }
   for (const group of state.battleGroups ?? []) {
     group.shipIds = group.shipIds.filter((id) => {
@@ -248,7 +258,73 @@ function purgeSystemEntities(state, systemId) {
       return ship && ship.systemId !== systemId;
     });
   }
-  state.heroFlagships = (state.heroFlagships ?? []).filter((h) => h.systemId !== systemId);
+  state.heroFlagships = (state.heroFlagships ?? []).filter((entity) => !referencesSystem(entity));
+  state.pirates.fleets = (state.pirates?.fleets ?? []).filter((entity) => !referencesSystem(entity));
+  for (const drone of state.builderDrones ?? []) {
+    if (!referencesSystem(drone)) continue;
+    drone.status = 'idle';
+    drone.systemId = state.flagship.systemId ?? state.stronghold;
+    drone.targetSystemId = null;
+    drone.targetBodyId = null;
+    drone.buildType = null;
+    drone.transit = null;
+    drone.returnTransit = null;
+    drone.buildStartedAt = null;
+    drone.buildDurationMs = null;
+    drone.lastError = 'target system destroyed';
+  }
+
+  const logistics = state.logistics;
+  if (logistics) {
+    const removedDepotIds = new Set();
+    for (const [depotId, depot] of Object.entries(logistics.depots ?? {})) {
+      if (depot.systemId === systemId || depot.nexusSystemId === systemId) {
+        removedDepotIds.add(depotId);
+        delete logistics.depots[depotId];
+      }
+    }
+    logistics.routes = (logistics.routes ?? []).filter((route) => (
+      !removedDepotIds.has(route.depotId)
+      && route.fromSystemId !== systemId
+      && route.toSystemId !== systemId
+      && route.nexusSystemId !== systemId
+      && !route.path?.includes?.(systemId)
+    ));
+    const removedConvoys = (logistics.convoys ?? []).filter((convoy) => (
+      removedDepotIds.has(convoy.depotId)
+      || convoy.fromSystemId === systemId
+      || convoy.toSystemId === systemId
+      || convoy.nexusSystemId === systemId
+      || convoy.path?.includes?.(systemId)
+    ));
+    logistics.convoys = (logistics.convoys ?? []).filter((convoy) => !removedConvoys.includes(convoy));
+    logistics.stats ??= {};
+    logistics.stats.convoysLost = (logistics.stats.convoysLost ?? 0) + removedConvoys.length;
+    logistics.localTransports = (logistics.localTransports ?? []).filter((transport) => (
+      transport.systemId !== systemId && !removedDepotIds.has(transport.depotId)
+    ));
+    for (const key of Object.keys(logistics.outpostStock ?? {})) {
+      const stock = logistics.outpostStock[key];
+      if (stock?.systemId === systemId || key.includes(`:${systemId}:`)) delete logistics.outpostStock[key];
+    }
+    logistics.blockades.systems = (logistics.blockades?.systems ?? [])
+      .filter((key) => !key.endsWith(`:${systemId}`));
+    logistics.blockades.lanes = (logistics.blockades?.lanes ?? [])
+      .filter((key) => !key.split(':').at(-1)?.split('|').includes(systemId));
+  }
+
+  state.manualTradeRoutes = (state.manualTradeRoutes ?? []).filter((route) => (
+    route.fromSystemId !== systemId && route.toSystemId !== systemId
+  ));
+  const galaxy = getActiveGalaxy(state);
+  if (galaxy?.intel) delete galaxy.intel[systemId];
+  if (galaxy?.capture) delete galaxy.capture[systemId];
+  for (const faction of state.factions?.list ?? []) {
+    if (faction.homeSystemId !== systemId) continue;
+    faction.homeSystemId = Object.values(getSystems(state))
+      .find((system) => system.id !== systemId && system.owner === 'ai' && system.factionId === faction.id)?.id
+      ?? null;
+  }
   delete state.systemBattles?.[systemId];
 }
 

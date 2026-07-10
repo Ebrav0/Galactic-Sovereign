@@ -7,7 +7,11 @@ import {
   SHUTTLE_PLANET_DWELL_MS,
 } from './constants.js';
 import { systemById, planetPosition, moonPosition, hasOutpost, hashSeed } from './state.js';
-import { BODY_STRUCTURE_DEFS } from './body-structures.js';
+import {
+  BODY_STRUCTURE_DEFS,
+  isOperationalStructure,
+  structureLevel,
+} from './body-structures.js';
 
 const CYCLE_MS =
   SHUTTLE_FLIGHT_MS + SHUTTLE_MOON_DWELL_MS + SHUTTLE_FLIGHT_MS + SHUTTLE_PLANET_DWELL_MS;
@@ -42,6 +46,42 @@ function shuttleCyclePhase(time, planet, moonIdx) {
   return (time + offset) % CYCLE_MS;
 }
 
+function surfaceBuildingSitesForBody(
+  state,
+  systemId,
+  system,
+  bodyId,
+  bodyPos,
+  bodyRadius,
+  planetId,
+  moonId = null,
+) {
+  return system.structures
+    .filter((structure) => {
+      const def = BODY_STRUCTURE_DEFS[structure.type];
+      return def?.placement === 'surface' && structure.bodyId === bodyId;
+    })
+    .map((structure, idx) => {
+      const seed = hashSeed(0x51f15e, structure.id);
+      const angle = ((seed % 10000) / 10000) * Math.PI * 2 + idx * 0.31;
+      const r = bodyRadius + 2.6 + (idx % 3) * 1.2;
+      return {
+        kind: `surface-${structure.type}`,
+        structureType: structure.type,
+        structureId: structure.id,
+        placement: 'surface',
+        level: structureLevel(structure),
+        x: bodyPos.x + Math.cos(angle) * r,
+        y: bodyPos.y + Math.sin(angle) * r,
+        heading: angle + Math.PI / 2,
+        active: isOperationalStructure(state, structure, { systemId }),
+        planetId,
+        moonId,
+        seed: seed % 97,
+      };
+    });
+}
+
 /**
  * Landing pads and mining rigs for outpost worlds.
  * @returns {Array<{kind, x, y, heading, active, planetId, moonId?, seed}>}
@@ -52,28 +92,17 @@ export function outpostSurfaceSites(state, systemId, time = state.time) {
   if (!system) return sites;
 
   for (const planet of system.bodies) {
-    const surfaceStructures = system.structures.filter((s) => {
-      const def = BODY_STRUCTURE_DEFS[s.type];
-      return def?.placement === 'surface' && s.bodyId === planet.id;
-    });
     const planetPos = planetPosition(planet, time);
-    surfaceStructures.forEach((structure, idx) => {
-      const seed = hashSeed(0x51f15e, structure.id);
-      const angle = ((seed % 10000) / 10000) * Math.PI * 2 + idx * 0.31;
-      const r = planet.radius + 2.6 + (idx % 3) * 1.2;
-      sites.push({
-        kind: `surface-${structure.type}`,
-        structureType: structure.type,
-        structureId: structure.id,
-        placement: 'surface',
-        x: planetPos.x + Math.cos(angle) * r,
-        y: planetPos.y + Math.sin(angle) * r,
-        heading: angle + Math.PI / 2,
-        active: (structure.hp ?? 1) > 0 && state.time >= (structure.disabledUntil ?? 0),
-        planetId: planet.id,
-        seed: seed % 97,
-      });
-    });
+    sites.push(...surfaceBuildingSitesForBody(
+      state, systemId, system, planet.id, planetPos, planet.radius, planet.id,
+    ));
+
+    for (const moon of planet.moons) {
+      const moonPos = moonPosition(planet, moon, time);
+      sites.push(...surfaceBuildingSitesForBody(
+        state, systemId, system, moon.id, moonPos, moon.radius, planet.id, moon.id,
+      ));
+    }
 
     if (!hasOutpost(state, systemId, planet.id) || planet.moons.length === 0) continue;
 

@@ -12,7 +12,13 @@ import {
   isPlayerOwned,
   systemById,
 } from './state.js';
-import { shipyardSlots as techShipyardSlots, empireQueueHulls } from './tech-web.js';
+import { shipyardSlots as techShipyardSlots, empireQueueHulls, techEffects } from './tech-web.js';
+import {
+  isOperationalStructure,
+  shipyardBuildTimeMultiplier,
+  shipyardExtraSlots,
+  structureShipBuildTimeMultiplier,
+} from './body-structures.js';
 
 export function shipyardSlots(state) {
   return techShipyardSlots(state);
@@ -61,13 +67,16 @@ export function listPlayerShipyards(state) {
   for (const system of Object.values(getSystems(state))) {
     if (!isPlayerOwned(state, system.id)) continue;
     for (const s of system.structures) {
-      if (s.type !== 'shipyard') continue;
+      if (s.type !== 'shipyard' || !isOperationalStructure(state, s, {
+        systemId: system.id,
+        owner: 'player',
+      })) continue;
       normalizeShipyardBuilds(s);
       yards.push({
         shipyardId: s.id,
         systemId: system.id,
         activeBuilds: s.builds.length,
-        slots: shipyardSlots(state),
+        slots: shipyardSlots(state) + shipyardExtraSlots(s),
       });
     }
   }
@@ -115,11 +124,14 @@ function canBuildHullAtShipyard(state, hull, shipyardId, systemId) {
     return { ok: false, reason: 'Hull not available at shipyard' };
   }
   const shipyard = findStructure(state, systemId, shipyardId);
-  if (!shipyard || shipyard.type !== 'shipyard') {
-    return { ok: false, reason: 'No such shipyard' };
+  if (!shipyard || shipyard.type !== 'shipyard' || !isOperationalStructure(state, shipyard, {
+    systemId,
+    owner: 'player',
+  })) {
+    return { ok: false, reason: 'No operational shipyard at that system' };
   }
   normalizeShipyardBuilds(shipyard);
-  const slots = shipyardSlots(state);
+  const slots = shipyardSlots(state) + shipyardExtraSlots(shipyard);
   if (shipyard.builds.length >= slots) {
     return { ok: false, reason: 'Shipyard slots full' };
   }
@@ -231,7 +243,12 @@ export function dispatchEmpireQueue(state) {
 
       const shipyard = findStructure(state, yard.systemId, yard.shipyardId);
       normalizeShipyardBuilds(shipyard);
-      const buildMs = hullBuildMs(item.hull);
+      const buildMs = Math.max(1, Math.round(
+        hullBuildMs(item.hull)
+          * shipyardBuildTimeMultiplier(shipyard)
+          * structureShipBuildTimeMultiplier(state, yard.systemId)
+          / Math.max(0.1, techEffects(state).shipBuildSpeedMult),
+      ));
       shipyard.builds.push({
         hull: item.hull,
         startedAt: state.time,

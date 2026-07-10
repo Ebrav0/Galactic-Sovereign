@@ -9,6 +9,7 @@ import {
 } from './constants.js';
 import { refreshMilestones } from './milestones.js';
 import { isTechUnlocked } from './tech-web.js';
+import { empireStructureEffectValue } from './body-structures.js';
 
 export const RELATION_WAR = 'war';
 export const RELATION_NEUTRAL = 'neutral';
@@ -91,30 +92,38 @@ export function offerTreaty(state, factionId, type) {
   if (!faction) return { ok: false, reason: 'Unknown faction' };
   const tech = treatyTechCheck(state, type);
   if (!tech.ok) return tech;
+  const creditCostMultiplier = empireStructureEffectValue(state, 'treatyCostMult', {
+    base: 1,
+    op: 'mult',
+  });
 
   if (type === 'truce') {
-    if (state.credits < DIPLOMACY_TRUCE_COST) {
-      return { ok: false, reason: `Need ${DIPLOMACY_TRUCE_COST} credits` };
+    const cost = Math.ceil(DIPLOMACY_TRUCE_COST * creditCostMultiplier);
+    if (state.credits < cost) {
+      return { ok: false, reason: `Need ${cost} credits` };
     }
-    state.credits -= DIPLOMACY_TRUCE_COST;
+    state.credits -= cost;
     return setRelation(state, factionId, RELATION_TRUCE);
   }
   if (type === 'trade') {
-    if (state.credits < DIPLOMACY_TRADE_TREATY_COST) {
-      return { ok: false, reason: `Need ${DIPLOMACY_TRADE_TREATY_COST} credits` };
+    const cost = Math.ceil(DIPLOMACY_TRADE_TREATY_COST * creditCostMultiplier);
+    if (state.credits < cost) {
+      return { ok: false, reason: `Need ${cost} credits` };
     }
-    state.credits -= DIPLOMACY_TRADE_TREATY_COST;
+    state.credits -= cost;
     return setRelation(state, factionId, RELATION_TRADE);
   }
   if (type === 'alliance') {
-    if (state.credits < DIPLOMACY_ALLIANCE_COST) {
-      return { ok: false, reason: `Need ${DIPLOMACY_ALLIANCE_COST} credits` };
+    const cost = Math.ceil(DIPLOMACY_ALLIANCE_COST * creditCostMultiplier);
+    const solariiCost = Math.ceil(DIPLOMACY_ALLIANCE_SOLARII * creditCostMultiplier * 100) / 100;
+    if (state.credits < cost) {
+      return { ok: false, reason: `Need ${cost} credits` };
     }
-    if ((state.solarii ?? 0) < DIPLOMACY_ALLIANCE_SOLARII) {
-      return { ok: false, reason: `Need ${DIPLOMACY_ALLIANCE_SOLARII} Solarii` };
+    if ((state.solarii ?? 0) < solariiCost) {
+      return { ok: false, reason: `Need ${solariiCost} Solarii` };
     }
-    state.credits -= DIPLOMACY_ALLIANCE_COST;
-    state.solarii -= DIPLOMACY_ALLIANCE_SOLARII;
+    state.credits -= cost;
+    state.solarii -= solariiCost;
     return setRelation(state, factionId, RELATION_ALLIANCE);
   }
   return { ok: false, reason: 'Unknown treaty type' };
@@ -146,7 +155,11 @@ export function diplomaticTradeBonus(state) {
   if (isTechUnlocked(state, 'dip_embassy_network')) {
     bonus += DIPLOMACY_TRADE_INCOME_BONUS;
   }
-  return 1 + bonus;
+  const treatyEffectMultiplier = empireStructureEffectValue(state, 'treatyEffectMult', {
+    base: 1,
+    op: 'mult',
+  });
+  return 1 + bonus * treatyEffectMultiplier;
 }
 
 export function triggerSuperweaponPanic(state) {

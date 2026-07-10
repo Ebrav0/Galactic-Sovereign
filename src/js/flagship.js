@@ -329,6 +329,9 @@ export function orderTravel(state, targetId) {
   const f = state.flagship;
   const galaxy = getGraph(state);
   if (f.transit || f.wormholeTransit) return { ok: false, reason: 'Flagship is already in transit' };
+  if (f.systemId && state.systemBattles?.[f.systemId]?.active) {
+    return { ok: false, reason: 'Flagship is engaged in combat — issue an emergency retreat order' };
+  }
   if (!nodeById(galaxy, targetId)) return { ok: false, reason: 'No such star' };
   if (targetId === f.systemId) return { ok: false, reason: 'Flagship is already in that system' };
 

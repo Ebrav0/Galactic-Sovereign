@@ -22,7 +22,11 @@ import {
 import { shipyardBuildProgress } from './production.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import { jobProgress } from './drones.js';
-import { BODY_STRUCTURE_DEFS } from './body-structures.js';
+import {
+  BODY_STRUCTURE_DEFS,
+  isOperationalStructure,
+  structureLevel,
+} from './body-structures.js';
 
 const STAR_X = 0;
 const STAR_Y = 0;
@@ -112,6 +116,7 @@ function shipyardSite(state, systemId, planet, time = state.time) {
     buildHull: shipyard.builds[0]?.hull ?? null,
     seed: hashSeed(0x9e3779b9, shipyard.id) % 97,
     shipyardId: shipyard.id,
+    level: structureLevel(shipyard),
   };
 }
 
@@ -149,6 +154,8 @@ function researchStationSites(state, systemId, planet, time = state.time) {
       building: underConstruction,
       buildProgress: underConstruction ? structureConstructionProgress(state, station) : 0,
       seed: hashSeed(0xcafebabe, station.id) % 97,
+      level: structureLevel(station),
+      active: isOperationalStructure(state, station, { systemId }),
     };
   });
 }
@@ -191,6 +198,7 @@ function launcherSitesForBody(state, systemId, bodyId, time = state.time) {
       building: underConstruction,
       buildProgress: underConstruction ? structureConstructionProgress(state, launcher) : 0,
       seed: hashSeed(0xdeadbeef, launcher.id) % 97,
+      level: structureLevel(launcher),
     });
   });
 
@@ -219,10 +227,47 @@ function orbitalBuildingSitesForBody(state, systemId, bodyId, time = state.time)
         ...anchor,
         heading: starHeading(anchor.x, anchor.y),
         hubHeading: slotAngle + Math.PI / 2,
-        active: (structure.hp ?? 1) > 0 && state.time >= (structure.disabledUntil ?? 0),
+        active: isOperationalStructure(state, structure, { systemId }),
+        level: structureLevel(structure),
+        visual: BODY_STRUCTURE_DEFS[structure.type]?.visual ?? null,
         seed: hashSeed(0xbeefcafe, structure.id) % 97,
       };
     });
+}
+
+/** Deterministic star-orbit anchors for harvesters, collectors, and observatories. */
+export function starNodeStructureSites(state, systemId, time = state.time) {
+  const system = systemById(state, systemId);
+  if (!system) return [];
+  const structures = (system.structures ?? []).filter(
+    (structure) => BODY_STRUCTURE_DEFS[structure.type]?.placement === 'star-node',
+  );
+  const starRadius = (system.star?.radius ?? 60) * CELESTIAL_VISUAL_SCALE;
+  return structures.map((structure, idx) => {
+    const slotAngle = fixedSlotAngle(structure.id, 0xa7) + idx * 0.74;
+    const orbitR = starRadius + 64 + idx * 14;
+    const x = Math.cos(slotAngle) * orbitR;
+    const y = Math.sin(slotAngle) * orbitR;
+    return {
+      kind: structure.type,
+      structureType: structure.type,
+      structureId: structure.id,
+      placement: 'star-node',
+      bodyId: null,
+      planetId: null,
+      x,
+      y,
+      orbitR,
+      slotAngle,
+      heading: starHeading(x, y),
+      hubHeading: slotAngle + Math.PI / 2,
+      active: isOperationalStructure(state, structure, { systemId }),
+      level: structureLevel(structure),
+      visual: BODY_STRUCTURE_DEFS[structure.type]?.visual ?? null,
+      seed: hashSeed(0x7357a2, structure.id) % 97,
+      time,
+    };
+  });
 }
 
 /**
@@ -233,6 +278,8 @@ export function structureSites(state, systemId, time = state.time) {
   const system = systemById(state, systemId);
   const sites = [];
   if (!system) return sites;
+
+  sites.push(...starNodeStructureSites(state, systemId, time));
 
   for (const planet of system.bodies) {
     const sy = shipyardSite(state, systemId, planet, time);

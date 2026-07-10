@@ -8,6 +8,8 @@ import {
   SCOUT_HULL_COST,
   SHIPYARD_COST,
   WEAPON_PROFILES,
+  VETERANCY_BONUS_PER_LEVEL,
+  VETERANCY_XP_THRESHOLDS,
 } from './constants.js';
 import { techEffects } from './tech-web.js';
 
@@ -56,20 +58,20 @@ export function weaponProfile(profileId) {
   return WEAPON_PROFILES[profileId] ?? WEAPON_PROFILES.kinetic;
 }
 
-export function maxCarrierWingCount(shipOrHull, state = null) {
+export function maxCarrierWingCount(shipOrHull, state = null, localMultiplier = 1) {
   const hull = typeof shipOrHull === 'string' ? shipOrHull : shipOrHull?.hull;
   const spec = CARRIER_WING_SPECS[hull];
   if (!spec) return 0;
   const base = Object.values(spec).reduce((n, count) => n + count, 0);
-  const mult = state ? techEffects(state).carrierWingCapacityMult : 1;
+  const mult = (state ? techEffects(state).carrierWingCapacityMult : 1) * Math.max(0, localMultiplier || 1);
   return Math.max(0, Math.round(base * mult));
 }
 
-export function carrierWingLoadout(shipOrHull, state = null) {
+export function carrierWingLoadout(shipOrHull, state = null, localMultiplier = 1) {
   const hull = typeof shipOrHull === 'string' ? shipOrHull : shipOrHull?.hull;
   const spec = CARRIER_WING_SPECS[hull];
   if (!spec) return [];
-  const mult = state ? techEffects(state).carrierWingCapacityMult : 1;
+  const mult = (state ? techEffects(state).carrierWingCapacityMult : 1) * Math.max(0, localMultiplier || 1);
   const out = [];
   for (const [wingHull, count] of Object.entries(spec)) {
     const adjusted = Math.max(1, Math.round(count * mult));
@@ -78,9 +80,9 @@ export function carrierWingLoadout(shipOrHull, state = null) {
   return out;
 }
 
-export function normalizeCarrierWingState(ship, state = null) {
+export function normalizeCarrierWingState(ship, state = null, localMultiplier = 1) {
   if (!ship || !isCarrierHull(ship.hull)) return null;
-  const max = maxCarrierWingCount(ship, state);
+  const max = maxCarrierWingCount(ship, state, localMultiplier);
   if (!ship.wingState) {
     ship.wingState = { ready: max, lost: 0, launched: 0 };
   }
@@ -99,10 +101,44 @@ export function createShipInstance(id, hull, state = null) {
     hull,
     hp,
     maxHp: hp,
+    baseMaxHp: hp,
+    veterancy: 0,
+    experience: 0,
     weaponProfile: defaultWeaponProfileForHull(hull),
   };
   normalizeCarrierWingState(ship, state);
   return ship;
+}
+
+export function veterancyForExperience(experience) {
+  const xp = Math.max(0, Number(experience) || 0);
+  let level = 0;
+  for (let index = 1; index < VETERANCY_XP_THRESHOLDS.length; index += 1) {
+    if (xp >= VETERANCY_XP_THRESHOLDS[index]) level = index;
+  }
+  return Math.min(3, level);
+}
+
+export function applyVeterancy(ship, level, { preserveRatio = false } = {}) {
+  if (!ship) return ship;
+  const previousMax = Math.max(1, Number(ship.maxHp) || 1);
+  const ratio = Math.max(0, Math.min(1, (Number(ship.hp) || 0) / previousMax));
+  const oldLevel = Math.max(0, Math.min(3, Math.round(ship.veterancy ?? 0)));
+  const inferredBase = previousMax / (1 + oldLevel * VETERANCY_BONUS_PER_LEVEL);
+  ship.baseMaxHp = Math.max(1, Number(ship.baseMaxHp) || inferredBase);
+  ship.veterancy = Math.max(0, Math.min(3, Math.round(level ?? 0)));
+  ship.maxHp = Math.round(ship.baseMaxHp * (1 + ship.veterancy * VETERANCY_BONUS_PER_LEVEL));
+  ship.hp = preserveRatio ? Math.min(ship.maxHp, ship.maxHp * ratio) : ship.maxHp;
+  return ship;
+}
+
+export function grantShipExperience(ship, amount) {
+  if (!ship) return { levelUp: false, level: 0, experience: 0 };
+  const previous = Math.max(0, Math.min(3, Math.round(ship.veterancy ?? 0)));
+  ship.experience = Math.max(0, Number(ship.experience ?? 0) + Math.max(0, Number(amount) || 0));
+  const next = veterancyForExperience(ship.experience);
+  if (next !== previous) applyVeterancy(ship, next, { preserveRatio: true });
+  return { levelUp: next > previous, level: next, experience: ship.experience };
 }
 
 export function createFlagshipCombatUnit() {
@@ -127,9 +163,12 @@ export function effectiveDps(ship, state = null, { heroCombatAura = false } = {}
   if (ship.hull === 'flagship') return 25;
   let dps = hullStats(ship.hull)?.dps ?? 0;
   if (state) {
+    const fx = techEffects(state);
     dps *= dpsMultForHull(state, ship.hull);
+    dps *= fx.fleetDamageMult;
     if (heroCombatAura && ship.side !== 'enemy') dps *= 1.1;
   }
+  dps *= 1 + Math.max(0, Math.min(3, Math.round(ship.veterancy ?? 0))) * VETERANCY_BONUS_PER_LEVEL;
   return dps;
 }
 

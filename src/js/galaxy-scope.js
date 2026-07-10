@@ -71,6 +71,40 @@ export function hydratedGalaxyCount(state) {
   return Object.values(state.galaxies).filter((g) => g.status === 'active').length;
 }
 
+/** Active systems plus durable overlays for every dehydrated galaxy. */
+export function persistentSystemRecords(state) {
+  if (!state.galaxies) {
+    return Object.entries(state.systems ?? {}).map(([systemId, system]) => ({
+      galaxyId: state.activeGalaxyId ?? 'gal-0', systemId, system, abstract: false,
+    }));
+  }
+  const records = [];
+  for (const [galaxyId, galaxy] of Object.entries(state.galaxies)) {
+    const systems = Object.entries(galaxy.systems ?? {});
+    if (systems.length > 0) {
+      for (const [systemId, system] of systems) records.push({ galaxyId, systemId, system, abstract: false });
+      continue;
+    }
+    for (const [systemId, overlay] of Object.entries(galaxy.abstract?.systemOverlays ?? {})) {
+      records.push({
+        galaxyId,
+        systemId,
+        abstract: true,
+        system: {
+          id: systemId,
+          owner: overlay.owner ?? 'neutral',
+          factionId: overlay.factionId ?? null,
+          structures: overlay.structures ?? [],
+          dyson: overlay.dyson ?? {},
+          star: overlay.star ?? null,
+          bodies: overlay.bodies ?? [],
+        },
+      });
+    }
+  }
+  return records;
+}
+
 export function allWormholeIds(state) {
   return Object.keys(state.wormholes ?? {});
 }

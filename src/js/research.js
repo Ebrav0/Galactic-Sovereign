@@ -16,10 +16,9 @@ import {
   ensureDyson,
   findPlanet,
   isPlayerOwned,
-  isStructureActive,
   systemById,
 } from './state.js';
-import { getSystems } from './galaxy-scope.js';
+import { getSystems, persistentSystemRecords } from './galaxy-scope.js';
 import {
   techNode,
   techPrereqsMet,
@@ -31,6 +30,13 @@ import {
 } from './tech-web.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingResearchJob, queueConstructionJob } from './drones.js';
+import {
+  isOperationalStructure,
+  structureLevelMultiplier,
+  structureEffectValueFromList,
+  structureResearchOutputMultiplier,
+  structureResearchQueueSlotBonus,
+} from './body-structures.js';
 
 export function ensureResearchState(state) {
   if (!state.research) {
@@ -48,11 +54,11 @@ export function ensureResearchState(state) {
 export function researchStationCount(state, systemId) {
   const system = systemById(state, systemId);
   if (!system) return 0;
-  if (system.researchStationCount != null) {
-    return system.researchStationCount;
-  }
   return system.structures.filter(
-    (s) => s.type === 'research_station' && isStructureActive(s),
+    (s) => s.type === 'research_station' && isOperationalStructure(state, s, {
+      systemId,
+      owner: 'player',
+    }),
   ).length;
 }
 
@@ -100,27 +106,48 @@ export function buildResearchStation(state, systemId) {
 }
 
 export function totalResearchStationBonus(state) {
-  let count = 0;
-  for (const system of Object.values(getSystems(state))) {
-    if (!isPlayerOwned(state, system.id)) continue;
-    count += researchStationCount(state, system.id);
+  let bonus = 0;
+  for (const { system } of persistentSystemRecords(state)) {
+    if (system.owner !== 'player') continue;
+    const stations = (system.structures ?? []).filter(
+      (structure) => structure.type === 'research_station'
+        && isOperationalStructure(state, structure, { owner: 'player' }),
+    );
+    const stationStrength = stations.reduce(
+      (sum, station) => sum + structureLevelMultiplier(station),
+      0,
+    );
+    const researchOutput = structureEffectValueFromList(
+      state,
+      system.structures,
+      'researchOutputMult',
+      { base: 1, op: 'mult', owner: 'player' },
+    ) * structureEffectValueFromList(
+      state,
+      system.structures,
+      'researchStationOutputMult',
+      { base: 1, op: 'mult', owner: 'player' },
+    );
+    bonus += stationStrength * RESEARCH_STATION_BONUS * researchOutput;
   }
-  return count * RESEARCH_STATION_BONUS;
+  return bonus;
 }
 
 export function researchSpeedMultiplier(state, systemId = null) {
   ensureResearchState(state);
   let mult = 1 + totalResearchStationBonus(state);
   mult *= techEffects(state).researchSpeedMult;
+  mult *= techEffects(state).quantumArchiveOutputMult;
   if (systemId) {
     const system = systemById(state, systemId);
     if (system) mult *= shellResearchBonus(system);
   } else {
     // Use best shell bonus among player systems with stations
     let best = 1;
-    for (const system of Object.values(getSystems(state))) {
-      if (!isPlayerOwned(state, system.id)) continue;
-      if (researchStationCount(state, system.id) > 0) {
+    for (const { system } of persistentSystemRecords(state)) {
+      if (system.owner !== 'player') continue;
+      if ((system.structures ?? []).some((structure) => structure.type === 'research_station'
+        && isOperationalStructure(state, structure, { owner: 'player' }))) {
         best = Math.max(best, shellResearchBonus(system));
       }
     }
@@ -143,7 +170,8 @@ export function canStartResearch(state, nodeId) {
   if (isTechUnlocked(state, nodeId)) return { ok: false, reason: 'Already researched' };
   if (!techPrereqsMet(state, nodeId)) return { ok: false, reason: 'Prerequisites not met' };
   if (state.research.activeNodeId && state.research.activeNodeId !== nodeId) {
-    const maxQueue = techEffects(state).researchQueueDepth - 1;
+    const maxQueue = techEffects(state).researchQueueDepth - 1
+      + structureResearchQueueSlotBonus(state);
     if (state.research.queue.length >= maxQueue) {
       return { ok: false, reason: 'Research queue full' };
     }
@@ -179,6 +207,17 @@ export function startResearch(state, nodeId) {
   return { ok: true, nodeId, durationMs: check.durationMs };
 }
 
+function beginPaidQueuedResearch(state, nodeId) {
+  const node = techNode(nodeId);
+  if (!node || isTechUnlocked(state, nodeId) || !techPrereqsMet(state, nodeId)) {
+    return { ok: false, reason: 'Queued research is no longer legal' };
+  }
+  state.research.activeNodeId = nodeId;
+  state.research.progress = 0;
+  state.research.durationMs = nodeResearchMs(nodeId);
+  return { ok: true, nodeId, durationMs: state.research.durationMs };
+}
+
 export function cancelResearch(state) {
   ensureResearchState(state);
   if (!state.research.activeNodeId) return { ok: false, reason: 'No active research' };
@@ -188,7 +227,7 @@ export function cancelResearch(state) {
   state.research.durationMs = null;
   if (state.research.queue.length > 0) {
     const next = state.research.queue.shift();
-    return startResearch(state, next);
+    return beginPaidQueuedResearch(state, next);
   }
   return { ok: true };
 }
@@ -217,8 +256,8 @@ export function tickResearch(state) {
 
   if (state.research.queue.length > 0) {
     const next = state.research.queue.shift();
-    const res = startResearch(state, next);
-    if (res.ok && !res.queued) events.push({ type: 'research_started', nodeId: next });
+    const res = beginPaidQueuedResearch(state, next);
+    if (res.ok) events.push({ type: 'research_started', nodeId: next });
   }
 
   return events;
@@ -231,10 +270,11 @@ export function researchSummary(state) {
     progress: Math.round((state.research.progress ?? 0) * 1000) / 1000,
     unlocked: [...(state.research.unlocked ?? [])],
     queue: [...(state.research.queue ?? [])],
-    stationCount: Object.values(getSystems(state)).reduce(
-      (n, sys) => n + (isPlayerOwned(state, sys.id) ? researchStationCount(state, sys.id) : 0),
-      0,
-    ),
+    stationCount: persistentSystemRecords(state).reduce((count, { system }) => count
+      + (system.owner === 'player'
+        ? (system.structures ?? []).filter((structure) => structure.type === 'research_station'
+          && isOperationalStructure(state, structure, { owner: 'player' })).length
+        : 0), 0),
     speedMult: Math.round(researchSpeedMultiplier(state) * 100) / 100,
   };
 }

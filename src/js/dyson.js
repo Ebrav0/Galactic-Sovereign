@@ -24,7 +24,7 @@ import {
   TICK_MS,
   STRUCTURE_BUILD_MS,
 } from './constants.js';
-import { isTechUnlocked } from './tech-web.js';
+import { isTechUnlocked, techEffects } from './tech-web.js';
 import {
   systemById,
   findBody,
@@ -46,6 +46,53 @@ import {
   hasPendingJob,
   queueConstructionJob,
 } from './drones.js';
+import {
+  bodyStructureDef,
+  isOperationalStructure,
+  structureFoundryOutputMultiplier,
+  structureLauncherRateMultiplier,
+  structureLevelMultiplier,
+  structureSolariiIncomeMultiplier,
+} from './body-structures.js';
+
+function persistentDysonSystems(state) {
+  if (!state.galaxies) return Object.values(getSystems(state)).map((system) => ({ system, galaxyId: state.activeGalaxyId, active: true }));
+  const out = [];
+  for (const galaxy of Object.values(state.galaxies)) {
+    const hydrated = Object.values(galaxy.systems ?? {});
+    if (hydrated.length > 0) {
+      for (const system of hydrated) out.push({ system, galaxyId: galaxy.id, active: true });
+    } else {
+      for (const [systemId, overlay] of Object.entries(galaxy.abstract?.systemOverlays ?? {})) {
+        out.push({
+          galaxyId: galaxy.id,
+          active: false,
+          system: {
+            id: systemId,
+            owner: overlay.owner,
+            factionId: overlay.factionId ?? null,
+            structures: overlay.structures ?? [],
+            dyson: overlay.dyson ?? {},
+          },
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function persistentSolariiMultiplier(state, system, galaxyId, active) {
+  if (active) return structureSolariiIncomeMultiplier(state, system.id, { galaxyId });
+  const effect = bodyStructureDef('solar_collector')?.effects?.find((entry) => entry.key === 'solariiIncomeMult');
+  if (!effect) return 1;
+  let multiplier = 1;
+  for (const structure of system.structures ?? []) {
+    if (structure.type !== 'solar_collector' || !isOperationalStructure(state, structure)) continue;
+    const scaled = 1 + (effect.value - 1) * structureLevelMultiplier(structure);
+    multiplier *= scaled;
+  }
+  return multiplier;
+}
 
 // --- Build validation ---
 
@@ -182,12 +229,16 @@ export function shellRepairBonus(system) {
 
 export function solariiPerSecond(state) {
   let total = 0;
-  for (const system of Object.values(getSystems(state))) {
-    if (!isPlayerOwned(state, system.id)) continue;
+  const effects = techEffects(state);
+  for (const { system, galaxyId, active } of persistentDysonSystems(state)) {
+    if (system.owner !== 'player') continue;
     const shells = system.dyson?.completedShells ?? 0;
     if (shells < 1) continue;
     const mult = SOLARII_SHELL_MULTIPLIERS[shells] ?? 0;
-    total += SOLARII_BASE_RATE * mult;
+    total += SOLARII_BASE_RATE * mult
+      * persistentSolariiMultiplier(state, system, galaxyId, active)
+      * effects.solariiIncomeMult
+      * effects.dysonOutputMult;
   }
   return total;
 }
@@ -197,7 +248,12 @@ export function solariiPerSecondInSystem(state, systemId) {
   if (!system || !isPlayerOwned(state, systemId)) return 0;
   const shells = system.dyson?.completedShells ?? 0;
   if (shells < 1) return 0;
-  return SOLARII_BASE_RATE * (SOLARII_SHELL_MULTIPLIERS[shells] ?? 0);
+  const effects = techEffects(state);
+  return SOLARII_BASE_RATE
+    * (SOLARII_SHELL_MULTIPLIERS[shells] ?? 0)
+    * structureSolariiIncomeMultiplier(state, systemId)
+    * effects.solariiIncomeMult
+    * effects.dysonOutputMult;
 }
 
 export function applySolariiTick(state) {
@@ -218,20 +274,32 @@ function completeShell(state, system, dyson) {
 function tickSystemDyson(state, system) {
   const events = [];
   if (!isPlayerOwned(state, system.id)) return events;
-  if (!hasFoundry(state, system.id)) return events;
+  const foundry = (system.structures ?? []).find(
+    (structure) => structure.type === 'sail_foundry'
+      && isOperationalStructure(state, structure, { systemId: system.id, owner: 'player' }),
+  );
+  if (!foundry) return events;
 
   const dyson = ensureDyson(system);
   if (dyson.completedShells >= SHELL_COUNT) return events;
 
-  const launchers = dysonLaunchers(state, system.id);
+  const launchers = dysonLaunchers(state, system.id).filter(
+    (launcher) => isOperationalStructure(state, launcher, { systemId: system.id, owner: 'player' }),
+  );
   const dt = TICK_MS / 1000;
   const prevTime = state.time - TICK_MS;
+  const effects = techEffects(state);
 
   // 1. Foundry production
-  const sailRate = FOUNDRY_SAIL_RATE * shellSailEfficiencyBonus(system);
+  const sailRate = FOUNDRY_SAIL_RATE
+    * shellSailEfficiencyBonus(system)
+    * structureLevelMultiplier(foundry)
+    * structureFoundryOutputMultiplier(state, system.id)
+    * effects.foundryOutputMult
+    * effects.dysonOutputMult;
   const sailsToMake = sailRate * dt;
   if (sailsToMake > 0) {
-    const creditCost = sailsToMake * SAIL_CREDIT_COST;
+    const creditCost = sailsToMake * SAIL_CREDIT_COST * effects.sailCostMult;
     if (state.credits >= creditCost) {
       state.credits -= creditCost;
       dyson.foundryStock += sailsToMake;
@@ -256,7 +324,12 @@ function tickSystemDyson(state, system) {
     const stock = dyson.launcherStock[launcher.id] ?? 0;
     if (stock < LAUNCHER_BATCH_SIZE) continue;
     const lastFire = dyson.launcherLastFireAt[launcher.id] ?? 0;
-    if (state.time - lastFire < LAUNCHER_LAUNCH_INTERVAL_MS) continue;
+    const launcherThroughput = structureLevelMultiplier(launcher)
+      * structureLauncherRateMultiplier(state, system.id)
+      * effects.launcherRateMult
+      * effects.dysonOutputMult;
+    const intervalMs = LAUNCHER_LAUNCH_INTERVAL_MS / Math.max(0.1, launcherThroughput);
+    if (state.time - lastFire < intervalMs) continue;
 
     dyson.launcherStock[launcher.id] = stock - LAUNCHER_BATCH_SIZE;
     dyson.shellSails += LAUNCHER_BATCH_SIZE;

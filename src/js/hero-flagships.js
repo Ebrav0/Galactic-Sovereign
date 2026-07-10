@@ -126,6 +126,9 @@ export function setHeroRally(state, heroId, starId) {
 export function orderHeroTravel(state, heroId, targetStarId) {
   const hero = findHeroFlagship(state, heroId);
   if (!hero || hero.transit) return { ok: false, reason: 'Hero unavailable' };
+  if (hero.systemId && state.systemBattles?.[hero.systemId]?.active) {
+    return { ok: false, reason: 'Hero flagship is engaged in combat' };
+  }
   const graph = getGraph(state);
   const from = hero.systemId;
   if (from === targetStarId) return { ok: false, reason: 'Already there' };

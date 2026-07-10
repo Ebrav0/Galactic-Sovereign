@@ -26,6 +26,7 @@ import { tryAdvanceTutorial } from './tutorial.js';
 import { tickBodyStructureEffects } from './body-structures.js';
 import { tickBuilderDrones } from './builder-drones.js';
 import { tickLogistics } from './logistics.js';
+import { syncFlagshipAnchoredFleets } from './battle-groups.js';
 
 function handleArrival(state, systemId) {
   onForcesArrive(state, systemId);
@@ -55,6 +56,7 @@ function tickOnce(state) {
   const pirateArrivals = tickPirates(state, (destId) => handleArrival(state, destId));
   const pirateInterdictions = tickPirateInterdictions(state, (destId) => handleArrival(state, destId));
   if (!state.flagship.wormholeTransit) tickFlagship(state);
+  const flagshipAnchorEvents = syncFlagshipAnchoredFleets(state);
   const battleEvents = tickCombat(state);
   const bodyStructureEvents = tickBodyStructureEffects(state);
   const builderDroneEvents = tickBuilderDrones(state);
@@ -66,6 +68,7 @@ function tickOnce(state) {
   return {
     prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents, capture,
     wormholeArrival, campaignEvents, bodyStructureEvents, builderDroneEvents, droneCompletions, logisticsEvents,
+    flagshipAnchorEvents,
   };
 }
 

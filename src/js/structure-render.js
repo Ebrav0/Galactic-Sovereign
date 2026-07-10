@@ -248,6 +248,148 @@ export function drawOrbitalDefensePlatform(ctx, x, y, scale, site, time = 0) {
   ctx.restore();
 }
 
+const ORBITAL_BUILDING_COLORS = Object.freeze({
+  orbital_habitat: '#7ee7c8',
+  interdiction_array: '#cf87ff',
+  carrier_command: '#63d7ff',
+  sensor_array: '#7fc8ff',
+  logistics_hub: '#66e6b5',
+  galactic_exchange: '#ffc96b',
+  salvage_yard: '#d29a73',
+});
+
+const STAR_NODE_BUILDING_COLORS = Object.freeze({
+  asteroid_harvester: '#d4b16b',
+  solar_collector: '#ffd45a',
+  wormhole_observatory: '#b99cff',
+});
+
+export const ORBITAL_BUILDING_VISUAL_TYPES = Object.freeze(Object.keys(ORBITAL_BUILDING_COLORS));
+export const STAR_NODE_BUILDING_VISUAL_TYPES = Object.freeze(Object.keys(STAR_NODE_BUILDING_COLORS));
+
+function drawStructureTierRings(ctx, radius, level, color, scale) {
+  for (let tier = 2; tier <= Math.max(1, level ?? 1); tier++) {
+    ctx.strokeStyle = hexToRgba(color, 0.24 + tier * 0.08);
+    ctx.lineWidth = Math.max(0.45, 0.55 * scale);
+    ctx.beginPath();
+    ctx.arc(0, 0, radius * (1 + tier * 0.18), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+/** Compact shared visual for all save-v13 orbital building types. */
+export function drawOrbitalBuilding(ctx, x, y, scale, site, time = 0) {
+  const type = site.structureType ?? site.kind;
+  const color = ORBITAL_BUILDING_COLORS[type] ?? site.visual?.color ?? '#d8e2ff';
+  const r = SHIPYARD_WORLD_RADIUS * 0.42 * scale;
+  const pulse = site.active ? 0.55 + 0.45 * Math.sin(time / 520 + (site.seed ?? 0)) : 0.2;
+  const spin = type === 'interdiction_array' ? -time / 2400 : time / 5200;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((site.hubHeading ?? 0) + spin);
+  ctx.globalAlpha = site.active ? 1 : 0.52;
+  drawHubRing(
+    ctx,
+    r * 0.62,
+    hexToRgba(color, 0.72),
+    'rgba(15, 21, 32, 0.94)',
+    Math.max(0.7, 0.95 * scale),
+  );
+
+  const arms = type === 'orbital_habitat' ? 6 : (type === 'logistics_hub' ? 4 : 3);
+  ctx.strokeStyle = hexToRgba(color, 0.55 + pulse * 0.25);
+  ctx.fillStyle = hexToRgba(color, 0.18 + pulse * 0.18);
+  ctx.lineWidth = Math.max(0.65, scale);
+  for (let i = 0; i < arms; i++) {
+    const angle = (i / arms) * Math.PI * 2;
+    const inner = r * 0.48;
+    const outer = r * (type === 'sensor_array' ? 1.45 : 1.12);
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
+    ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
+    ctx.stroke();
+    if (type !== 'sensor_array' && type !== 'interdiction_array') {
+      const mx = Math.cos(angle) * outer;
+      const my = Math.sin(angle) * outer;
+      ctx.fillRect(mx - r * 0.17, my - r * 0.12, r * 0.34, r * 0.24);
+    }
+  }
+
+  if (type === 'interdiction_array') {
+    ctx.strokeStyle = hexToRgba(color, 0.45 + pulse * 0.35);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 1.38, r * 0.45, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.45, r * 1.38, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'sensor_array') {
+    ctx.rotate(-((site.hubHeading ?? 0) + spin));
+    ctx.beginPath();
+    ctx.arc(0, -r * 0.45, r * 0.7, Math.PI * 0.08, Math.PI * 0.92);
+    ctx.stroke();
+  } else if (type === 'galactic_exchange') {
+    ctx.strokeStyle = hexToRgba('#fff0c0', 0.45 + pulse * 0.28);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.22, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'salvage_yard') {
+    ctx.strokeStyle = hexToRgba(color, 0.7);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.15, Math.PI * 0.12, Math.PI * 0.88);
+    ctx.stroke();
+  }
+
+  drawStructureTierRings(ctx, r, site.level, color, scale);
+  ctx.restore();
+}
+
+/** Compact star-orbit visual for the three catalogued star-node structures. */
+export function drawStarNodeBuilding(ctx, x, y, scale, site, time = 0) {
+  const type = site.structureType ?? site.kind;
+  const color = STAR_NODE_BUILDING_COLORS[type] ?? site.visual?.color ?? '#ffe9a0';
+  const r = SHIPYARD_WORLD_RADIUS * 0.38 * scale;
+  const pulse = site.active ? 0.5 + 0.5 * Math.sin(time / 440 + (site.seed ?? 0)) : 0.18;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((site.heading ?? 0) + (type === 'solar_collector' ? time / 4200 : 0));
+  ctx.globalAlpha = site.active ? 1 : 0.5;
+  drawHubRing(
+    ctx,
+    r * 0.52,
+    hexToRgba(color, 0.78),
+    'rgba(18, 18, 28, 0.94)',
+    Math.max(0.7, scale),
+  );
+
+  const arms = type === 'solar_collector' ? 6 : 4;
+  for (let i = 0; i < arms; i++) {
+    const angle = (i / arms) * Math.PI * 2;
+    ctx.save();
+    ctx.rotate(angle);
+    ctx.fillStyle = hexToRgba(color, 0.18 + pulse * 0.28);
+    ctx.strokeStyle = hexToRgba(color, 0.68);
+    if (type === 'wormhole_observatory') {
+      ctx.beginPath();
+      ctx.arc(r * 0.88, 0, r * 0.24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(r * 0.42, -r * 0.18, r * 0.88, r * 0.36);
+      ctx.strokeRect(r * 0.42, -r * 0.18, r * 0.88, r * 0.36);
+    }
+    ctx.restore();
+  }
+  if (type === 'wormhole_observatory') {
+    ctx.strokeStyle = hexToRgba(color, 0.42 + pulse * 0.3);
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 1.45, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  drawStructureTierRings(ctx, r, site.level, color, scale);
+  ctx.restore();
+}
+
 export function drawLaunchMuzzleFlash(ctx, site, scale, camera, canvas, worldToScreen) {
   if (!site.firing) return;
   const fade = 1 - (site.fireAge ?? 0) / LAUNCHER_BURST_MS;

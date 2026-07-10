@@ -593,3 +593,29 @@ Never delete prior entries.
 
 ### Decision
 - The new engines borrow the Enterprise's recognizable twin-stalk proportion, but use heavy military pylons and armored nacelles so the flagship still belongs to Galactic Sovereign rather than reading as a direct franchise copy.
+
+---
+
+## Session 2026-07-10 — v13 expansive technology web and infrastructure
+
+**Task claimed:** Implement the 164-node interconnected tech web, 15 new buildings, tiered infrastructure, exact 40 cr/s passive outposts, searchable tech navigation, faction AI parity, and save-v13.
+**Status:** in progress
+
+### Completed so far
+- Restored passive income as a flat 40 Credits/second per operational player outpost; construction, damage, disablement, pause, and mothball state are respected while cargo delivery remains additive.
+- Extended text/HUD reporting to separate passive outpost income, recent cargo-delivery throughput, and projected total income.
+- Added save-v13 schema and migration scaffolding for structure levels, faction IDs, per-faction research/resources/queues, AI difficulty, and deterministic personality-based research backfill.
+- Added tech-web search, result focus, cluster/tier/state filters, reset/fit controls, persistent details, and a compact minimap.
+- Reconciled the pre-existing textual merge conflict by preserving both construction-drone and unified-overhaul logistics/Sol state paths in `main.js`, `simulation.js`, and `trade.js`; the unmerged binary screenshot remains untouched.
+
+### Verification so far
+- Focused deterministic income check: one level-III operational outpost still yields exactly 40 Credits over one simulated second.
+- `node --check` passes for the touched save, economy, drone, simulation, trade, main, UI, and tech-web UI modules.
+
+### In progress
+- Sixty-node content/effect registry, 15-building roster/upgrades/visuals, and faction AI parity are being implemented in parallel before shared integration and browser QA.
+
+### Focused fleet and shipyard integrity verification
+- Added `output/verify_fleet_shipyard_integrity.mjs` covering operational-yard eligibility, rejection of under-construction/disabled/destroyed/mothballed/offline yards, physical-yard dispatch assignment, completion spawning at the assigned system/body, live-ship auto-assignment, and player-flagship fleet anchoring/follow behavior.
+- `node output/verify_fleet_shipyard_integrity.mjs` — 28/28 pass.
+- Follow-up: the older `output/verify_battle_groups.mjs` still encodes the former skipped ordinal sequence (`1, 3, 5`) and should be updated to the corrected contiguous fleet ordinals.

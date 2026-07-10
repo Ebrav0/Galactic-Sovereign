@@ -44,9 +44,33 @@ const SURFACE_COLORS = {
   fighter_factory: '#6fd6ff',
   planetary_shield: '#75f2b0',
   ion_battery: '#b07cff',
+  power_grid: '#ffd55f',
+  nanoforge: '#ff8f66',
+  fleet_academy: '#f4e29a',
+  missile_silo: '#ff776f',
+  quantum_archive: '#82a8ff',
+  embassy_complex: '#f1d3ff',
 };
 
-export function drawSurfaceBuilding(ctx, x, y, heading, zoom, { type, active, time, seed = 0 }) {
+export const SURFACE_BUILDING_VISUAL_TYPES = Object.freeze(Object.keys(SURFACE_COLORS));
+
+function drawTierPips(ctx, r, level, color, zoom) {
+  if (level <= 1) return;
+  ctx.fillStyle = color;
+  for (let i = 0; i < level; i++) {
+    ctx.beginPath();
+    ctx.arc((i - (level - 1) / 2) * r * 0.38, r * 1.08, Math.max(0.55, 0.7 * zoom), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+export function drawSurfaceBuilding(ctx, x, y, heading, zoom, {
+  type,
+  active,
+  time,
+  seed = 0,
+  level = 1,
+}) {
   const color = SURFACE_COLORS[type] ?? '#d8e2ff';
   const r = Math.max(2.5, 5.2 * zoom);
   const pulse = active ? 0.55 + 0.45 * Math.sin((time + seed * 31) / 520) : 0.25;
@@ -85,6 +109,73 @@ export function drawSurfaceBuilding(ctx, x, y, heading, zoom, { type, active, ti
     ctx.fillStyle = `rgba(111, 214, 255, ${0.2 + pulse * 0.35})`;
     ctx.fillRect(-r * 1.05, -r * 0.18, r * 0.62, r * 0.36);
     ctx.fillRect(r * 0.42, -r * 0.18, r * 0.62, r * 0.36);
+  } else if (type === 'power_grid') {
+    ctx.strokeRect(-r, -r * 0.7, r * 2, r * 1.4);
+    ctx.strokeStyle = `${color}${active ? 'bb' : '66'}`;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * r * 0.45, -r * 0.58);
+      ctx.lineTo(i * r * 0.45, r * 0.58);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.88, i * r * 0.28);
+      ctx.lineTo(r * 0.88, i * r * 0.28);
+      ctx.stroke();
+    }
+    ctx.fillStyle = `rgba(255, 213, 95, ${0.18 + pulse * 0.35})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (type === 'nanoforge') {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 143, 102, ${0.3 + pulse * 0.45})`;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (type === 'fleet_academy') {
+    ctx.fillRect(-r, -r * 0.55, r * 2, r * 1.1);
+    ctx.strokeRect(-r, -r * 0.55, r * 2, r * 1.1);
+    ctx.fillStyle = `${color}${active ? 'cc' : '66'}`;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.72, -r * 0.72);
+    ctx.lineTo(0, -r * 1.2);
+    ctx.lineTo(r * 0.72, -r * 0.72);
+    ctx.closePath();
+    ctx.fill();
+  } else if (type === 'missile_silo') {
+    ctx.fillRect(-r, -r * 0.55, r * 2, r * 1.1);
+    ctx.strokeRect(-r, -r * 0.55, r * 2, r * 1.1);
+    ctx.fillStyle = `${color}${active ? 'aa' : '55'}`;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.arc(i * r * 0.52, 0, r * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (type === 'quantum_archive') {
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 1.15);
+    ctx.lineTo(r, 0);
+    ctx.lineTo(0, r * 1.15);
+    ctx.lineTo(-r, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = `rgba(130, 168, 255, ${0.2 + pulse * 0.45})`;
+    ctx.fillRect(-r * 0.18, -r * 0.65, r * 0.36, r * 1.3);
+  } else if (type === 'embassy_complex') {
+    ctx.fillRect(-r, -r * 0.62, r * 2, r * 1.24);
+    ctx.strokeRect(-r, -r * 0.62, r * 2, r * 1.24);
+    ctx.fillStyle = `${color}${active ? 'aa' : '55'}`;
+    for (let i = -1; i <= 1; i++) ctx.fillRect(i * r * 0.55 - r * 0.1, -r * 0.45, r * 0.2, r * 0.9);
   } else {
     ctx.fillRect(-r, -r * 0.7, r * 2, r * 1.4);
     ctx.strokeRect(-r, -r * 0.7, r * 2, r * 1.4);
@@ -101,5 +192,6 @@ export function drawSurfaceBuilding(ctx, x, y, heading, zoom, { type, active, ti
       ctx.fillRect(-r * 0.6, -r * 0.22, r * 1.2, r * 0.44);
     }
   }
+  drawTierPips(ctx, r, level, color, zoom);
   ctx.restore();
 }

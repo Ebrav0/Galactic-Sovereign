@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 13",
+  "description": "Expanded technology web, tiered infrastructure, restored passive outpost income, and faction-level AI parity.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 13 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "wormholes", "flagship", "playerShips", "research", "factions", "aiShips",
+        "aiDifficulty", "logistics", "tacticalOrders", "battleReports", "solCommander"
+      ],
+      "properties": {
+        "aiDifficulty": { "enum": ["easy", "normal", "hard", "sovereign"] },
+        "galaxies": { "type": "object" },
+        "research": {
+          "type": "object",
+          "required": ["activeNodeId", "progress", "unlocked", "queue"],
+          "properties": {
+            "activeNodeId": { "type": ["string", "null"] },
+            "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+            "unlocked": { "type": "array", "items": { "type": "string" } },
+            "queue": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "factions": {
+          "type": "object",
+          "required": ["list"],
+          "properties": {
+            "list": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "personality", "credits", "solarii", "research"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "personality": { "type": "string" },
+                  "credits": { "type": "number" },
+                  "solarii": { "type": "number" },
+                  "research": { "type": "object" },
+                  "productionQueue": { "type": "array" }
+                }
+              }
+            }
+          }
+        },
+        "aiShips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "owner", "factionId"],
+            "properties": {
+              "owner": { "const": "ai" },
+              "factionId": { "type": "string" },
+              "veterancy": { "type": "number", "minimum": 0, "maximum": 3 }
+            }
+          }
+        },
+        "logistics": { "type": "object" },
+        "tacticalOrders": { "type": "object" },
+        "battleReports": { "type": "array" },
+        "solCommander": { "type": "object" }
+      }
+    }
+  }
+}

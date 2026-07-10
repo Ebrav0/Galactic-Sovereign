@@ -5,7 +5,8 @@ import { tradeStationCount } from './trade.js';
 import { isPlayerOwned, systemById } from './state.js';
 import { getGraph } from './galaxy-scope.js';
 import { neighborsOf } from './galaxy.js';
-import { isTechUnlocked } from './tech-web.js';
+import { isTechUnlocked, techEffects } from './tech-web.js';
+import { structureManualTradeRouteBonus } from './body-structures.js';
 
 let nextRouteId = 1;
 
@@ -26,6 +27,12 @@ function routeKey(a, b) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+export function manualTradeRouteCapacity(state) {
+  return MANUAL_TRADE_ROUTE_MAX
+    + Math.max(0, Math.floor(techEffects(state).manualTradeRouteBonus ?? 0))
+    + Math.max(0, Math.floor(structureManualTradeRouteBonus(state)));
+}
+
 export function canAddTradeRoute(state, fromSystemId, toSystemId) {
   if (!isTechUnlocked(state, 'trade_route_opt')) {
     return { ok: false, reason: 'Research Route Optimization first' };
@@ -34,8 +41,9 @@ export function canAddTradeRoute(state, fromSystemId, toSystemId) {
     return { ok: false, reason: 'Cannot route a system to itself' };
   }
   ensureTradeRoutes(state);
-  if (state.manualTradeRoutes.length >= MANUAL_TRADE_ROUTE_MAX) {
-    return { ok: false, reason: 'Maximum manual routes reached' };
+  const routeCapacity = manualTradeRouteCapacity(state);
+  if (state.manualTradeRoutes.length >= routeCapacity) {
+    return { ok: false, reason: `Maximum manual routes reached (${routeCapacity})` };
   }
   if (!isPlayerOwned(state, fromSystemId) || !isPlayerOwned(state, toSystemId)) {
     return { ok: false, reason: 'Both systems must be player-owned' };
@@ -87,7 +95,7 @@ export function tradeRoutesSummary(state) {
   ensureTradeRoutes(state);
   return {
     count: state.manualTradeRoutes.length,
-    max: MANUAL_TRADE_ROUTE_MAX,
+    max: manualTradeRouteCapacity(state),
     bonus: manualRouteBonus(state),
     routes: state.manualTradeRoutes.map((r) => ({
       id: r.id,

@@ -45,7 +45,7 @@ export function nextFleetOrdinal(state, galaxyId = state.activeGalaxyId) {
   const groups = ensureBattleGroups(state).filter((g) => g.galaxyId === galaxyId);
   if (groups.length === 0) return 1;
   const max = Math.max(...groups.map((g) => g.ordinal ?? 0));
-  return max + 2;
+  return max + 1;
 }
 
 export function battleGroupsForGalaxy(state, galaxyId = state.activeGalaxyId) {
@@ -70,6 +70,7 @@ export function createBattleGroup(state) {
     ordinal,
     shipIds: [],
     anchorHeroId: null,
+    anchorFlagship: false,
   };
   groups.push(group);
   return group;
@@ -201,7 +202,145 @@ export function setBattleGroupHeroAnchor(state, groupId, heroId) {
     if (hero.galaxyId !== group.galaxyId) return { ok: false, reason: 'Hero not in this galaxy' };
   }
   group.anchorHeroId = heroId;
+  if (heroId) group.anchorFlagship = false;
   return { ok: true, groupId, anchorHeroId: heroId };
+}
+
+/** Attach or detach a battle group from the player's own flagship. */
+export function setBattleGroupFlagshipAnchor(state, groupId, anchored = true) {
+  const group = findBattleGroup(state, groupId);
+  if (!group) return { ok: false, reason: 'No such fleet' };
+  const flagship = state.flagship;
+  if (anchored && (!flagship || flagship.galaxyId !== group.galaxyId)) {
+    return { ok: false, reason: 'Player flagship is not in this galaxy' };
+  }
+  group.anchorFlagship = !!anchored;
+  if (group.anchorFlagship) group.anchorHeroId = null;
+  return {
+    ok: true,
+    groupId,
+    anchorFlagship: group.anchorFlagship,
+  };
+}
+
+function shipDestinationId(ship) {
+  return ship?.transit?.path?.[ship.transit.path.length - 1] ?? ship?.systemId ?? null;
+}
+
+function groupPreferredSystem(state, group) {
+  const counts = new Map();
+  for (const ship of shipsInBattleGroup(state, group.id)) {
+    const systemId = shipDestinationId(ship);
+    if (systemId) counts.set(systemId, (counts.get(systemId) ?? 0) + 1);
+  }
+  let best = null;
+  let bestCount = -1;
+  for (const [systemId, count] of counts) {
+    if (count > bestCount) {
+      best = systemId;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Assign every live, unassigned ship in the active galaxy. Fleets are kept
+ * compact and location-aware; a selected/preferred fleet is filled first.
+ */
+export function autoAssignShipsToFleets(state, options = {}) {
+  const maxShipsPerFleet = Math.max(1, Math.floor(options.maxShipsPerFleet ?? 8));
+  const ships = unassignedPlayerShips(state).sort((a, b) => {
+    const loc = String(shipDestinationId(a) ?? '').localeCompare(String(shipDestinationId(b) ?? ''));
+    return loc || a.id.localeCompare(b.id);
+  });
+  const createdGroupIds = [];
+  if (ships.length === 0) {
+    return { ok: true, assigned: 0, createdGroupIds, groupIds: [] };
+  }
+
+  let groups = battleGroupsForGalaxy(state);
+  const preferred = options.preferredGroupId
+    ? groups.find((group) => group.id === options.preferredGroupId)
+    : null;
+  if (groups.length === 0) {
+    const group = createBattleGroup(state);
+    createdGroupIds.push(group.id);
+    groups = [group];
+  }
+
+  let assigned = 0;
+  const touched = new Set();
+  for (const ship of ships) {
+    const systemId = shipDestinationId(ship);
+    const available = groups.filter((group) => group.shipIds.length < maxShipsPerFleet);
+    let target = null;
+    if (preferred && preferred.shipIds.length < maxShipsPerFleet) target = preferred;
+    if (!target) {
+      target = available
+        .filter((group) => groupPreferredSystem(state, group) === systemId)
+        .sort((a, b) => a.shipIds.length - b.shipIds.length || a.ordinal - b.ordinal)[0] ?? null;
+    }
+    if (!target) {
+      target = available.sort((a, b) => a.shipIds.length - b.shipIds.length || a.ordinal - b.ordinal)[0] ?? null;
+    }
+    if (!target) {
+      target = createBattleGroup(state);
+      groups.push(target);
+      createdGroupIds.push(target.id);
+    }
+    const result = assignShipToGroup(state, ship.id, target.id);
+    if (result.ok) {
+      assigned++;
+      touched.add(target.id);
+    }
+  }
+  return {
+    ok: true,
+    assigned,
+    createdGroupIds,
+    groupIds: [...touched],
+  };
+}
+
+/**
+ * Keep flagship-anchored fleets converging on the flagship's current course.
+ * The existing anchored-combat rules keep the fleet tactically attached while
+ * slower hulls are still travelling. Wormhole arrival carries the anchored
+ * group across galaxies as one command formation.
+ */
+export function syncFlagshipAnchoredFleets(state) {
+  const flagship = state.flagship;
+  if (!flagship) return [];
+  const targetId = flagship.transit?.path?.[flagship.transit.path.length - 1]
+    ?? flagship.systemId
+    ?? null;
+  const events = [];
+
+  for (const group of ensureBattleGroups(state).filter((entry) => entry.anchorFlagship)) {
+    if (flagship.wormholeTransit) continue;
+    if (group.galaxyId !== flagship.galaxyId) {
+      group.galaxyId = flagship.galaxyId;
+      for (const shipId of group.shipIds) {
+        const ship = findPlayerShip(state, shipId);
+        if (!ship || ship.hp <= 0) continue;
+        ship.galaxyId = flagship.galaxyId;
+        ship.transit = null;
+        ship.systemId = flagship.systemId;
+      }
+      events.push({ type: 'flagship_anchor_wormhole_sync', groupId: group.id, galaxyId: flagship.galaxyId });
+    }
+    if (!targetId || group.galaxyId !== state.activeGalaxyId) continue;
+    for (const ship of shipsInBattleGroup(state, group.id)) {
+      if (shipDestinationId(ship) === targetId) continue;
+      if (ship.transit || !ship.systemId) continue;
+      const result = orderShipTravel(state, ship.id, targetId);
+      if (result.ok) {
+        events.push({ type: 'flagship_anchor_dispatch', groupId: group.id, shipId: ship.id, targetId });
+      }
+    }
+  }
+  return events;
 }
 
 /** Galaxy-map markers: one entry per fleet per stationed system. */

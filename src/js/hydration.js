@@ -54,7 +54,15 @@ export function generateGalaxySystems(state, galaxyId) {
 
 function snapshotSystemOverlay(system) {
   return {
+    id: system.id,
+    name: system.name,
+    star: JSON.parse(JSON.stringify(system.star)),
+    bodies: JSON.parse(JSON.stringify(system.bodies ?? [])),
+    environment: system.environment ?? 'clear',
+    tradeAccess: system.tradeAccess ?? null,
+    createdBySuperweapon: !!system.createdBySuperweapon || String(system.id).startsWith('sys-created-'),
     owner: system.owner,
+    factionId: system.factionId ?? null,
     dyson: JSON.parse(JSON.stringify(system.dyson)),
     structures: JSON.parse(JSON.stringify(system.structures)),
   };
@@ -66,10 +74,10 @@ export function dehydrateGalaxy(state, galaxyId) {
 
   const overlay = {};
   for (const [sysId, system] of Object.entries(gal.systems)) {
-    if (sysId === BLACK_HOLE_ID) continue;
     if (system.owner === 'player' || system.structures.length > 0
         || system.owner === 'ai'
-        || system.dyson.completedShells > 0 || system.dyson.shellSails > 0) {
+        || system.dyson.completedShells > 0 || system.dyson.shellSails > 0
+        || sysId === BLACK_HOLE_ID || system.createdBySuperweapon || sysId.startsWith('sys-created-')) {
       overlay[sysId] = snapshotSystemOverlay(system);
     }
   }
@@ -94,7 +102,15 @@ export function dehydrateGalaxy(state, galaxyId) {
 
 function mergeSystemOverlay(base, overlay) {
   if (!overlay) return base;
+  base.id = overlay.id ?? base.id;
+  base.name = overlay.name ?? base.name;
+  base.star = overlay.star ?? base.star;
+  base.bodies = overlay.bodies ?? base.bodies;
+  base.environment = overlay.environment ?? base.environment;
+  base.tradeAccess = overlay.tradeAccess ?? base.tradeAccess;
+  base.createdBySuperweapon = overlay.createdBySuperweapon ?? base.createdBySuperweapon ?? false;
   base.owner = overlay.owner ?? base.owner;
+  base.factionId = overlay.factionId ?? base.factionId ?? null;
   base.dyson = { ...base.dyson, ...overlay.dyson };
   base.structures = overlay.structures ?? base.structures;
   return base;

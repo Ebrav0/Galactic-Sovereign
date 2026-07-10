@@ -21,6 +21,7 @@ import { allocateStructureId } from './economy.js';
 import { flagshipInSystem, flagshipPresentForDrones } from './flagship-presence.js';
 import { isTechUnlocked } from './tech-web.js';
 import { ensureDyson } from './state.js';
+import { refreshSystemStructureCombatFields } from './body-structures.js';
 
 let nextJobId = 1;
 let nextDroneId = 1;
@@ -200,6 +201,35 @@ function completeStructureJob(state, job) {
 
   delete structure.construction;
   structure.builtAtTime = state.time;
+  if (job.upgradeToLevel) {
+    structure.level = Math.max(1, Math.min(3, Math.round(job.upgradeToLevel)));
+    if (Number.isFinite(job.targetMaxHp)) {
+      structure.maxHp = job.targetMaxHp;
+      structure.hp = Math.round(job.targetMaxHp * Math.max(0, Math.min(1, job.hpRatio ?? 1)));
+    }
+  } else {
+    structure.level = Math.max(1, Math.min(3, Math.round(structure.level ?? 1)));
+  }
+  structure.operational = structure.operational !== false;
+
+  if (structure.type === 'outpost') {
+    structure.hp = structure.hp ?? 240;
+    structure.maxHp = structure.maxHp ?? 240;
+    if (system?.star?.kind !== 'trade_nexus'
+        && !system?.structures?.some((entry) => entry.type === 'export_depot')) {
+      system.structures.push({
+        id: allocateStructureId(),
+        type: 'export_depot',
+        bodyId: null,
+        sourceBodyId: structure.bodyId,
+        builtAtTime: state.time,
+        level: 1,
+        hp: 520,
+        maxHp: 520,
+        operational: true,
+      });
+    }
+  }
 
   if (structure.type === 'shipyard' && !structure.builds) {
     structure.builds = [];
@@ -212,6 +242,7 @@ function completeStructureJob(state, job) {
   if (structure.type === 'research_station') {
     system.researchStationCount = (system.researchStationCount ?? 0) + 1;
   }
+  refreshSystemStructureCombatFields(state, job.systemId);
 
   job.status = 'complete';
   for (const droneId of job.assignedDroneIds ?? []) {
@@ -222,7 +253,53 @@ function completeStructureJob(state, job) {
     structureId: structure.id,
     structureType: structure.type,
     systemId: job.systemId,
+    upgradedToLevel: job.upgradeToLevel ?? null,
   };
+}
+
+export function queueStructureUpgradeJob(state, opts) {
+  ensureArrays(state);
+  const {
+    systemId,
+    structureId,
+    creditCost,
+    durationMs,
+    targetLevel,
+    targetMaxHp = null,
+    hpRatio = 1,
+  } = opts;
+  if (!flagshipInSystem(state, systemId)) {
+    return { ok: false, reason: 'Flagship must be in this system to direct upgrades' };
+  }
+  if (state.credits < creditCost) return { ok: false, reason: `Need ${creditCost} credits` };
+  const structure = findStructure(state, systemId, structureId);
+  if (!structure) return { ok: false, reason: 'No such structure' };
+  if (structure.construction) return { ok: false, reason: 'Structure work already in progress' };
+
+  const jobId = `job-${nextJobId++}`;
+  const workRequiredMs = durationMs ?? 20000;
+  state.credits -= creditCost;
+  structure.construction = { jobId, durationMs: workRequiredMs, startedAt: state.time, upgrade: true };
+  state.constructionJobs.push({
+    id: jobId,
+    galaxyId: state.activeGalaxyId,
+    systemId,
+    structureType: structure.type,
+    bodyId: structure.bodyId ?? null,
+    structureId,
+    creditCost,
+    workRequiredMs,
+    workDoneMs: 0,
+    assignedDroneIds: [],
+    status: 'queued',
+    orderedAt: state.time,
+    upgradeToLevel: targetLevel,
+    targetMaxHp,
+    hpRatio,
+  });
+  syncDronesForSystem(state, systemId);
+  assignDronesToJobs(state, systemId);
+  return { ok: true, jobId, structureId, targetLevel };
 }
 
 export function queueConstructionJob(state, opts) {

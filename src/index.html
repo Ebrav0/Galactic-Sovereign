@@ -52,7 +52,7 @@
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M1 12l4.5-4.5 3 3L14 5v3.5h2V1h-7.5v2H12l-3.5 3.5-3-3L0 10.5 1 12z"/></svg>
           </span>
           <span class="chip__body">
-            <span class="chip__label">Delivered Trade</span>
+            <span class="chip__label">Outpost Income</span>
             <span class="chip__value"><span id="income-value">0</span>/s</span>
           </span>
         </div>
@@ -70,7 +70,7 @@
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v2H2V3zm0 4h8v2H2V7zm0 4h10v2H2v-2z"/></svg>
           </span>
           <span class="chip__body">
-            <span class="chip__label">Trade</span>
+            <span class="chip__label">Cargo Deliveries</span>
             <span class="chip__value"><span id="trade-income-value">0</span>/s</span>
           </span>
         </div>
@@ -250,6 +250,7 @@
           <button id="enter-wormhole-btn" type="button" class="btn btn--primary btn--block">Enter Wormhole</button>
           <select id="anchor-target-select" class="btn btn--ghost btn--block" style="margin-bottom:8px"></select>
           <button id="build-anchor-btn" type="button" class="btn btn--primary btn--block">Build Wormhole Anchor</button>
+          <div id="wormhole-structure-build-btns" class="panel__actions panel__actions--stack"></div>
         </div>
       </div>
 
@@ -352,6 +353,13 @@
             <option value="annihilation">Annihilation (eliminate AI)</option>
             <option value="economic">Economic (50k cr + 50 Solarii)</option>
             <option value="sculptor">Sculptor (3 superweapon actions)</option>
+          </select>
+          <label class="panel-note" style="display:block;margin-top:10px">Rival difficulty</label>
+          <select id="new-game-ai-difficulty" class="btn btn--ghost btn--block">
+            <option value="easy">Easy — 0.8× income, 1.2× research/build time</option>
+            <option value="normal" selected>Normal — equal rates</option>
+            <option value="hard">Hard — 1.2× income, 0.85× research/build time</option>
+            <option value="sovereign">Sovereign — 1.4× income, 0.7× research/build time</option>
           </select>
           <div class="panel__actions panel__actions--stack" style="margin-top:12px">
             <button id="new-game-sandbox-btn" type="button" class="btn btn--primary btn--block">Sandbox</button>

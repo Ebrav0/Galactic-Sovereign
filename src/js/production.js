@@ -7,7 +7,7 @@ import {
   SHIPYARD_COMBAT_HULLS,
   STRUCTURE_BUILD_MS,
 } from './constants.js';
-import { hullStats, hullQueueCost, shipyardStructureCost } from './hull.js';
+import { applyVeterancy, hullStats, hullQueueCost, shipyardStructureCost } from './hull.js';
 import { getSystems } from './galaxy-scope.js';
 import {
   systemById,
@@ -15,7 +15,6 @@ import {
   hasShipyard,
   findStructure,
   isPlayerOwned,
-  isStructureActive,
   pendingStructureOnBody,
 } from './state.js';
 import { allocateStructureId } from './economy.js';
@@ -28,7 +27,14 @@ import {
 } from './empire-queue.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingJob, queueConstructionJob } from './drones.js';
-import { isEmpireHullUnlocked } from './tech-web.js';
+import { isEmpireHullUnlocked, techEffects } from './tech-web.js';
+import {
+  isOperationalStructure,
+  shipyardBuildTimeMultiplier,
+  shipyardExtraSlots,
+  structureEffectValue,
+  structureShipBuildTimeMultiplier,
+} from './body-structures.js';
 
 export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
@@ -48,8 +54,9 @@ export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (!opts.ignoreCredits && state.credits < SHIPYARD_COST) return { ok: false, reason: `Need ${SHIPYARD_COST} credits` };
-  return { ok: true };
+  const cost = shipyardStructureCost(state);
+  if (!opts.ignoreCredits && state.credits < cost) return { ok: false, reason: `Need ${cost} credits` };
+  return { ok: true, cost };
 }
 
 export function buildShipyard(state, systemId, planetId, opts = {}) {
@@ -61,13 +68,13 @@ export function buildShipyard(state, systemId, planetId, opts = {}) {
       systemId,
       structureType: 'shipyard',
       bodyId: planetId,
-      creditCost: SHIPYARD_COST,
+      creditCost: check.cost,
       durationMs: STRUCTURE_BUILD_MS.shipyard,
       extraStructureFields: { builds: [] },
     });
   }
 
-  if (!opts.alreadyPaid) state.credits -= SHIPYARD_COST;
+  if (!opts.alreadyPaid) state.credits -= check.cost;
   systemById(state, systemId).structures.push({
     id: allocateStructureId(),
     type: 'shipyard',
@@ -85,18 +92,28 @@ function canQueueHullType(state, shipyardId, systemId, hull) {
   if (!system) return { ok: false, reason: 'No such system' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
   const shipyard = findStructure(state, systemId, shipyardId);
-  if (!shipyard || shipyard.type !== 'shipyard' || !isStructureActive(shipyard)) {
-    return { ok: false, reason: 'No such shipyard' };
+  if (!shipyard || shipyard.type !== 'shipyard' || !isOperationalStructure(state, shipyard, {
+    systemId,
+    owner: 'player',
+  })) {
+    return { ok: false, reason: 'No operational shipyard in this system' };
   }
   normalizeShipyardBuilds(shipyard);
-  const slots = shipyardSlots(state);
+  const slots = shipyardSlots(state) + shipyardExtraSlots(shipyard);
   if (shipyard.builds.length >= slots) return { ok: false, reason: 'Shipyard slots full' };
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct production' };
   }
   const cost = hull === 'scout' ? SCOUT_HULL_COST : stats.cost;
   if (state.credits < cost) return { ok: false, reason: `Need ${cost} credits` };
-  return { ok: true, cost, buildMs: hull === 'scout' ? SCOUT_BUILD_MS : stats.buildMs };
+  const baseBuildMs = hull === 'scout' ? SCOUT_BUILD_MS : stats.buildMs;
+  const buildMs = Math.max(1, Math.round(
+    baseBuildMs
+      * shipyardBuildTimeMultiplier(shipyard)
+      * structureShipBuildTimeMultiplier(state, systemId)
+      / Math.max(0.1, techEffects(state).shipBuildSpeedMult),
+  ));
+  return { ok: true, cost, buildMs };
 }
 
 export function canQueueScout(state, shipyardId, systemId) {
@@ -143,7 +160,10 @@ export function tickProduction(state) {
   const completed = [];
   for (const system of Object.values(getSystems(state))) {
     for (const structure of system.structures) {
-      if (structure.type !== 'shipyard' || !isStructureActive(structure)) continue;
+      if (structure.type !== 'shipyard' || !isOperationalStructure(state, structure, {
+        systemId: system.id,
+        owner: 'player',
+      })) continue;
       normalizeShipyardBuilds(structure);
       const remaining = [];
       for (const build of structure.builds) {
@@ -159,6 +179,13 @@ export function tickProduction(state) {
           completed.push({ systemId: system.id, hull, scoutId: scout.id, shipId: null });
         } else {
           const ship = spawnPlayerShip(state, system.id, hull, structure.bodyId);
+          const startingVeterancy = structureEffectValue(
+            state,
+            system.id,
+            'startingVeterancy',
+            { base: 0, op: 'max' },
+          );
+          if (startingVeterancy > 0) applyVeterancy(ship, startingVeterancy);
           completed.push({ systemId: system.id, hull, scoutId: null, shipId: ship.id });
         }
       }
@@ -171,7 +198,10 @@ export function tickProduction(state) {
 export function shipyardCount(state) {
   let count = 0;
   for (const system of Object.values(getSystems(state))) {
-    count += system.structures.filter((s) => s.type === 'shipyard' && isStructureActive(s)).length;
+    count += system.structures.filter((s) => s.type === 'shipyard' && isOperationalStructure(state, s, {
+      systemId: system.id,
+      owner: 'player',
+    })).length;
   }
   return count;
 }
@@ -180,7 +210,10 @@ export function buildingScoutCount(state) {
   let count = 0;
   for (const system of Object.values(getSystems(state))) {
     for (const s of system.structures) {
-      if (s.type !== 'shipyard') continue;
+      if (s.type !== 'shipyard' || !isOperationalStructure(state, s, {
+        systemId: system.id,
+        owner: 'player',
+      })) continue;
       normalizeShipyardBuilds(s);
       count += s.builds.filter((b) => b.hull === 'scout').length;
     }
@@ -192,7 +225,10 @@ export function activeCombatQueues(state) {
   const queues = [];
   for (const system of Object.values(getSystems(state))) {
     for (const s of system.structures) {
-      if (s.type !== 'shipyard') continue;
+      if (s.type !== 'shipyard' || !isOperationalStructure(state, s, {
+        systemId: system.id,
+        owner: 'player',
+      })) continue;
       normalizeShipyardBuilds(s);
       s.builds.forEach((build, idx) => {
         if (build.hull === 'scout') return;
@@ -210,8 +246,28 @@ export function activeCombatQueues(state) {
 }
 
 export function productionSlotSummary(state) {
+  const yards = listPlayerShipyardSlotCounts(state);
   return {
     shipyardSlots: shipyardSlots(state),
+    totalShipyardSlots: yards.reduce((total, yard) => total + yard.slots, 0),
     activeBuilds: activeCombatQueues(state).length + buildingScoutCount(state),
   };
+}
+
+function listPlayerShipyardSlotCounts(state) {
+  const rows = [];
+  for (const system of Object.values(getSystems(state))) {
+    if (!isPlayerOwned(state, system.id)) continue;
+    for (const structure of system.structures ?? []) {
+      if (structure.type !== 'shipyard' || !isOperationalStructure(state, structure, {
+        systemId: system.id,
+        owner: 'player',
+      })) continue;
+      rows.push({
+        id: structure.id,
+        slots: shipyardSlots(state) + shipyardExtraSlots(structure),
+      });
+    }
+  }
+  return rows;
 }

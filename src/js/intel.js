@@ -3,6 +3,7 @@
 import { neighborsOf } from './galaxy.js';
 import { systemById, isPlayerOwned } from './state.js';
 import { getGalaxyIntel, getGraph, getSystems } from './galaxy-scope.js';
+import { structureIntelHopBonus } from './body-structures.js';
 
 const listeningCoverageCache = new WeakMap();
 
@@ -20,8 +21,29 @@ function listeningPostCoverage(state) {
   if (graph) {
     for (const system of Object.values(getSystems(state))) {
       if (!isPlayerOwned(state, system.id)) continue;
-      if (!system.structures?.some((s) => s.type === 'listening_post')) continue;
-      for (const neighborId of neighborsOf(graph, system.id)) coverage.add(neighborId);
+      const hasListeningPost = system.structures?.some(
+        (structure) => structure.type === 'listening_post'
+          && !structure.construction
+          && (structure.hp ?? 1) > 0
+          && (structure.disabledUntil ?? 0) <= state.time
+          && structure.operational !== false,
+      );
+      const sensorHops = Math.max(0, Math.floor(structureIntelHopBonus(state, system.id)));
+      const maxHops = (hasListeningPost ? 1 : 0) + sensorHops;
+      if (maxHops <= 0) continue;
+      const distances = new Map([[system.id, 0]]);
+      const queue = [system.id];
+      while (queue.length > 0) {
+        const current = queue.shift();
+        const distance = distances.get(current);
+        if (distance >= maxHops) continue;
+        for (const neighborId of neighborsOf(graph, current)) {
+          if (distances.has(neighborId)) continue;
+          distances.set(neighborId, distance + 1);
+          coverage.add(neighborId);
+          queue.push(neighborId);
+        }
+      }
     }
   }
   listeningCoverageCache.set(state, { galaxyId, time: state.time, coverage });
