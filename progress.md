@@ -10,6 +10,30 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-10 — Progressable building tech + assigned construction drones
+
+**Task claimed:** Make building unlocks progressable; deploy construction drones to claimed systems; verify real UI buttons; remove the resulting ship stutter.
+
+### Done
+- Added early Economy tech `Construction Drones` after `Surveyor Drones`; late `mil_builder_ship` remains the separate Construction Tender hull unlock.
+- Removed the hidden Builder-Drones gate from Sail Foundry and Dyson Launcher construction: their named techs now control their availability.
+- Builder drones now deploy to a selected, player-claimed galaxy system, remain assigned there, and take construction jobs from that system's planet panel.
+- Remote drone jobs support outposts, shipyards, body structures, Sail Foundries, and Dyson Launchers; unclaimed systems reject deployment and construction.
+- Added the galaxy-map Construction Drones panel and verified the real Deploy, Assign Sail Foundry, and Assign Dyson Launcher button handlers.
+- Fixed construction-button detachment by refreshing on affordability thresholds instead of every small income change.
+- Fixed a ship/map stutter introduced by the new panel: route validation is now cached by target/ownership/credits/drone state instead of running a 400-star path search every animation frame.
+
+### Verification
+- `npm run build` passes.
+- `output/verify_dev_unlock_all_perf.mjs`: 6/6 passes; no console errors; post-unlock frame cadence remains baseline-relative.
+- `output/verify_progressable_tech_drones.mjs` covers tech separation, claimed-system deployment, stationing, and actual construction buttons.
+- Web-game client screenshot inspected at `output/web-game/stutter-check/shot-0.png`; no browser error artifact was produced.
+
+### Suggested next
+- Re-run the assigned-drone verifier after future construction-panel changes; it specifically catches DOM replacement during button clicks.
+
+---
+
 ## Session 2026-07-02 — Phase 0 foundation complete
 
 **Task claimed:** Phase 0 in full (tasks 0.1–0.12)

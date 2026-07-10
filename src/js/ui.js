@@ -133,6 +133,19 @@ import {
   TARGET_CLASSES,
 } from './combat-orders.js';
 
+const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
+  ...new Set([
+    OUTPOST_COST,
+    SHIPYARD_COST,
+    FOUNDRY_COST,
+    LAUNCHER_COST,
+    TRADE_STATION_COST,
+    RESEARCH_STATION_COST,
+    ...Object.values(BODY_STRUCTURE_DEFS).map((def) => def.cost),
+    ...Object.values(STRUCTURE_DEFS).map((def) => def.cost),
+  ]),
+]);
+
 const el = (id) => document.getElementById(id);
 
 const HINTS = {
@@ -2209,6 +2222,7 @@ export function initUi(ctx) {
     buildPanel: '',
     starBuildPanel: '',
     wormholeBuildPanel: '',
+    builderDroneGalaxyPanel: '',
   };
   let uiPointerActive = false;
   window.addEventListener('pointerdown', () => { uiPointerActive = true; }, true);
@@ -2217,22 +2231,12 @@ export function initUi(ctx) {
 
   function constructionUiSnapshot(state, systemId, bodyId = null) {
     const system = systemById(state, systemId);
-    const affordabilityThresholds = [
-      OUTPOST_COST,
-      SHIPYARD_COST,
-      FOUNDRY_COST,
-      LAUNCHER_COST,
-      TRADE_STATION_COST,
-      RESEARCH_STATION_COST,
-      ...Object.values(BODY_STRUCTURE_DEFS).map((def) => def.cost),
-      ...Object.values(STRUCTURE_DEFS).map((def) => def.cost),
-    ];
     return JSON.stringify({
       systemId,
       bodyId,
       owner: system?.owner,
       factionId: system?.factionId ?? null,
-      affordable: [...new Set(affordabilityThresholds)].map((cost) => (state.credits ?? 0) >= cost),
+      affordable: CONSTRUCTION_AFFORDABILITY_THRESHOLDS.map((cost) => (state.credits ?? 0) >= cost),
       unlockedCount: state.research?.unlocked?.length ?? 0,
       flagship: [state.flagship?.galaxyId, state.flagship?.systemId, !!state.flagship?.transit, !!state.flagship?.wormholeTransit],
       structures: (system?.structures ?? []).map((structure) => [
@@ -2960,19 +2964,32 @@ export function initUi(ctx) {
     const droneTarget = droneTargetId ? systemById(state, droneTargetId) : null;
     if (view === 'galaxy' && droneTarget) {
       builderDroneGalaxyPanel?.classList.remove('hidden');
-      const check = canDeployBuilderDrone?.(droneTargetId) ?? { ok: false, reason: 'Construction drones unavailable' };
-      const summary = builderDroneSummary?.(state);
-      el('builder-drone-galaxy-body').innerHTML =
-        `<p class="panel-note">Target: <strong>${droneTarget.name ?? droneTargetId}</strong></p>`
-        + `<p class="panel-note">${isPlayerOwned(state, droneTargetId) ? 'Claimed system' : 'Unclaimed — drones cannot deploy here.'}</p>`
-        + `<p class="panel-note panel-note--muted">Idle drones: ${summary?.idle ?? 0}/${summary?.capacity ?? 0}. Deploy one, then open the system and choose its construction job.</p>`;
-      const deployBtn = el('builder-drone-deploy-btn');
-      deployBtn.disabled = !check.ok;
-      deployBtn.textContent = `Deploy Builder Drone (${check.totalCost ?? 40} cr)`;
-      deployBtn.title = check.ok ? 'Deploy an idle builder drone to this claimed system' : check.reason;
-      deployBtn.onclick = () => deployBuilderDrone?.(droneTargetId);
+      const dronePanelSnap = JSON.stringify({
+        targetId: droneTargetId,
+        owner: droneTarget.owner,
+        unlocked: state.research?.unlocked?.includes('eco_construction_drones') ?? false,
+        canAffordDeploy: (state.credits ?? 0) >= 40,
+        drones: (state.builderDrones ?? []).map((drone) => [
+          drone.id, drone.status, drone.systemId, drone.targetSystemId,
+        ]),
+      });
+      if (dronePanelSnap !== uiSnapshots.builderDroneGalaxyPanel && !uiPointerActive) {
+        uiSnapshots.builderDroneGalaxyPanel = dronePanelSnap;
+        const check = canDeployBuilderDrone?.(droneTargetId) ?? { ok: false, reason: 'Construction drones unavailable' };
+        const summary = builderDroneSummary?.(state);
+        el('builder-drone-galaxy-body').innerHTML =
+          `<p class="panel-note">Target: <strong>${droneTarget.name ?? droneTargetId}</strong></p>`
+          + `<p class="panel-note">${isPlayerOwned(state, droneTargetId) ? 'Claimed system' : 'Unclaimed — drones cannot deploy here.'}</p>`
+          + `<p class="panel-note panel-note--muted">Idle drones: ${summary?.idle ?? 0}/${summary?.capacity ?? 0}. Deploy one, then open the system and choose its construction job.</p>`;
+        const deployBtn = el('builder-drone-deploy-btn');
+        deployBtn.disabled = !check.ok;
+        deployBtn.textContent = `Deploy Builder Drone (${check.totalCost ?? 40} cr)`;
+        deployBtn.title = check.ok ? 'Deploy an idle builder drone to this claimed system' : check.reason;
+        deployBtn.onclick = () => deployBuilderDrone?.(droneTargetId);
+      }
     } else {
       builderDroneGalaxyPanel?.classList.add('hidden');
+      uiSnapshots.builderDroneGalaxyPanel = '';
     }
 
     const dysonPanel = el('dyson-panel');
