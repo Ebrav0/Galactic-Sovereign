@@ -74,7 +74,7 @@ import { captureProgressMs, canHoldCapture } from './capture.js';
 import { laneBulge, laneControlPoint } from './galaxy.js';
 import { getGraph, getActiveGalaxy, wormholeIdForGalaxy } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
-import { playerShipsAtSystem } from './fleets.js';
+import { playerShipsAtSystem, playerShipTransitPositions } from './fleets.js';
 import {
   pirateFleetAtSystem,
   pirateSystemsWithPresence,
@@ -96,9 +96,19 @@ import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './shi
 import { weaponProfile } from './hull.js';
 import { builderDroneTransitPositions } from './builder-drones.js';
 import {
+  activeConvoys,
+  convoyTransitStatus,
+  localTransportSnapshots,
+  logisticsLaneKey,
+} from './logistics.js';
+import {
+  drawExportDepot,
+  drawSpaceCompressionJump,
+  exportDepotWorldPose,
+} from './trade-nexus-render.js';
+import {
   THEME,
   hexToRgba,
-  bezierPoint,
   drawQuadraticCurve,
 } from './theme.js';
 
@@ -514,6 +524,65 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     );
   }
 
+  const depotStructure = intel
+    ? system.structures?.find((structure) => structure.type === 'export_depot')
+    : null;
+  const depotPose = depotStructure ? exportDepotWorldPose(system, t) : null;
+  if (depotPose) {
+    const depotScreen = worldToScreen(camera, depotPose.x, depotPose.y, canvas);
+    drawOrbitRing(ctx, starScreen.x, starScreen.y, depotPose.orbitRadius * z, 0.08);
+    drawExportDepot(
+      ctx,
+      depotScreen.x,
+      depotScreen.y,
+      Math.max(7, 16 * z),
+      t,
+      { active: depotStructure.operational !== false },
+    );
+    if (z > 0.28) {
+      labelText(ctx, 'EXPORT DEPOT', depotScreen.x, depotScreen.y + Math.max(18, 27 * z), Math.max(8, 9 * z), THEME.accentCyan);
+    }
+
+    for (const transport of localTransportSnapshots(state)
+      .filter((entry) => entry.systemId === systemId)) {
+      const planet = system.bodies.find((body) => body.id === transport.fromBodyId);
+      if (!planet) continue;
+      const origin = planetPosition(planet, t);
+      const p = transport.progress * transport.progress * (3 - 2 * transport.progress);
+      const wx = origin.x + (depotPose.x - origin.x) * p;
+      const wy = origin.y + (depotPose.y - origin.y) * p;
+      const shipScreen = worldToScreen(camera, wx, wy, canvas);
+      drawShuttleSprite(
+        ctx,
+        shipScreen.x,
+        shipScreen.y,
+        Math.atan2(depotPose.y - origin.y, depotPose.x - origin.x),
+        Math.max(3.5, 6 * z),
+        { active: true, time: t, loaded: true },
+      );
+    }
+
+    for (const convoy of activeConvoys(state)
+      .filter((entry) => entry.fromSystemId === systemId && entry.status === 'jumping')) {
+      const status = convoyTransitStatus(state, convoy);
+      const stagingX = depotPose.x + Math.cos(depotPose.heading) * 46;
+      const stagingY = depotPose.y + Math.sin(depotPose.heading) * 46;
+      const shipScreen = worldToScreen(camera, stagingX, stagingY, canvas);
+      drawHullSpriteLite(ctx, shipScreen.x, shipScreen.y, 'freighter', Math.max(4, 8 * z), {
+        heading: depotPose.heading,
+        side: 'player',
+      });
+      drawSpaceCompressionJump(
+        ctx,
+        shipScreen.x,
+        shipScreen.y,
+        depotPose.heading,
+        Math.max(12, 26 * z),
+        status?.progress ?? 0,
+      );
+    }
+  }
+
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
   const surfaceSites = intel ? outpostSurfaceSites(state, systemId, t) : [];
   const orbitalStructures = intel ? structureSites(state, systemId, t) : [];
@@ -737,7 +806,16 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     const inp = getFlagshipInput();
     const orbiting = isFlagshipOrbiting(state);
     const thrusting = !state.paused && !orbiting && (inp.x !== 0 || inp.y !== 0);
-    drawFlagshipSprite(ctx, fs.x, fs.y, pose.heading, FLAGSHIP_RADIUS * z, thrusting);
+    drawFlagshipSprite(
+      ctx,
+      fs.x,
+      fs.y,
+      pose.heading,
+      FLAGSHIP_RADIUS * z,
+      thrusting,
+      state.flagship.hp ?? state.systemBattles?.[systemId]?.flagshipHp ?? 1,
+      state.flagship.maxHp ?? 1,
+    );
   }
 
   drawCombatLayer(ctx, state, systemId, canvas, z, t);
@@ -998,7 +1076,106 @@ function starNodeRadius(state, starId) {
 
 const BLACK_HOLE_NODE_RADIUS = 26;
 
-export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGroupId = null) {
+function laneKey(a, b) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** A compact, state-backed label for a scouted system on the strategic map. */
+function galaxySystemReadout(system, { owned, aiOwned, pirateAtStar, fleetAtStar }) {
+  const worldCount = system?.bodies.length ?? 0;
+  const worlds = worldCount === 1 ? '1 world' : `${worldCount} worlds`;
+  const structures = system?.structures ?? [];
+  const has = (type) => structures.some((s) => s.type === type);
+
+  if (pirateAtStar.length > 0) {
+    const ships = pirateAtStar.reduce((n, fleet) => n + fleet.shipCount, 0);
+    return { text: `PIRATE FLEET · ${ships} ships`, color: THEME.dangerHot };
+  }
+  if (aiOwned) {
+    const asset = has('shipyard') ? 'shipyard' : has('orbital_defense') ? 'defenses' : worlds;
+    return { text: `HOSTILE · ${asset}`, color: '#d194ff' };
+  }
+  if (owned) {
+    const asset = has('sail_foundry') ? 'foundry' : has('shipyard') ? 'shipyard' : has('outpost') ? 'outpost' : worlds;
+    return { text: `YOUR SYSTEM · ${asset}`, color: THEME.accentGold };
+  }
+  if (fleetAtStar.length > 0) {
+    const ships = fleetAtStar.reduce((n, fleet) => n + fleet.shipCount, 0);
+    return { text: `FRIENDLY FLEET · ${ships} ships`, color: THEME.accentGreen };
+  }
+  return { text: `NEUTRAL · ${worlds}`, color: THEME.textMuted };
+}
+
+function drawTrafficChevron(ctx, x, y, angle, color, z) {
+  const r = Math.max(2.1, 4.1 * z);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = Math.max(2, 5 * z);
+  ctx.beginPath();
+  ctx.moveTo(r * 1.45, 0);
+  ctx.lineTo(-r, -r * 0.78);
+  ctx.lineTo(-r * 0.45, 0);
+  ctx.lineTo(-r, r * 0.78);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawGalaxyReadout(ctx, state, galaxy, trafficCount, pirateFleetCount, convoyCount = 0) {
+  const intelCount = galaxy.stars.reduce((count, star) => count + (hasIntel(state, star.id) ? 1 : 0), 0);
+  let owned = 0;
+  let hostile = 0;
+  for (const star of galaxy.stars) {
+    if (isPlayerOwned(state, star.id)) owned++;
+    else if (isAiOwned(state, star.id)) hostile++;
+  }
+
+  const lines = [
+    'GALACTIC INTEL',
+    `Known systems  ${intelCount}/${galaxy.stars.length}`,
+    `Territory  ${owned} yours · ${hostile} hostile`,
+    `Alerts  ${pirateFleetCount} pirate fleet${pirateFleetCount === 1 ? '' : 's'}`,
+    `Live lane traffic  ${trafficCount} · ${convoyCount} convoys`,
+  ];
+  const lineH = 17;
+  const width = 230;
+  const height = 22 + lines.length * lineH;
+  // HUD and queue panels occupy the upper left; keep strategic information
+  // in the open map area beneath the top bar instead.
+  const x = ctx.canvas.width - width - 20;
+  const y = 72;
+  ctx.save();
+  ctx.fillStyle = 'rgba(5, 10, 22, 0.76)';
+  ctx.strokeStyle = 'rgba(116, 203, 255, 0.32)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, width, height, 6);
+  else ctx.rect(x, y, width, height);
+  ctx.fill();
+  ctx.stroke();
+  ctx.font = '600 12px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  lines.forEach((line, index) => {
+    ctx.fillStyle = index === 0 ? THEME.accentCyan : index === lines.length - 1 ? THEME.accentGreen : THEME.textSecondary;
+    ctx.fillText(line, x + 12, y + 14 + index * lineH);
+  });
+  ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = THEME.textMuted;
+  ctx.fillText('Chevrons show actual ship direction', x + 12, y + height - 10);
+  ctx.restore();
+}
+
+export function drawGalaxy(
+  ctx,
+  state,
+  selectedScoutId = null,
+  selectedBattleGroupId = null,
+  tutorialTargetSystemId = null,
+) {
   const drawStartedAt = performance.now();
   const canvas = ctx.canvas;
   ctx.fillStyle = THEME.bgGalaxy;
@@ -1051,9 +1228,43 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     const b = route.toSystemId;
     manualRoutes.add(a < b ? `${a}|${b}` : `${b}|${a}`);
   }
+  const overlayState = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
+  const blockadePrefix = `${state.activeGalaxyId}:`;
+  const blockadeRoutes = new Set((state.logistics?.blockades?.lanes ?? [])
+    .filter((entry) => entry.startsWith(blockadePrefix))
+    .map((entry) => entry.slice(blockadePrefix.length)));
+  const logisticsRoutes = new Set();
+  for (const route of state.logistics?.routes ?? []) {
+    if (route.galaxyId !== state.activeGalaxyId || route.paused) continue;
+    for (let i = 0; i < (route.path?.length ?? 0) - 1; i++) {
+      logisticsRoutes.add(logisticsLaneKey(route.path[i], route.path[i + 1]));
+    }
+  }
+  const convoyTransit = activeConvoys(state)
+    .map((convoy) => ({ convoy, status: convoyTransitStatus(state, convoy) }))
+    .filter((entry) => entry.status);
+  for (const { convoy } of convoyTransit) {
+    for (let i = convoy.legIndex ?? 0; i < convoy.path.length - 1; i++) {
+      logisticsRoutes.add(logisticsLaneKey(convoy.path[i], convoy.path[i + 1]));
+    }
+  }
   const fleetRoutes = fleetTransitLaneKeys(state, selectedBattleGroupId);
   const piratePresence = new Set(pirateSystemsWithPresence(state));
   const pirateRoutes = pirateTransitLaneKeys(state);
+  const scoutTransit = scoutTransitPositions(state);
+  const playerShipTransit = playerShipTransitPositions(state);
+  const pirateTransit = pirateFleetTransitMarkersForGalaxy(state);
+  const droneTransit = builderDroneTransitPositions(state);
+  const liveTraffic = [
+    ...(transit ? [{ ...transit, color: THEME.accentGold }] : []),
+    ...scoutTransit.map((entry) => ({ ...entry, color: THEME.laneScout })),
+    ...playerShipTransit.map((entry) => ({ ...entry, color: THEME.accentGreen })),
+    ...pirateTransit.map((entry) => ({ ...entry, color: THEME.dangerHot })),
+    ...droneTransit.map((entry) => ({ ...entry, color: '#ffb85c' })),
+    ...convoyTransit
+      .filter(({ status }) => status.phase === 'in_transit')
+      .map(({ status }) => ({ ...status, color: '#76ddff' })),
+  ];
   const pirateMarkers = pirateFleetMarkersForGalaxy(state);
   const pirateMarkersBySystem = new Map();
   for (const marker of pirateMarkers) {
@@ -1077,22 +1288,32 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     const sb = worldToScreen(galaxyCamera, b.x, b.y, canvas);
     if (!screenInView(sa, canvas) && !screenInView(sb, canvas)) continue;
 
-    const key = aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
+    const key = laneKey(aId, bId);
     const onFlagshipRoute = routeLanes?.has(key);
     const onScoutRoute = scoutRoutes.has(key);
     const onManualRoute = manualRoutes.has(key);
     const onFleetRoute = fleetRoutes.all.has(key);
     const onFleetSelectedRoute = fleetRoutes.selected.has(key);
     const onPirateRoute = pirateRoutes.has(key);
-    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onManualRoute && !onFleetRoute && !onPirateRoute && (i % 3 !== 0)) {
+    const onLogisticsRoute = logisticsRoutes.has(key);
+    const onBlockade = overlayState.blockade && blockadeRoutes.has(key);
+    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onManualRoute && !onFleetRoute && !onPirateRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
       continue;
     }
     visibleLanes++;
 
-    if (onPirateRoute) {
+    if (onBlockade) {
+      ctx.setLineDash([3 * z, 3 * z]);
+      ctx.strokeStyle = hexToRgba(THEME.dangerHot, 0.92);
+      ctx.lineWidth = Math.max(1.8, 3 * z);
+    } else if (onPirateRoute) {
       ctx.setLineDash([5 * z, 4 * z]);
       ctx.strokeStyle = hexToRgba(THEME.dangerHot, 0.72);
       ctx.lineWidth = Math.max(1.2, 2.2 * z);
+    } else if (onLogisticsRoute) {
+      ctx.setLineDash([9 * z, 4 * z, 2 * z, 4 * z]);
+      ctx.strokeStyle = hexToRgba('#76ddff', 0.86);
+      ctx.lineWidth = Math.max(1.5, 2.5 * z);
     } else if (onManualRoute) {
       ctx.setLineDash([8 * z, 6 * z]);
       ctx.strokeStyle = hexToRgba(THEME.accentGold, 0.85);
@@ -1121,21 +1342,15 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     drawQuadraticCurve(ctx, sa.x, sa.y, sc.x, sc.y, sb.x, sb.y);
     ctx.setLineDash([]);
 
-    if (!lod && tier !== 'far') {
-      for (let k = 0; k < 2; k++) {
-        const t = ((state.time / 6000) + k * 0.5 + i * 0.13) % 1;
-        const pt = bezierPoint(sa.x, sa.y, sc.x, sc.y, sb.x, sb.y, t);
-        ctx.globalAlpha = 0.55;
-        ctx.shadowColor = THEME.trafficPulse;
-        ctx.shadowBlur = 4;
-        ctx.fillStyle = THEME.trafficPulse;
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, Math.max(1.2, 2.5 * z), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        ctx.globalAlpha = 1;
-      }
-    }
+  }
+
+  // These are not ambient particles: every chevron maps to an active transit
+  // record.  Their heading is the lane tangent, so reverse travel clearly
+  // follows the same curve in the opposite direction.
+  for (const entry of liveTraffic) {
+    const s = worldToScreen(galaxyCamera, entry.x, entry.y, canvas);
+    if (!screenInView(s, canvas, 20)) continue;
+    drawTrafficChevron(ctx, s.x, s.y, entry.angle, entry.color, z);
   }
 
   const bhScreen = worldToScreen(galaxyCamera, galaxy.blackHole.x, galaxy.blackHole.y, canvas);
@@ -1155,7 +1370,19 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     ctx.fill();
     ctx.restore();
   } else {
-    drawBlackHole(ctx, bhScreen.x, bhScreen.y, BLACK_HOLE_NODE_RADIUS * z, state.time, !!wh?.anchor || !!state.flagship.wormholeTransit);
+    const wormholeTransit = state.flagship.wormholeTransit;
+    const wormholeProgress = wormholeTransit
+      ? Math.max(0, Math.min(1, (state.time - wormholeTransit.startTime) / Math.max(1, wormholeTransit.durationMs)))
+      : 0;
+    drawBlackHole(
+      ctx,
+      bhScreen.x,
+      bhScreen.y,
+      BLACK_HOLE_NODE_RADIUS * z,
+      state.time,
+      !!wh?.anchor || !!wormholeTransit,
+      wormholeTransit ? Math.sin(wormholeProgress * Math.PI) : 0,
+    );
   }
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
@@ -1177,12 +1404,14 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     }
 
     if (tier === 'far') {
-      ctx.fillStyle = intel ? (system?.star?.color ?? THEME.textSecondary) : THEME.fog.star;
+      const nexus = system?.star?.kind === 'trade_nexus';
+      ctx.fillStyle = intel ? (nexus ? '#76ddff' : (system?.star?.color ?? THEME.textSecondary)) : THEME.fog.star;
       ctx.globalAlpha = intel ? 0.9 : 0.5;
       ctx.beginPath();
       ctx.arc(s.x, s.y, Math.max(1.8, nodeR * 0.72), 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
+      if (nexus && intel) drawGlowRing(ctx, s.x, s.y, Math.max(4, nodeR * 1.45), '#ffce7a', Math.max(1, 1.5 * z), 0.8);
     } else if (system?.star) {
       drawStar(ctx, {
         star: system.star,
@@ -1203,6 +1432,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
   labelText(ctx, getActiveGalaxy(state)?.name ?? 'Galaxy', bhScreen.x, bhScreen.y - (BLACK_HOLE_NODE_RADIUS + 52) * z, Math.max(9, 11 * z), THEME.accentCyan);
   labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
   labelText(ctx, whLabel, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.85)');
+  drawGalaxyReadout(ctx, state, galaxy, liveTraffic.length, pirateMarkers.length + pirateTransit.length, convoyTransit.length);
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
     const star = galaxy.stars[starIdx];
@@ -1238,6 +1468,22 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
       drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1 * z), 0.35);
     }
 
+    if (tutorialTargetSystemId === star.id) {
+      const pulse = 0.5 + 0.5 * Math.sin((performance.now() / SELECTION_PULSE_MS) * Math.PI * 2);
+      drawGlowRing(
+        ctx,
+        s.x,
+        s.y,
+        nodeR + (13 + 5 * pulse) * z,
+        THEME.accentCyan,
+        Math.max(1.2, 2.2 * z),
+        0.62 + 0.32 * pulse,
+      );
+      if (tier !== 'far') {
+        labelText(ctx, 'Tutorial target', s.x, s.y - nodeR - 17 * z, Math.max(8, 10 * z), THEME.accentCyan);
+      }
+    }
+
     if (owned) {
       drawGlowRing(ctx, s.x, s.y, nodeR + 10 * z, THEME.accentGold, Math.max(1, 1.5 * z), 0.65);
     }
@@ -1257,6 +1503,21 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
       ctx.arc(s.x - nodeR - 8 * z, s.y + nodeR + 6 * z, Math.max(2, 3.5 * z), 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
+      if (overlayState.threat) {
+        drawGlowRing(ctx, s.x, s.y, nodeR + 20 * z, THEME.dangerHot, Math.max(1, 2 * z), 0.42);
+      }
+    }
+
+    if (overlayState.sensor && intel) {
+      const sensorColor = owned ? THEME.accentCyan : 'rgba(126, 145, 186, 0.8)';
+      ctx.save();
+      ctx.setLineDash([4 * z, 5 * z]);
+      ctx.strokeStyle = sensorColor;
+      ctx.lineWidth = Math.max(0.8, 1.1 * z);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, nodeR + 24 * z, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
     }
 
     const progress = captureProgressMs(state, star.id);
@@ -1281,18 +1542,21 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     }
 
     const labelImportant = owned || aiOwned || state.stronghold === star.id
+      || system?.star?.kind === 'trade_nexus'
       || fleetAtStar.length > 0 || piratePresence.has(star.id) || pirateAtStar.length > 0;
     if (intel && tier !== 'far' && (tier === 'close' || labelImportant)) {
       labelText(ctx, star.name, s.x, s.y + nodeR + 16 * z, Math.max(10, 12 * z), THEME.textLabel);
-      const n = system?.bodies.length ?? 0;
       if (tier === 'close') {
+        const readout = system?.star?.kind === 'trade_nexus'
+          ? { text: 'TRADE NEXUS · INTERSTELLAR MARKET', color: '#ffce7a' }
+          : galaxySystemReadout(system, { owned, aiOwned, pirateAtStar, fleetAtStar });
         labelText(
           ctx,
-          n === 0 ? 'dead star' : `${n} planet${n === 1 ? '' : 's'}`,
+          readout.text,
           s.x,
           s.y + nodeR + 29 * z,
           Math.max(8, 9.5 * z),
-          THEME.textMuted,
+          readout.color,
         );
       }
     }
@@ -1368,7 +1632,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     );
   }
 
-  for (const entry of scoutTransitPositions(state)) {
+  for (const entry of scoutTransit) {
     const s = worldToScreen(galaxyCamera, entry.x, entry.y, canvas);
     drawScoutSprite(
       ctx,
@@ -1400,7 +1664,7 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     }
   }
 
-  for (const marker of pirateFleetTransitMarkersForGalaxy(state)) {
+  for (const marker of pirateTransit) {
     const s = worldToScreen(galaxyCamera, marker.x, marker.y, canvas);
     if (!screenInView(s, canvas, 50)) continue;
     drawFleetMarker(ctx, s.x, s.y, z, marker);
@@ -1420,7 +1684,6 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     }
   }
 
-  const droneTransit = builderDroneTransitPositions(state);
   for (const entry of droneTransit) {
     if (tier === 'far' && !entry.drone?.targetSystemId) continue;
     const s = worldToScreen(galaxyCamera, entry.x, entry.y, canvas);
@@ -1442,6 +1705,23 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     ctx.restore();
   }
 
+  for (const { convoy, status } of convoyTransit) {
+    if (status.phase === 'delivered' || status.phase === 'intercepted') continue;
+    const s = worldToScreen(galaxyCamera, status.x, status.y, canvas);
+    if (!screenInView(s, canvas, 50)) continue;
+    const heading = Number.isFinite(status.angle) ? status.angle : 0;
+    drawHullSpriteLite(ctx, s.x, s.y, 'freighter', Math.max(3.5, 7.5 * z), {
+      heading,
+      side: status.phase === 'paused' ? 'ai' : 'player',
+    });
+    if (status.phase === 'jumping') {
+      drawSpaceCompressionJump(ctx, s.x, s.y, heading, Math.max(10, 23 * z), status.progress);
+    }
+    if (tier === 'close') {
+      labelText(ctx, convoy.id.toUpperCase(), s.x, s.y + Math.max(15, 21 * z), Math.max(7, 8 * z), '#76ddff');
+    }
+  }
+
   flushStars(ctx, 'bloom');
 
   const swAction = state.superweapon?.lastAction;
@@ -1460,8 +1740,9 @@ export function drawGalaxy(ctx, state, selectedScoutId = null, selectedBattleGro
     visibleStars,
     visibleLanes,
     fleetMarkers: fleetMarkers.length,
-    pirateMarkers: pirateMarkers.length + pirateFleetTransitMarkersForGalaxy(state).length,
+    pirateMarkers: pirateMarkers.length + pirateTransit.length,
     droneMarkers: droneTransit.length,
+    convoyMarkers: convoyTransit.length,
     lastDrawMs: Math.round((performance.now() - drawStartedAt) * 100) / 100,
   };
 }

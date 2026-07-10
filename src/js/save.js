@@ -1,8 +1,15 @@
 // Save/load: envelope + CRC-32 checksum + slots (IMPLEMENTATION_PLAN §5-6).
 // Pure serialize/deserialize plus I/O calls; holds no live state references.
 
-import { SAVE_VERSION } from './constants.js';
-import { createNewGame, seedNeutralStructuresForGalaxy, createDefaultDyson, hashSeed, createRng } from './state.js';
+import { SAVE_VERSION, FLAGSHIP_HP } from './constants.js';
+import {
+  createNewGame,
+  seedNeutralStructuresForGalaxy,
+  createDefaultDyson,
+  hashSeed,
+  createRng,
+  markTradeNexusStars,
+} from './state.js';
 import { backfillStarTypes } from './star-types.js';
 import { spawnPirateFleets } from './pirates.js';
 import { generateGalaxy } from './galaxy.js';
@@ -17,8 +24,19 @@ import { seedAiFaction } from './ai-faction.js';
 import { ensureStructureCombatFields } from './body-structures.js';
 import { defaultWeaponProfileForHull, normalizeCarrierWingState } from './hull.js';
 import { initBuilderDrones } from './builder-drones.js';
+import { ensureLogisticsState, resetLogisticsIds } from './logistics.js';
+import { createSolCommanderState } from './sol-commander.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
+
+const CREDENTIAL_FIELD_RE = /^(?:apiKey|openaiKey|encryptedKey|authorization|accessToken|secret|password)$/i;
+const CREDENTIAL_VALUE_RE = /\b(?:sk|sess)-[A-Za-z0-9_-]{12,}\b|\bBearer\s+[A-Za-z0-9._-]{12,}\b/gi;
+
+function persistenceReplacer(key, value) {
+  if (CREDENTIAL_FIELD_RE.test(key)) return undefined;
+  if (typeof value === 'string') return value.replace(CREDENTIAL_VALUE_RE, '[REDACTED CREDENTIAL]');
+  return value;
+}
 
 // --- CRC-32 (shared by write and verify) ---
 
@@ -45,7 +63,9 @@ export function crc32(str) {
 // --- Envelope ---
 
 export function serialize(state) {
-  const stateJson = JSON.stringify(state);
+  // Defensive last boundary: credentials are main-process-only, but a save can
+  // never retain one even if an imported mod or console mutation added it.
+  const stateJson = JSON.stringify(state, persistenceReplacer);
   return JSON.stringify({
     saveVersion: SAVE_VERSION,
     checksum: crc32(stateJson),
@@ -69,6 +89,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 8) e = migrateV8toV9(e);
   if (e.saveVersion === 9) e = migrateV9toV10(e);
   if (e.saveVersion === 10) e = migrateV10toV11(e);
+  if (e.saveVersion === 11) e = migrateV11toV12(e);
   return e;
 }
 
@@ -418,7 +439,11 @@ function initPhase6State(state) {
     activeMissionId: null,
     completedMissions: [],
     missionProgress: {},
+    tutorialTargetSystemId: null,
+    tutorialCompletedAt: null,
   };
+  state.campaign.tutorialTargetSystemId ??= null;
+  state.campaign.tutorialCompletedAt ??= null;
   state.diplomacy = state.diplomacy ?? { relations: {} };
   state.superweapon = state.superweapon ?? {
     cradleSystemId: null,
@@ -466,6 +491,7 @@ function migrateV8toV9(envelope) {
 function initPostPhase6BuildingsAndCombat(state) {
   for (const gal of Object.values(state.galaxies ?? {})) {
     for (const system of Object.values(gal.systems ?? {})) {
+      system.environment = system.environment ?? (system.star?.kind === 'trade_nexus' ? 'commerce' : 'clear');
       for (const structure of system.structures ?? []) {
         ensureStructureCombatFields(state, system.id, structure);
       }
@@ -519,6 +545,151 @@ function migrateV10toV11(envelope) {
   };
 }
 
+function nexusStarFields(system, seed, galaxyId) {
+  return {
+    radius: 110,
+    color: '#76ddff',
+    secondaryColor: '#ffce7a',
+    coronaColor: '#9e8cff',
+    kind: 'trade_nexus',
+    type: 'trade_nexus',
+    visualSeed: system.star?.visualSeed ?? hashSeed(seed, `${galaxyId}:${system.id}:trade-nexus`),
+  };
+}
+
+function prepareV12Galaxy(state, galaxy) {
+  const activeSystems = galaxy.systems ?? {};
+  const overlays = galaxy.abstract?.systemOverlays ?? {};
+  for (const star of galaxy.graph?.stars ?? []) {
+    const system = activeSystems[star.id];
+    const overlay = overlays[star.id];
+    const dyson = system?.dyson ?? overlay?.dyson;
+    const structures = system?.structures ?? overlay?.structures ?? [];
+    if ((dyson?.completedShells ?? 0) > 0 || (dyson?.shellSails ?? 0) > 0
+        || structures.some((structure) => ['sail_foundry', 'dyson_launcher', 'superweapon_cradle'].includes(structure.type))) {
+      star.protectedFromNexus = true;
+    }
+  }
+  markTradeNexusStars(galaxy.graph, galaxy.strongholdStarId);
+
+  for (const star of galaxy.graph?.stars ?? []) {
+    delete star.protectedFromNexus;
+    const system = activeSystems[star.id];
+    const overlay = overlays[star.id];
+    if (!system && overlay) {
+      overlay.structures = Array.isArray(overlay.structures) ? overlay.structures : [];
+      for (const structure of overlay.structures) {
+        if (structure.type === 'trade_station') {
+          structure.type = 'export_depot';
+          structure.bodyId = null;
+          structure.hp = structure.hp ?? 520;
+          structure.maxHp = structure.maxHp ?? 520;
+          structure.operational = structure.operational !== false;
+        }
+      }
+      if (star.kind === 'trade_nexus') {
+        overlay.dyson = { ...createDefaultDyson(), disabled: true, disabledReason: 'Trade Nexus systems have no star to enclose' };
+        if (!overlay.structures.some((structure) => structure.type === 'trade_nexus')) {
+          overlay.structures.push({
+            id: `nexus-${star.id}`,
+            type: 'trade_nexus',
+            bodyId: null,
+            builtAtTime: 0,
+            hp: 2400,
+            maxHp: 2400,
+            openAccess: true,
+          });
+        }
+      } else if (overlay.owner === 'player'
+        && overlay.structures.some((structure) => structure.type === 'outpost')
+        && !overlay.structures.some((structure) => structure.type === 'export_depot')) {
+        overlay.structures.push({
+          id: `depot-v12-${galaxy.id}-${star.id}`,
+          type: 'export_depot',
+          bodyId: null,
+          builtAtTime: state.time,
+          hp: 520,
+          maxHp: 520,
+          operational: true,
+        });
+      }
+      continue;
+    }
+    if (!system) continue;
+    if (star.kind === 'trade_nexus') {
+      system.name = star.name;
+      system.star = nexusStarFields(system, state.meta.seed, galaxy.id);
+      system.environment = 'commerce';
+      system.tradeAccess = 'open';
+      system.dyson = { ...createDefaultDyson(), disabled: true, disabledReason: 'Trade Nexus systems have no star to enclose' };
+      if (!system.structures.some((structure) => structure.type === 'trade_nexus')) {
+        system.structures.push({
+          id: `nexus-${star.id}`,
+          type: 'trade_nexus',
+          bodyId: null,
+          builtAtTime: 0,
+          hp: 2400,
+          maxHp: 2400,
+          openAccess: true,
+        });
+      }
+    }
+
+    for (const structure of system.structures ?? []) {
+      if (structure.type === 'trade_station') {
+        structure.type = 'export_depot';
+        structure.bodyId = null;
+        structure.hp = structure.hp ?? 520;
+        structure.maxHp = structure.maxHp ?? 520;
+        structure.operational = structure.operational !== false;
+      }
+    }
+    const developed = system.owner === 'player'
+      && system.star?.kind !== 'trade_nexus'
+      && system.structures.some((structure) => structure.type === 'outpost');
+    if (developed && !system.structures.some((structure) => structure.type === 'export_depot')) {
+      system.structures.push({
+        id: `depot-v12-${galaxy.id}-${system.id}`,
+        type: 'export_depot',
+        bodyId: null,
+        builtAtTime: state.time,
+        hp: 520,
+        maxHp: 520,
+        operational: true,
+      });
+    }
+  }
+}
+
+// v11 -> v12 (physical logistics, tactical orders/reports, Sol preferences).
+function migrateV11toV12(envelope) {
+  const state = envelope.state;
+  initPhase6State(state);
+  initPostPhase6BuildingsAndCombat(state);
+  initBuilderDrones(state);
+  for (const galaxy of Object.values(state.galaxies ?? {})) prepareV12Galaxy(state, galaxy);
+  ensureLogisticsState(state);
+  resetLogisticsIds(state);
+  state.tacticalOrders = state.tacticalOrders ?? {};
+  state.battleReports = Array.isArray(state.battleReports) ? state.battleReports : [];
+  state.mapOverlays = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
+  state.solCommander = state.solCommander?.settings && Array.isArray(state.solCommander.history)
+    ? state.solCommander
+    : createSolCommanderState();
+  if (state.flagship) {
+    state.flagship.hp = state.flagship.hp ?? FLAGSHIP_HP;
+    state.flagship.maxHp = state.flagship.maxHp ?? FLAGSHIP_HP;
+  }
+
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 12,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -558,6 +729,18 @@ export function deserialize(envelopeJson) {
   initPhase6State(envelope.state);
   initPostPhase6BuildingsAndCombat(envelope.state);
   initBuilderDrones(envelope.state);
+  ensureLogisticsState(envelope.state);
+  resetLogisticsIds(envelope.state);
+  envelope.state.tacticalOrders = envelope.state.tacticalOrders ?? {};
+  envelope.state.battleReports = Array.isArray(envelope.state.battleReports) ? envelope.state.battleReports : [];
+  envelope.state.mapOverlays = { threat: true, sensor: false, blockade: true, ...(envelope.state.mapOverlays ?? {}) };
+  envelope.state.solCommander = envelope.state.solCommander?.settings && Array.isArray(envelope.state.solCommander.history)
+    ? envelope.state.solCommander
+    : createSolCommanderState();
+  if (envelope.state.flagship) {
+    envelope.state.flagship.hp = envelope.state.flagship.hp ?? FLAGSHIP_HP;
+    envelope.state.flagship.maxHp = envelope.state.flagship.maxHp ?? FLAGSHIP_HP;
+  }
   migrateShipyardsOnLoad(envelope.state);
   envelope.state.constructionJobs = envelope.state.constructionJobs ?? [];
   envelope.state.drones = envelope.state.drones ?? [];

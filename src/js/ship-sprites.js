@@ -145,139 +145,194 @@ function cacheHullBitmap(hull, side, r) {
 }
 
 // ============================= FLAGSHIP =============================
-// Star Destroyer dagger hull + Enterprise saucer & nacelles + Foundation
-// minimalist dark plating with luminous seams.
+// Grounded sovereign command ship: armored asymmetric naval hull, recessed
+// drives, sensor mast, visible batteries, and restrained navigation lighting.
 
 export function drawFlagshipModel(ctx, r, opts = {}) {
   const {
     thrusting = false,
     time = performance.now(),
     side = 'player',
+    hpFraction = 1,
   } = opts;
   const c = hullColors('flagship', side);
   const flicker = 0.8 + 0.2 * Math.sin(time / 42);
 
-  // --- Engine flames (drawn first, behind hull) ---
-  if (thrusting) {
-    engineFlame(ctx, -r * 1.62, 0, r * 2.6, r * 0.5, c.engine, flicker);
-    engineFlame(ctx, -r * 1.52, r * 0.5, r * 1.7, r * 0.32, c.engine, flicker * 0.9);
-    engineFlame(ctx, -r * 1.52, -r * 0.5, r * 1.7, r * 0.32, c.engine, flicker * 1.05);
+  // Four recessed drives. Short, dense exhaust sells mass better than long
+  // cartoon flames; hard thrust adds a compressed ion wake.
+  for (const y of [-0.48, -0.16, 0.16, 0.48]) {
+    engineFlame(ctx, -r * 1.78, r * y, r * (thrusting ? 1.65 : 0.45), r * 0.17, c.engine, flicker);
   }
-  // Nacelle exhaust — always lit, brighter under thrust.
-  const nacGlow = thrusting ? 0.85 : 0.4;
-  engineFlame(ctx, -r * 2.05, r * 1.02, r * (thrusting ? 1.5 : 0.7), r * 0.22, c.engine, flicker * nacGlow + 0.2);
-  engineFlame(ctx, -r * 2.05, -r * 1.02, r * (thrusting ? 1.5 : 0.7), r * 0.22, c.engine, flicker * nacGlow + 0.2);
 
-  // --- Nacelle pylons ---
-  ctx.strokeStyle = c.hull;
-  ctx.lineWidth = r * 0.16;
-  ctx.beginPath();
-  ctx.moveTo(-r * 0.7, r * 0.5);
-  ctx.lineTo(-r * 1.15, r * 0.98);
-  ctx.moveTo(-r * 0.7, -r * 0.5);
-  ctx.lineTo(-r * 1.15, -r * 0.98);
-  ctx.stroke();
+  // Twin outboard engine stalks: swept structural pylons carry long nacelles
+  // clear of the armored hull, echoing classic Enterprise proportions without
+  // turning the flagship back into a clean, optimistic exploration vessel.
+  for (const sideSign of [-1, 1]) {
+    const nacelleY = sideSign * r * 1.42;
+    engineFlame(
+      ctx,
+      -r * 1.84,
+      nacelleY,
+      r * (thrusting ? 1.9 : 0.55),
+      r * 0.19,
+      c.engine,
+      flicker,
+    );
 
-  // --- Twin nacelles (Enterprise) ---
-  for (const s of [1, -1]) {
-    const ny = s * r * 1.02;
-    const g = ctx.createLinearGradient(-r * 2.05, ny, -r * 0.55, ny);
-    g.addColorStop(0, c.dark);
-    g.addColorStop(1, c.hull);
-    ctx.fillStyle = g;
+    // Broad, load-bearing pylon rather than a fragile line.
+    const pylon = ctx.createLinearGradient(-r * 1.35, nacelleY, -r * 0.28, sideSign * r * 0.45);
+    pylon.addColorStop(0, '#121d2a');
+    pylon.addColorStop(0.55, c.hull);
+    pylon.addColorStop(1, c.dark);
+    ctx.fillStyle = pylon;
     ctx.beginPath();
-    if (ctx.roundRect) ctx.roundRect(-r * 2.05, ny - r * 0.15, r * 1.5, r * 0.3, r * 0.15);
-    else ctx.rect(-r * 2.05, ny - r * 0.15, r * 1.5, r * 0.3);
+    ctx.moveTo(-r * 0.3, sideSign * r * 0.42);
+    ctx.lineTo(-r * 0.66, sideSign * r * 0.62);
+    ctx.lineTo(-r * 1.38, sideSign * r * 1.28);
+    ctx.lineTo(-r * 1.14, sideSign * r * 1.52);
+    ctx.lineTo(-r * 0.45, sideSign * r * 0.68);
+    ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = hexToRgba(c.stroke, 0.5);
-    ctx.lineWidth = Math.max(0.6, r * 0.05);
+    ctx.strokeStyle = 'rgba(161, 191, 214, 0.46)';
+    ctx.lineWidth = Math.max(0.7, r * 0.052);
     ctx.stroke();
-    // Bussard collector — warm glow at nacelle nose.
-    glowDot(ctx, -r * 0.62, ny, r * 0.13, '#ffb46b', 0.9);
-    // Luminous field strip along the nacelle.
-    ctx.strokeStyle = hexToRgba(c.glow, 0.55 + 0.2 * Math.sin(time / 300 + s));
-    ctx.lineWidth = Math.max(0.6, r * 0.06);
+
+    // Armored nacelle pod with a recessed luminous channel and hot exhaust cap.
+    const nacelle = ctx.createLinearGradient(-r * 1.9, nacelleY, -r * 0.28, nacelleY);
+    nacelle.addColorStop(0, '#050a12');
+    nacelle.addColorStop(0.36, '#172638');
+    nacelle.addColorStop(0.72, c.hull);
+    nacelle.addColorStop(1, '#2e4355');
+    ctx.fillStyle = nacelle;
     ctx.beginPath();
-    ctx.moveTo(-r * 1.9, ny);
-    ctx.lineTo(-r * 0.75, ny);
+    ctx.moveTo(-r * 1.88, nacelleY - r * 0.16);
+    ctx.lineTo(-r * 0.58, nacelleY - r * 0.2);
+    ctx.quadraticCurveTo(-r * 0.3, nacelleY - r * 0.13, -r * 0.22, nacelleY);
+    ctx.quadraticCurveTo(-r * 0.3, nacelleY + r * 0.13, -r * 0.58, nacelleY + r * 0.2);
+    ctx.lineTo(-r * 1.88, nacelleY + r * 0.16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(184, 211, 230, 0.62)';
+    ctx.lineWidth = Math.max(0.75, r * 0.055);
+    ctx.stroke();
+
+    ctx.strokeStyle = hexToRgba(c.glow, 0.72);
+    ctx.lineWidth = Math.max(0.8, r * 0.075);
+    ctx.beginPath();
+    ctx.moveTo(-r * 1.58, nacelleY);
+    ctx.lineTo(-r * 0.52, nacelleY);
+    ctx.stroke();
+    glowDot(ctx, -r * 1.73, nacelleY, r * 0.095, c.engine, 0.9);
+    glowDot(ctx, -r * 0.36, nacelleY, r * 0.065, c.glow, 0.72);
+  }
+
+  // Main asymmetrical armored silhouette.
+  const hull = ctx.createLinearGradient(-r * 1.8, -r, r * 2.35, r * 0.65);
+  hull.addColorStop(0, '#070c14');
+  hull.addColorStop(0.42, c.dark);
+  hull.addColorStop(0.72, c.hull);
+  hull.addColorStop(1, '#27384a');
+  ctx.fillStyle = hull;
+  ctx.beginPath();
+  ctx.moveTo(r * 2.38, -r * 0.06);
+  ctx.lineTo(r * 1.2, r * 0.48);
+  ctx.lineTo(r * 0.18, r * 0.78);
+  ctx.lineTo(-r * 1.42, r * 0.72);
+  ctx.lineTo(-r * 1.82, r * 0.42);
+  ctx.lineTo(-r * 1.72, -r * 0.6);
+  ctx.lineTo(-r * 0.42, -r * 0.84);
+  ctx.lineTo(r * 1.16, -r * 0.54);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(178, 205, 224, 0.62)';
+  ctx.lineWidth = Math.max(0.8, r * 0.065);
+  ctx.stroke();
+
+  // Layered armor plates and recessed launch trench.
+  const plates = [
+    [[1.86, -0.05], [0.72, 0.32], [-0.28, 0.44], [0.12, 0.06]],
+    [[1.32, -0.18], [0.08, -0.1], [-0.92, -0.5], [0.34, -0.58]],
+    [[-0.18, 0.54], [-1.5, 0.54], [-1.18, 0.2], [0.42, 0.14]],
+  ];
+  for (let i = 0; i < plates.length; i++) {
+    const plate = plates[i];
+    ctx.fillStyle = i === 1 ? 'rgba(7, 12, 21, 0.82)' : 'rgba(72, 91, 110, 0.34)';
+    ctx.beginPath();
+    plate.forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x * r, y * r); else ctx.lineTo(x * r, y * r);
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(148, 176, 198, 0.2)';
+    ctx.lineWidth = Math.max(0.45, r * 0.03);
     ctx.stroke();
   }
 
-  // --- Main dagger hull (Star Destroyer wedge) ---
+  // Armored command island, offset from the centerline.
+  ctx.fillStyle = '#111b28';
   ctx.beginPath();
-  ctx.moveTo(r * 2.3, 0);
-  ctx.lineTo(r * 0.1, r * 0.62);
-  ctx.lineTo(-r * 1.55, r * 0.78);
-  ctx.lineTo(-r * 1.7, r * 0.3);
-  ctx.lineTo(-r * 1.7, -r * 0.3);
-  ctx.lineTo(-r * 1.55, -r * 0.78);
-  ctx.lineTo(r * 0.1, -r * 0.62);
+  ctx.moveTo(r * 0.64, -r * 0.42);
+  ctx.lineTo(r * 0.12, -r * 0.66);
+  ctx.lineTo(-r * 0.48, -r * 0.54);
+  ctx.lineTo(-r * 0.22, -r * 0.26);
   ctx.closePath();
-  ctx.fillStyle = metalGradient(ctx, r, c);
   ctx.fill();
-  ctx.strokeStyle = hexToRgba(c.stroke, 0.8);
-  ctx.lineWidth = Math.max(0.8, r * 0.07);
+  ctx.strokeStyle = 'rgba(170, 198, 218, 0.44)';
   ctx.stroke();
 
-  // --- Raised superstructure wedge ---
+  // Sensor mast and rotating phased array.
+  ctx.save();
+  ctx.translate(r * 0.02, -r * 0.58);
+  ctx.rotate(time / 1800);
+  ctx.strokeStyle = hexToRgba(c.glow, 0.72);
+  ctx.lineWidth = Math.max(0.6, r * 0.045);
   ctx.beginPath();
-  ctx.moveTo(r * 1.35, 0);
-  ctx.lineTo(-r * 0.2, r * 0.38);
-  ctx.lineTo(-r * 1.35, r * 0.44);
-  ctx.lineTo(-r * 1.35, -r * 0.44);
-  ctx.lineTo(-r * 0.2, -r * 0.38);
-  ctx.closePath();
-  ctx.fillStyle = hexToRgba(c.deck, 0.85);
-  ctx.fill();
-  ctx.strokeStyle = hexToRgba(c.stroke, 0.35);
-  ctx.lineWidth = Math.max(0.5, r * 0.04);
+  ctx.ellipse(0, 0, r * 0.28, r * 0.08, 0, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.restore();
 
-  // --- Luminous hull seams (Foundation) ---
-  ctx.strokeStyle = hexToRgba(c.glow, 0.5);
-  ctx.lineWidth = Math.max(0.5, r * 0.045);
-  ctx.beginPath();
-  ctx.moveTo(r * 2.1, 0);
-  ctx.lineTo(r * 1.05, 0);
-  ctx.moveTo(r * 0.4, r * 0.44);
-  ctx.lineTo(-r * 1.45, r * 0.6);
-  ctx.moveTo(r * 0.4, -r * 0.44);
-  ctx.lineTo(-r * 1.45, -r * 0.6);
-  ctx.stroke();
+  // Visible point-defense and capital batteries.
+  for (const [x, y, scale] of [[0.95, 0.24, 1], [0.22, 0.4, 0.8], [-0.62, 0.36, 0.75], [0.68, -0.36, 0.85], [-0.5, -0.44, 0.7]]) {
+    ctx.fillStyle = '#050910';
+    ctx.beginPath();
+    ctx.arc(x * r, y * r, r * 0.09 * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(214, 226, 236, 0.4)';
+    ctx.beginPath();
+    ctx.moveTo((x - 0.01) * r, y * r);
+    ctx.lineTo((x + 0.2 * scale) * r, y * r);
+    ctx.stroke();
+  }
 
-  // --- Saucer section (Enterprise command disc) ---
-  const sx = r * 0.95;
-  const saucerR = r * 0.58;
-  const sg = ctx.createRadialGradient(sx - saucerR * 0.3, -saucerR * 0.3, saucerR * 0.15, sx, 0, saucerR);
-  sg.addColorStop(0, c.deck);
-  sg.addColorStop(0.75, c.hull);
-  sg.addColorStop(1, c.dark);
-  ctx.fillStyle = sg;
+  // Restrained deck windows and navigation lights.
+  ctx.strokeStyle = hexToRgba(c.glow, 0.38);
+  ctx.lineWidth = Math.max(0.45, r * 0.028);
   ctx.beginPath();
-  ctx.arc(sx, 0, saucerR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = hexToRgba(c.stroke, 0.75);
-  ctx.lineWidth = Math.max(0.7, r * 0.055);
+  ctx.moveTo(r * 1.52, r * 0.08);
+  ctx.lineTo(-r * 1.28, r * 0.52);
+  ctx.moveTo(r * 1.08, -r * 0.2);
+  ctx.lineTo(-r * 1.3, -r * 0.5);
   ctx.stroke();
-  // Concentric deck ring + glowing rim arc.
-  ctx.strokeStyle = hexToRgba(c.stroke, 0.3);
-  ctx.lineWidth = Math.max(0.5, r * 0.035);
-  ctx.beginPath();
-  ctx.arc(sx, 0, saucerR * 0.62, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.strokeStyle = hexToRgba(c.glow, 0.7);
-  ctx.lineWidth = Math.max(0.6, r * 0.05);
-  ctx.beginPath();
-  ctx.arc(sx, 0, saucerR * 0.82, -0.9, 0.9);
-  ctx.stroke();
-  // Bridge dome.
-  glowDot(ctx, sx + saucerR * 0.25, 0, r * 0.14, c.glow, 0.95);
+  const blink = (phase) => 0.22 + 0.78 * (Math.sin(time / 520 + phase) > 0.62 ? 1 : 0.08);
+  glowDot(ctx, -r * 1.42, r * 0.58, r * 0.045, '#ff6f6f', blink(0));
+  glowDot(ctx, -r * 1.3, -r * 0.58, r * 0.045, '#7dffa8', blink(2.1));
+  glowDot(ctx, r * 2.08, -r * 0.05, r * 0.04, '#e9f5ff', blink(4.2));
 
-  // --- Running lights (blinking) ---
-  const blink = (phase) => 0.25 + 0.75 * (Math.sin(time / 480 + phase) > 0.55 ? 1 : 0.12);
-  glowDot(ctx, -r * 1.5, r * 0.68, r * 0.055, '#ff7a7a', blink(0));
-  glowDot(ctx, -r * 1.5, -r * 0.68, r * 0.055, '#7aff9e', blink(2.2));
-  glowDot(ctx, r * 1.9, 0, r * 0.05, '#ffffff', blink(4.1));
+  // Localized scorch and venting communicate battle damage without swapping art.
+  if (hpFraction < 0.72) {
+    const severity = 1 - hpFraction;
+    for (const [x, y, phase] of [[0.42, 0.3, 0], [-0.64, -0.38, 2.4], [1.12, -0.16, 4.7]]) {
+      if (severity * 3 < phase / 2.5) continue;
+      const soot = ctx.createRadialGradient(x * r, y * r, 0, x * r, y * r, r * 0.34);
+      soot.addColorStop(0, 'rgba(0,0,0,0.72)');
+      soot.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = soot;
+      ctx.beginPath();
+      ctx.arc(x * r, y * r, r * 0.34, 0, Math.PI * 2);
+      ctx.fill();
+      if (hpFraction < 0.42) glowDot(ctx, x * r, y * r, r * 0.055, '#ff8b52', 0.45 + 0.3 * Math.sin(time / 95 + phase));
+    }
+  }
 }
 
 // ============================= WHISPER SHUTTLE =============================
@@ -1001,11 +1056,15 @@ export function drawHullSpriteLite(ctx, x, y, hull, baseR, opts = {}) {
 }
 
 /** Flagship sprite at a screen position/heading (system + galaxy views). */
-export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting) {
+export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting, hp = 1, maxHp = 1) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
-  drawFlagshipModel(ctx, r, { thrusting, time: performance.now() });
+  drawFlagshipModel(ctx, r, {
+    thrusting,
+    time: performance.now(),
+    hpFraction: maxHp > 0 ? Math.max(0, hp / maxHp) : 1,
+  });
   ctx.restore();
 }
 

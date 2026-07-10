@@ -53,7 +53,7 @@ check('save file exists on disk', fs.existsSync(slotFile), slotFile);
 const envelope = JSON.parse(fs.readFileSync(slotFile, 'utf8'));
 // Ground truth for the restore check is what was actually written to disk.
 const creditsBefore = envelope.state.credits;
-check('envelope has saveVersion 0', envelope.saveVersion === 0);
+check('envelope has saveVersion 12', envelope.saveVersion === 12);
 check('envelope has checksum', /^[0-9a-f]{8}$/.test(envelope.checksum), envelope.checksum);
 
 await page.screenshot({ path: path.join(projectRoot, 'output', 'web-game', 'electron-session1.png') });
@@ -68,7 +68,9 @@ await page.waitForTimeout(500);
 const restored = await page.evaluate(() => JSON.parse(window.render_game_to_text()));
 check('restart restores credits', Math.abs(restored.credits - creditsBefore) < 0.001,
   `restored=${restored.credits} expected=${creditsBefore}`);
-check('restart restores outpost', restored.structures.length === 1);
+check('restart restores outpost and export depot',
+  restored.structures.some((structure) => structure.type === 'outpost')
+    && restored.structures.some((structure) => structure.type === 'export_depot'));
 
 // exit-save: close app window gracefully, then check the file appeared
 await app.close();

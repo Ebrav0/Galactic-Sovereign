@@ -25,6 +25,7 @@ import { tickCampaign } from './campaign.js';
 import { tryAdvanceTutorial } from './tutorial.js';
 import { tickBodyStructureEffects } from './body-structures.js';
 import { tickBuilderDrones } from './builder-drones.js';
+import { tickLogistics } from './logistics.js';
 
 function handleArrival(state, systemId) {
   onForcesArrive(state, systemId);
@@ -39,6 +40,7 @@ function tickOnce(state) {
   const wormholeArrival = tickWormholeTransit(state);
   applyIncomeTick(state);
   tickTrade(state);
+  const logisticsEvents = tickLogistics(state);
   tickResearch(state);
   tickDiplomacy(state);
   tickSuperweapon(state);
@@ -63,7 +65,7 @@ function tickOnce(state) {
   const campaignEvents = tickCampaign(state);
   return {
     prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents, capture,
-    wormholeArrival, campaignEvents, bodyStructureEvents, builderDroneEvents, droneCompletions,
+    wormholeArrival, campaignEvents, bodyStructureEvents, builderDroneEvents, droneCompletions, logisticsEvents,
   };
 }
 
@@ -71,7 +73,7 @@ export function step(state, accumulatedMs) {
   if (state.paused) {
     return {
       captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], aiArrivals: [], pirateArrivals: [], pirateInterdictions: [],
-      battleEvents: [], dysonEvents: [], wormholeArrivals: [], builderDroneEvents: [], droneCompletions: [],
+      battleEvents: [], dysonEvents: [], wormholeArrivals: [], builderDroneEvents: [], droneCompletions: [], logisticsEvents: [],
     };
   }
   let remaining = accumulatedMs;
@@ -87,6 +89,7 @@ export function step(state, accumulatedMs) {
   const wormholeArrivals = [];
   const droneCompletions = [];
   const builderDroneEvents = [];
+  const logisticsEvents = [];
   while (remaining >= TICK_MS) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
@@ -99,6 +102,7 @@ export function step(state, accumulatedMs) {
     dysonEvents.push(...events.dysonEvents);
     droneCompletions.push(...(events.droneCompletions ?? []));
     builderDroneEvents.push(...events.builderDroneEvents);
+    logisticsEvents.push(...events.logisticsEvents);
     if (events.capture) captures.push(events.capture);
     if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
     remaining -= TICK_MS;
@@ -106,7 +110,7 @@ export function step(state, accumulatedMs) {
   return {
     captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents,
     wormholeArrivals, remainingMs: remaining,
-    builderDroneEvents, droneCompletions,
+    builderDroneEvents, droneCompletions, logisticsEvents,
   };
 }
 
@@ -114,7 +118,7 @@ export function advance(state, ms) {
   if (state.paused) {
     return {
       captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], aiArrivals: [], pirateArrivals: [], pirateInterdictions: [],
-      battleEvents: [], dysonEvents: [], wormholeArrivals: [], builderDroneEvents: [], droneCompletions: [],
+      battleEvents: [], dysonEvents: [], wormholeArrivals: [], builderDroneEvents: [], droneCompletions: [], logisticsEvents: [],
     };
   }
   const ticks = Math.floor(ms / TICK_MS);
@@ -130,6 +134,7 @@ export function advance(state, ms) {
   const wormholeArrivals = [];
   const droneCompletions = [];
   const builderDroneEvents = [];
+  const logisticsEvents = [];
   for (let i = 0; i < ticks; i++) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
@@ -142,13 +147,14 @@ export function advance(state, ms) {
     dysonEvents.push(...events.dysonEvents);
     droneCompletions.push(...(events.droneCompletions ?? []));
     builderDroneEvents.push(...events.builderDroneEvents);
+    logisticsEvents.push(...events.logisticsEvents);
     if (events.capture) captures.push(events.capture);
     if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
   }
   return {
     captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents,
     wormholeArrivals,
-    builderDroneEvents, droneCompletions,
+    builderDroneEvents, droneCompletions, logisticsEvents,
   };
 }
 

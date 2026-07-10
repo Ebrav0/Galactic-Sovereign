@@ -93,6 +93,21 @@ export function buildOutpost(state, systemId, planetId, opts = {}) {
     bodyId: planetId,
     builtAtTime: state.time,
   });
+  // Physical logistics replaces passive outpost income. The first outpost in a
+  // normal stellar system commissions one system-wide orbital export depot so
+  // cargo can visibly move outpost -> depot -> Trade Nexus.
+  if (system.star?.kind !== 'trade_nexus'
+      && !system.structures.some((structure) => structure.type === 'export_depot')) {
+    system.structures.push({
+      id: allocateStructureId(),
+      type: 'export_depot',
+      bodyId: null,
+      builtAtTime: state.time,
+      hp: 520,
+      maxHp: 520,
+      operational: true,
+    });
+  }
   return { ok: true };
 }
 
@@ -128,5 +143,8 @@ export function incomePerSecondInSystem(state, systemId) {
 }
 
 export function applyIncomeTick(state) {
-  state.credits += incomePerSecond(state) * (TICK_MS / 1000);
+  // Credits are now awarded by logistics.js only when a physical convoy
+  // reaches a Trade Nexus. Keep this function as a compatibility no-op for
+  // older callers and UI projections.
+  return 0;
 }

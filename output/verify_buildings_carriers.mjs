@@ -42,7 +42,7 @@ await page.evaluate(() => {
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 11', s.saveVersion === 11);
+check('1.1 saveVersion is 12', s.saveVersion === 12);
 check('1.2 building rows present', Array.isArray(s.bodyStructures?.buildRows));
 check('1.3 mining locked before tech',
   s.bodyStructures.buildRows.some((r) => r.type === 'mining_complex' && !r.canBuild));

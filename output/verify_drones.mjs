@@ -73,7 +73,9 @@ check('2 active construction job',
 await page.evaluate(() => window.advanceTime(12000));
 s = await text();
 check('3 outpost complete', s.structures.some((st) => st.type === 'outpost' && !st.underConstruction));
-check('3 income begins', s.incomePerSecInViewedSystem > 0, `${s.incomePerSecInViewedSystem}/s`);
+check('3 passive income stays disabled under physical logistics',
+  s.incomePerSecInViewedSystem === 0,
+  `${s.incomePerSecInViewedSystem}/s`);
 
 // --- 4. Drone motion + determinism ---
 await page.evaluate(() => {
@@ -219,7 +221,7 @@ check('9 save round-trip preserves workDoneMs',
   s.constructionJobs[0]?.workDoneMs >= midJob?.workDoneMs,
   `${midJob?.workDoneMs} vs ${s.constructionJobs[0]?.workDoneMs}`);
 await page.evaluate(() => { window.getGameState().paused = false; });
-check('9 save version 11', s.saveVersion === 11);
+check('9 save version 12', s.saveVersion === 12);
 
 // --- 10. UI snapshot progress ---
 check('10 job progress monotonic', (s.constructionJobs[0]?.progress ?? 0) > 0);

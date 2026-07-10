@@ -52,7 +52,7 @@
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M1 12l4.5-4.5 3 3L14 5v3.5h2V1h-7.5v2H12l-3.5 3.5-3-3L0 10.5 1 12z"/></svg>
           </span>
           <span class="chip__body">
-            <span class="chip__label">Income</span>
+            <span class="chip__label">Delivered Trade</span>
             <span class="chip__value"><span id="income-value">0</span>/s</span>
           </span>
         </div>
@@ -72,6 +72,13 @@
           <span class="chip__body">
             <span class="chip__label">Trade</span>
             <span class="chip__value"><span id="trade-income-value">0</span>/s</span>
+          </span>
+        </div>
+        <div class="chip chip--cyan hidden" id="logistics-chip">
+          <span class="chip__icon" aria-hidden="true">⇄</span>
+          <span class="chip__body">
+            <span class="chip__label">Logistics</span>
+            <span class="chip__value"><span id="cargo-transit-value">0</span> active</span>
           </span>
         </div>
         <div class="chip chip--cyan chip--wide">
@@ -103,13 +110,15 @@
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 3h3v10H4V3zm5 0h3v10H9V3z"/></svg>
           <span class="btn-label">Pause</span>
         </button>
-        <button id="save-menu-btn" type="button" class="btn btn--primary btn--sm">
+        <button id="save-menu-btn" type="button" class="btn btn--primary btn--sm" aria-label="Open save menu">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h8l2 2v10H3V2zm1 1v10h8V4h-2V3H4zm2 0h4v2H6V3zm0 4h4v4H6V7z"/></svg>
           Saves
         </button>
         <span id="dev-badge" class="dev-badge hidden" aria-hidden="true">DEV</span>
       </div>
     </header>
+
+    <section id="tutorial-guide" class="tutorial-guide hidden" aria-live="polite" aria-label="Tutorial guidance"></section>
 
     <aside id="left-rail" class="hud-rail hud-rail--left">
       <div id="fleet-panel" class="panel hidden">
@@ -173,6 +182,17 @@
         </div>
       </div>
 
+      <div id="logistics-panel" class="panel panel--operations hidden">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Logistics Command</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body" id="logistics-panel-body">
+          <p class="empty-state">Export depots and convoys will appear here.</p>
+        </div>
+      </div>
+
       <div id="intel-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -209,7 +229,7 @@
           <button id="build-shipyard-btn" type="button" class="btn btn--primary btn--block hidden">Build Shipyard</button>
           <button id="build-foundry-btn" type="button" class="btn btn--primary btn--block hidden">Build Sail Foundry</button>
           <button id="build-launcher-btn" type="button" class="btn btn--primary btn--block hidden">Build Dyson Launcher</button>
-          <button id="build-trade-btn" type="button" class="btn btn--primary btn--block hidden">Build Trade Station</button>
+          <button id="build-trade-btn" type="button" class="btn btn--primary btn--block hidden">Build Export Depot</button>
           <button id="build-research-btn" type="button" class="btn btn--primary btn--block hidden">Build Research Station</button>
           <div id="strategic-build-btns" class="panel__actions panel__actions--stack hidden"></div>
           <button id="queue-scout-btn" type="button" class="btn btn--primary btn--block hidden">Add Scout to Empire Queue</button>
@@ -231,6 +251,15 @@
           <select id="anchor-target-select" class="btn btn--ghost btn--block" style="margin-bottom:8px"></select>
           <button id="build-anchor-btn" type="button" class="btn btn--primary btn--block">Build Wormhole Anchor</button>
         </div>
+      </div>
+
+      <div id="combat-command-panel" class="panel panel--command hidden">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Tactical Command</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+        </div>
+        <div class="panel__body" id="combat-command-body"></div>
       </div>
 
       <div id="dyson-panel" class="panel hidden">
@@ -269,11 +298,21 @@
         <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
         <button type="button" class="tab" data-panel="fleet" id="tab-fleet">Fleet</button>
+        <button type="button" class="tab" data-panel="logistics" id="tab-logistics">Logistics</button>
         <button type="button" class="tab" data-panel="tech" id="tab-tech">Tech</button>
         <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
         <button type="button" class="tab" data-panel="diplomacy" id="tab-diplomacy">Diplomacy</button>
         <button type="button" class="tab" data-panel="campaign" id="tab-campaign">Campaign</button>
       </nav>
+      <div id="overlay-controls" class="overlay-controls" aria-label="Galaxy overlays">
+        <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-threat">Threat</button>
+        <button type="button" class="overlay-toggle" id="overlay-sensor">Sensors</button>
+        <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-blockade">Blockades</button>
+      </div>
+      <div id="command-timeline" class="command-timeline" aria-live="polite">
+        <span class="command-timeline__mode" id="command-mode">Strategic command</span>
+        <span class="command-timeline__detail" id="command-detail">Select a fleet, system, or convoy for contextual orders.</span>
+      </div>
     </footer>
 
     <div id="hud-overlays">
@@ -289,6 +328,7 @@
           </div>
           <div class="title-screen__actions">
             <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">New Campaign</button>
+            <button id="title-custom-campaign-btn" type="button" class="btn btn--ghost btn--block">Custom Campaign</button>
             <button id="title-continue-btn" type="button" class="btn btn--ghost btn--block hidden">Continue</button>
             <button id="title-load-btn" type="button" class="btn btn--ghost btn--block">Load Game</button>
           </div>
@@ -300,7 +340,7 @@
       <div id="new-game-modal-backdrop" class="modal-backdrop hidden"></div>
       <div id="new-game-modal" class="panel panel--modal hidden">
         <div class="panel__header">
-          <span class="panel__title">New Campaign</span>
+          <span class="panel__title">Custom Campaign</span>
         </div>
         <div class="panel__body">
           <p class="panel-note">Choose how to begin your reign.</p>
@@ -315,7 +355,7 @@
           </select>
           <div class="panel__actions panel__actions--stack" style="margin-top:12px">
             <button id="new-game-sandbox-btn" type="button" class="btn btn--primary btn--block">Sandbox</button>
-            <button id="new-game-tutorial-btn" type="button" class="btn btn--ghost btn--block">Tutorial</button>
+            <button id="new-game-tutorial-btn" type="button" class="btn btn--ghost btn--block">Guided Tutorial</button>
             <button id="new-game-missions-btn" type="button" class="btn btn--ghost btn--block">Missions</button>
           </div>
         </div>

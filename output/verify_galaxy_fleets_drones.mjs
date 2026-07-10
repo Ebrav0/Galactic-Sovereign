@@ -35,7 +35,7 @@ await page.evaluate(() => window.__newGame(123));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let snap = await text();
-check('1.1 saveVersion is 11', snap.saveVersion === 11, `version=${snap.saveVersion}`);
+check('1.1 saveVersion is 12', snap.saveVersion === 12, `version=${snap.saveVersion}`);
 check('1.2 builder drone state present', snap.builderDrones && Array.isArray(snap.builderDrones.drones));
 
 const galaxyPerf = await page.evaluate(() => {

@@ -20,6 +20,8 @@ import {
   STRONGHOLD_GAS_COUNT,
   STRONGHOLD_MOON_COUNT_RANGE,
   STRONGHOLD_SECONDARY_MOON_COUNT_RANGE,
+  TRADE_NEXUS_COUNT_PER_GALAXY,
+  FLAGSHIP_HP,
 } from './constants.js';
 import { generateGalaxy, BLACK_HOLE_ID } from './galaxy.js';
 import { pickStarType, starFieldsFromType } from './star-types.js';
@@ -33,6 +35,7 @@ import {
 } from './galaxy-scope.js';
 import { createDefaultAbstract } from './abstract-galaxy.js';
 import { generateGalaxySystems, hydrateGalaxy } from './hydration.js';
+import { createDefaultLogisticsState } from './logistics.js';
 
 export { BLACK_HOLE_ID };
 
@@ -148,6 +151,17 @@ export function generateStrongholdSystem(rng, star, { gameSeed, galaxyId, rename
     structures: [],
     dyson: createDefaultDyson(),
   };
+
+  if (star.kind !== 'trade_nexus') {
+    const environmentalRoll = rng();
+    system.environment = environmentalRoll < 0.1
+      ? 'nebula'
+      : environmentalRoll < 0.16
+        ? 'ion_storm'
+        : environmentalRoll < 0.23
+          ? 'debris_field'
+          : 'clear';
+  }
   return system;
 }
 
@@ -180,6 +194,8 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
   let planetCount;
   if (isHome) {
     planetCount = rangeInt(rng, [2, 3]);
+  } else if (star.kind === 'trade_nexus') {
+    planetCount = rangeInt(rng, [2, 4]);
   } else {
     planetCount = rng() < DEAD_STAR_CHANCE ? 0 : rangeInt(rng, OTHER_PLANET_COUNT_RANGE);
   }
@@ -227,7 +243,16 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
 
   const isDead = planetCount === 0;
   const typeProfile = pickStarType(rng, { isHome, isDead });
-  const starFields = starFieldsFromType(typeProfile, rng, { isHome });
+  const starFields = star.kind === 'trade_nexus'
+    ? {
+      radius: 110,
+      color: '#76ddff',
+      secondaryColor: '#ffce7a',
+      coronaColor: '#9e8cff',
+      kind: 'trade_nexus',
+      type: 'trade_nexus',
+    }
+    : starFieldsFromType(typeProfile, rng, { isHome });
 
   const system = {
     id: star.id,
@@ -241,6 +266,23 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
     structures: [],
     dyson: createDefaultDyson(),
   };
+
+  if (star.kind === 'trade_nexus') {
+    system.name = star.name;
+    system.environment = 'commerce';
+    system.tradeAccess = 'open';
+    system.dyson.disabled = true;
+    system.dyson.disabledReason = 'Trade Nexus systems have no star to enclose';
+    system.structures.push({
+      id: `nexus-${star.id}`,
+      type: 'trade_nexus',
+      bodyId: null,
+      builtAtTime: 0,
+      hp: 2400,
+      maxHp: 2400,
+      openAccess: true,
+    });
+  }
 
   seedNeutralStructures(rng, system, { isHome });
   return system;
@@ -282,6 +324,7 @@ function buildGalaxyRecord(metaSeed, index) {
   const abstractRng = createRng(hashSeed(gSeed, 'abstract-init'));
   const graph = generateGalaxy(graphRng);
   const strongholdStarId = graph.stars[Math.floor(pickRng() * graph.stars.length)].id;
+  markTradeNexusStars(graph, strongholdStarId);
 
   return {
     id: galId,
@@ -295,6 +338,48 @@ function buildGalaxyRecord(metaSeed, index) {
     strongholdStarId,
     discovered: index === 0,
   };
+}
+
+/**
+ * Mark a small, deterministic set of star nodes as artificial commerce systems.
+ * The first Nexus is the closest eligible node to the regional stronghold; the
+ * remaining Nexuses use farthest-point sampling so they form useful trade hubs.
+ */
+export function markTradeNexusStars(graph, strongholdStarId, count = TRADE_NEXUS_COUNT_PER_GALAXY) {
+  const stronghold = graph.stars.find((star) => star.id === strongholdStarId);
+  const eligible = graph.stars.filter((star) => star.id !== strongholdStarId && !star.protectedFromNexus);
+  if (!stronghold || eligible.length === 0) return [];
+
+  const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const selected = [];
+  const nearest = [...eligible].sort((a, b) => distance(a, stronghold) - distance(b, stronghold)
+    || a.id.localeCompare(b.id))[0];
+  selected.push(nearest);
+
+  while (selected.length < Math.min(count, eligible.length)) {
+    const remaining = eligible.filter((star) => !selected.includes(star));
+    let best = null;
+    let bestScore = -1;
+    for (const star of remaining) {
+      const score = Math.min(...selected.map((hub) => distance(star, hub)));
+      if (score > bestScore || (score === bestScore && (!best || star.id < best.id))) {
+        best = star;
+        bestScore = score;
+      }
+    }
+    if (!best) break;
+    selected.push(best);
+  }
+
+  for (let i = 0; i < selected.length; i++) {
+    const star = selected[i];
+    star.kind = 'trade_nexus';
+    star.tradeNexus = true;
+    star.originalName = star.originalName ?? star.name;
+    star.name = `${star.originalName} Exchange`;
+    star.nexusOrdinal = i + 1;
+  }
+  return selected.map((star) => star.id);
 }
 
 export function createNewGame(seed) {
@@ -334,6 +419,8 @@ export function createNewGame(seed) {
       vx: 0,
       vy: 0,
       heading: 0,
+      hp: FLAGSHIP_HP,
+      maxHp: FLAGSHIP_HP,
       transit: null,
       wormholeTransit: null,
       orbit: null,
@@ -382,6 +469,8 @@ export function createNewGame(seed) {
       activeMissionId: null,
       completedMissions: [],
       missionProgress: {},
+      tutorialTargetSystemId: null,
+      tutorialCompletedAt: null,
     },
     diplomacy: { relations: {} },
     superweapon: {
@@ -395,6 +484,23 @@ export function createNewGame(seed) {
     },
     heroFlagships: [],
     manualTradeRoutes: [],
+    mapOverlays: { threat: true, sensor: false, blockade: true },
+    logistics: createDefaultLogisticsState(),
+    tacticalOrders: {},
+    battleReports: [],
+    solCommander: {
+      version: 1,
+      settings: {
+        enabled: false,
+        providerMode: 'offline',
+        model: 'gpt-5.6-sol',
+        confirmationRequired: true,
+        previewData: true,
+        requestLimitPerHour: 12,
+        spendingCapUsd: 5,
+      },
+      history: [],
+    },
   };
 
   hydrateGalaxy(state, homeGalaxyId);

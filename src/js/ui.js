@@ -58,7 +58,12 @@ import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.j
 import { diplomacySummary, offerTreaty } from './diplomacy.js';
 import { campaignSummary } from './campaign.js';
 import { listMissions, startMission } from './missions.js';
-import { initTutorial } from './tutorial.js';
+import {
+  acknowledgeTutorialStep,
+  finishTutorial,
+  getTutorialState,
+  initTutorial,
+} from './tutorial.js';
 import { milestonesSummary } from './milestones.js';
 import {
   superweaponCreate,
@@ -98,6 +103,26 @@ import {
   setBattleGroupHeroAnchor,
 } from './battle-groups.js';
 import { getGraph } from './galaxy-scope.js';
+import { getBattleState } from './combat.js';
+import {
+  activeConvoys,
+  cargoTotal,
+  convoyEtaMs,
+  depotSummary,
+  discoverTradeNexuses,
+  dispatchDepot,
+  logisticsSummary,
+  pauseDepotRoute,
+  rerouteConvoy,
+  resumeDepotRoute,
+  setConvoyEscort,
+  setDepotDestination,
+} from './logistics.js';
+import {
+  activeFleetOrders,
+  FORMATION_TYPES,
+  TARGET_CLASSES,
+} from './combat-orders.js';
 
 const el = (id) => document.getElementById(id);
 
@@ -149,6 +174,11 @@ function renderIntelBody(container, sys, captureReq) {
   header.appendChild(ownerBadge);
   container.appendChild(header);
 
+  const environment = document.createElement('p');
+  environment.className = 'panel-note panel-note--muted';
+  environment.textContent = `Environment: ${(sys.environment ?? 'clear').replaceAll('_', ' ')}`;
+  container.appendChild(environment);
+
   const planetsTitle = document.createElement('div');
   planetsTitle.className = 'intel-section-title';
   planetsTitle.textContent = 'Planets';
@@ -192,7 +222,8 @@ function renderIntelBody(container, sys, captureReq) {
       tag.textContent = s.type;
       const label = document.createElement('span');
       label.className = 'planet-row__meta';
-      label.textContent = `on ${s.bodyId}`;
+      const body = s.bodyId ? sys.bodies.find((candidate) => candidate.id === s.bodyId) : null;
+      label.textContent = body ? `at ${body.name}` : 'system orbital';
       row.appendChild(tag);
       row.appendChild(label);
       container.appendChild(row);
@@ -350,8 +381,217 @@ function updateTabBar(view, sidePanel) {
   el('tab-dyson').classList.toggle('tab--active', sidePanel === 'dyson');
   el('tab-tech').classList.toggle('tab--active', sidePanel === 'tech');
   el('tab-fleet')?.classList.toggle('tab--active', sidePanel === 'fleet');
+  el('tab-logistics')?.classList.toggle('tab--active', sidePanel === 'logistics');
   el('tab-diplomacy')?.classList.toggle('tab--active', sidePanel === 'diplomacy');
   el('tab-campaign')?.classList.toggle('tab--active', sidePanel === 'campaign');
+}
+
+function formatEta(ms) {
+  if (ms == null) return 'Paused';
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function appendMetric(container, label, value) {
+  const cell = document.createElement('div');
+  cell.className = 'metric-cell';
+  const labelNode = document.createElement('span');
+  labelNode.className = 'metric-cell__label';
+  labelNode.textContent = label;
+  const valueNode = document.createElement('span');
+  valueNode.className = 'metric-cell__value';
+  valueNode.textContent = value;
+  cell.append(labelNode, valueNode);
+  container.appendChild(cell);
+}
+
+function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
+  clearChildren(container);
+  const summary = logisticsSummary(state);
+  const metrics = document.createElement('div');
+  metrics.className = 'metric-grid';
+  appendMetric(metrics, 'Throughput', `${summary.throughputCreditsPerMinute.toFixed(1)} cr/min`);
+  appendMetric(metrics, 'In transit', `${cargoTotal(summary.cargoInTransit).toFixed(1)} cargo`);
+  appendMetric(metrics, 'Trade Nexuses', `${summary.availableNexusCount}/${summary.nexusCount}`);
+  appendMetric(metrics, 'Blockades', String(summary.laneBlockadeCount + summary.systemBlockadeCount));
+  container.appendChild(metrics);
+
+  const nexuses = discoverTradeNexuses(state);
+  const depots = Object.values(state.logistics?.depots ?? {})
+    .filter((depot) => depot.galaxyId === state.activeGalaxyId)
+    .sort((a, b) => a.systemId.localeCompare(b.systemId));
+  if (!depots.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Build an outpost to establish its system export depot.';
+    container.appendChild(empty);
+  }
+
+  for (const depot of depots) {
+    const data = depotSummary(state, depot.id);
+    const card = document.createElement('article');
+    card.className = 'logistics-card';
+    const title = document.createElement('strong');
+    title.textContent = `${systemById(state, depot.systemId)?.name ?? depot.systemId} Export Depot`;
+    const status = document.createElement('p');
+    status.className = 'panel-note';
+    status.textContent = `${data.storedCargo.toFixed(1)}/${data.capacity} cargo · ${data.activeConvoys} active convoy${data.activeConvoys === 1 ? '' : 's'}${data.routePaused ? ` · paused (${data.pauseReason ?? 'manual'})` : ''}`;
+    card.append(title, status);
+
+    const destinationLabel = document.createElement('label');
+    destinationLabel.className = 'field-label';
+    destinationLabel.textContent = 'Destination';
+    const destination = document.createElement('select');
+    destination.className = 'command-input';
+    const automatic = document.createElement('option');
+    automatic.value = '';
+    automatic.textContent = 'Automatic shortest valid route';
+    destination.appendChild(automatic);
+    for (const nexus of nexuses) {
+      const option = document.createElement('option');
+      option.value = nexus.systemId;
+      option.textContent = `${nexus.name}${nexus.available ? '' : ' — unavailable'}`;
+      option.disabled = !nexus.available;
+      option.selected = depot.preferredNexusId === nexus.systemId;
+      destination.appendChild(option);
+    }
+    destination.onchange = () => {
+      const result = setDepotDestination(state, depot.id, destination.value || null);
+      toast(result.ok ? 'Logistics destination updated' : result.reason, result.ok ? 'ok' : 'error');
+    };
+    card.append(destinationLabel, destination);
+
+    const actions = document.createElement('div');
+    actions.className = 'panel__actions';
+    const pause = document.createElement('button');
+    pause.type = 'button';
+    pause.className = 'btn btn--ghost btn--xs';
+    pause.textContent = depot.routePaused ? 'Resume route' : 'Pause route';
+    pause.onclick = () => {
+      const wasPaused = depot.routePaused;
+      const result = wasPaused ? resumeDepotRoute(state, depot.id) : pauseDepotRoute(state, depot.id);
+      toast(result.ok ? (wasPaused ? 'Route resumed' : 'Route paused') : result.reason, result.ok ? 'ok' : 'error');
+    };
+    const dispatch = document.createElement('button');
+    dispatch.type = 'button';
+    dispatch.className = 'btn btn--ghost btn--xs';
+    dispatch.textContent = 'Dispatch now';
+    dispatch.onclick = () => {
+      const result = dispatchDepot(state, depot.id);
+      toast(result.ok ? `${result.convoy.id} jumping to Trade Nexus` : result.reason, result.ok ? 'ok' : 'error');
+    };
+    actions.append(pause, dispatch);
+    card.appendChild(actions);
+    container.appendChild(card);
+  }
+
+  for (const convoy of activeConvoys(state)) {
+    const card = document.createElement('article');
+    card.className = 'logistics-card';
+    const title = document.createElement('strong');
+    title.textContent = convoy.id.toUpperCase();
+    const eta = convoyEtaMs(state, convoy);
+    const status = document.createElement('p');
+    status.className = 'panel-note';
+    status.textContent = `${convoy.status.replaceAll('_', ' ')} · ETA ${formatEta(eta)} · ${cargoTotal(convoy.manifest).toFixed(1)} cargo · escort ${convoy.escortStrength ?? 0}`;
+    const danger = document.createElement('p');
+    danger.className = 'panel-note panel-note--muted';
+    danger.textContent = convoy.pauseReason
+      ? `Risk: ${convoy.pauseReason}`
+      : `Route: ${(convoy.path ?? []).map((id) => systemById(state, id)?.name ?? id).join(' → ')}`;
+    const actions = document.createElement('div');
+    actions.className = 'panel__actions';
+    const followButton = document.createElement('button');
+    followButton.type = 'button';
+    followButton.className = 'btn btn--ghost btn--xs';
+    followButton.textContent = 'Follow';
+    followButton.onclick = () => onFollowConvoy?.(convoy.id);
+    const reroute = document.createElement('button');
+    reroute.type = 'button';
+    reroute.className = 'btn btn--ghost btn--xs';
+    reroute.textContent = 'Reroute';
+    reroute.onclick = () => {
+      const result = rerouteConvoy(state, convoy.id);
+      toast(result.ok ? 'Convoy rerouted over shortest valid lanes' : result.reason, result.ok ? 'ok' : 'error');
+    };
+    const escort = document.createElement('button');
+    escort.type = 'button';
+    escort.className = 'btn btn--ghost btn--xs';
+    escort.textContent = '+ Escort';
+    escort.onclick = () => {
+      const result = setConvoyEscort(state, convoy.id, (convoy.escortStrength ?? 0) + 25);
+      toast(result.ok ? 'Escort strength assigned' : result.reason, result.ok ? 'ok' : 'error');
+    };
+    actions.append(followButton, reroute, escort);
+    card.append(title, status, danger, actions);
+    container.appendChild(card);
+  }
+}
+
+function renderCombatCommandPanel(container, state, battle, issueTacticalOrder) {
+  clearChildren(container);
+  const alive = battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0);
+  const enemy = battle.units.filter((unit) => unit.side !== 'player' && unit.hp > 0);
+  const metrics = document.createElement('div');
+  metrics.className = 'metric-grid';
+  appendMetric(metrics, 'Friendly', String(alive.length));
+  appendMetric(metrics, 'Hostile', String(enemy.length));
+  appendMetric(metrics, 'Mode', battle.mode ?? 'tactical');
+  appendMetric(metrics, 'Elapsed', formatEta(battle.elapsedMs ?? 0));
+  container.appendChild(metrics);
+
+  const formationLabel = document.createElement('label');
+  formationLabel.className = 'field-label';
+  formationLabel.textContent = 'Formation';
+  const formation = document.createElement('select');
+  formation.className = 'command-input';
+  for (const value of FORMATION_TYPES) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    formation.appendChild(option);
+  }
+  formation.onchange = () => issueTacticalOrder?.({ type: 'formation', formation: formation.value });
+  container.append(formationLabel, formation);
+
+  const actions = document.createElement('div');
+  actions.className = 'panel__actions panel__actions--stack';
+  for (const targetClass of TARGET_CLASSES) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn--ghost btn--xs';
+    button.textContent = `Attack ${targetClass}`;
+    button.onclick = () => issueTacticalOrder?.({ type: 'attack_class', targetClass });
+    actions.appendChild(button);
+  }
+  for (const [type, label, extra] of [
+    ['hold', 'Hold position', {}],
+    ['rally', 'Rally center', { point: { x: 0, y: 0 } }],
+    ['emergency_retreat', 'Emergency retreat', { point: { x: -1500, y: 0 } }],
+  ]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = type === 'emergency_retreat' ? 'btn btn--danger btn--xs' : 'btn btn--ghost btn--xs';
+    button.textContent = label;
+    button.onclick = () => issueTacticalOrder?.({ type, ...extra });
+    actions.appendChild(button);
+  }
+  container.appendChild(actions);
+
+  const orders = activeFleetOrders(battle, 'player');
+  if (orders.length) {
+    const label = document.createElement('div');
+    label.className = 'field-label';
+    label.textContent = 'Order timeline';
+    container.appendChild(label);
+    for (const order of orders.slice(-6).reverse()) {
+      const row = document.createElement('div');
+      row.className = 'tactical-order-card';
+      row.textContent = `#${order.sequence} ${order.type.replaceAll('_', ' ')}${order.targetClass ? ` · ${order.targetClass}` : ''}`;
+      container.appendChild(row);
+    }
+  }
 }
 
 function renderDiplomacyPanel(container, state) {
@@ -431,10 +671,10 @@ function renderCampaignPanel(container, state) {
   const tutBtn = document.createElement('button');
   tutBtn.type = 'button';
   tutBtn.className = 'btn btn--ghost btn--sm';
-  tutBtn.textContent = 'Start Tutorial';
+  tutBtn.textContent = camp.mode === 'tutorial' ? 'Restart Guided Tutorial' : 'Start Guided Tutorial';
   tutBtn.onclick = () => {
     initTutorial(state);
-    toast('Tutorial started', 'ok');
+    toast('Guided tutorial started', 'ok');
   };
   container.appendChild(tutBtn);
   for (const m of listMissions()) {
@@ -1616,6 +1856,11 @@ export function initUi(ctx) {
     doBuildWormholeAnchor,
     getGalaxyTargetStar,
     doStartNewGame,
+    doFocusTutorial,
+    executeSolRecommendation,
+    validateSolRecommendation,
+    issueTacticalOrder,
+    followConvoy,
     getBootPhase,
     setBootPhase,
   } = ctx;
@@ -1653,7 +1898,112 @@ export function initUi(ctx) {
     scoutRoster: '',
     buildHullActions: '',
     fleetPanel: '',
+    tutorialGuide: '',
+    logisticsPanel: '',
+    combatCommand: '',
   };
+
+  function setTutorialTarget(targetId) {
+    document.querySelectorAll('.tutorial-target').forEach((node) => {
+      node.classList.remove('tutorial-target');
+    });
+    if (targetId) el(targetId)?.classList.add('tutorial-target');
+  }
+
+  function renderTutorialGuide(state, phase) {
+    const guide = el('tutorial-guide');
+    if (!guide) return;
+    const tutorial = getTutorialState(state);
+    if (phase !== 'playing' || !tutorial.active || !tutorial.current) {
+      guide.classList.add('hidden');
+      setTutorialTarget(null);
+      uiSnapshots.tutorialGuide = '';
+      return;
+    }
+
+    const current = tutorial.current;
+    setTutorialTarget(current.uiTargetId);
+    const snapshot = JSON.stringify({ step: tutorial.step, current });
+    if (snapshot === uiSnapshots.tutorialGuide) return;
+    uiSnapshots.tutorialGuide = snapshot;
+    guide.classList.remove('hidden');
+    clearChildren(guide);
+
+    const header = document.createElement('div');
+    header.className = 'tutorial-guide__header';
+    const eyebrow = document.createElement('span');
+    eyebrow.className = 'tutorial-guide__eyebrow';
+    eyebrow.textContent = 'Guided tutorial';
+    const step = document.createElement('span');
+    step.className = 'tutorial-guide__step';
+    step.textContent = `${current.id + 1} / ${tutorial.totalSteps}`;
+    header.append(eyebrow, step);
+
+    const body = document.createElement('div');
+    body.className = 'tutorial-guide__body';
+    const title = document.createElement('h2');
+    title.className = 'tutorial-guide__title';
+    title.textContent = current.title;
+    const objective = document.createElement('p');
+    objective.className = 'tutorial-guide__objective';
+    objective.textContent = current.objective;
+    const instruction = document.createElement('p');
+    instruction.className = 'tutorial-guide__instruction';
+    instruction.textContent = current.instruction;
+    const status = document.createElement('p');
+    status.className = 'tutorial-guide__status';
+    status.textContent = current.status;
+    body.append(title, objective, instruction, status);
+
+    const actions = document.createElement('div');
+    actions.className = 'tutorial-guide__actions';
+    if (current.readyToFinish) {
+      const finish = document.createElement('button');
+      finish.type = 'button';
+      finish.className = 'btn btn--primary btn--sm';
+      finish.textContent = 'Finish tutorial';
+      finish.onclick = () => {
+        const result = finishTutorial(getState());
+        toast(result.ok ? 'Tutorial complete — command is yours' : result.reason, result.ok ? 'ok' : 'error');
+      };
+      actions.appendChild(finish);
+    } else if (current.canConfirm) {
+      const confirm = document.createElement('button');
+      confirm.type = 'button';
+      confirm.className = 'btn btn--primary btn--sm';
+      confirm.textContent = 'Continue';
+      confirm.onclick = () => {
+        const result = acknowledgeTutorialStep(getState());
+        toast(result.ok ? 'Capture briefing understood' : result.reason, result.ok ? 'ok' : 'error');
+      };
+      actions.appendChild(confirm);
+    } else if (current.actionLabel) {
+      const focus = document.createElement('button');
+      focus.type = 'button';
+      focus.className = 'btn btn--primary btn--sm';
+      focus.textContent = current.actionLabel;
+      focus.onclick = () => {
+        closeSidePanel();
+        const result = doFocusTutorial?.();
+        if (!result?.ok) toast(result?.reason ?? 'Tutorial target unavailable', 'error');
+      };
+      actions.appendChild(focus);
+    }
+
+    if (!current.readyToFinish) {
+      const skip = document.createElement('button');
+      skip.type = 'button';
+      skip.className = 'btn btn--ghost btn--xs tutorial-guide__skip';
+      skip.textContent = 'Skip tutorial';
+      skip.onclick = () => {
+        const result = finishTutorial(getState(), { skipped: true });
+        toast(result.ok ? 'Tutorial skipped — restart it anytime from Campaign' : result.reason, result.ok ? 'info' : 'error');
+      };
+      actions.appendChild(skip);
+    }
+
+    guide.append(header, body, actions);
+  }
 
   function queueHullFromUi(hull) {
     const res = enqueueHull(getState(), hull);
@@ -1804,6 +2154,10 @@ export function initUi(ctx) {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'fleet' ? null : 'fleet';
   });
+  el('tab-logistics')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'logistics' ? null : 'logistics';
+  });
   el('tab-diplomacy')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'diplomacy' ? null : 'diplomacy';
@@ -1812,13 +2166,20 @@ export function initUi(ctx) {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'campaign' ? null : 'campaign';
   });
+  for (const [id, key] of [['overlay-threat', 'threat'], ['overlay-sensor', 'sensor'], ['overlay-blockade', 'blockade']]) {
+    el(id)?.addEventListener('click', () => {
+      const state = getState();
+      state.mapOverlays = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
+      state.mapOverlays[key] = !state.mapOverlays[key];
+    });
+  }
 
   el('build-trade-btn')?.addEventListener('click', () => {
     const sel = getSelection();
     if (sel) {
       const res = buildTradeStation(getState(), getViewedSystemId(), sel);
       if (!res.ok) toast(res.reason, 'error');
-      else toast('Trade station built', 'ok');
+      else toast('Export depot built', 'ok');
     }
   });
   el('build-research-btn')?.addEventListener('click', () => {
@@ -1889,7 +2250,10 @@ export function initUi(ctx) {
     getState().paused = true;
   }
 
-  el('title-new-campaign-btn')?.addEventListener('click', openNewGameModal);
+  el('title-new-campaign-btn')?.addEventListener('click', () => {
+    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+  });
+  el('title-custom-campaign-btn')?.addEventListener('click', openNewGameModal);
   el('title-continue-btn')?.addEventListener('click', async () => {
     titleScreen?.classList.add('hidden');
     setBootPhase?.('playing');
@@ -2034,7 +2398,8 @@ export function initUi(ctx) {
     const selectedScoutId = getSelectedScoutId();
 
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
-    el('income-value').textContent = incomePerSecond(state).toFixed(1);
+    const logistics = logisticsSummary(state);
+    el('income-value').textContent = (logistics.throughputCreditsPerMinute / 60).toFixed(1);
 
     const droneStrip = el('view-hint');
     if (view === 'system' && viewedSystemId && isPlayerOwned(state, viewedSystemId)) {
@@ -2056,12 +2421,10 @@ export function initUi(ctx) {
 
     const trade = tradeSummary(state);
     const tradeChip = el('trade-chip');
-    if (trade.incomePerSec > 0) {
-      tradeChip.classList.remove('hidden');
-      el('trade-income-value').textContent = trade.incomePerSec.toFixed(2);
-    } else {
-      tradeChip.classList.add('hidden');
-    }
+    tradeChip.classList.add('hidden');
+    const logisticsChip = el('logistics-chip');
+    logisticsChip?.classList.toggle('hidden', logistics.depotCount === 0 && logistics.activeConvoyCount === 0);
+    if (el('cargo-transit-value')) el('cargo-transit-value').textContent = String(logistics.activeConvoyCount);
 
     const listSnap = empireQueueListSnapshot(state);
     if (listSnap !== uiSnapshots.empireQueueList) {
@@ -2120,12 +2483,71 @@ export function initUi(ctx) {
       uiSnapshots.fleetPanel = '';
     }
 
+    const logisticsPanel = el('logistics-panel');
+    if (sidePanel === 'logistics') {
+      logisticsPanel?.classList.remove('hidden');
+      const logisticsSnap = JSON.stringify({
+        time: Math.floor(state.time / 1000),
+        summary: logistics,
+        depots: state.logistics?.depots,
+        convoys: activeConvoys(state),
+      });
+      if (logisticsSnap !== uiSnapshots.logisticsPanel) {
+        uiSnapshots.logisticsPanel = logisticsSnap;
+        renderLogisticsPanel(el('logistics-panel-body'), state, { onFollowConvoy: followConvoy });
+      }
+    } else {
+      logisticsPanel?.classList.add('hidden');
+      uiSnapshots.logisticsPanel = '';
+    }
+
+    const activeBattle = view === 'system' ? getBattleState(state, viewedSystemId) : null;
+    const combatPanel = el('combat-command-panel');
+    const showCombatCommand = !!activeBattle?.active;
+    combatPanel?.classList.toggle('hidden', !showCombatCommand);
+    if (showCombatCommand) {
+      const combatSnap = JSON.stringify({
+        elapsed: Math.floor((activeBattle.elapsedMs ?? 0) / 500),
+        units: activeBattle.units.map((unit) => [unit.id, Math.round(unit.hp), unit.damageState, unit.ammo, unit.fuel]),
+        orders: activeFleetOrders(activeBattle, 'player'),
+      });
+      if (combatSnap !== uiSnapshots.combatCommand) {
+        uiSnapshots.combatCommand = combatSnap;
+        renderCombatCommandPanel(el('combat-command-body'), state, activeBattle, issueTacticalOrder);
+      }
+    } else {
+      uiSnapshots.combatCommand = '';
+    }
+
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
     el('pause-overlay').classList.toggle('hidden', !state.paused || phase !== 'playing');
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
     el('view-hint').textContent = HINTS[view];
     updateTabBar(view, sidePanel);
+    const overlays = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
+    el('overlay-controls')?.classList.toggle('hidden', view !== 'galaxy');
+    el('overlay-threat')?.classList.toggle('overlay-toggle--active', overlays.threat);
+    el('overlay-sensor')?.classList.toggle('overlay-toggle--active', overlays.sensor);
+    el('overlay-blockade')?.classList.toggle('overlay-toggle--active', overlays.blockade);
+
+    const commandMode = el('command-mode');
+    const commandDetail = el('command-detail');
+    if (activeBattle?.active) {
+      commandMode.textContent = 'Tactical command';
+      const lastOrder = activeFleetOrders(activeBattle, 'player').at(-1);
+      commandDetail.textContent = lastOrder
+        ? `Order #${lastOrder.sequence}: ${lastOrder.type.replaceAll('_', ' ')}`
+        : 'Battle active — set formation and target priorities.';
+    } else if (logistics.activeConvoyCount > 0) {
+      commandMode.textContent = 'Logistics command';
+      commandDetail.textContent = `${logistics.activeConvoyCount} convoy${logistics.activeConvoyCount === 1 ? '' : 's'} active · ${cargoTotal(logistics.cargoInTransit).toFixed(1)} cargo in transit`;
+    } else {
+      commandMode.textContent = state.paused ? 'Paused order phase' : 'Strategic command';
+      commandDetail.textContent = state.paused
+        ? 'Issue orders while simulation time is stopped.'
+        : 'Select a fleet, system, or convoy for contextual orders.';
+    }
 
     const swGalaxyPanel = el('superweapon-galaxy-panel');
     const tradeRoutesPanel = el('trade-routes-panel');
@@ -2239,6 +2661,8 @@ export function initUi(ctx) {
       intelPanel.classList.add('hidden');
     }
 
+    renderTutorialGuide(state, phase);
+
     const panel = el('build-panel');
     const wormholePanel = el('wormhole-panel');
 
@@ -2273,7 +2697,8 @@ export function initUi(ctx) {
     }
     wormholePanel?.classList.add('hidden');
 
-    if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || sidePanel === 'fleet' || !selection) {
+    if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || sidePanel === 'fleet'
+        || sidePanel === 'logistics' || !selection) {
       panel.classList.add('hidden');
       return;
     }
@@ -2318,7 +2743,7 @@ export function initUi(ctx) {
     const tradeBtn = el('build-trade-btn');
     tradeBtn.classList.toggle('hidden', !hasOutpost(state, viewedSystemId, planet.id));
     tradeBtn.disabled = !tradeCheck.ok;
-    tradeBtn.textContent = `Build Trade Station (${TRADE_STATION_COST} cr)`;
+    tradeBtn.textContent = `Build Export Depot (${TRADE_STATION_COST} cr)`;
 
     const researchBtn = el('build-research-btn');
     researchBtn.classList.toggle('hidden', !isPlayerOwned(state, viewedSystemId));

@@ -237,7 +237,15 @@ export function laneIndex(galaxy, idA, idB) {
 
 export function laneBulge(galaxy, idA, idB) {
   const i = laneIndex(galaxy, idA, idB);
-  return i >= 0 ? 0.08 + (i % 3) * 0.03 : 0.08;
+  if (i < 0) return 0.08;
+
+  // Curves belong to the lane, not to the traveller.  Reversing the signed
+  // bulge while reversing the endpoints produces the same control point, so
+  // ships travelling either way follow one shared hyperlane instead of two
+  // mirrored arcs.
+  const [laneFromId, laneToId] = galaxy.lanes[i];
+  const magnitude = 0.08 + (i % 3) * 0.03;
+  return idA === laneFromId && idB === laneToId ? magnitude : -magnitude;
 }
 
 export function laneControlPoint(from, to, bulge) {

@@ -1,6 +1,24 @@
 // Boot + loop wiring + test hooks. Wiring only — no balance or game logic here.
 
-import { TICK_MS, AUTOSAVE_INTERVAL_MS, DEFAULT_SEED, SCOUT_BUILD_MS, CAMERA_DEFAULT_ZOOM, HULL_STATS, PIRATE_FLEET_COUNT, PIRATE_WANDER_MS, SAVE_VERSION, SHELL_SAILS_REQUIRED } from './constants.js';
+import {
+  TICK_MS,
+  AUTOSAVE_INTERVAL_MS,
+  DEFAULT_SEED,
+  SCOUT_BUILD_MS,
+  CAMERA_DEFAULT_ZOOM,
+  HULL_STATS,
+  PIRATE_FLEET_COUNT,
+  PIRATE_WANDER_MS,
+  SAVE_VERSION,
+  SHELL_SAILS_REQUIRED,
+  OUTPOST_COST,
+  SHIPYARD_COST,
+  TRADE_STATION_COST,
+  RESEARCH_STATION_COST,
+  FOUNDRY_COST,
+  LAUNCHER_COST,
+  SUPERWEAPON_CRADLE_COST,
+} from './constants.js';
 import {
   createNewGame,
   systemById,
@@ -17,7 +35,7 @@ import {
   foundryHostPlanet,
 } from './state.js';
 import { step, advance, togglePaused } from './simulation.js';
-import { buildOutpost, canBuildOutpost, incomePerSecond, incomePerSecondInSystem, resetStructureIds } from './economy.js';
+import { buildOutpost, canBuildOutpost, resetStructureIds } from './economy.js';
 import {
   activeJobsInSystem,
   droneCapacity,
@@ -77,6 +95,7 @@ import {
   formatFleetName,
 } from './battle-groups.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
+import { applyFleetOrder } from './combat-orders.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
 import { structureSites } from './structure-sites.js';
@@ -173,10 +192,16 @@ import {
 import { addTradeRoute, clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
 import { setVictoryType, checkVictory, checkDefeat, campaignSummary } from './campaign.js';
 import { startMission, completeMissionForTest, advanceMissionObjective, missionsSummary } from './missions.js';
-import { getTutorialState, setTutorialStep, initTutorial } from './tutorial.js';
-import { buildStrategicStructure, strategicStructuresSummary } from './strategic-structures.js';
+import {
+  getTutorialFocus,
+  getTutorialState,
+  setTutorialStep,
+  initTutorial,
+} from './tutorial.js';
+import { buildStrategicStructure, strategicStructuresSummary, STRUCTURE_DEFS } from './strategic-structures.js';
 import {
   allBodyStructuresSummary,
+  BODY_STRUCTURE_DEFS,
   bodyStructureBuildRows,
   bodyStructuresSummary,
   buildBodyStructure,
@@ -192,6 +217,22 @@ import {
 import { shellShieldBonus, shellRepairBonus } from './dyson.js';
 import { setBattleGroupHeroAnchor } from './battle-groups.js';
 import { tickContextualTips, resetContextualTips } from './tips.js';
+import {
+  activeConvoys,
+  convoyTransitStatus,
+  dispatchDepot,
+  discoverTradeNexuses,
+  ensureLogisticsState,
+  findExportDepot,
+  logisticsSummary,
+  registerExportDepot,
+  setDepotDestination,
+} from './logistics.js';
+import {
+  buildRedactedSolSnapshot,
+  createOfflineSolAdvice,
+  validateSolCommand,
+} from './sol-commander.js';
 
 let state = createNewGame(DEFAULT_SEED);
 state.pirates = spawnPirateFleets(state);
@@ -207,6 +248,30 @@ let selectedScoutId = null;
 let selectedBattleGroupId = null;
 let galaxyTargetStarId = null;
 let tradeRoutePending = null;
+let followedConvoyId = null;
+
+const SOL_BUILD_CATALOG = Object.freeze({
+  outpost: { cost: OUTPOST_COST, requiresBody: true, disallowOnTradeNexus: true },
+  shipyard: { cost: SHIPYARD_COST, requiresBody: true, disallowOnTradeNexus: true },
+  trade_station: { cost: TRADE_STATION_COST, tech: 'eco_trade_hub', requiresBody: true, disallowOnTradeNexus: true },
+  export_depot: { cost: TRADE_STATION_COST, tech: 'eco_trade_hub', requiresBody: true, disallowOnTradeNexus: true },
+  research_station: { cost: RESEARCH_STATION_COST, tech: 'res_station_protocol' },
+  dyson_foundry: { cost: FOUNDRY_COST, requiresBody: true, disallowOnTradeNexus: true },
+  solar_sail_launcher: { cost: LAUNCHER_COST, requiresBody: true, disallowOnTradeNexus: true },
+  superweapon_cradle: { cost: SUPERWEAPON_CRADLE_COST, disallowOnTradeNexus: true },
+  ...Object.fromEntries(Object.entries(BODY_STRUCTURE_DEFS).map(([type, def]) => [type, {
+    cost: def.cost,
+    tech: def.tech,
+    requiresBody: !def.starNode,
+    disallowOnTradeNexus: true,
+  }])),
+  ...Object.fromEntries(Object.entries(STRUCTURE_DEFS).map(([type, def]) => [type, {
+    cost: def.cost,
+    tech: def.tech,
+    requiresBody: def.perBody,
+    disallowOnTradeNexus: true,
+  }])),
+});
 
 const canvas = document.getElementById('game-canvas');
 const ctx2d = canvas.getContext('2d');
@@ -276,6 +341,33 @@ function doViewSystem(systemId) {
   selection = null;
   follow.enabled = false;
   snapCameraTo(0, 0);
+}
+
+function doFocusTutorial() {
+  const focus = getTutorialFocus(state);
+  if (!focus) return { ok: false, reason: 'No tutorial target is available' };
+
+  setFlagshipInput(0, 0);
+  if (focus.view === 'galaxy') {
+    view = 'galaxy';
+    selection = null;
+    galaxyTargetStarId = focus.systemId;
+    const graph = getGraph(state);
+    const target = graph?.stars.find((star) => star.id === focus.systemId);
+    if (target) {
+      // Keep the marked star outside the centered tutorial card so the player
+      // can see and click the destination the guide is describing.
+      const targetScreenX = Math.min(canvas.width - 88, canvas.width * 0.86);
+      const targetScreenY = canvas.height * 0.42;
+      galaxyCamera.x = target.x - (targetScreenX - canvas.width / 2) / galaxyCamera.zoom;
+      galaxyCamera.y = target.y - (targetScreenY - canvas.height / 2) / galaxyCamera.zoom;
+    }
+    return { ok: true };
+  }
+
+  doViewSystem(focus.systemId);
+  selection = focus.bodyId ?? null;
+  return { ok: true };
 }
 
 function doFlagshipInput(x, y) {
@@ -470,6 +562,8 @@ async function doLoadSlot(slot) {
 
 function doImportState(newState) {
   state = newState;
+  ensureLogisticsState(state);
+  followedConvoyId = null;
   selection = null;
   viewedSystemId = newState.flagship.systemId ?? newState.stronghold;
   lastFlagshipSystemId = newState.flagship.systemId;
@@ -524,6 +618,123 @@ function checkFlagshipArrival() {
   lastFlagshipSystemId = current;
 }
 
+function doFollowConvoy(convoyId) {
+  const convoy = activeConvoys(state).find((entry) => entry.id === convoyId);
+  if (!convoy) return { ok: false, reason: 'Convoy is no longer active' };
+  followedConvoyId = convoyId;
+  view = 'galaxy';
+  follow.enabled = false;
+  const status = convoyTransitStatus(state, convoy);
+  if (status) {
+    galaxyCamera.x = status.x;
+    galaxyCamera.y = status.y;
+    galaxyCamera.zoom = Math.max(galaxyCamera.zoom, 0.28);
+  }
+  toast(`Following ${convoyId}`, 'ok');
+  return { ok: true, convoyId };
+}
+
+function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
+  const group = groupId ? battleGroupsForGalaxy(state).find((entry) => entry.id === groupId) : null;
+  const fleetShipIds = new Set(group?.shipIds ?? []);
+  const candidateSystemIds = [
+    viewedSystemId,
+    ...(state.playerShips ?? [])
+      .filter((ship) => fleetShipIds.has(ship.id) && ship.systemId)
+      .map((ship) => ship.systemId),
+  ];
+  const systemId = candidateSystemIds.find((id) => getBattleState(state, id)?.active);
+  const battle = systemId ? getBattleState(state, systemId) : null;
+  if (!battle?.active || battle.mode !== 'tactical') {
+    return { ok: false, reason: 'No controllable tactical battle is active' };
+  }
+  const allPlayerUnits = battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0);
+  const subjectIds = allPlayerUnits
+    .filter((unit) => !group || fleetShipIds.has(unit.id) || fleetShipIds.has(unit.parentCarrierId))
+    .map((unit) => unit.id);
+  if (!subjectIds.length) return { ok: false, reason: 'Selected fleet has no live units in this battle' };
+  const canonical = {
+    ...order,
+    side: 'player',
+    groupId: group?.id ?? null,
+    subjectIds,
+  };
+  const result = applyFleetOrder(battle, canonical, {
+    time: state.time,
+    units: battle.units,
+    ownedUnitIds: subjectIds,
+    targetIds: battle.units.filter((unit) => unit.hp > 0).map((unit) => unit.id),
+    convoyIds: activeConvoys(state).map((convoy) => convoy.id),
+    destinationIds: getGraph(state).stars.map((star) => star.id),
+  });
+  if (result.ok) toast(`Order #${result.order.sequence}: ${result.order.type.replaceAll('_', ' ')}`, 'ok');
+  else toast(result.reason, 'error');
+  return result;
+}
+
+function validateSolRecommendationForGame(recommendation, options = {}) {
+  return validateSolCommand(state, recommendation, {
+    ...options,
+    buildCatalog: SOL_BUILD_CATALOG,
+  });
+}
+
+function executeSolRecommendation(recommendation, { confirmed = false } = {}) {
+  const validation = validateSolRecommendationForGame(recommendation, {
+    stage: 'execute',
+    confirmed,
+  });
+  if (!validation.ok) return validation;
+  const { tool, arguments: args } = validation.command;
+  if (!tool.startsWith('propose_')) {
+    return { ok: true, inspected: true, tool };
+  }
+
+  if (tool === 'propose_route') {
+    const depot = findExportDepot(state, args.fromSystemId);
+    if (!depot) return { ok: false, reason: 'No export depot exists at the proposed origin' };
+    return setDepotDestination(state, depot.id, args.toSystemId);
+  }
+
+  if (tool === 'propose_fleet_order') {
+    const type = args.order === 'attack_target_class' ? 'attack_class' : args.order;
+    const targetClass = args.targetClass === 'bomber' ? 'fighter' : args.targetClass;
+    const formation = args.formation === 'escort' ? 'screen' : args.formation;
+    const battleOrder = {
+      type,
+      targetId: args.targetId ?? null,
+      targetClass: targetClass ?? null,
+      formation: formation ?? null,
+      convoyId: type === 'escort_convoy' ? args.targetId : null,
+      destinationId: type === 'emergency_retreat' ? args.targetSystemId : null,
+      point: ['rally', 'emergency_retreat'].includes(type) && !args.targetSystemId
+        ? { x: type === 'rally' ? 0 : -1500, y: 0 }
+        : null,
+    };
+    return doIssueTacticalOrder(battleOrder, args.fleetId);
+  }
+
+  if (tool === 'propose_build') {
+    const { systemId, bodyId, structureType } = args;
+    if (structureType === 'outpost') return buildOutpost(state, systemId, bodyId);
+    if (structureType === 'shipyard') return buildShipyard(state, systemId, bodyId);
+    if (structureType === 'trade_station' || structureType === 'export_depot') {
+      return buildTradeStation(state, systemId, bodyId);
+    }
+    if (structureType === 'research_station') return buildResearchStation(state, systemId);
+    if (structureType === 'dyson_foundry') return buildFoundry(state, systemId, bodyId);
+    if (structureType === 'solar_sail_launcher') return buildLauncher(state, systemId, bodyId);
+    if (structureType === 'superweapon_cradle') return buildSuperweaponCradle(state, systemId);
+    if (BODY_STRUCTURE_DEFS[structureType]) {
+      return buildBodyStructure(state, systemId, bodyId, structureType);
+    }
+    if (STRUCTURE_DEFS[structureType]) {
+      return buildStrategicStructure(state, systemId, structureType, bodyId);
+    }
+  }
+  return { ok: false, reason: 'Unsupported validated command' };
+}
+
 // --- UI + input wiring ---
 
 const { updateUi, closeSidePanel } = initUi({
@@ -567,6 +778,11 @@ const { updateUi, closeSidePanel } = initUi({
   cancelBuilderDrone: doCancelBuilderDrone,
   getGalaxyTargetStar: () => galaxyTargetStarId,
   doStartNewGame: (opts) => doStartNewGame(opts),
+  doFocusTutorial,
+  executeSolRecommendation,
+  validateSolRecommendation: validateSolRecommendationForGame,
+  issueTacticalOrder: doIssueTacticalOrder,
+  followConvoy: doFollowConvoy,
   getBootPhase,
   setBootPhase,
 });
@@ -718,6 +934,15 @@ function frame(now) {
       toast(`Builder drone failed: ${ev.reason}`, 'error');
     }
   }
+  for (const ev of tickEvents.logisticsEvents ?? []) {
+    if (ev.type === 'convoy_dispatched') {
+      toast(`${ev.convoyId} completed space-compression jump prep`, 'info');
+    } else if (ev.type === 'convoy_delivered') {
+      toast(`${ev.convoyId} delivered ${Math.floor(ev.credits)} credits`, 'ok');
+    } else if (ev.type === 'convoy_intercepted') {
+      toast(`${ev.convoyId} intercepted${ev.destroyed ? ' and destroyed' : ''}`, 'error');
+    }
+  }
   for (const cap of tickEvents.captures ?? []) {
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
     toast(`Captured: ${name}`, 'ok');
@@ -767,7 +992,24 @@ function frame(now) {
   }
 
   if (view === 'galaxy') {
-    drawGalaxy(ctx2d, state, selectedScoutId, selectedBattleGroupId);
+    if (followedConvoyId) {
+      const convoy = activeConvoys(state).find((entry) => entry.id === followedConvoyId);
+      const convoyStatus = convoy ? convoyTransitStatus(state, convoy) : null;
+      if (convoyStatus) {
+        galaxyCamera.x = convoyStatus.x;
+        galaxyCamera.y = convoyStatus.y;
+      } else {
+        followedConvoyId = null;
+      }
+    }
+    const tutorialFocus = getTutorialFocus(state);
+    drawGalaxy(
+      ctx2d,
+      state,
+      selectedScoutId,
+      selectedBattleGroupId,
+      tutorialFocus?.view === 'galaxy' ? tutorialFocus.systemId : null,
+    );
   } else {
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator);
@@ -837,6 +1079,8 @@ window.render_game_to_text = () => {
     view,
     currentSystem: viewedSystemId,
     systemName: viewedSystem?.name ?? null,
+    systemKind: viewedSystem?.star?.kind ?? 'star',
+    tradeNexus: viewedSystem?.star?.kind === 'trade_nexus',
     strongholdSystem: state.stronghold,
     systemOwner: viewedSystem?.owner ?? null,
     metaGalaxy: {
@@ -851,10 +1095,12 @@ window.render_game_to_text = () => {
     selection,
     selectedScoutId,
     selectedBattleGroupId,
-    incomePerSec: incomePerSecond(state),
-    incomePerSecInViewedSystem: incomePerSecondInSystem(state, viewedSystemId),
+    incomePerSec: logisticsSummary(state).throughputCreditsPerMinute / 60,
+    incomePerSecInViewedSystem: 0,
     flagship: {
       galaxyId: f.galaxyId,
+      hp: f.hp,
+      maxHp: f.maxHp,
       systemId: f.systemId,
       x: Math.round(f.x * 100) / 100,
       y: Math.round(f.y * 100) / 100,
@@ -938,6 +1184,36 @@ window.render_game_to_text = () => {
       etaMs: jobEtaMs(job, state),
       assignedDrones: job.assignedDroneIds?.length ?? 0,
     })),
+    logistics: {
+      ...logisticsSummary(state),
+      nexuses: discoverTradeNexuses(state),
+      depots: Object.values(state.logistics?.depots ?? {}).map((depot) => ({
+        id: depot.id,
+        systemId: depot.systemId,
+        operational: depot.operational,
+        routePaused: depot.routePaused,
+        preferredNexusId: depot.preferredNexusId,
+        inventory: depot.inventory,
+      })),
+      convoys: activeConvoys(state).map((convoy) => ({
+        id: convoy.id,
+        status: convoy.status,
+        fromSystemId: convoy.fromSystemId,
+        destinationSystemId: convoy.destinationSystemId,
+        path: [...convoy.path],
+        manifest: convoy.manifest,
+        escortStrength: convoy.escortStrength,
+        projection: convoyTransitStatus(state, convoy),
+      })),
+    },
+    solCommander: {
+      enabled: !!state.solCommander?.settings?.enabled,
+      providerMode: state.solCommander?.settings?.providerMode ?? 'offline',
+      model: state.solCommander?.settings?.model ?? 'gpt-5.6-sol',
+      confirmationRequired: state.solCommander?.settings?.confirmationRequired !== false,
+      previewData: state.solCommander?.settings?.previewData !== false,
+      historyCount: state.solCommander?.history?.length ?? 0,
+    },
     factions: {
       ai: aiFactionSummary(state),
       list: listAiFactions(state).map((f) => ({
@@ -988,6 +1264,8 @@ window.render_game_to_text = () => {
       })),
     },
     battle: battleSummaryForSystem(state, viewedSystemId),
+    tacticalOrders: getBattleState(state, viewedSystemId)?.tacticalOrders ?? {},
+    battleReports: (state.battleReports ?? []).slice(-5),
     hullStats: Object.keys(HULL_STATS),
     galaxy: {
       starCount: graph.stars.length,
@@ -1218,6 +1496,21 @@ window.__forcePirateIntoSystem = (systemId) => {
   checkBattleTrigger(state, systemId);
 };
 window.__getBattleState = (systemId) => getBattleState(state, systemId);
+window.__issueTacticalOrder = (order, groupId = null) => doIssueTacticalOrder(order, groupId);
+window.__getLogistics = () => JSON.parse(JSON.stringify(ensureLogisticsState(state)));
+window.__listTradeNexuses = () => discoverTradeNexuses(state);
+window.__registerExportDepot = (systemId, opts = {}) =>
+  registerExportDepot(state, state.activeGalaxyId, systemId, opts);
+window.__setDepotDestination = (depotId, nexusSystemId = null) =>
+  setDepotDestination(state, depotId, nexusSystemId);
+window.__dispatchDepot = (depotId, opts = {}) => dispatchDepot(state, depotId, opts);
+window.__followConvoy = (convoyId) => doFollowConvoy(convoyId);
+window.__offlineSolAdvice = () => createOfflineSolAdvice(state);
+window.__redactedSolSnapshot = () => buildRedactedSolSnapshot(state);
+window.__validateSolRecommendation = (recommendation, options = {}) =>
+  validateSolRecommendationForGame(recommendation, options);
+window.__executeSolRecommendation = (recommendation, confirmed = false) =>
+  executeSolRecommendation(recommendation, { confirmed });
 window.__getHullStats = () => ({ ...HULL_STATS });
 window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   resetWormholeJumpCounter(0);
@@ -1385,6 +1678,7 @@ window.__completeMission = (id) => completeMissionForTest(state, id);
 window.__setTutorialStep = (n) => setTutorialStep(state, n);
 window.__getTutorialState = () => getTutorialState(state);
 window.__initTutorial = () => initTutorial(state);
+window.__focusTutorial = () => doFocusTutorial();
 window.__setVictoryType = (type, mode) => setVictoryType(state, type, mode);
 window.__checkVictory = () => checkVictory(state);
 window.__checkDefeat = () => checkDefeat(state);

@@ -28,8 +28,14 @@ export function ensureCampaign(state) {
       activeMissionId: null,
       completedMissions: [],
       missionProgress: {},
+      tutorialTargetSystemId: null,
+      tutorialCompletedAt: null,
     };
   }
+  // Tutorial fields were added after campaign saves already existed. Keep old
+  // saves playable without requiring a save-version bump for additive data.
+  state.campaign.tutorialTargetSystemId ??= null;
+  state.campaign.tutorialCompletedAt ??= null;
 }
 
 export function setVictoryType(state, type, mode = 'sandbox') {
@@ -49,6 +55,8 @@ export function startTutorial(state) {
   state.campaign.mode = 'tutorial';
   state.campaign.victoryType = 'sandbox';
   state.campaign.tutorialStep = 0;
+  state.campaign.tutorialTargetSystemId = null;
+  state.campaign.tutorialCompletedAt = null;
   state.campaign.defeated = false;
   state.campaign.won = false;
   return { ok: true };
@@ -159,6 +167,8 @@ export function campaignSummary(state) {
     defeated: state.campaign.defeated,
     won: state.campaign.won,
     tutorialStep: state.campaign.tutorialStep,
+    tutorialTargetSystemId: state.campaign.tutorialTargetSystemId,
+    tutorialCompletedAt: state.campaign.tutorialCompletedAt,
     activeMissionId: state.campaign.activeMissionId,
     completedMissions: [...(state.campaign.completedMissions ?? [])],
     missionProgress: { ...(state.campaign.missionProgress ?? {}) },

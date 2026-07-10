@@ -571,3 +571,25 @@ Never delete prior entries.
 
 ### Known issues
 - `output/verify_phase2.mjs` is stale against the current state shape and fails early on `st.systems[...]`; current game state uses `st.galaxies[activeGalaxyId].systems[...]`.
+
+---
+
+## Session 2026-07-10 — Flagship twin engine stalks
+
+**Task claimed:** Add two USS Enterprise-inspired engine stalks to the flagship without losing the grounded capital-ship redesign
+**Status:** complete
+
+### Done
+- `src/js/ship-sprites.js` — added two swept armored pylons behind the flagship's main hull.
+- Each pylon carries a long outboard nacelle with a recessed cyan energy channel, forward status light, hot exhaust cap, and thrust-dependent ion wake.
+- Preserved the four central recessed drives, armored asymmetry, batteries, sensor island, navigation lights, and damage rendering.
+- Expanded the flagship visual inspection framing in `output/verify_unified_overhaul.mjs` so the complete hull and both nacelles are visible at review scale.
+
+### Verification
+- `npm run build` — pass.
+- Develop-web-game Playwright client — completed with final state/screenshot artifacts under `output/web-game/flagship-engine-stalks-final/` and no browser error artifact.
+- `node output/verify_unified_overhaul.mjs` — 18/18 checks passed with no browser console errors.
+- Final close-up inspected at `output/visuals/unified-overhaul/flagship-closeup.png`; both separated nacelles, swept stalks, hull silhouette, and central drives remain readable.
+
+### Decision
+- The new engines borrow the Enterprise's recognizable twin-stalk proportion, but use heavy military pylons and armored nacelles so the flagship still belongs to Galactic Sovereign rather than reading as a direct franchise copy.

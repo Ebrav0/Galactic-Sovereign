@@ -55,6 +55,9 @@ export function canBuildFoundry(state, systemId, bodyId) {
   }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
+  if (system.star?.kind === 'trade_nexus' || system.dyson?.disabled) {
+    return { ok: false, reason: 'Trade Nexus systems have no star for a Dyson project' };
+  }
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
   if (!bodyId) return { ok: false, reason: 'Select a planet to anchor the foundry ring' };
@@ -91,6 +94,9 @@ export function canBuildLauncher(state, systemId, bodyId) {
   }
   const system = systemById(state, systemId);
   if (!system) return { ok: false, reason: 'No such system' };
+  if (system.star?.kind === 'trade_nexus' || system.dyson?.disabled) {
+    return { ok: false, reason: 'Trade Nexus systems have no star for a Dyson project' };
+  }
   if (systemId === 'core') return { ok: false, reason: 'Cannot build at the galactic core' };
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
   const found = findBody(state, systemId, bodyId);

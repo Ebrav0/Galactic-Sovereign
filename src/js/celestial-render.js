@@ -13,6 +13,7 @@ import {
   queueStar,
   queueBlackHole,
 } from './gl/star-renderer.js';
+import { drawTradeNexus } from './trade-nexus-render.js';
 
 export { resolveVisualSeed };
 
@@ -75,9 +76,9 @@ export function drawStarOverlays(ctx, opts) {
   ctx.restore();
 }
 
-export function drawBlackHole(ctx, x, y, r, time, large) {
+export function drawBlackHole(ctx, x, y, r, time, large, warp = 0) {
   if (isStarRendererEnabled()) {
-    queueBlackHole({ x, y, screenR: r, time, large });
+    queueBlackHole({ x, y, screenR: r, time, large, warp });
     return;
   }
   drawBlackHoleCanvas2D(ctx, x, y, r, time, large);
@@ -86,7 +87,19 @@ export function drawBlackHole(ctx, x, y, r, time, large) {
 export function drawStar(ctx, opts) {
   const { star } = opts;
   if (star.kind === 'blackhole') {
-    drawBlackHole(ctx, opts.x, opts.y, opts.screenR, opts.time, opts.mode === 'system');
+    const transit = opts.state?.flagship?.wormholeTransit;
+    const progress = transit
+      ? Math.max(0, Math.min(1, (opts.state.time - transit.startTime) / Math.max(1, transit.durationMs)))
+      : 0;
+    const warp = transit ? Math.sin(progress * Math.PI) : 0;
+    drawBlackHole(ctx, opts.x, opts.y, opts.screenR, opts.time, opts.mode === 'system', warp);
+    return;
+  }
+  if (star.kind === 'trade_nexus') {
+    drawTradeNexus(ctx, opts.x, opts.y, opts.screenR, opts.time, {
+      intel: opts.intel,
+      compact: opts.mode === 'galaxy',
+    });
     return;
   }
   if (isStarRendererEnabled()) {

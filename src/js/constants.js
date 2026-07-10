@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -15,6 +15,37 @@ export const DEFAULT_SEED = 1;
 export const OUTPOST_COST = 300;             // credits
 export const OUTPOST_BASE_INCOME = 2;        // credits per second, before moon bonus
 export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the same planet
+
+// --- Physical logistics (Unified Overhaul / save-v12) ---
+export const TRADE_NEXUS_COUNT_PER_GALAXY = 4;
+export const LOGISTICS_CARGO_TYPES = ['rawMaterials', 'fuel', 'manufacturedGoods'];
+export const LOGISTICS_OUTPOST_RATE = 0.7;          // cargo units / second / outpost
+export const LOGISTICS_PRODUCTION_RATES = {
+  habitable: { rawMaterials: 0.35, fuel: 0.14, manufacturedGoods: 0.21 },
+  barren: { rawMaterials: 0.56, fuel: 0.105, manufacturedGoods: 0.035 },
+  gas: { rawMaterials: 0.105, fuel: 0.56, manufacturedGoods: 0.035 },
+};
+export const LOGISTICS_MOON_PRODUCTION_BONUS = 0.25;
+export const LOGISTICS_OUTPOST_STOCK_CAPACITY = 120;
+export const LOGISTICS_LOCAL_DISPATCH_CARGO = 2;
+export const LOGISTICS_LOCAL_TRANSPORT_CAPACITY = 18;
+export const LOGISTICS_DEPOT_CAPACITY = 220;
+export const LOGISTICS_MIN_DISPATCH_CARGO = 12;
+export const LOGISTICS_CONVOY_CAPACITY = 48;
+export const LOGISTICS_LOCAL_TRANSFER_MS = 4800;
+export const LOGISTICS_LOCAL_DISPATCH_INTERVAL_MS = 2500;
+export const LOGISTICS_JUMP_CHARGE_MS = 1250;
+export const LOGISTICS_LANE_SPEED = 115;
+export const LOGISTICS_LANE_MIN_LEG_MS = 1500;
+export const LOGISTICS_DISPATCH_INTERVAL_MS = 8000;
+export const LOGISTICS_ROUTE_PAUSE_MS = 15000;
+export const LOGISTICS_DEFAULT_CONVOY_ARMOR = 1;
+export const LOGISTICS_RECENT_DELIVERY_WINDOW_MS = 60000;
+export const LOGISTICS_CARGO_CREDIT_VALUE = {
+  rawMaterials: 4,
+  fuel: 6,
+  manufacturedGoods: 10,
+};
 
 // --- Structures ---
 export const SHIPYARD_COST = 400;

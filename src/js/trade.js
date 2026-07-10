@@ -10,13 +10,11 @@ import {
 import { shellTradeBonus } from './dyson.js';
 import { diplomaticTradeBonus } from './diplomacy.js';
 import { manualRouteBonus } from './trade-routes.js';
-import { allocateStructureId } from './economy.js';
 import {
   findPlanet,
   hasOutpost,
   isPlayerOwned,
   isStructureActive,
-  structuresOn,
   systemById,
 } from './state.js';
 import { getGraph, getSystems } from './galaxy-scope.js';
@@ -34,7 +32,7 @@ export function tradeStationCount(state, systemId) {
   const system = systemById(state, systemId);
   if (!system) return 0;
   return system.structures.filter(
-    (s) => s.type === 'trade_station' && isStructureActive(s),
+    (s) => ['trade_station', 'export_depot', 'trade_nexus'].includes(s.type) && isStructureActive(s),
   ).length;
 }
 
@@ -52,15 +50,15 @@ export function canBuildTradeStation(state, systemId, planetId) {
   if (!hasOutpost(state, systemId, planetId)) {
     return { ok: false, reason: 'Outpost required before trade station' };
   }
-  if (structuresOn(state, systemId, planetId).some(
-    (s) => s.type === 'trade_station' && isStructureActive(s),
+  if (system.structures.some(
+    (s) => ['trade_station', 'export_depot', 'trade_nexus'].includes(s.type) && isStructureActive(s),
   )) {
-    return { ok: false, reason: 'Trade station already built on this body' };
+    return { ok: false, reason: 'This system already has an export depot' };
   }
-  if (structuresOn(state, systemId, planetId).some(
-    (s) => s.type === 'trade_station' && s.construction,
-  ) || hasPendingJob(state, systemId, planetId, 'trade_station')) {
-    return { ok: false, reason: 'Trade station construction already in progress' };
+  if (system.structures.some(
+    (s) => ['trade_station', 'export_depot'].includes(s.type) && s.construction,
+  ) || hasPendingJob(state, systemId, null, 'export_depot')) {
+    return { ok: false, reason: 'Export depot construction already in progress' };
   }
   if (!flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
@@ -77,10 +75,15 @@ export function buildTradeStation(state, systemId, planetId) {
 
   return queueConstructionJob(state, {
     systemId,
-    structureType: 'trade_station',
-    bodyId: planetId,
+    structureType: 'export_depot',
+    bodyId: null,
     creditCost: TRADE_STATION_COST,
     durationMs: STRUCTURE_BUILD_MS.trade_station,
+    extraStructureFields: {
+      hp: 520,
+      maxHp: 520,
+      operational: true,
+    },
   });
 }
 
@@ -180,11 +183,9 @@ export function tradeIncomePerSecondSync(state) {
 }
 
 export function tickTrade(state) {
-  if (state.paused) return 0;
-  const rate = tradeIncomePerSecondSync(state);
-  const delta = rate * (TICK_MS / 1000);
-  state.credits += delta;
-  return delta;
+  // Compatibility no-op: physical convoy delivery in logistics.js is now the
+  // sole authority for trade credits.
+  return 0;
 }
 
 export function tradeSummary(state) {
@@ -197,7 +198,9 @@ export function tradeSummary(state) {
     stationCount,
     componentCount: components.length,
     largestComponent: components.reduce((m, c) => Math.max(m, c.length), 0),
-    incomePerSec: Math.round(tradeIncomePerSecondSync(state) * 100) / 100,
+    // Credits are now awarded exclusively by physical convoy delivery.
+    incomePerSec: 0,
+    projectedLegacyIncomePerSec: Math.round(tradeIncomePerSecondSync(state) * 100) / 100,
   };
 }
 

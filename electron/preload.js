@@ -13,3 +13,12 @@ contextBridge.exposeInMainWorld('gameSave', {
     });
   },
 });
+
+// Sol requests stay in the Electron main process. No method ever returns the
+// API key or accepts arbitrary URLs/request bodies from the renderer.
+contextBridge.exposeInMainWorld('gameSol', {
+  keyStatus: () => ipcRenderer.invoke('sol:key:status'),
+  setKey: (key) => ipcRenderer.invoke('sol:key:set', key),
+  clearKey: () => ipcRenderer.invoke('sol:key:clear'),
+  requestAdvice: (payload) => ipcRenderer.invoke('sol:request', payload),
+});

@@ -46,7 +46,7 @@ await page.evaluate(() => window.__newGame(42));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 11', s.saveVersion === 11);
+check('1.1 saveVersion is 12', s.saveVersion === 12);
 check('1.1b battleGroups array', Array.isArray(s.battleGroups));
 check('1.2 empireQueue array', Array.isArray(s.empireQueue));
 check('1.3 research defaults', s.research?.unlocked?.includes('eco_baseline'));
@@ -83,7 +83,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-2', 
 await page.evaluate(() => window.__loadSlot('slot-2'));
 await page.waitForFunction(() => typeof window.render_game_to_text === 'function');
 s = await text();
-check('1.7 v6 migrates to v11', s.saveVersion === 11 && s.research?.unlocked?.includes('eco_baseline'));
+check('1.7 v6 migrates to v12', s.saveVersion === 12 && s.research?.unlocked?.includes('eco_baseline'));
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => {

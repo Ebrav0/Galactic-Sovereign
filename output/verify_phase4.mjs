@@ -80,7 +80,7 @@ async function resetWormholeAnchors() {
 
 // --- Section 1: Save v6 ---
 let s = await text();
-check('1.1 saveVersion is 11', s.saveVersion === 11);
+check('1.1 saveVersion is 12', s.saveVersion === 12);
 check('1.2 metaGalaxy present', s.metaGalaxy && s.metaGalaxy.activeGalaxyId === 'gal-0');
 check('1.3 wormholes summary', s.wormholes && s.wormholes.count === 10);
 
@@ -129,7 +129,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-2', 
 })), [v5Json, v5Checksum]);
 await page.evaluate(() => window.__loadSlot('slot-2'));
 s = await text();
-check('1.5 v5 migrates to v11', s.saveVersion === 11 && s.metaGalaxy.galaxyCount === 10);
+check('1.5 v5 migrates to v12', s.saveVersion === 12 && s.metaGalaxy.galaxyCount === 10);
 
 // --- Section 2: 400-star gen ---
 await page.evaluate(() => window.__newGame(42));
