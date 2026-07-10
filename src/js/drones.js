@@ -422,14 +422,11 @@ export function droneSummaryForSystem(state, systemId) {
 }
 
 export function requiresBuilderTech(structureType) {
-  return structureType === 'sail_foundry' || structureType === 'dyson_launcher';
+  return false;
 }
 
 export function canUseBuilderTech(state, structureType) {
   if (!requiresBuilderTech(structureType)) return { ok: true };
-  if (!isTechUnlocked(state, 'mil_builder_ship')) {
-    return { ok: false, reason: 'Research Builder Drones first' };
-  }
   return { ok: true };
 }
 

@@ -82,6 +82,10 @@ export const TECH_NODES = {
     id: 'eco_outpost_2', cluster: 'economy', name: 'Outpost Efficiency I',
     prereqs: ['eco_surveyor'], creditCost: 400, solariiCost: 0, researchMs: 45000, effect: 'outpost_income_10',
   },
+  eco_construction_drones: {
+    id: 'eco_construction_drones', cluster: 'economy', name: 'Construction Drones',
+    prereqs: ['eco_surveyor'], creditCost: 350, solariiCost: 0, researchMs: 45000, effect: 'unlock_construction_drones',
+  },
   eco_outpost_3: {
     id: 'eco_outpost_3', cluster: 'economy', name: 'Outpost Efficiency II',
     prereqs: ['eco_outpost_2', 'res_lab_1'], creditCost: 650, solariiCost: 0, researchMs: 54000, effect: 'outpost_income_15',
@@ -241,7 +245,7 @@ export const TECH_NODES = {
     prereqs: ['mil_healer_tech', 'wh_probe_swarm'], creditCost: 600, solariiCost: 1, researchMs: 56250, effect: 'unlock_sensor_ship',
   },
   mil_builder_ship: {
-    id: 'mil_builder_ship', cluster: 'military', name: 'Builder Drones',
+    id: 'mil_builder_ship', cluster: 'military', name: 'Construction Tender',
     prereqs: ['mil_sensor_ship', 'mega_auto_sail'], creditCost: 900, solariiCost: 1, researchMs: 67500, effect: 'unlock_builder_ship',
   },
   mil_command_cruiser: {

@@ -3,6 +3,8 @@
 import {
   OUTPOST_COST,
   SHIPYARD_COST,
+  FOUNDRY_COST,
+  LAUNCHER_COST,
   BUILDER_DRONE_CAPACITY,
   BUILDER_DRONE_DEPLOY_COST,
   BUILDER_DRONE_LANE_SPEED,
@@ -23,8 +25,14 @@ import {
 } from './body-structures.js';
 import { findPath } from './galaxy.js';
 import { getGraph } from './galaxy-scope.js';
-import { systemById } from './state.js';
-import { techEffects } from './tech-web.js';
+import { isPlayerOwned, systemById } from './state.js';
+import { isTechUnlocked } from './tech-web.js';
+import {
+  buildFoundry,
+  buildLauncher,
+  canBuildFoundry,
+  canBuildLauncher,
+} from './dyson.js';
 import {
   advanceTransit,
   transitEtaMs,
@@ -34,19 +42,11 @@ import {
 let nextBuilderDroneId = 1;
 
 function droneTechUnlocked(state) {
-  return !!techEffects(state).unlockBuilderShip;
+  return isTechUnlocked(state, 'eco_construction_drones');
 }
 
 function activeGalaxyDrones(state) {
   return (state.builderDrones ?? []).filter((d) => d.galaxyId === state.activeGalaxyId);
-}
-
-function flagshipCanLaunch(state) {
-  const f = state.flagship;
-  if (!f || f.galaxyId !== state.activeGalaxyId) return false;
-  if (!f.systemId || f.transit || f.wormholeTransit) return false;
-  if (f.hp != null && f.hp <= 0) return false;
-  return true;
 }
 
 function makeIdleDrone(state) {
@@ -61,6 +61,7 @@ function makeIdleDrone(state) {
     transit: null,
     buildStartedAt: null,
     buildDurationMs: null,
+    originSystemId: state.flagship?.systemId ?? state.stronghold,
     returnTransit: null,
     costPaid: 0,
     lastError: null,
@@ -88,12 +89,13 @@ export function initBuilderDrones(state) {
     drone.transit = drone.transit ?? null;
     drone.buildStartedAt = drone.buildStartedAt ?? null;
     drone.buildDurationMs = drone.buildDurationMs ?? null;
+    drone.originSystemId = drone.originSystemId ?? drone.systemId ?? state.stronghold;
     drone.returnTransit = drone.returnTransit ?? null;
     drone.costPaid = drone.costPaid ?? 0;
     drone.lastError = drone.lastError ?? null;
   }
 
-  if (!droneTechUnlocked(state) || !flagshipCanLaunch(state)) return state.builderDrones;
+  if (!droneTechUnlocked(state)) return state.builderDrones;
   const current = activeGalaxyDrones(state).length;
   for (let i = current; i < BUILDER_DRONE_CAPACITY; i++) {
     state.builderDrones.push(makeIdleDrone(state));
@@ -105,22 +107,34 @@ function idleDrone(state) {
   return activeGalaxyDrones(state).find((d) => d.status === 'idle') ?? null;
 }
 
+function idleDroneAt(state, systemId) {
+  return activeGalaxyDrones(state).find((d) => d.status === 'idle' && d.systemId === systemId) ?? null;
+}
+
 function buildCost(type) {
   if (type === 'outpost') return OUTPOST_COST;
   if (type === 'shipyard') return SHIPYARD_COST;
+  if (type === 'sail_foundry') return FOUNDRY_COST;
+  if (type === 'dyson_launcher') return LAUNCHER_COST;
   return bodyStructureDef(type)?.cost ?? null;
 }
 
 function buildDuration(type) {
   if (type === 'outpost') return Math.round(BUILDER_DRONE_OUTPOST_BUILD_MS * BUILDER_DRONE_BUILD_TIME_MULT);
   if (type === 'shipyard') return Math.round(BUILDER_DRONE_SHIPYARD_BUILD_MS * BUILDER_DRONE_BUILD_TIME_MULT);
+  if (type === 'sail_foundry' || type === 'dyson_launcher') {
+    return Math.round(BUILDER_DRONE_BODY_STRUCTURE_BUILD_MS * BUILDER_DRONE_BUILD_TIME_MULT);
+  }
   if (BODY_STRUCTURE_DEFS[type]) return Math.round(BUILDER_DRONE_BODY_STRUCTURE_BUILD_MS * BUILDER_DRONE_BUILD_TIME_MULT);
   return null;
 }
 
 function canBuildTarget(state, systemId, bodyId, type) {
+  if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'Builder drones can only construct in claimed systems' };
   if (type === 'outpost') return canBuildOutpost(state, systemId, bodyId, { remote: true, ignoreCredits: true });
   if (type === 'shipyard') return canBuildShipyard(state, systemId, bodyId, { remote: true, ignoreCredits: true });
+  if (type === 'sail_foundry') return canBuildFoundry(state, systemId, bodyId, { remote: true, ignoreCredits: true });
+  if (type === 'dyson_launcher') return canBuildLauncher(state, systemId, bodyId, { remote: true, ignoreCredits: true });
   if (BODY_STRUCTURE_DEFS[type]) {
     return canBuildBodyStructure(state, systemId, bodyId, type, { remote: true, ignoreCredits: true });
   }
@@ -134,6 +148,12 @@ function completeBuildTarget(state, drone) {
   }
   if (buildType === 'shipyard') {
     return buildShipyard(state, targetSystemId, targetBodyId, { remote: true, alreadyPaid: true, ignoreCredits: true });
+  }
+  if (buildType === 'sail_foundry') {
+    return buildFoundry(state, targetSystemId, targetBodyId, { remote: true, alreadyPaid: true, ignoreCredits: true });
+  }
+  if (buildType === 'dyson_launcher') {
+    return buildLauncher(state, targetSystemId, targetBodyId, { remote: true, alreadyPaid: true, ignoreCredits: true });
   }
   return buildBodyStructure(
     state,
@@ -179,43 +199,73 @@ export function builderDroneEtaMs(state, drone) {
 
 export function canSendBuilderDrone(state, systemId, bodyId, buildType) {
   initBuilderDrones(state);
-  if (!droneTechUnlocked(state)) return { ok: false, reason: 'Research Builder Drones first' };
-  if (!flagshipCanLaunch(state)) return { ok: false, reason: 'Flagship must be idle in this galaxy to launch drones' };
+  if (!droneTechUnlocked(state)) return { ok: false, reason: 'Research Construction Drones first' };
   const targetSystem = systemById(state, systemId);
   if (!targetSystem) return { ok: false, reason: 'No such system' };
-  const drone = idleDrone(state);
-  if (!drone) return { ok: false, reason: 'No idle builder drone available' };
+  const drone = idleDroneAt(state, systemId);
+  if (!drone) return { ok: false, reason: 'Deploy an idle builder drone to this system first' };
   const targetCheck = canBuildTarget(state, systemId, bodyId, buildType);
   if (!targetCheck.ok) return targetCheck;
   const cost = buildCost(buildType);
   const durationMs = buildDuration(buildType);
   if (cost == null || durationMs == null) return { ok: false, reason: 'Unknown drone build type' };
-  const totalCost = cost + BUILDER_DRONE_DEPLOY_COST;
-  if (state.credits < totalCost) return { ok: false, reason: `Need ${totalCost} credits` };
-  if (state.flagship.systemId !== systemId && !makeTransit(state, state.flagship.systemId, systemId)) {
-    return { ok: false, reason: 'No lane route to target system' };
-  }
-  return { ok: true, droneId: drone.id, cost, fee: BUILDER_DRONE_DEPLOY_COST, totalCost, durationMs };
+  if (state.credits < cost) return { ok: false, reason: `Need ${cost} credits` };
+  return { ok: true, droneId: drone.id, cost, totalCost: cost, durationMs };
 }
 
 export function sendBuilderDrone(state, systemId, bodyId, buildType) {
   const check = canSendBuilderDrone(state, systemId, bodyId, buildType);
   if (!check.ok) return check;
-  const drone = idleDrone(state);
-  const fromId = state.flagship.systemId;
+  const drone = idleDroneAt(state, systemId);
   state.credits -= check.totalCost;
-  drone.status = fromId === systemId ? 'building' : 'outbound';
-  drone.systemId = fromId === systemId ? systemId : null;
+  drone.status = 'building';
+  drone.systemId = systemId;
   drone.targetSystemId = systemId;
   drone.targetBodyId = bodyId;
   drone.buildType = buildType;
-  drone.transit = fromId === systemId ? null : makeTransit(state, fromId, systemId);
-  drone.buildStartedAt = fromId === systemId ? state.time : null;
+  drone.transit = null;
+  drone.buildStartedAt = state.time;
   drone.buildDurationMs = check.durationMs;
   drone.returnTransit = null;
   drone.costPaid = check.totalCost;
   drone.lastError = null;
-  return { ok: true, droneId: drone.id, systemId, bodyId, buildType, etaMs: builderDroneEtaMs(state, drone) };
+  return { ok: true, droneId: drone.id, systemId, bodyId, buildType, etaMs: 0 };
+}
+
+export function canDeployBuilderDrone(state, systemId) {
+  initBuilderDrones(state);
+  if (!droneTechUnlocked(state)) return { ok: false, reason: 'Research Construction Drones first' };
+  const target = systemById(state, systemId);
+  if (!target) return { ok: false, reason: 'No such system' };
+  if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'Builder drones can only deploy to claimed systems' };
+  const drone = idleDrone(state);
+  if (!drone) return { ok: false, reason: 'No idle builder drone available' };
+  if (!drone.systemId) return { ok: false, reason: 'Builder drone is not stationed at a system' };
+  if (drone.systemId === systemId) return { ok: false, reason: 'An idle builder drone is already stationed here' };
+  const transit = makeTransit(state, drone.systemId, systemId);
+  if (!transit) return { ok: false, reason: 'No lane route to target system' };
+  if (state.credits < BUILDER_DRONE_DEPLOY_COST) return { ok: false, reason: `Need ${BUILDER_DRONE_DEPLOY_COST} credits` };
+  return { ok: true, droneId: drone.id, originSystemId: drone.systemId, totalCost: BUILDER_DRONE_DEPLOY_COST, etaMs: builderDroneEtaMs(state, { ...drone, transit }) };
+}
+
+export function deployBuilderDrone(state, systemId) {
+  const check = canDeployBuilderDrone(state, systemId);
+  if (!check.ok) return check;
+  const drone = state.builderDrones.find((entry) => entry.id === check.droneId);
+  state.credits -= check.totalCost;
+  drone.status = 'outbound';
+  drone.originSystemId = drone.systemId;
+  drone.systemId = null;
+  drone.targetSystemId = systemId;
+  drone.targetBodyId = null;
+  drone.buildType = null;
+  drone.transit = makeTransit(state, check.originSystemId, systemId);
+  drone.buildStartedAt = null;
+  drone.buildDurationMs = null;
+  drone.returnTransit = null;
+  drone.costPaid = check.totalCost;
+  drone.lastError = null;
+  return { ok: true, droneId: drone.id, systemId, etaMs: builderDroneEtaMs(state, drone) };
 }
 
 export function cancelBuilderDrone(state, droneId) {
@@ -225,7 +275,7 @@ export function cancelBuilderDrone(state, droneId) {
   if (drone.status === 'building') return { ok: false, reason: 'Drone is already building' };
   if (drone.status === 'idle') return { ok: true };
   drone.status = 'idle';
-  drone.systemId = state.flagship?.systemId ?? drone.systemId;
+  drone.systemId = drone.originSystemId ?? state.flagship?.systemId ?? drone.systemId;
   drone.targetSystemId = null;
   drone.targetBodyId = null;
   drone.buildType = null;
@@ -275,11 +325,23 @@ export function tickBuilderDrones(state) {
         BUILDER_DRONE_LANE_SPEED,
         BUILDER_DRONE_LANE_MIN_LEG_MS,
         (destId) => {
-          drone.status = 'building';
+          if (!isPlayerOwned(state, destId)) {
+            drone.status = 'idle';
+            drone.systemId = destId;
+            drone.transit = null;
+            drone.lastError = 'Target system is no longer under your control';
+            events.push({ type: 'builder_drone_deploy_failed', droneId: drone.id, systemId: destId, reason: drone.lastError });
+            return;
+          }
+          drone.status = 'idle';
           drone.systemId = destId;
           drone.transit = null;
-          drone.buildStartedAt = state.time;
-          events.push({ type: 'builder_drone_arrived', droneId: drone.id, systemId: destId });
+          drone.targetSystemId = null;
+          drone.targetBodyId = null;
+          drone.buildType = null;
+          drone.buildStartedAt = null;
+          drone.buildDurationMs = null;
+          events.push({ type: 'builder_drone_deployed', droneId: drone.id, systemId: destId });
         },
       );
     }
@@ -296,7 +358,15 @@ export function tickBuilderDrones(state) {
             bodyId: drone.targetBodyId,
             buildType: drone.buildType,
           });
-          beginReturn(state, drone);
+          drone.status = 'idle';
+          drone.systemId = drone.targetSystemId;
+          drone.targetSystemId = null;
+          drone.targetBodyId = null;
+          drone.buildType = null;
+          drone.buildStartedAt = null;
+          drone.buildDurationMs = null;
+          drone.transit = null;
+          drone.returnTransit = null;
         } else {
           drone.status = 'idle';
           drone.systemId = drone.targetSystemId;

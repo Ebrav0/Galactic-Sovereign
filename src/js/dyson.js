@@ -42,7 +42,6 @@ import { getSystems } from './galaxy-scope.js';
 import { sailShuttleLauncherArrivals } from './sail-shuttles.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import {
-  canUseBuilderTech,
   hasPendingJob,
   queueConstructionJob,
 } from './drones.js';
@@ -96,7 +95,7 @@ function persistentSolariiMultiplier(state, system, galaxyId, active) {
 
 // --- Build validation ---
 
-export function canBuildFoundry(state, systemId, bodyId) {
+export function canBuildFoundry(state, systemId, bodyId, opts = {}) {
   if (!isTechUnlocked(state, 'mega_foundry_unlock')) {
     return { ok: false, reason: 'Research Sail Foundry first' };
   }
@@ -113,18 +112,31 @@ export function canBuildFoundry(state, systemId, bodyId) {
   if (system.structures.some((s) => s.type === 'sail_foundry' && s.construction)) {
     return { ok: false, reason: 'Sail foundry construction already in progress' };
   }
-  const builderCheck = canUseBuilderTech(state, 'sail_foundry');
-  if (!builderCheck.ok) return builderCheck;
-  if (!flagshipInSystem(state, systemId)) {
+  if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (state.credits < FOUNDRY_COST) return { ok: false, reason: `Need ${FOUNDRY_COST} credits` };
+  if (!opts.ignoreCredits && state.credits < FOUNDRY_COST) return { ok: false, reason: `Need ${FOUNDRY_COST} credits` };
   return { ok: true };
 }
 
-export function buildFoundry(state, systemId, bodyId) {
-  const check = canBuildFoundry(state, systemId, bodyId);
+export function buildFoundry(state, systemId, bodyId, opts = {}) {
+  const check = canBuildFoundry(state, systemId, bodyId, opts);
   if (!check.ok) return check;
+
+  if (opts.remote) {
+    if (!opts.alreadyPaid) state.credits -= FOUNDRY_COST;
+    const system = systemById(state, systemId);
+    const structure = {
+      id: allocateStructureId(),
+      type: 'sail_foundry',
+      bodyId,
+      builtAtTime: state.time,
+      level: 1,
+      operational: true,
+    };
+    system.structures.push(structure);
+    return { ok: true, structureId: structure.id, systemId, bodyId, type: structure.type };
+  }
 
   return queueConstructionJob(state, {
     systemId,
@@ -135,7 +147,7 @@ export function buildFoundry(state, systemId, bodyId) {
   });
 }
 
-export function canBuildLauncher(state, systemId, bodyId) {
+export function canBuildLauncher(state, systemId, bodyId, opts = {}) {
   if (!isTechUnlocked(state, 'mega_launcher_unlock')) {
     return { ok: false, reason: 'Research Dyson Launcher first' };
   }
@@ -160,23 +172,39 @@ export function canBuildLauncher(state, systemId, bodyId) {
   if (launcherCountOnBody(state, systemId, bodyId) + pendingLaunchers >= LAUNCHERS_PER_BODY_MAX) {
     return { ok: false, reason: `Maximum ${LAUNCHERS_PER_BODY_MAX} launchers per body` };
   }
-  const builderCheck = canUseBuilderTech(state, 'dyson_launcher');
-  if (!builderCheck.ok) return builderCheck;
-  if (!flagshipInSystem(state, systemId)) {
+  if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (state.credits < LAUNCHER_COST) return { ok: false, reason: `Need ${LAUNCHER_COST} credits` };
+  if (!opts.ignoreCredits && state.credits < LAUNCHER_COST) return { ok: false, reason: `Need ${LAUNCHER_COST} credits` };
   return { ok: true };
 }
 
-export function buildLauncher(state, systemId, bodyId) {
-  const check = canBuildLauncher(state, systemId, bodyId);
+export function buildLauncher(state, systemId, bodyId, opts = {}) {
+  const check = canBuildLauncher(state, systemId, bodyId, opts);
   if (!check.ok) return check;
 
   const launcherIndex = launcherCountOnBody(state, systemId, bodyId)
     + (systemById(state, systemId)?.structures.filter(
       (s) => s.type === 'dyson_launcher' && s.bodyId === bodyId && s.construction,
     ).length ?? 0);
+
+  if (opts.remote) {
+    if (!opts.alreadyPaid) state.credits -= LAUNCHER_COST;
+    const system = systemById(state, systemId);
+    const structure = {
+      id: allocateStructureId(),
+      type: 'dyson_launcher',
+      bodyId,
+      builtAtTime: state.time,
+      level: 1,
+      operational: true,
+    };
+    system.structures.push(structure);
+    const dyson = ensureDyson(system);
+    dyson.launcherStock[structure.id] = 0;
+    dyson.launcherLastFireAt[structure.id] = state.time;
+    return { ok: true, structureId: structure.id, systemId, bodyId, type: structure.type };
+  }
 
   return queueConstructionJob(state, {
     systemId,

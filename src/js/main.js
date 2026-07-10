@@ -217,8 +217,10 @@ import {
 } from './body-structures.js';
 import {
   builderDroneSummary,
+  canDeployBuilderDrone,
   canSendBuilderDrone,
   cancelBuilderDrone,
+  deployBuilderDrone,
   initBuilderDrones,
   resetBuilderDroneIds,
   sendBuilderDrone,
@@ -526,7 +528,18 @@ function doSendBuilderDrone(systemId, bodyId, buildType) {
   const res = sendBuilderDrone(state, systemId ?? viewedSystemId, bodyId ?? selection, buildType);
   if (res.ok) {
     const name = systemById(state, res.systemId)?.name ?? res.systemId;
-    toast(`Builder drone dispatched to ${name}`, 'ok');
+    toast(`Builder drone started ${buildType.replaceAll('_', ' ')} at ${name}`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+  return res;
+}
+
+function doDeployBuilderDrone(systemId) {
+  const res = deployBuilderDrone(state, systemId);
+  if (res.ok) {
+    const name = systemById(state, res.systemId)?.name ?? res.systemId;
+    toast(`Builder drone deployed to ${name}`, 'ok');
   } else {
     toast(res.reason, 'error');
   }
@@ -785,7 +798,9 @@ const { updateUi, closeSidePanel } = initUi({
   battleSummaryForSystem,
   canQueueHull,
   builderDroneSummary,
+  canDeployBuilderDrone: (systemId) => canDeployBuilderDrone(state, systemId),
   canSendBuilderDrone: (systemId, bodyId, buildType) => canSendBuilderDrone(state, systemId, bodyId, buildType),
+  deployBuilderDrone: doDeployBuilderDrone,
   sendBuilderDrone: doSendBuilderDrone,
   cancelBuilderDrone: doCancelBuilderDrone,
   getGalaxyTargetStar: () => galaxyTargetStarId,
@@ -1721,9 +1736,12 @@ window.__buildBodyStructure = (type, bodyId) =>
   buildBodyStructure(state, viewedSystemId, bodyId ?? selection, type);
 window.__sendBuilderDrone = (systemId, bodyId, buildType) =>
   doSendBuilderDrone(systemId ?? viewedSystemId, bodyId ?? selection, buildType);
+window.__deployBuilderDrone = (systemId) => doDeployBuilderDrone(systemId ?? galaxyTargetStarId ?? viewedSystemId);
 window.__listBuilderDrones = () => builderDroneSummary(state);
 window.__canSendBuilderDrone = (systemId, bodyId, buildType) =>
   canSendBuilderDrone(state, systemId ?? viewedSystemId, bodyId ?? selection, buildType);
+window.__canDeployBuilderDrone = (systemId) =>
+  canDeployBuilderDrone(state, systemId ?? galaxyTargetStarId ?? viewedSystemId);
 window.__cancelBuilderDrone = (droneId) => doCancelBuilderDrone(droneId);
 window.__galaxyPerfSummary = () => galaxyPerfSummary();
 window.__setBattleGroupHeroAnchor = (groupId, heroId) =>

@@ -97,6 +97,7 @@ function createDefaultTechEffects() {
     unlockFleetCarrierQueue: false,
     unlockSuperCarrierQueue: false,
     unlockSensorShip: false,
+    unlockConstructionDrones: false,
     unlockBuilderShip: false,
     unlockCommandCruiser: false,
     unlockHeroFlagship: false,
@@ -245,6 +246,7 @@ function applyLegacyEffect(effects, effect) {
     case 'unlock_fleet_carrier_queue': effects.unlockFleetCarrierQueue = true; break;
     case 'unlock_super_carrier_queue': effects.unlockSuperCarrierQueue = true; break;
     case 'unlock_sensor_ship': effects.unlockSensorShip = true; break;
+    case 'unlock_construction_drones': effects.unlockConstructionDrones = true; break;
     case 'unlock_builder_ship': effects.unlockBuilderShip = true; break;
     case 'unlock_command_cruiser': effects.unlockCommandCruiser = true; break;
     case 'unlock_hero_flagship': effects.unlockHeroFlagship = true; break;

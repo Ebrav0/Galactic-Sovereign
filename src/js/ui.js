@@ -83,6 +83,7 @@ import {
   STRUCTURE_DEFS,
 } from './strategic-structures.js';
 import {
+  BODY_STRUCTURE_DEFS,
   bodyStructureBuildRows,
   starNodeStructureBuildRows,
   buildBodyStructure,
@@ -1290,13 +1291,18 @@ function renderStrategicBuildButtons(container, state, systemId, planetId, drone
   if (!container) return;
   clearChildren(container);
   const owned = isPlayerOwned(state, systemId);
-  const outpostDroneCheck = !hasOutpost(state, systemId, planetId)
-    ? droneCtx?.canSendBuilderDrone?.(systemId, planetId, 'outpost')
-    : null;
-  const shipyardDroneCheck = hasOutpost(state, systemId, planetId) && !hasShipyard(state, systemId, planetId)
-    ? droneCtx?.canSendBuilderDrone?.(systemId, planetId, 'shipyard')
-    : null;
-  const hasDroneAction = !!(outpostDroneCheck?.ok || shipyardDroneCheck?.ok);
+  const droneRows = [
+    !hasOutpost(state, systemId, planetId) && ['outpost', 'Outpost'],
+    hasOutpost(state, systemId, planetId) && !hasShipyard(state, systemId, planetId) && ['shipyard', 'Shipyard'],
+    !hasFoundry(state, systemId) && ['sail_foundry', 'Sail Foundry'],
+    hasFoundry(state, systemId) && launcherCountOnBody(state, systemId, planetId) < LAUNCHERS_PER_BODY_MAX
+      && ['dyson_launcher', 'Dyson Launcher'],
+  ].filter(Boolean).map(([type, label]) => ({
+    type,
+    label,
+    check: droneCtx?.canSendBuilderDrone?.(systemId, planetId, type),
+  }));
+  const hasDroneAction = droneRows.some((row) => row.check?.ok);
   if (!owned && !hasDroneAction) {
     container.classList.add('hidden');
     return;
@@ -1308,16 +1314,12 @@ function renderStrategicBuildButtons(container, state, systemId, planetId, drone
     heading.className = 'intel-section-title';
     heading.textContent = 'Builder Drones';
     container.appendChild(heading);
-    const droneRows = [
-      ['outpost', 'Outpost', outpostDroneCheck],
-      ['shipyard', 'Shipyard', shipyardDroneCheck],
-    ];
-    for (const [type, label, check] of droneRows) {
+    for (const { type, label, check } of droneRows) {
       if (!check?.ok) continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn--ghost btn--block btn--sm';
-      btn.textContent = `Send Drone: ${label} (${check.totalCost} cr)`;
+      btn.textContent = `Assign Drone: ${label} (${check.totalCost} cr)`;
       btn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, type);
       container.appendChild(btn);
     }
@@ -1356,7 +1358,7 @@ function renderStrategicBuildButtons(container, state, systemId, planetId, drone
         const droneBtn = document.createElement('button');
         droneBtn.type = 'button';
         droneBtn.className = 'btn btn--ghost btn--block btn--sm';
-        droneBtn.textContent = `Send Drone: ${row.label} (${droneCheck.totalCost} cr)`;
+        droneBtn.textContent = `Assign Drone: ${row.label} (${droneCheck.totalCost} cr)`;
         droneBtn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, row.type);
         container.appendChild(droneBtn);
       }
@@ -2133,7 +2135,9 @@ export function initUi(ctx) {
     battleSummaryForSystem,
     canQueueHull,
     builderDroneSummary,
+    canDeployBuilderDrone,
     canSendBuilderDrone,
+    deployBuilderDrone,
     sendBuilderDrone,
     cancelBuilderDrone,
     doBuildFoundry,
@@ -2213,12 +2217,22 @@ export function initUi(ctx) {
 
   function constructionUiSnapshot(state, systemId, bodyId = null) {
     const system = systemById(state, systemId);
+    const affordabilityThresholds = [
+      OUTPOST_COST,
+      SHIPYARD_COST,
+      FOUNDRY_COST,
+      LAUNCHER_COST,
+      TRADE_STATION_COST,
+      RESEARCH_STATION_COST,
+      ...Object.values(BODY_STRUCTURE_DEFS).map((def) => def.cost),
+      ...Object.values(STRUCTURE_DEFS).map((def) => def.cost),
+    ];
     return JSON.stringify({
       systemId,
       bodyId,
       owner: system?.owner,
       factionId: system?.factionId ?? null,
-      credits: Math.floor((state.credits ?? 0) / 10),
+      affordable: [...new Set(affordabilityThresholds)].map((cost) => (state.credits ?? 0) >= cost),
       unlockedCount: state.research?.unlocked?.length ?? 0,
       flagship: [state.flagship?.galaxyId, state.flagship?.systemId, !!state.flagship?.transit, !!state.flagship?.wormholeTransit],
       structures: (system?.structures ?? []).map((structure) => [
@@ -2919,6 +2933,7 @@ export function initUi(ctx) {
 
     const swGalaxyPanel = el('superweapon-galaxy-panel');
     const tradeRoutesPanel = el('trade-routes-panel');
+    const builderDroneGalaxyPanel = el('builder-drone-galaxy-panel');
     const ms = milestonesSummary(state);
     if (view === 'galaxy' && ms.superweaponUnlocked) {
       swGalaxyPanel?.classList.remove('hidden');
@@ -2939,6 +2954,25 @@ export function initUi(ctx) {
         + (tr.routes?.map((r) => `<div class="intel-row">${r.from} ↔ ${r.to}</div>`).join('') ?? '');
     } else {
       tradeRoutesPanel?.classList.add('hidden');
+    }
+
+    const droneTargetId = getGalaxyTargetStar?.() ?? null;
+    const droneTarget = droneTargetId ? systemById(state, droneTargetId) : null;
+    if (view === 'galaxy' && droneTarget) {
+      builderDroneGalaxyPanel?.classList.remove('hidden');
+      const check = canDeployBuilderDrone?.(droneTargetId) ?? { ok: false, reason: 'Construction drones unavailable' };
+      const summary = builderDroneSummary?.(state);
+      el('builder-drone-galaxy-body').innerHTML =
+        `<p class="panel-note">Target: <strong>${droneTarget.name ?? droneTargetId}</strong></p>`
+        + `<p class="panel-note">${isPlayerOwned(state, droneTargetId) ? 'Claimed system' : 'Unclaimed — drones cannot deploy here.'}</p>`
+        + `<p class="panel-note panel-note--muted">Idle drones: ${summary?.idle ?? 0}/${summary?.capacity ?? 0}. Deploy one, then open the system and choose its construction job.</p>`;
+      const deployBtn = el('builder-drone-deploy-btn');
+      deployBtn.disabled = !check.ok;
+      deployBtn.textContent = `Deploy Builder Drone (${check.totalCost ?? 40} cr)`;
+      deployBtn.title = check.ok ? 'Deploy an idle builder drone to this claimed system' : check.reason;
+      deployBtn.onclick = () => deployBuilderDrone?.(droneTargetId);
+    } else {
+      builderDroneGalaxyPanel?.classList.add('hidden');
     }
 
     const dysonPanel = el('dyson-panel');
