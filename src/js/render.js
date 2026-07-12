@@ -63,8 +63,14 @@ import {
   STAR_NODE_BUILDING_VISUAL_TYPES,
 } from './structure-render.js';
 import { sailShuttlePositions, foundryAnchor } from './sail-shuttles.js';
-import { dronePoses } from './drone-motion.js';
-import { drawConstructionDrone, drawDroneTrail } from './drone-render.js';
+import { constructionSiteAnchor, dronePoses } from './drone-motion.js';
+import { jobProgress } from './drones.js';
+import {
+  drawConstructionAssembly,
+  drawConstructionDrone,
+  drawDroneTrail,
+  drawDroneWorkBeam,
+} from './drone-render.js';
 import { drawSailFoundryRingStation, drawSailFoundryLabel, sailFoundryLabelAnchor } from './foundry-render.js';
 import {
   drawResearchStation,
@@ -773,9 +779,21 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     if (fa.planetId && fa.foundryId) {
       const ps = worldToScreen(camera, fa.planetX, fa.planetY, canvas);
       const ringScreenR = fa.ringR * z;
+      const foundryStructure = system.structures.find((structure) => structure.id === fa.foundryId);
+      const foundryJob = foundryStructure?.construction
+        ? (state.constructionJobs ?? []).find((job) => job.id === foundryStructure.construction.jobId)
+        : null;
+      const foundryBuildProgress = foundryJob ? jobProgress(foundryJob) : 1;
+      ctx.save();
+      ctx.globalAlpha = foundryStructure?.construction
+        ? 0.12 + 0.88 * foundryBuildProgress
+        : 1;
       drawSailFoundryRingStation(ctx, ps.x, ps.y, ringScreenR, z, t, fa.foundryId);
-      const label = sailFoundryLabelAnchor(ps.x, ps.y, ringScreenR, fa.dockAngle);
-      drawSailFoundryLabel(ctx, label, z);
+      ctx.restore();
+      if (!foundryStructure?.construction || foundryBuildProgress >= 0.6) {
+        const label = sailFoundryLabelAnchor(ps.x, ps.y, ringScreenR, fa.dockAngle);
+        drawSailFoundryLabel(ctx, label, z);
+      }
     }
 
     for (const line of foundryLauncherSupplyLines(state, systemId, t)) {
@@ -810,8 +828,36 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     ctx.shadowBlur = 0;
   }
 
-  for (const dp of dronePoses(state, systemId, t)) {
+  const f = state.flagship;
+  const flagshipDisplayPose = f.systemId === systemId && !f.transit
+    ? getFlagshipDisplayPose(state, accumulatorMs)
+    : null;
+
+  const activeConstructionJobs = (state.constructionJobs ?? []).filter(
+    (job) => job.galaxyId === state.activeGalaxyId
+      && job.systemId === systemId
+      && job.status !== 'complete'
+      && job.status !== 'failed',
+  );
+  activeConstructionJobs.forEach((job, index) => {
+    const anchor = constructionSiteAnchor(state, job, t);
+    const site = worldToScreen(camera, anchor.x, anchor.y, canvas);
+    if (!screenInView(site, canvas, 75)) return;
+    drawConstructionAssembly(ctx, site.x, site.y, z, {
+      type: job.structureType,
+      progress: jobProgress(job),
+      time: t,
+      seed: index * 0.83 + job.id.length * 0.17,
+    });
+  });
+
+  for (const dp of dronePoses(state, systemId, t, flagshipDisplayPose)) {
     const ds = worldToScreen(camera, dp.x, dp.y, canvas);
+    if (!screenInView(ds, canvas, 45)) continue;
+    if (dp.working && Number.isFinite(dp.workTargetX) && Number.isFinite(dp.workTargetY)) {
+      const target = worldToScreen(camera, dp.workTargetX, dp.workTargetY, canvas);
+      drawDroneWorkBeam(ctx, ds.x, ds.y, target.x, target.y, z, t, dp.drone.slotIndex);
+    }
     drawDroneTrail(ctx, ds.x, ds.y, dp.heading, z, dp.phase);
     drawConstructionDrone(ctx, ds.x, ds.y, dp.heading, z, {
       phase: dp.phase,
@@ -829,7 +875,6 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   drawBuilderDroneConstruction(ctx, state, system, canvas, z, t);
 
-  const f = state.flagship;
   if (f.systemId === systemId && !f.transit) {
     const orbitVisual = getFlagshipOrbitVisual(state, t);
     if (orbitVisual) {
@@ -837,7 +882,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       drawOrbitRing(ctx, os.x, os.y, orbitVisual.radius * z, 0.32);
     }
 
-    const pose = getFlagshipDisplayPose(state, accumulatorMs);
+    const pose = flagshipDisplayPose;
     const fs = worldToScreen(camera, pose.x, pose.y, canvas);
     const inp = getFlagshipInput();
     const orbiting = isFlagshipOrbiting(state);
@@ -1258,12 +1303,6 @@ export function drawGalaxy(
     }
   }
 
-  const manualRoutes = new Set();
-  for (const route of state.manualTradeRoutes ?? []) {
-    const a = route.fromSystemId;
-    const b = route.toSystemId;
-    manualRoutes.add(a < b ? `${a}|${b}` : `${b}|${a}`);
-  }
   const overlayState = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
   const blockadePrefix = `${state.activeGalaxyId}:`;
   const blockadeRoutes = new Set((state.logistics?.blockades?.lanes ?? [])
@@ -1327,13 +1366,12 @@ export function drawGalaxy(
     const key = laneKey(aId, bId);
     const onFlagshipRoute = routeLanes?.has(key);
     const onScoutRoute = scoutRoutes.has(key);
-    const onManualRoute = manualRoutes.has(key);
     const onFleetRoute = fleetRoutes.all.has(key);
     const onFleetSelectedRoute = fleetRoutes.selected.has(key);
     const onPirateRoute = pirateRoutes.has(key);
     const onLogisticsRoute = logisticsRoutes.has(key);
     const onBlockade = overlayState.blockade && blockadeRoutes.has(key);
-    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onManualRoute && !onFleetRoute && !onPirateRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
+    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onFleetRoute && !onPirateRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
       continue;
     }
     visibleLanes++;
@@ -1350,10 +1388,6 @@ export function drawGalaxy(
       ctx.setLineDash([9 * z, 4 * z, 2 * z, 4 * z]);
       ctx.strokeStyle = hexToRgba('#76ddff', 0.86);
       ctx.lineWidth = Math.max(1.5, 2.5 * z);
-    } else if (onManualRoute) {
-      ctx.setLineDash([8 * z, 6 * z]);
-      ctx.strokeStyle = hexToRgba(THEME.accentGold, 0.85);
-      ctx.lineWidth = Math.max(1.5, 2.4 * z);
     } else if (onScoutRoute) {
       ctx.setLineDash([6 * z, 4 * z]);
       ctx.strokeStyle = THEME.laneScout;

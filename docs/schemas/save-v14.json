@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 14",
+  "description": "Persistent construction-drone plans and removal of manual trade routes.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 14 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": [
+        "meta", "time", "credits", "paused", "stronghold", "activeGalaxyId", "homeGalaxyId",
+        "galaxies", "flagship", "research", "builderDrones", "builderConstructionOrders"
+      ],
+      "properties": {
+        "builderDrones": { "type": "array" },
+        "builderConstructionOrders": { "type": "array" }
+      },
+      "not": { "required": ["manualTradeRoutes"] }
+    }
+  }
+}

@@ -36,6 +36,7 @@ export function attachInput(canvas, ctx) {
     onFlagshipInput,
     onStarTravel,
     onScoutTravel,
+    onBuilderDroneTravel,
     onBattleGroupTravel,
     onBattleGroupSelect,
     onStarView,
@@ -44,7 +45,7 @@ export function attachInput(canvas, ctx) {
     onToggleOrbit,
     onCloseSidePanel,
     onGalaxyStarClick,
-    onTradeRouteClick,
+    onBuilderDroneDeployClick,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -183,8 +184,8 @@ export function attachInput(canvas, ctx) {
     const starId = hitTestStar(getState(), w.x, w.y);
     if (!starId) return;
 
-    if (e.ctrlKey && onTradeRouteClick) {
-      onTradeRouteClick(starId);
+    if ((e.ctrlKey || e.metaKey) && onBuilderDroneDeployClick) {
+      onBuilderDroneDeployClick(starId);
       return;
     }
 
@@ -194,7 +195,11 @@ export function attachInput(canvas, ctx) {
     }
 
     if (e.shiftKey || shiftHeld) {
-      onScoutTravel(starId);
+      if (ctx.getSelectedBuilderDroneId?.()) {
+        onBuilderDroneTravel?.(starId);
+      } else {
+        onScoutTravel(starId);
+      }
       return;
     }
 

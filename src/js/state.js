@@ -466,6 +466,7 @@ export function createNewGame(seed) {
     aiShips: [],
     constructionJobs: [],
     drones: [],
+    builderConstructionOrders: [],
     milestones: {
       completedDysonSystems: [],
       diplomacyUnlocked: false,
@@ -494,7 +495,6 @@ export function createNewGame(seed) {
       createCount: 0,
     },
     heroFlagships: [],
-    manualTradeRoutes: [],
     mapOverlays: { threat: true, sensor: false, blockade: true },
     logistics: createDefaultLogisticsState(),
     tacticalOrders: {},

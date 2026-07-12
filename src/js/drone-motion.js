@@ -26,6 +26,26 @@ import { computeFoundryRingRadius, foundryRingMotion } from './sail-shuttles.js'
 const RESEARCH_ORBIT_PAD = 28;
 const RESEARCH_ORBIT_SPREAD = 0.42;
 const TRADE_ORBIT_PAD = 24;
+const DRONE_WORK_ORBIT_MIN = 10;
+const DRONE_WORK_ORBIT_STEP = 3.5;
+
+const motionParamsCache = new WeakMap();
+
+function motionParams(drone) {
+  let params = motionParamsCache.get(drone);
+  if (params) return params;
+  const seed = (hashSeed(0xd20e0000, drone.id) % 10000) / 10000;
+  params = {
+    seed,
+    omega: 0.55 + seed * 0.35,
+    patrolScale: 0.75 + seed * 0.4,
+    phase: seed * Math.PI * 2 + drone.slotIndex * 1.4,
+    cycleOffset: (hashSeed(0xabc123, drone.id) % 1000) / 1000,
+    workDirection: drone.slotIndex % 2 === 0 ? 1 : -1,
+  };
+  motionParamsCache.set(drone, params);
+  return params;
+}
 
 function easeInOut(t) {
   return t * t * (3 - 2 * t);
@@ -56,7 +76,8 @@ function fixedSlotAngle(structureId, salt = 0) {
   return ((hashSeed(0x5f3759df + salt, structureId) % 10000) / 10000) * Math.PI * 2;
 }
 
-function flagshipHome(state) {
+function flagshipHome(state, override = null) {
+  if (override) return override;
   const f = state.flagship;
   return { x: f.x, y: f.y };
 }
@@ -150,13 +171,13 @@ export function constructionSiteAnchor(state, job, time = state.time) {
   };
 }
 
-function idlePatrolPose(state, drone, time) {
-  const home = flagshipHome(state);
-  const seed = (hashSeed(0xd20e0000, drone.id) % 10000) / 10000;
+function idlePatrolPose(state, drone, time, homeOverride = null) {
+  const home = flagshipHome(state, homeOverride);
+  const params = motionParams(drone);
   const t = time / 1000;
-  const omega = 0.55 + seed * 0.35;
-  const radius = DRONE_PATROL_RADIUS * (0.75 + seed * 0.4);
-  const phase = seed * Math.PI * 2 + drone.slotIndex * 1.4;
+  const omega = params.omega;
+  const radius = DRONE_PATROL_RADIUS * params.patrolScale;
+  const phase = params.phase;
   const angle = t * omega + phase;
   const wobble = Math.sin(t * omega * 2.1 + phase) * radius * 0.35;
   const cx = Math.cos(angle) * radius + Math.cos(angle + Math.PI / 2) * wobble;
@@ -170,23 +191,41 @@ function idlePatrolPose(state, drone, time) {
   return { x, y, heading, phase: 'idle', working: false };
 }
 
+function workingPose(site, drone, time) {
+  const params = motionParams(drone);
+  const radius = DRONE_WORK_ORBIT_MIN + (drone.slotIndex % 3) * DRONE_WORK_ORBIT_STEP;
+  const angle = params.phase + params.workDirection * time / (920 + params.seed * 260);
+  const x = site.x + Math.cos(angle) * radius;
+  const y = site.y + Math.sin(angle) * radius;
+  return {
+    x,
+    y,
+    heading: Math.atan2(site.y - y, site.x - x),
+    phase: 'working',
+    working: true,
+    workTargetX: site.x,
+    workTargetY: site.y,
+  };
+}
+
 /**
  * Deterministic drone pose for render + observability.
  * @returns {{ x, y, heading, phase, working }}
  */
-export function dronePose(state, drone, job, time = state.time) {
+export function dronePose(state, drone, job, time = state.time, homeOverride = null) {
   if (!job || job.status === 'paused' || job.status === 'complete') {
-    return idlePatrolPose(state, drone, time);
+    return idlePatrolPose(state, drone, time, homeOverride);
   }
 
-  const home = flagshipHome(state);
+  const home = flagshipHome(state, homeOverride);
   const site = constructionSiteAnchor(state, job, time);
   const tripMs = tripDurationMs(home, site);
   const cycleMs = tripMs * 2 + DRONE_WORK_DWELL_MS;
-  const offset = (hashSeed(0xabc123, drone.id) % 1000) / 1000 * cycleMs;
+  const params = motionParams(drone);
+  const offset = params.cycleOffset * cycleMs;
   const cycleT = (time + offset) % cycleMs;
 
-  const bulgeSign = drone.slotIndex % 2 === 0 ? 1 : -1;
+  const bulgeSign = params.workDirection;
 
   if (cycleT < tripMs) {
     const t = cycleT / tripMs;
@@ -194,14 +233,14 @@ export function dronePose(state, drone, job, time = state.time) {
     return { ...pose, phase: 'outbound', working: false };
   }
   if (cycleT < tripMs + DRONE_WORK_DWELL_MS) {
-    return { x: site.x, y: site.y, heading: 0, phase: 'working', working: true };
+    return workingPose(site, drone, time);
   }
   const t = (cycleT - tripMs - DRONE_WORK_DWELL_MS) / tripMs;
   const pose = flightPose(site, home, t, -bulgeSign);
   return { ...pose, phase: 'returning', working: false };
 }
 
-export function dronePoses(state, systemId, time = state.time) {
+export function dronePoses(state, systemId, time = state.time, homeOverride = null) {
   const drones = (state.drones ?? []).filter(
     (d) => d.galaxyId === state.activeGalaxyId && d.systemId === systemId,
   );
@@ -212,7 +251,7 @@ export function dronePoses(state, systemId, time = state.time) {
   );
   return drones.map((drone) => {
     const job = drone.jobId ? jobsById.get(drone.jobId) ?? null : null;
-    const pose = dronePose(state, drone, job, time);
+    const pose = dronePose(state, drone, job, time, homeOverride);
     return { drone, jobId: drone.jobId, ...pose };
   });
 }

@@ -76,7 +76,6 @@ import {
   heroFlagshipsSummary,
   setHeroRally,
 } from './hero-flagships.js';
-import { clearTradeRoutes, tradeRoutesSummary } from './trade-routes.js';
 import {
   canBuildStrategicStructure,
   buildStrategicStructure,
@@ -150,7 +149,7 @@ const el = (id) => document.getElementById(id);
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Tab+click: fleet · Shift+click: scout · Ctrl+click: trade route · double-click: view · M: system',
+  galaxy: 'Click star: travel · Fleet tab: select builder, then Shift+click · Ctrl/Cmd+click: quick drone deploy · Tab+click: fleet · Shift+click: scout · double-click: view · M: system',
 };
 
 const PLANET_DOT = {
@@ -849,7 +848,7 @@ function scoutRosterStructureSnapshot(state, selectedScoutId) {
   );
 }
 
-function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScoutId) {
+function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScoutId, selectedBuilderDroneId) {
   const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
   return JSON.stringify({
     groups: battleGroupsForGalaxy(state).map((g) => ({
@@ -876,16 +875,20 @@ function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScout
     drones: (state.builderDrones ?? []).map((d) => ({
       id: d.id,
       status: d.status,
+      selected: d.id === selectedBuilderDroneId,
+      systemId: d.systemId,
       target: d.targetSystemId,
       buildType: d.buildType,
       buildStartedAt: d.buildStartedAt,
+      awaitingOrders: !!d.awaitingOrders,
     })),
+    builderOrders: (state.builderConstructionOrders ?? []).map((order) => [order.id, order.status, order.assignedDroneId]),
     yards: listPlayerShipyards(state).length,
     queuePending: empireQueueSummary(state).filter((q) => q.status === 'pending').length,
   });
 }
 
-function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId) {
+function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId, selectedBuilderDroneId) {
   const container = el('fleet-panel-body');
   if (!container) return;
 
@@ -952,6 +955,14 @@ function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId) {
       const loc = systemById(state, scout.systemId)?.name ?? scout.systemId;
       sub.textContent = `@ ${loc}`;
     }
+  }
+
+  for (const row of container.querySelectorAll('[data-builder-drone-select]')) {
+    const drone = (state.builderDrones ?? []).find((entry) => entry.id === row.dataset.builderDroneSelect);
+    if (!drone) continue;
+    row.classList.toggle('list-row--selected', drone.id === selectedBuilderDroneId);
+    const icon = row.querySelector('.list-row__icon');
+    if (icon) icon.style.background = drone.status === 'idle' ? 'var(--accent-green)' : 'var(--accent-gold)';
   }
 }
 
@@ -1300,45 +1311,15 @@ function renderStarNodeBuildButtons(container, state, systemId, { includeHeading
   renderStructureUpgradeButtons(container, state, systemId);
 }
 
-function renderStrategicBuildButtons(container, state, systemId, planetId, droneCtx = null) {
+function renderStrategicBuildButtons(container, state, systemId, planetId) {
   if (!container) return;
   clearChildren(container);
   const owned = isPlayerOwned(state, systemId);
-  const droneRows = [
-    !hasOutpost(state, systemId, planetId) && ['outpost', 'Outpost'],
-    hasOutpost(state, systemId, planetId) && !hasShipyard(state, systemId, planetId) && ['shipyard', 'Shipyard'],
-    !hasFoundry(state, systemId) && ['sail_foundry', 'Sail Foundry'],
-    hasFoundry(state, systemId) && launcherCountOnBody(state, systemId, planetId) < LAUNCHERS_PER_BODY_MAX
-      && ['dyson_launcher', 'Dyson Launcher'],
-  ].filter(Boolean).map(([type, label]) => ({
-    type,
-    label,
-    check: droneCtx?.canSendBuilderDrone?.(systemId, planetId, type),
-  }));
-  const hasDroneAction = droneRows.some((row) => row.check?.ok);
-  if (!owned && !hasDroneAction) {
+  if (!owned) {
     container.classList.add('hidden');
     return;
   }
   container.classList.remove('hidden');
-
-  if (hasDroneAction) {
-    const heading = document.createElement('div');
-    heading.className = 'intel-section-title';
-    heading.textContent = 'Builder Drones';
-    container.appendChild(heading);
-    for (const { type, label, check } of droneRows) {
-      if (!check?.ok) continue;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn btn--ghost btn--block btn--sm';
-      btn.textContent = `Assign Drone: ${label} (${check.totalCost} cr)`;
-      btn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, type);
-      container.appendChild(btn);
-    }
-  }
-
-  if (!owned) return;
 
   const bodyRows = bodyStructureBuildRows(state, systemId, planetId);
   const groups = [
@@ -1366,15 +1347,6 @@ function renderStrategicBuildButtons(container, state, systemId, planetId, drone
       };
       container.appendChild(btn);
 
-      const droneCheck = droneCtx?.canSendBuilderDrone?.(systemId, planetId, row.type);
-      if (!row.check.ok && droneCheck?.ok) {
-        const droneBtn = document.createElement('button');
-        droneBtn.type = 'button';
-        droneBtn.className = 'btn btn--ghost btn--block btn--sm';
-        droneBtn.textContent = `Assign Drone: ${row.label} (${droneCheck.totalCost} cr)`;
-        droneBtn.onclick = () => droneCtx.sendBuilderDrone(systemId, planetId, row.type);
-        container.appendChild(droneBtn);
-      }
     }
   }
 
@@ -1415,16 +1387,20 @@ function renderFleetPanel(container, state, ctx) {
   const {
     getSelectedScoutId,
     doSelectScout,
+    getSelectedBuilderDroneId,
+    doSelectBuilderDrone,
     getSelectedBattleGroupId,
     doSelectBattleGroup,
     createBattleGroup,
     deleteBattleGroup,
     builderDroneSummary,
     cancelBuilderDrone,
+    openBuilderDronePlanner,
   } = ctx;
   clearChildren(container);
   const galaxy = getGraph(state);
   const selectedScoutId = getSelectedScoutId();
+  const selectedBuilderDroneId = getSelectedBuilderDroneId?.() ?? null;
   const selectedBattleGroupId = getSelectedBattleGroupId?.() ?? null;
 
   const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
@@ -1458,7 +1434,9 @@ function renderFleetPanel(container, state, ctx) {
     droneList.className = 'list';
     for (const drone of drones.drones) {
       const row = document.createElement('div');
-      row.className = 'list-row';
+      row.className = `list-row${drone.id === selectedBuilderDroneId ? ' list-row--selected' : ''}`;
+      row.dataset.builderDroneSelect = drone.id;
+      row.title = 'Select this builder drone, then Shift+click a star to dispatch it';
       const icon = document.createElement('span');
       icon.className = 'list-row__icon';
       icon.style.background = drone.status === 'idle' ? 'var(--accent-green)' : 'var(--accent-gold)';
@@ -1486,6 +1464,13 @@ function renderFleetPanel(container, state, ctx) {
         btn.className = 'btn btn--ghost btn--xs';
         btn.textContent = 'Cancel';
         btn.onclick = () => cancelBuilderDrone?.(drone.id);
+        row.appendChild(btn);
+      } else if (drone.status === 'idle' && drone.systemId) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn--ghost btn--xs';
+        btn.textContent = 'Plan Builds';
+        btn.onclick = () => openBuilderDronePlanner?.(drone.systemId);
         row.appendChild(btn);
       }
       droneList.appendChild(row);
@@ -1673,7 +1658,7 @@ function renderFleetPanel(container, state, ctx) {
   const fleetHint = document.createElement('p');
   fleetHint.className = 'panel-note panel-note--muted';
   fleetHint.style.marginTop = '8px';
-  fleetHint.textContent = 'Click a map fleet to select it. Tab+click a star to dispatch the selected fleet. Shift+click still sends scouts.';
+  fleetHint.textContent = 'Click a builder drone to select it, then Shift+click a star to dispatch it. Tab+click dispatches fleets; Shift+click sends scouts when no drone is selected.';
   container.appendChild(fleetHint);
 
   const unassignedTitle = document.createElement('div');
@@ -2124,6 +2109,8 @@ export function initUi(ctx) {
     getViewedSystemId,
     getSelectedScoutId,
     doSelectScout,
+    getSelectedBuilderDroneId,
+    doSelectBuilderDrone,
     getSelectedBattleGroupId,
     doSelectBattleGroup,
     createBattleGroup,
@@ -2148,10 +2135,12 @@ export function initUi(ctx) {
     battleSummaryForSystem,
     canQueueHull,
     builderDroneSummary,
+    cancelBuilderConstructionOrder,
     canDeployBuilderDrone,
-    canSendBuilderDrone,
     deployBuilderDrone,
-    sendBuilderDrone,
+    getDroneConstructionCatalog,
+    confirmBuilderConstructionPlan,
+    setBuilderDronesAwaitingOrders,
     cancelBuilderDrone,
     doBuildFoundry,
     doBuildLauncher,
@@ -2224,10 +2213,188 @@ export function initUi(ctx) {
     wormholeBuildPanel: '',
     builderDroneGalaxyPanel: '',
   };
+  let dronePlannerSystemId = null;
+  let dronePlannerDraft = [];
+  let dronePlannerResumeOnClose = false;
+  let nextDronePlannerDraftId = 1;
   let uiPointerActive = false;
   window.addEventListener('pointerdown', () => { uiPointerActive = true; }, true);
   window.addEventListener('pointerup', () => { uiPointerActive = false; }, true);
   window.addEventListener('pointercancel', () => { uiPointerActive = false; }, true);
+
+  function closeDronePlanner({ resume = true } = {}) {
+    if (dronePlannerSystemId) setBuilderDronesAwaitingOrders?.(dronePlannerSystemId, false);
+    el('drone-planner')?.classList.add('hidden');
+    el('drone-planner-backdrop')?.classList.add('hidden');
+    const shouldResume = dronePlannerResumeOnClose && resume;
+    dronePlannerSystemId = null;
+    dronePlannerDraft = [];
+    dronePlannerResumeOnClose = false;
+    if (shouldResume) getState().paused = false;
+  }
+
+  function addDronePlannerJob(bodyId, structureType, targetLabel = null) {
+    dronePlannerDraft.push({
+      clientId: `planner-${nextDronePlannerDraftId++}`,
+      bodyId,
+      structureType,
+      targetLabel,
+    });
+    renderDronePlanner();
+  }
+
+  function renderDronePlanner() {
+    if (!dronePlannerSystemId) return;
+    const state = getState();
+    const system = systemById(state, dronePlannerSystemId);
+    const catalog = getDroneConstructionCatalog?.(dronePlannerSystemId, dronePlannerDraft)
+      ?? { ok: false, reason: 'Construction catalog unavailable', targets: [], draftResults: [] };
+    el('drone-planner-title').textContent = `Construction Planner · ${system?.name ?? dronePlannerSystemId}`;
+    const stationed = (state.builderDrones ?? []).filter(
+      (drone) => drone.systemId === dronePlannerSystemId && drone.status === 'idle',
+    ).length;
+    el('drone-planner-summary').innerHTML =
+      `<p class="panel-note">${stationed} idle construction drone${stationed === 1 ? '' : 's'} stationed here. Jobs run in parallel by available drone count.</p>`;
+
+    const catalogEl = el('drone-planner-catalog');
+    clearChildren(catalogEl);
+    const allTypes = new Map();
+    for (const target of catalog.targets ?? []) {
+      const card = document.createElement('section');
+      card.className = 'drone-planner__target';
+      const heading = document.createElement('div');
+      heading.className = 'intel-section-title';
+      heading.textContent = `${target.label} · ${target.kind}`;
+      card.appendChild(heading);
+      for (const building of target.buildings ?? []) {
+        if (!allTypes.has(building.type)) allTypes.set(building.type, building.label);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn--ghost btn--block btn--sm';
+        button.disabled = !building.ok;
+        button.textContent = `${building.label} · ${building.cost} cr`;
+        button.title = building.ok ? `Add ${building.label} to this target` : building.reason;
+        button.onclick = () => addDronePlannerJob(target.id, building.type, target.label);
+        card.appendChild(button);
+        if (!building.ok) {
+          const reason = document.createElement('div');
+          reason.className = 'panel-note panel-note--muted';
+          reason.textContent = building.reason;
+          card.appendChild(reason);
+        }
+      }
+      catalogEl.appendChild(card);
+    }
+
+    const bulk = el('drone-planner-bulk');
+    clearChildren(bulk);
+    for (const [type, label] of allTypes) {
+      const eligible = (catalog.targets ?? []).filter(
+        (target) => target.buildings?.some((building) => building.type === type && building.ok),
+      );
+      if (eligible.length < 2) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn--ghost btn--sm';
+      button.textContent = `${label}: all eligible (${eligible.length})`;
+      button.onclick = () => {
+        for (const target of eligible) {
+          dronePlannerDraft.push({
+            clientId: `planner-${nextDronePlannerDraftId++}`,
+            bodyId: target.id,
+            structureType: type,
+            targetLabel: target.label,
+          });
+        }
+        renderDronePlanner();
+      };
+      bulk.appendChild(button);
+    }
+
+    const draftEl = el('drone-planner-draft');
+    clearChildren(draftEl);
+    const resultById = new Map((catalog.draftResults ?? []).map((result) => [result.clientId, result]));
+    let total = 0;
+    dronePlannerDraft.forEach((draft, index) => {
+      const result = resultById.get(draft.clientId);
+      total += result?.cost ?? 0;
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      const target = (catalog.targets ?? []).find((entry) => entry.id === draft.bodyId);
+      row.innerHTML = `<div class="list-row__main"><div class="list-row__title">${index + 1}. ${draft.structureType.replaceAll('_', ' ')}</div><div class="list-row__sub">${draft.targetLabel ?? target?.label ?? 'System'} · ${result?.cost ?? 0} cr${result?.ok === false ? ` · ${result.reason}` : ''}</div></div>`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn--ghost btn--xs';
+      remove.textContent = 'Remove';
+      remove.onclick = () => {
+        dronePlannerDraft.splice(index, 1);
+        renderDronePlanner();
+      };
+      row.appendChild(remove);
+      draftEl.appendChild(row);
+    });
+
+    const ordersEl = el('drone-planner-orders');
+    clearChildren(ordersEl);
+    const existing = (state.builderConstructionOrders ?? []).filter(
+      (order) => order.systemId === dronePlannerSystemId && ['queued', 'active'].includes(order.status),
+    );
+    if (existing.length) {
+      const title = document.createElement('div');
+      title.className = 'intel-section-title';
+      title.textContent = 'Confirmed Orders';
+      ordersEl.appendChild(title);
+    }
+    for (const order of existing) {
+      const row = document.createElement('div');
+      row.className = 'list-row';
+      row.innerHTML = `<div class="list-row__main"><div class="list-row__title">${order.structureType.replaceAll('_', ' ')}</div><div class="list-row__sub">${order.status} · ${Math.round((order.workDoneMs / Math.max(1, order.workRequiredMs)) * 100)}%</div></div>`;
+      if (order.status === 'queued') {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'btn btn--ghost btn--xs';
+        cancel.textContent = 'Cancel';
+        cancel.onclick = () => {
+          const result = cancelBuilderConstructionOrder?.(order.id);
+          toast(result?.ok ? `Order canceled · ${result.refunded} cr refunded` : result?.reason, result?.ok ? 'ok' : 'error');
+          renderDronePlanner();
+        };
+        row.appendChild(cancel);
+      }
+      ordersEl.appendChild(row);
+    }
+
+    const invalid = (catalog.draftResults ?? []).some((result) => !result.ok);
+    el('drone-planner-total').textContent = `Reserved on confirmation: ${total} credits · ${dronePlannerDraft.length} job${dronePlannerDraft.length === 1 ? '' : 's'}`;
+    const confirm = el('drone-planner-confirm');
+    confirm.disabled = dronePlannerDraft.length === 0 || invalid || state.credits < total;
+    confirm.title = invalid ? 'Resolve invalid jobs before confirming' : state.credits < total ? `Need ${total} credits` : '';
+  }
+
+  function openDronePlanner(systemId, { auto = false } = {}) {
+    if (!systemId || !systemById(getState(), systemId)) return;
+    dronePlannerSystemId = systemId;
+    dronePlannerDraft = [];
+    dronePlannerResumeOnClose = auto;
+    getState().paused = true;
+    el('drone-planner')?.classList.remove('hidden');
+    el('drone-planner-backdrop')?.classList.remove('hidden');
+    renderDronePlanner();
+  }
+
+  el('drone-planner-close')?.addEventListener('click', () => closeDronePlanner());
+  el('drone-planner-backdrop')?.addEventListener('click', () => closeDronePlanner());
+  el('drone-planner-confirm')?.addEventListener('click', () => {
+    if (!dronePlannerSystemId) return;
+    const result = confirmBuilderConstructionPlan?.(dronePlannerSystemId, dronePlannerDraft);
+    if (!result?.ok) {
+      toast(result?.reason ?? 'Construction plan failed', 'error');
+      renderDronePlanner();
+      return;
+    }
+    toast(`${result.orders.length} construction job${result.orders.length === 1 ? '' : 's'} confirmed`, 'ok');
+    closeDronePlanner();
+  });
 
   function constructionUiSnapshot(state, systemId, bodyId = null) {
     const system = systemById(state, systemId);
@@ -2424,6 +2591,12 @@ export function initUi(ctx) {
       if (selectTarget?.dataset.fleetSelect) {
         e.preventDefault();
         doSelectBattleGroup(selectTarget.dataset.fleetSelect);
+        return;
+      }
+      const droneTarget = e.target.closest('[data-builder-drone-select]');
+      if (droneTarget?.dataset.builderDroneSelect && !e.target.closest('button,select,input')) {
+        e.preventDefault();
+        doSelectBuilderDrone?.(droneTarget.dataset.builderDroneSelect);
       }
     });
 
@@ -2573,10 +2746,6 @@ export function initUi(ctx) {
     if (!target) { toast('Click a target star on the map', 'error'); return; }
     const res = superweaponJump(getState(), target);
     toast(res.ok ? 'Jump complete' : res.reason, res.ok ? 'ok' : 'error');
-  });
-  el('clear-trade-routes-btn')?.addEventListener('click', () => {
-    const res = clearTradeRoutes(getState());
-    toast(`Cleared ${res.cleared ?? 0} routes`, 'ok');
   });
 
   const newGameModal = el('new-game-modal');
@@ -2748,6 +2917,16 @@ export function initUi(ctx) {
     const viewedSystemId = getViewedSystemId();
     const viewedSystem = systemById(state, viewedSystemId);
     const selectedScoutId = getSelectedScoutId();
+    const selectedBuilderDroneId = getSelectedBuilderDroneId?.() ?? null;
+
+    const pendingPlannerDrone = (state.builderDrones ?? []).find(
+      (drone) => drone.awaitingOrders && drone.status === 'idle' && drone.systemId,
+    );
+    const otherModalOpen = [...document.querySelectorAll('.panel--modal:not(.hidden)')]
+      .some((node) => node.id !== 'drone-planner');
+    if (pendingPlannerDrone && el('drone-planner')?.classList.contains('hidden') && !otherModalOpen) {
+      openDronePlanner(pendingPlannerDrone.systemId, { auto: true });
+    }
 
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
     const logistics = logisticsSummary(state);
@@ -2850,19 +3029,34 @@ export function initUi(ctx) {
     const fleetPanel = el('fleet-panel');
     if (sidePanel === 'fleet') {
       fleetPanel?.classList.remove('hidden');
-      const fleetSnap = fleetPanelStructureSnapshot(state, getSelectedBattleGroupId?.() ?? null, selectedScoutId);
+      const fleetSnap = fleetPanelStructureSnapshot(
+        state,
+        getSelectedBattleGroupId?.() ?? null,
+        selectedScoutId,
+        selectedBuilderDroneId,
+      );
       if (fleetSnap !== uiSnapshots.fleetPanel) {
         uiSnapshots.fleetPanel = fleetSnap;
         renderFleetPanel(el('fleet-panel-body'), state, {
           getSelectedScoutId,
           doSelectScout,
+          getSelectedBuilderDroneId,
+          doSelectBuilderDrone,
           getSelectedBattleGroupId,
           doSelectBattleGroup,
           createBattleGroup,
           deleteBattleGroup,
+          builderDroneSummary,
+          cancelBuilderDrone,
+          openBuilderDronePlanner: (systemId) => openDronePlanner(systemId, { auto: false }),
         });
       } else {
-        updateFleetPanelLabels(state, selectedScoutId, getSelectedBattleGroupId?.() ?? null);
+        updateFleetPanelLabels(
+          state,
+          selectedScoutId,
+          getSelectedBattleGroupId?.() ?? null,
+          selectedBuilderDroneId,
+        );
       }
     } else {
       fleetPanel?.classList.add('hidden');
@@ -2936,7 +3130,6 @@ export function initUi(ctx) {
     }
 
     const swGalaxyPanel = el('superweapon-galaxy-panel');
-    const tradeRoutesPanel = el('trade-routes-panel');
     const builderDroneGalaxyPanel = el('builder-drone-galaxy-panel');
     const ms = milestonesSummary(state);
     if (view === 'galaxy' && ms.superweaponUnlocked) {
@@ -2949,15 +3142,6 @@ export function initUi(ctx) {
         + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'} · CD ${Math.ceil(sw.cooldownMs / 1000)}s</p>`;
     } else {
       swGalaxyPanel?.classList.add('hidden');
-    }
-    if (view === 'galaxy' && ms.diplomacyUnlocked) {
-      tradeRoutesPanel?.classList.remove('hidden');
-      const tr = tradeRoutesSummary(state);
-      el('trade-routes-body').innerHTML =
-        `<p class="panel-note">${tr.count}/${tr.max} routes · bonus ×${tr.bonus?.toFixed?.(2) ?? tr.bonus}</p>`
-        + (tr.routes?.map((r) => `<div class="intel-row">${r.from} ↔ ${r.to}</div>`).join('') ?? '');
-    } else {
-      tradeRoutesPanel?.classList.add('hidden');
     }
 
     const droneTargetId = getGalaxyTargetStar?.() ?? null;
@@ -3192,10 +3376,7 @@ export function initUi(ctx) {
     if (buildPanelSnap !== uiSnapshots.buildPanel && !uiPointerActive) {
       uiSnapshots.buildPanel = buildPanelSnap;
       renderBuildBody(el('build-panel-body'), planet, state, viewedSystemId);
-      renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id, {
-        canSendBuilderDrone,
-        sendBuilderDrone,
-      });
+      renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id);
     }
 
     const outpostCheck = canBuildOutpost(state, viewedSystemId, planet.id);

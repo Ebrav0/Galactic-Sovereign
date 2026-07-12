@@ -76,7 +76,7 @@ export const STRUCTURE_DEFS = {
   },
 };
 
-export function canBuildStrategicStructure(state, systemId, type, planetId = null) {
+export function canBuildStrategicStructure(state, systemId, type, planetId = null, opts = {}) {
   const def = STRUCTURE_DEFS[type];
   if (!def) return { ok: false, reason: 'Unknown structure type' };
   if (!isTechUnlocked(state, def.tech)) {
@@ -86,10 +86,10 @@ export function canBuildStrategicStructure(state, systemId, type, planetId = nul
   if (!system || !isPlayerOwned(state, systemId)) {
     return { ok: false, reason: 'System not under your control' };
   }
-  if (!flagshipInSystem(state, systemId)) {
+  if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system' };
   }
-  if (state.credits < def.cost) {
+  if (!opts.ignoreCredits && state.credits < def.cost) {
     return { ok: false, reason: `Need ${def.cost} credits` };
   }
 
@@ -109,11 +109,11 @@ export function canBuildStrategicStructure(state, systemId, type, planetId = nul
   return { ok: true };
 }
 
-export function buildStrategicStructure(state, systemId, type, planetId = null) {
-  const check = canBuildStrategicStructure(state, systemId, type, planetId);
+export function buildStrategicStructure(state, systemId, type, planetId = null, opts = {}) {
+  const check = canBuildStrategicStructure(state, systemId, type, planetId, opts);
   if (!check.ok) return check;
   const def = STRUCTURE_DEFS[type];
-  state.credits -= def.cost;
+  if (!opts.alreadyPaid) state.credits -= def.cost;
   systemById(state, systemId).structures.push({
     id: allocateStructureId(),
     type,

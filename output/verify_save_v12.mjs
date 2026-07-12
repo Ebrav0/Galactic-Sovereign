@@ -55,7 +55,7 @@ legacy.playerShips.push({
   wingState: { ready: 5, launched: 2, lost: 1, ammo: 31, fuel: 620 },
 });
 legacy.research.unlocked.push('eco_trade_hub', 'mil_carrier_operations');
-legacy.manualTradeRoutes.push({ fromSystemId: legacy.stronghold, toSystemId: developedStar.id });
+legacy.manualTradeRoutes = [{ fromSystemId: legacy.stronghold, toSystemId: developedStar.id }];
 
 const legacyStateJson = JSON.stringify(legacy);
 const envelope = JSON.stringify({
@@ -85,15 +85,14 @@ if (migrated.ok) {
   check('legacy trade station becomes operational export depot',
     migratedHome.systems[developedStar.id].structures.some((structure) =>
       structure.id === 'legacy-trade' && structure.type === 'export_depot' && structure.operational));
-  check('manual routes survive migration',
-    state.manualTradeRoutes.some((route) => route.fromSystemId === legacy.stronghold && route.toSystemId === developedStar.id));
+  check('retired manual routes are removed by migration', !Object.hasOwn(state, 'manualTradeRoutes'));
   const carrier = state.playerShips.find((ship) => ship.id === 'legacy-carrier');
   check('carrier wing state survives migration',
     carrier?.wingState?.ready === 5 && carrier?.wingState?.launched === 2 && carrier?.wingState?.lost === 1);
   check('v12 logistics, reports, and offline Sol state exist',
     state.logistics?.version === 1 && Array.isArray(state.battleReports)
       && state.solCommander?.settings?.providerMode === 'offline');
-  check('migrated save serializes as v12', JSON.parse(serialize(state)).saveVersion === 12);
+  check('migrated save serializes as v14', JSON.parse(serialize(state)).saveVersion === 14);
 }
 
 const corrupt = JSON.parse(envelope);

@@ -18,7 +18,7 @@ export function drawShipyardStation(ctx, x, y, scale, site, time = 0) {
   const pulse = 0.6 + 0.4 * Math.sin(time / 640 + site.seed);
   const building = site.building;
   const prog = site.buildProgress ?? 0;
-  const alpha = building ? 0.75 + 0.25 * prog : 1;
+  const alpha = building ? 0.16 + 0.84 * prog : 1;
 
   ctx.save();
   ctx.translate(x, y);
@@ -136,6 +136,7 @@ export function drawSailLauncher(ctx, x, y, scale, site, time = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(site.heading);
+  ctx.globalAlpha = site.building ? 0.16 + 0.84 * (site.buildProgress ?? 0) : 1;
 
   // Stabilization ring (perpendicular to rail)
   ctx.strokeStyle = hexToRgba(THEME.textSecondary, 0.55);
@@ -287,7 +288,9 @@ export function drawOrbitalBuilding(ctx, x, y, scale, site, time = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate((site.hubHeading ?? 0) + spin);
-  ctx.globalAlpha = site.active ? 1 : 0.52;
+  ctx.globalAlpha = site.building
+    ? 0.16 + 0.84 * (site.buildProgress ?? 0)
+    : (site.active ? 1 : 0.52);
   drawHubRing(
     ctx,
     r * 0.62,
@@ -353,7 +356,9 @@ export function drawStarNodeBuilding(ctx, x, y, scale, site, time = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate((site.heading ?? 0) + (type === 'solar_collector' ? time / 4200 : 0));
-  ctx.globalAlpha = site.active ? 1 : 0.5;
+  ctx.globalAlpha = site.building
+    ? 0.16 + 0.84 * (site.buildProgress ?? 0)
+    : (site.active ? 1 : 0.5);
   drawHubRing(
     ctx,
     r * 0.52,

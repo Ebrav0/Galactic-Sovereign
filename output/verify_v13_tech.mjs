@@ -135,7 +135,7 @@ const EXPECTED_STRUCTURE_TECHS = {
   embassy_complex: 'dip_embassy_complex',
 };
 
-check('technology web contains exactly 164 nodes', techNodeCount() === 164, String(techNodeCount()));
+check('technology web contains exactly 165 nodes', techNodeCount() === 165, String(techNodeCount()));
 check('v13 contributes exactly 60 nodes', V13_TECH_NODE_IDS.length === 60, String(V13_TECH_NODE_IDS.length));
 check('startup graph validation succeeds', TECH_GRAPH_VALIDATION.ok, TECH_GRAPH_VALIDATION.errors.join('; '));
 check('all nine clusters remain represented', Object.keys(TECH_GRAPH_VALIDATION.clusterCounts).length === 9

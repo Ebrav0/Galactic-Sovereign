@@ -62,7 +62,7 @@ export function researchStationCount(state, systemId) {
   ).length;
 }
 
-export function canBuildResearchStation(state, systemId) {
+export function canBuildResearchStation(state, systemId, opts = {}) {
   if (!isTechUnlocked(state, 'res_station_protocol')) {
     return { ok: false, reason: 'Research Research Station protocol first' };
   }
@@ -77,18 +77,28 @@ export function canBuildResearchStation(state, systemId) {
   }
   const host = system.bodies.find((b) => b.type === 'habitable') ?? system.bodies[0];
   if (!host) return { ok: false, reason: 'No anchor body for research station' };
-  if (!flagshipInSystem(state, systemId)) {
+  if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (state.credits < RESEARCH_STATION_COST) {
+  if (!opts.ignoreCredits && state.credits < RESEARCH_STATION_COST) {
     return { ok: false, reason: `Need ${RESEARCH_STATION_COST} credits` };
   }
   return { ok: true, anchorBodyId: host.id };
 }
 
-export function buildResearchStation(state, systemId) {
-  const check = canBuildResearchStation(state, systemId);
+export function buildResearchStation(state, systemId, opts = {}) {
+  const check = canBuildResearchStation(state, systemId, opts);
   if (!check.ok) return check;
+
+  if (opts.remote) {
+    if (!opts.alreadyPaid) state.credits -= RESEARCH_STATION_COST;
+    const structure = {
+      id: allocateStructureId(), type: 'research_station', bodyId: check.anchorBodyId,
+      builtAtTime: state.time, level: 1, operational: true,
+    };
+    systemById(state, systemId).structures.push(structure);
+    return { ok: true, structureId: structure.id, type: structure.type, systemId };
+  }
 
   const orbitIndex = researchStationCount(state, systemId)
     + (systemById(state, systemId)?.structures.filter(

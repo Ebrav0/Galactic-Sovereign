@@ -292,7 +292,7 @@ function logisticsContainers(state) {
   const convoys = ownArray(logistics.convoys).length ? logistics.convoys : ownArray(state?.convoys);
   const routes = ownArray(logistics.routes).length
     ? logistics.routes
-    : ownArray(state?.logisticsRoutes).length ? state.logisticsRoutes : ownArray(state?.manualTradeRoutes);
+    : ownArray(state?.logisticsRoutes);
   return { logistics, depots, convoys, routes };
 }
 

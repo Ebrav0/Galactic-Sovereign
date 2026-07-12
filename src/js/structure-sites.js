@@ -218,6 +218,7 @@ function orbitalBuildingSitesForBody(state, systemId, bodyId, time = state.time)
       const slotAngle = fixedSlotAngle(structure.id, 0x88) + idx * 0.45;
       const pad = structure.type === 'drydock' ? SHIPYARD_ORBIT_PAD * 0.72 : LAUNCHER_ORBIT_PAD * 0.82;
       const anchor = bodyOrbitAnchor(world.bodyPos, world.bodyRadius, pad, slotAngle);
+      const underConstruction = !!structure.construction;
       return {
         kind: structure.type,
         structureType: structure.type,
@@ -228,6 +229,8 @@ function orbitalBuildingSitesForBody(state, systemId, bodyId, time = state.time)
         heading: starHeading(anchor.x, anchor.y),
         hubHeading: slotAngle + Math.PI / 2,
         active: isOperationalStructure(state, structure, { systemId }),
+        building: underConstruction,
+        buildProgress: underConstruction ? structureConstructionProgress(state, structure) : 0,
         level: structureLevel(structure),
         visual: BODY_STRUCTURE_DEFS[structure.type]?.visual ?? null,
         seed: hashSeed(0xbeefcafe, structure.id) % 97,
@@ -248,6 +251,7 @@ export function starNodeStructureSites(state, systemId, time = state.time) {
     const orbitR = starRadius + 64 + idx * 14;
     const x = Math.cos(slotAngle) * orbitR;
     const y = Math.sin(slotAngle) * orbitR;
+    const underConstruction = !!structure.construction;
     return {
       kind: structure.type,
       structureType: structure.type,
@@ -262,6 +266,8 @@ export function starNodeStructureSites(state, systemId, time = state.time) {
       heading: starHeading(x, y),
       hubHeading: slotAngle + Math.PI / 2,
       active: isOperationalStructure(state, structure, { systemId }),
+      building: underConstruction,
+      buildProgress: underConstruction ? structureConstructionProgress(state, structure) : 0,
       level: structureLevel(structure),
       visual: BODY_STRUCTURE_DEFS[structure.type]?.visual ?? null,
       seed: hashSeed(0x7357a2, structure.id) % 97,

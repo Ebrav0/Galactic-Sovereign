@@ -193,7 +193,6 @@ function createDefaultTechEffects() {
     dysonOutputMult: 1,
     logisticsDispatchIntervalMult: 1,
     convoyRouteBonus: 0,
-    manualTradeRouteBonus: 0,
     nexusDeliveryValueMult: 1,
     cargoLossMult: 1,
     wormholeChargeRateMult: 1,

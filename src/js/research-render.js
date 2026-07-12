@@ -15,6 +15,7 @@ export function drawResearchStation(ctx, x, y, scale, site, time = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(site.hubHeading);
+  ctx.globalAlpha = site.building ? 0.16 + 0.84 * (site.buildProgress ?? 0) : 1;
 
   // Orbit ring footprint
   ctx.strokeStyle = hexToRgba('#9a6bff', 0.35);

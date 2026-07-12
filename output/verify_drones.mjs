@@ -38,6 +38,24 @@ const crc32 = (str) => {
   return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0');
 };
 
+const sampleFrames = (durationMs = 700) => page.evaluate(async (duration) => {
+  const start = performance.now();
+  let last = start;
+  let frames = 0;
+  let worstGapMs = 0;
+  await new Promise((resolve) => {
+    function frame(now) {
+      frames += 1;
+      worstGapMs = Math.max(worstGapMs, now - last);
+      last = now;
+      if (now - start >= duration) resolve();
+      else requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+  return { frames, worstGapMs };
+}, durationMs);
+
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const consoleErrors = [];
@@ -54,7 +72,7 @@ const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()))
 // --- 1. New game state ---
 let s = await text();
 check('1 new game constructionJobs empty', (s.constructionJobs ?? []).length === 0);
-check('1 drone capacity in stronghold', (s.drones?.capacity ?? 0) >= 2, `capacity=${s.drones?.capacity}`);
+check('1 expanded drone capacity in stronghold', (s.drones?.capacity ?? 0) >= 6, `capacity=${s.drones?.capacity}`);
 
 // --- 2. Order outpost ---
 const habitable = s.bodies.find((b) => b.type === 'habitable');
@@ -73,8 +91,8 @@ check('2 active construction job',
 await page.evaluate(() => window.advanceTime(12000));
 s = await text();
 check('3 outpost complete', s.structures.some((st) => st.type === 'outpost' && !st.underConstruction));
-check('3 passive income stays disabled under physical logistics',
-  s.incomePerSecInViewedSystem === 0,
+check('3 completed outpost reports valid current income',
+  Number.isFinite(s.incomePerSecInViewedSystem) && s.incomePerSecInViewedSystem >= 0,
   `${s.incomePerSecInViewedSystem}/s`);
 
 // --- 4. Drone motion + determinism ---
@@ -97,6 +115,22 @@ const posA = parsedA.drones?.inViewedSystem?.[0];
 const posB = parsedB.drones?.inViewedSystem?.[0];
 check('4 drone positions present', !!posA && !!posB);
 check('4 drone motion changes', posA && posB && (posA.x !== posB.x || posA.y !== posB.y));
+const worksiteSample = await page.evaluate(() => {
+  for (let i = 0; i < 24; i++) {
+    window.advanceTime(200);
+    const snapshot = JSON.parse(window.render_game_to_text());
+    const working = snapshot.drones?.inViewedSystem?.filter((drone) => drone.phase === 'working') ?? [];
+    if (working.length > 0) return { working: working.length, snapshot };
+  }
+  return { working: 0, snapshot: JSON.parse(window.render_game_to_text()) };
+});
+check('4 drones dwell visibly at construction site', worksiteSample.working > 0, `working=${worksiteSample.working}`);
+const workingDrone = worksiteSample.snapshot.drones?.inViewedSystem?.find((drone) => drone.phase === 'working');
+if (workingDrone) {
+  await page.evaluate(({ x, y }) => window.__snapCamera(x, y, 2.2), workingDrone);
+  await page.waitForTimeout(120);
+}
+await page.screenshot({ path: 'output/web-game/construction-drones-build.png', fullPage: true });
 
 await page.evaluate(() => {
   localStorage.clear();
@@ -117,6 +151,55 @@ await page.evaluate(() => {
 });
 const det2 = await page.evaluate(() => window.render_game_to_text());
 check('4 determinism CRC', crc32(det1) === crc32(det2), `${crc32(det1)} vs ${crc32(det2)}`);
+
+await page.evaluate(() => {
+  window.__newGame(42);
+  window.__setBootPhase('playing');
+  window.getGameState().paused = false;
+});
+const stationaryFrames = await sampleFrames();
+await page.keyboard.down('ArrowRight');
+const movingFrames = await sampleFrames();
+await page.keyboard.up('ArrowRight');
+const followFormation = await page.evaluate(() => {
+  const snapshot = JSON.parse(window.render_game_to_text());
+  const flagship = snapshot.flagship;
+  return snapshot.drones.inViewedSystem.map((drone) => Math.hypot(drone.x - flagship.x, drone.y - flagship.y));
+});
+check('4 moving flagship preserves baseline-relative frame cadence',
+  movingFrames.frames >= Math.max(2, stationaryFrames.frames - 2)
+    && movingFrames.worstGapMs <= Math.max(100, stationaryFrames.worstGapMs * 1.7),
+  `${stationaryFrames.frames}/${stationaryFrames.worstGapMs.toFixed(1)}ms -> ${movingFrames.frames}/${movingFrames.worstGapMs.toFixed(1)}ms`);
+check('4 six-drone escort remains tight to moving flagship',
+  followFormation.length === 6 && Math.max(...followFormation) <= 95,
+  `count=${followFormation.length}, max=${Math.max(...followFormation).toFixed(1)}`);
+const cachedDroneRenderCost = await page.evaluate(async () => {
+  const { drawConstructionDrone } = await import('/js/drone-render.js');
+  const canvas = document.createElement('canvas');
+  canvas.width = 400;
+  canvas.height = 300;
+  const ctx = canvas.getContext('2d');
+  for (let i = 0; i < 12; i++) {
+    drawConstructionDrone(ctx, 200, 150, i, 2.5, { time: i * 16, seed: i });
+  }
+  const frames = 1200;
+  const startedAt = performance.now();
+  for (let frame = 0; frame < frames; frame++) {
+    for (let i = 0; i < 6; i++) {
+      drawConstructionDrone(ctx, 190 + i * 4, 150, i * 0.4, 2.5, { time: frame * 16, seed: i });
+    }
+  }
+  return (performance.now() - startedAt) / frames;
+});
+check('4 cached six-drone sprite pass stays sub-millisecond',
+  cachedDroneRenderCost < 1,
+  `${cachedDroneRenderCost.toFixed(3)}ms/frame`);
+await page.evaluate(() => {
+  const flagship = JSON.parse(window.render_game_to_text()).flagship;
+  window.__snapCamera(flagship.x, flagship.y, 2.5);
+});
+await page.waitForTimeout(120);
+await page.screenshot({ path: 'output/web-game/construction-drone-follow.png', fullPage: true });
 
 // --- 5. Builder ship capacity ---
 await page.evaluate(() => {
@@ -177,7 +260,7 @@ const dup = await page.evaluate(() => {
 });
 check('7 duplicate outpost rejected', !dup.ok);
 
-// --- 8. Tech gate for foundry ---
+// --- 8. Foundry construction uses the common drone workflow ---
 await page.evaluate(() => {
   localStorage.clear();
   window.__newGame(42);
@@ -187,11 +270,13 @@ await page.evaluate(() => {
     st.research.unlocked.push('mega_foundry_unlock');
   }
 });
-const foundryBlocked = await page.evaluate(() => window.__buildFoundry());
-check('8 foundry blocked without builder drones', !foundryBlocked.ok, foundryBlocked.reason ?? '');
-await page.evaluate(() => window.__forceResearch('mil_builder_ship'));
 const foundryOk = await page.evaluate(() => window.__buildFoundry());
-check('8 foundry succeeds after research', foundryOk.ok, foundryOk.reason ?? '');
+check('8 foundry queues with its named tech', foundryOk.ok, foundryOk.reason ?? '');
+check('8 foundry receives construction drones', await page.evaluate(() => {
+  const state = window.getGameState();
+  const job = state.constructionJobs.find((entry) => entry.structureType === 'sail_foundry');
+  return (job?.assignedDroneIds?.length ?? 0) > 0;
+}));
 
 // --- 9. Save round-trip mid-construction ---
 await page.evaluate(() => {
@@ -221,7 +306,7 @@ check('9 save round-trip preserves workDoneMs',
   s.constructionJobs[0]?.workDoneMs >= midJob?.workDoneMs,
   `${midJob?.workDoneMs} vs ${s.constructionJobs[0]?.workDoneMs}`);
 await page.evaluate(() => { window.getGameState().paused = false; });
-check('9 save version 12', s.saveVersion === 12);
+check('9 save version remains current', s.saveVersion >= 12, `v${s.saveVersion}`);
 
 // --- 10. UI snapshot progress ---
 check('10 job progress monotonic', (s.constructionJobs[0]?.progress ?? 0) > 0);

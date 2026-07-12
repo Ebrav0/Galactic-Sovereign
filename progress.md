@@ -10,6 +10,32 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-10 — Ctrl/Cmd-click construction planner (save v14)
+
+**Task claimed:** Replace manual trade routes with owned-system construction-drone dispatch and an unlimited multi-world arrival planner.
+
+### Done
+- Ctrl/Cmd-click on a claimed galaxy star dispatches exactly one idle builder drone and never orders flagship travel; repeat clicks send additional drones.
+- Drone arrival pauses play and opens a modal planner; deferred modal arrivals remain pending, and stationed drones can reopen planning from the Fleet panel.
+- Planner catalogs researched outpost, shipyard, research/trade, Dyson, body, strategic, and star-node buildings using canonical validators, with disabled reasons and bulk “all eligible” actions.
+- Confirmed plans reserve credits, persist dependency-aware orders, run independent worlds across multiple drones in parallel, allow full-refund cancellation while queued, and survive save/load.
+- Ownership loss refunds queued work, aborts active work without refund, and returns drones to origin.
+- Manual trade routes were fully removed from input, UI, rendering, economy, state, tips, hooks, and runtime modules; former capacity bonuses now improve convoy/logistics capacity.
+- `SAVE_VERSION=14`; v13→v14 migration removes `manualTradeRoutes` and initializes persistent planner/order fields; `docs/schemas/save-v14.json` added.
+
+### Verification
+- `npm run build` passes.
+- `output/verify_v14_drone_planner.mjs`: 23/23 pass, including real Ctrl-click, actual modal buttons, dependent batching, parallel drones, refunds, ownership loss, pending-planner save/load, migration, manual-route removal, relative frame cadence, and zero console errors.
+- `output/verify_v13_tech.mjs`: 92/92 pass.
+- `output/verify_save_v12.mjs`: 11/11 pass through current v14 migration.
+- `output/verify_phase6.mjs`: updated v14/manual-route expectations pass in the affected sections.
+- Planner screenshot inspected: `output/web-game/v14-drone-planner.png`; final web-game smoke screenshot inspected with no browser error artifact.
+
+### Suggested next
+- If construction types are added later, register them through the canonical planner catalog rather than adding modal-only build rules.
+
+---
+
 ## Session 2026-07-10 — Progressable building tech + assigned construction drones
 
 **Task claimed:** Make building unlocks progressable; deploy construction drones to claimed systems; verify real UI buttons; remove the resulting ship stutter.
@@ -643,3 +669,34 @@ Never delete prior entries.
 - Added `output/verify_fleet_shipyard_integrity.mjs` covering operational-yard eligibility, rejection of under-construction/disabled/destroyed/mothballed/offline yards, physical-yard dispatch assignment, completion spawning at the assigned system/body, live-ship auto-assignment, and player-flagship fleet anchoring/follow behavior.
 - `node output/verify_fleet_shipyard_integrity.mjs` — 28/28 pass.
 - Follow-up: the older `output/verify_battle_groups.mjs` still encodes the former skipped ordinal sequence (`1, 3, 5`) and should be updated to the corrected contiguous fleet ordinals.
+
+---
+
+## Session 2026-07-12 — Construction drone swarm and assembly visuals
+
+**Task claimed:** Increase and refine the flagship construction-drone swarm, make drones smaller and more detailed, keep them visibly working longer at distinct building sites, and prevent follow lag.
+
+### Done
+- Expanded the flagship/system construction-drone pool from 2 to 6, with a 12-drone system ceiling; the per-job worker cap remains 2 so a larger escort does not multiply single-job completion speed.
+- Reduced drone size and redesigned the sprite with an armored hex chassis, side panels, reactor eye, sensor mast, articulated fabrication arms, and twin maneuvering thrusters.
+- Increased worksite dwell from 0.8s to 3.2s; simultaneous workers now orbit separate assembly points instead of overlapping, face the work target, emit fabrication beams, and produce bounded weld flashes.
+- Added progress-driven, type-specific construction assemblies for outposts, shipyards, research stations, Sail Foundries, Dyson launchers, and generic structures. Existing structure sprites fade in with real job progress.
+- Bound render-time drone motion to the flagship's interpolated display pose, cached deterministic per-drone motion parameters in a `WeakMap`, and culled offscreen drones/sites to keep following smooth.
+- Refreshed `output/verify_drones.mjs` for current v14 economy/tech rules and added capacity, work-dwell, moving-cadence, formation-distance, screenshot, save, and console checks.
+
+### Verification
+- `npm run build` — pass.
+- `git diff --check` — pass for all touched drone/render/test files.
+- Develop-web-game client smoke state confirmed six idle drones around the moving flagship.
+- `node output/verify_drones.mjs` — 25/25 pass with no browser console errors; moving cadence remained baseline-relative and all six drones stayed within 46.5 world units of the flagship.
+- Screenshots inspected: `output/web-game/construction-drone-follow.png` and `output/web-game/construction-drones-build.png`.
+
+### Suggested next
+- If future tech raises the system ceiling beyond 12, add a distance/zoom LOD that collapses far-away idle drones into a lightweight swarm marker.
+
+### Follow-up 2026-07-12 — Flagship lag regression fixed
+- Player-reported flagship lag after the swarm pass was traced to rebuilding every detailed drone's multi-path Canvas sprite on every frame; CPU profiling did not identify simulation or AI work as the movement-window bottleneck.
+- Added a bounded raster cache in `src/js/drone-render.js`, keyed by quantized zoom, working state, and transit-thrust state. Escort rendering now uses rotated cached `drawImage` calls while preserving lightweight live reactor pulses, work sparks, trails, and fabrication beams.
+- Direct six-drone render benchmark: `0.076 ms/frame` in the final verification run.
+- `node output/verify_drones.mjs` — 26/26 pass, including movement cadence, six-drone formation distance, cached-render budget, save behavior, construction behavior, and zero console errors.
+- Develop-web-game client completed a post-fix gameplay capture at `output/web-game/flagship-drone-cache-fix/`; final close-up re-inspected at `output/web-game/construction-drone-follow.png` with no clipping or loss of drone detail.

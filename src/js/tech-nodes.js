@@ -819,7 +819,7 @@ export const TECH_NODES = {
     unlocks: ['Galactic Exchange building'],
     effects: [unlockStructure('galactic_exchange', {
       nexusDeliveryValueMult: 1.15,
-      manualTradeRouteBonus: 2,
+      activeConvoyRouteBonus: 2,
     })],
   }),
   trade_freeport_network: v13Node({
@@ -827,8 +827,8 @@ export const TECH_NODES = {
     prereqs: ['trade_galactic_exchange', 'dip_embassy_complex'], effect: 'manual_trade_routes_2',
     description: 'Links protected neutral markets into a resilient cross-faction commerce network.',
     tags: ['trade', 'diplomacy', 'freeport', 'routes'],
-    unlocks: ['Two additional manual trade routes'],
-    effects: [add('manualTradeRouteBonus', 2), multiply('tradeIncomeMult', 1.1)],
+    unlocks: ['Two additional convoy routes'],
+    effects: [add('convoyRouteBonus', 2), multiply('tradeIncomeMult', 1.1)],
   }),
   trade_quantum_markets: v13Node({
     id: 'trade_quantum_markets', cluster: 'trade', name: 'Quantum Markets',

@@ -601,6 +601,35 @@ button {
   animation: modal-in 0.22s ease-out;
 }
 
+.panel--drone-planner {
+  width: min(1120px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+
+.drone-planner__body {
+  overflow: auto;
+  max-height: calc(100vh - 190px);
+}
+
+.drone-planner__catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+}
+
+.drone-planner__target {
+  border: 1px solid rgba(110, 205, 255, 0.2);
+  background: rgba(8, 18, 32, 0.72);
+  padding: 10px;
+}
+
+.drone-planner__bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+
 @keyframes modal-in {
   from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)); }
   to { opacity: 1; transform: translate(-50%, -50%); }

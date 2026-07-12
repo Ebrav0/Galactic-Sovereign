@@ -170,18 +170,6 @@
         </div>
       </div>
 
-      <div id="trade-routes-panel" class="panel hidden">
-        <div class="panel__header">
-          <span class="panel__title">Manual Trade Routes</span>
-        </div>
-        <div class="panel__body" id="trade-routes-body">
-          <p class="panel-note">Ctrl+click two trade-station systems to link them.</p>
-        </div>
-        <div class="panel__footer panel__actions">
-          <button id="clear-trade-routes-btn" type="button" class="btn btn--ghost btn--block">Clear All Routes</button>
-        </div>
-      </div>
-
       <div id="logistics-panel" class="panel panel--operations hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -351,6 +339,28 @@
 
       <div id="save-menu-backdrop" class="modal-backdrop hidden"></div>
       <div id="new-game-modal-backdrop" class="modal-backdrop hidden"></div>
+      <div id="drone-planner-backdrop" class="modal-backdrop hidden"></div>
+      <div id="drone-planner" class="panel panel--modal panel--drone-planner hidden" role="dialog" aria-modal="true" aria-labelledby="drone-planner-title">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title" id="drone-planner-title">Construction Planner</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+          <button id="drone-planner-close" type="button" class="btn btn--ghost btn--xs">Close</button>
+        </div>
+        <div class="panel__body drone-planner__body">
+          <div id="drone-planner-summary"></div>
+          <div id="drone-planner-bulk" class="drone-planner__bulk"></div>
+          <div id="drone-planner-catalog" class="drone-planner__catalog"></div>
+          <div class="divider"></div>
+          <div class="intel-section-title">Construction Plan</div>
+          <div id="drone-planner-draft" class="list"></div>
+          <div id="drone-planner-orders" class="list"></div>
+        </div>
+        <div class="panel__footer panel__actions">
+          <div id="drone-planner-total" class="panel-note"></div>
+          <button id="drone-planner-confirm" type="button" class="btn btn--primary btn--block">Confirm Construction Plan</button>
+        </div>
+      </div>
       <div id="new-game-modal" class="panel panel--modal hidden">
         <div class="panel__header">
           <span class="panel__title">Custom Campaign</span>

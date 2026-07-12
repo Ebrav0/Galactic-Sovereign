@@ -92,6 +92,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 10) e = migrateV10toV11(e);
   if (e.saveVersion === 11) e = migrateV11toV12(e);
   if (e.saveVersion === 12) e = migrateV12toV13(e);
+  if (e.saveVersion === 13) e = migrateV13toV14(e);
   return e;
 }
 
@@ -457,7 +458,6 @@ function initPhase6State(state) {
     createCount: 0,
   };
   state.heroFlagships = state.heroFlagships ?? [];
-  state.manualTradeRoutes = state.manualTradeRoutes ?? [];
   if (!state.factions?.list) {
     state.factions = state.factions ?? {};
     if (state.factions.ai) {
@@ -857,6 +857,24 @@ function migrateV12toV13(envelope) {
   const stateJson = JSON.stringify(state);
   return {
     saveVersion: 13,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v13 -> v14 (construction-drone planner; manual routes retired).
+function migrateV13toV14(envelope) {
+  const state = envelope.state;
+  delete state.manualTradeRoutes;
+  state.builderConstructionOrders = state.builderConstructionOrders ?? [];
+  for (const drone of state.builderDrones ?? []) {
+    drone.awaitingOrders = drone.awaitingOrders ?? false;
+    drone.originSystemId = drone.originSystemId ?? drone.systemId ?? state.stronghold;
+  }
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 14,
     checksum: crc32(stateJson),
     savedAt: envelope.savedAt,
     state,

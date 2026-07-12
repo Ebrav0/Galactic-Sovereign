@@ -9,7 +9,7 @@ import {
 } from './constants.js';
 import { shellTradeBonus } from './dyson.js';
 import { diplomaticTradeBonus } from './diplomacy.js';
-import { manualRouteBonus } from './trade-routes.js';
+import { allocateStructureId } from './economy.js';
 import {
   findPlanet,
   hasOutpost,
@@ -36,7 +36,7 @@ export function tradeStationCount(state, systemId) {
   ).length;
 }
 
-export function canBuildTradeStation(state, systemId, planetId) {
+export function canBuildTradeStation(state, systemId, planetId, opts = {}) {
   if (!isTechUnlocked(state, 'eco_trade_hub')) {
     return { ok: false, reason: 'Research Trade Hub Protocol first' };
   }
@@ -60,18 +60,28 @@ export function canBuildTradeStation(state, systemId, planetId) {
   ) || hasPendingJob(state, systemId, null, 'export_depot')) {
     return { ok: false, reason: 'Export depot construction already in progress' };
   }
-  if (!flagshipInSystem(state, systemId)) {
+  if (!opts.remote && !flagshipInSystem(state, systemId)) {
     return { ok: false, reason: 'Flagship must be in this system to direct construction' };
   }
-  if (state.credits < TRADE_STATION_COST) {
+  if (!opts.ignoreCredits && state.credits < TRADE_STATION_COST) {
     return { ok: false, reason: `Need ${TRADE_STATION_COST} credits` };
   }
   return { ok: true };
 }
 
-export function buildTradeStation(state, systemId, planetId) {
-  const check = canBuildTradeStation(state, systemId, planetId);
+export function buildTradeStation(state, systemId, planetId, opts = {}) {
+  const check = canBuildTradeStation(state, systemId, planetId, opts);
   if (!check.ok) return check;
+
+  if (opts.remote) {
+    if (!opts.alreadyPaid) state.credits -= TRADE_STATION_COST;
+    const structure = {
+      id: allocateStructureId(), type: 'export_depot', bodyId: null,
+      sourceBodyId: planetId, builtAtTime: state.time, hp: 520, maxHp: 520, operational: true,
+    };
+    systemById(state, systemId).structures.push(structure);
+    return { ok: true, structureId: structure.id, type: structure.type, systemId };
+  }
 
   return queueConstructionJob(state, {
     systemId,
@@ -177,7 +187,7 @@ export function tradeIncomePerSecondSync(state) {
     }
     const refineryMult = component.reduce((m, sysId) => m * bodyStructureTradeMultiplier(state, sysId), 1);
     total += TRADE_BASE_INCOME * stationCount * connectivity * avgShell * tradeMult * blockadeMult * refineryMult
-      * manualRouteBonus(state) * diplomaticTradeBonus(state);
+      * diplomaticTradeBonus(state);
   }
   return total;
 }

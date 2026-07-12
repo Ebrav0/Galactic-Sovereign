@@ -46,13 +46,13 @@ await page.evaluate(() => window.__newGame(42));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 12', s.saveVersion === 12);
+check('1.1 saveVersion is 14', s.saveVersion === 14);
 check('1.2 milestones object', s.milestones != null);
 check('1.3 campaign object', s.campaign != null);
 check('1.4 diplomacy object', s.diplomacy != null);
 check('1.5 superweapon object', s.superweapon != null);
 check('1.6 heroFlagships array', Array.isArray(s.heroFlagships));
-check('1.7 manualTradeRoutes array', Array.isArray(s.manualTradeRoutes?.routes) || s.manualTradeRoutes != null);
+check('1.7 builder construction orders array', Array.isArray(s.builderDrones?.orders));
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));
@@ -72,7 +72,7 @@ const v8State = await page.evaluate(() => {
   delete copy.diplomacy;
   delete copy.superweapon;
   delete copy.heroFlagships;
-  delete copy.manualTradeRoutes;
+  delete copy.builderConstructionOrders;
   return copy;
 });
 const v8Json = JSON.stringify(v8State);
@@ -84,7 +84,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-v8',
 })), [v8Json, crc32(v8Json)]);
 await page.evaluate(() => window.__loadSlot('slot-v8'));
 s = await text();
-check('1.9 v8 migrates to v12', s.saveVersion === 12 && s.milestones != null);
+check('1.9 v8 migrates to v14', s.saveVersion === 14 && s.milestones != null);
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));
@@ -221,27 +221,13 @@ const jumpSetup = await page.evaluate(() => {
 });
 check('5.4 superweapon jump ok', jumpSetup.jump?.ok, jumpSetup.jump?.reason ?? jumpSetup.cradle?.reason ?? '');
 
-await page.evaluate(() => window.__newGame(42));
-const routeSetup = await page.evaluate(() => {
-  const st = window.getGameState();
-  st.research.unlocked.push('trade_route_opt');
-  const g = st.galaxies[st.activeGalaxyId];
-  const a = st.stronghold;
-  const lane = g.graph.lanes.find(([x, y]) => x === a || y === a);
-  const b = lane ? (lane[0] === a ? lane[1] : lane[0]) : null;
-  if (!b || !g.systems[b]) return { ok: false, reason: 'no adjacent system' };
-  g.systems[a].owner = 'player';
-  g.systems[b].owner = 'player';
-  const bodyA = g.systems[a].bodies[0]?.id;
-  const bodyB = g.systems[b].bodies[0]?.id;
-  g.systems[a].structures.push({ id: 'ts-a', type: 'trade_station', bodyId: bodyA, builtAtTime: 0 });
-  g.systems[b].structures.push({ id: 'ts-b', type: 'trade_station', bodyId: bodyB, builtAtTime: 0 });
-  st.manualTradeRoutes = [];
-  const route = window.__addTradeRoute(a, b);
-  return { ok: route.ok, reason: route.reason, count: st.manualTradeRoutes.length };
-});
-check('8.1 manual trade route added', routeSetup.ok, routeSetup.reason ?? '');
-check('8.2 manual routes in summary', routeSetup.count >= 1);
+const retiredRoutes = await page.evaluate(() => ({
+  panel: document.getElementById('trade-routes-panel'),
+  addHook: typeof window.__addTradeRoute,
+  clearHook: typeof window.__clearTradeRoutes,
+}));
+check('8.1 manual trade route panel removed', retiredRoutes.panel == null);
+check('8.2 manual trade route hooks removed', retiredRoutes.addHook === 'undefined' && retiredRoutes.clearHook === 'undefined');
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));

@@ -313,9 +313,6 @@ function purgeSystemEntities(state, systemId) {
       .filter((key) => !key.split(':').at(-1)?.split('|').includes(systemId));
   }
 
-  state.manualTradeRoutes = (state.manualTradeRoutes ?? []).filter((route) => (
-    route.fromSystemId !== systemId && route.toSystemId !== systemId
-  ));
   const galaxy = getActiveGalaxy(state);
   if (galaxy?.intel) delete galaxy.intel[systemId];
   if (galaxy?.capture) delete galaxy.capture[systemId];

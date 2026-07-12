@@ -198,7 +198,6 @@ import {
   setRelation,
   diplomacySummary,
 } from './diplomacy.js';
-import { addTradeRoute, clearTradeRoutes, resetTradeRouteIds, tradeRoutesSummary } from './trade-routes.js';
 import { setVictoryType, checkVictory, checkDefeat, campaignSummary } from './campaign.js';
 import { startMission, completeMissionForTest, advanceMissionObjective, missionsSummary } from './missions.js';
 import {
@@ -217,13 +216,14 @@ import {
 } from './body-structures.js';
 import {
   builderDroneSummary,
+  cancelBuilderConstructionOrder,
   canDeployBuilderDrone,
-  canSendBuilderDrone,
   cancelBuilderDrone,
+  confirmBuilderConstructionPlan,
   deployBuilderDrone,
+  getDroneConstructionCatalog,
   initBuilderDrones,
   resetBuilderDroneIds,
-  sendBuilderDrone,
 } from './builder-drones.js';
 import { shellShieldBonus, shellRepairBonus } from './dyson.js';
 import { setBattleGroupHeroAnchor } from './battle-groups.js';
@@ -257,8 +257,8 @@ let viewedSystemId = state.stronghold;
 let lastFlagshipSystemId = state.flagship.systemId;
 let selectedScoutId = null;
 let selectedBattleGroupId = null;
+let selectedBuilderDroneId = null;
 let galaxyTargetStarId = null;
-let tradeRoutePending = null;
 let followedConvoyId = null;
 
 const SOL_BUILD_CATALOG = Object.freeze({
@@ -312,12 +312,24 @@ function doSelectScout(scoutId) {
   if (scoutId && !findScout(state, scoutId)) return;
   selectedScoutId = scoutId;
   selectedBattleGroupId = null;
+  selectedBuilderDroneId = null;
 }
 
 function doSelectBattleGroup(groupId) {
   if (groupId && !battleGroupsForGalaxy(state).some((g) => g.id === groupId)) return;
   selectedBattleGroupId = groupId;
   selectedScoutId = null;
+  selectedBuilderDroneId = null;
+}
+
+function doSelectBuilderDrone(droneId) {
+  const drone = (state.builderDrones ?? []).find(
+    (entry) => entry.id === droneId && entry.galaxyId === state.activeGalaxyId,
+  );
+  if (!drone) return;
+  selectedBuilderDroneId = drone.id;
+  selectedScoutId = null;
+  selectedBattleGroupId = null;
 }
 
 function doDeleteBattleGroup(groupId) {
@@ -456,6 +468,20 @@ function doOrderBattleGroupTravel(targetId) {
   return res;
 }
 
+function doOrderBuilderDroneTravel(targetId) {
+  if (!selectedBuilderDroneId) {
+    return { ok: false, reason: 'Select a builder drone in Fleet Command first' };
+  }
+  const res = deployBuilderDrone(state, targetId, selectedBuilderDroneId);
+  if (res.ok) {
+    const dest = systemById(state, targetId);
+    toast(`Builder drone dispatched to ${dest?.name ?? targetId} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
+  } else {
+    toast(res.reason, 'error');
+  }
+  return res;
+}
+
 function doBuildOutpost(planetId) {
   const res = buildOutpost(state, viewedSystemId, planetId);
   if (res.ok) {
@@ -524,17 +550,6 @@ function doBuildLauncher(bodyId) {
   return res;
 }
 
-function doSendBuilderDrone(systemId, bodyId, buildType) {
-  const res = sendBuilderDrone(state, systemId ?? viewedSystemId, bodyId ?? selection, buildType);
-  if (res.ok) {
-    const name = systemById(state, res.systemId)?.name ?? res.systemId;
-    toast(`Builder drone started ${buildType.replaceAll('_', ' ')} at ${name}`, 'ok');
-  } else {
-    toast(res.reason, 'error');
-  }
-  return res;
-}
-
 function doDeployBuilderDrone(systemId) {
   const res = deployBuilderDrone(state, systemId);
   if (res.ok) {
@@ -588,6 +603,9 @@ function doImportState(newState) {
   ensureLogisticsState(state);
   followedConvoyId = null;
   selection = null;
+  selectedScoutId = null;
+  selectedBattleGroupId = null;
+  selectedBuilderDroneId = null;
   viewedSystemId = newState.flagship.systemId ?? newState.stronghold;
   lastFlagshipSystemId = newState.flagship.systemId;
   follow.enabled = true;
@@ -602,7 +620,6 @@ function doImportState(newState) {
   resetPirateIds(state);
   resetQueueIds(state);
   resetAiShipIds(state);
-  resetTradeRouteIds(state);
   resetWormholeJumpCounter(state.wormholeJumpCounter ?? 0, state);
   migrateShipyardBuilds(state);
   if (!newState.empireQueue) newState.empireQueue = [];
@@ -768,8 +785,10 @@ const { updateUi, closeSidePanel } = initUi({
   setSelection: (id) => { selection = id; },
   getView: () => view,
   getViewedSystemId: () => viewedSystemId,
+  getSelectedBuilderDroneId: () => selectedBuilderDroneId,
   getSelectedScoutId: () => selectedScoutId,
   doSelectScout,
+  doSelectBuilderDrone,
   getSelectedBattleGroupId: () => selectedBattleGroupId,
   doSelectBattleGroup,
   createBattleGroup: () => createBattleGroup(state),
@@ -798,10 +817,16 @@ const { updateUi, closeSidePanel } = initUi({
   battleSummaryForSystem,
   canQueueHull,
   builderDroneSummary,
+  cancelBuilderConstructionOrder: (orderId) => cancelBuilderConstructionOrder(state, orderId),
   canDeployBuilderDrone: (systemId) => canDeployBuilderDrone(state, systemId),
-  canSendBuilderDrone: (systemId, bodyId, buildType) => canSendBuilderDrone(state, systemId, bodyId, buildType),
   deployBuilderDrone: doDeployBuilderDrone,
-  sendBuilderDrone: doSendBuilderDrone,
+  getDroneConstructionCatalog: (systemId, draft) => getDroneConstructionCatalog(state, systemId, draft),
+  confirmBuilderConstructionPlan: (systemId, draft) => confirmBuilderConstructionPlan(state, systemId, draft),
+  setBuilderDronesAwaitingOrders: (systemId, awaiting) => {
+    for (const drone of state.builderDrones ?? []) {
+      if (drone.systemId === systemId && drone.status === 'idle') drone.awaitingOrders = awaiting;
+    }
+  },
   cancelBuilderDrone: doCancelBuilderDrone,
   getGalaxyTargetStar: () => galaxyTargetStarId,
   doStartNewGame: (opts) => doStartNewGame(opts),
@@ -818,6 +843,7 @@ attachInput(canvas, {
   getState: () => state,
   getView: () => view,
   getViewedSystemId: () => viewedSystemId,
+  getSelectedBuilderDroneId: () => selectedBuilderDroneId,
   getSelectedScoutId: () => selectedScoutId,
   onSelect: (id) => { selection = id; },
   onCloseSidePanel: closeSidePanel,
@@ -826,6 +852,7 @@ attachInput(canvas, {
   onFlagshipInput: doFlagshipInput,
   onStarTravel: doOrderTravel,
   onScoutTravel: doOrderScoutTravel,
+  onBuilderDroneTravel: doOrderBuilderDroneTravel,
   onBattleGroupTravel: doOrderBattleGroupTravel,
   onBattleGroupSelect: doSelectBattleGroup,
   onStarView: doViewSystem,
@@ -833,17 +860,7 @@ attachInput(canvas, {
   onFollowRequest: () => { follow.enabled = true; },
   onToggleOrbit: doToggleOrbit,
   onGalaxyStarClick: (starId) => { galaxyTargetStarId = starId; },
-  onTradeRouteClick: (starId) => {
-    if (!tradeRoutePending) {
-      tradeRoutePending = starId;
-      const name = systemById(state, starId)?.name ?? starId;
-      toast(`Trade route start: ${name}`, 'info');
-      return;
-    }
-    const res = addTradeRoute(state, tradeRoutePending, starId);
-    tradeRoutePending = null;
-    toast(res.ok ? 'Manual trade route added' : res.reason, res.ok ? 'ok' : 'error');
-  },
+  onBuilderDroneDeployClick: doDeployBuilderDrone,
 });
 
 window.__devLastResult = null;
@@ -954,7 +971,11 @@ function frame(now) {
     toast(`${outcome} at ${name} (${battle.mode})`, battle.playerWins ? 'ok' : 'error');
   }
   for (const ev of tickEvents.builderDroneEvents ?? []) {
-    if (ev.type === 'builder_drone_build_complete') {
+    if (ev.type === 'builder_drone_deployed') {
+      state.paused = true;
+      const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+      toast(`Construction drone arrived at ${name}`, 'ok');
+    } else if (ev.type === 'builder_drone_build_complete') {
       const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
       toast(`Builder drone completed ${ev.buildType} at ${name}`, 'ok');
     } else if (ev.type === 'builder_drone_build_failed') {
@@ -1425,7 +1446,6 @@ window.render_game_to_text = () => {
     campaign: campaignSummary(state),
     missions: missionsSummary(state),
     tutorial: getTutorialState(state),
-    manualTradeRoutes: tradeRoutesSummary(state),
     strategicStructures: strategicStructuresSummary(state),
     bodyStructures: {
       empire: allBodyStructuresSummary(state),
@@ -1566,7 +1586,6 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   state.pirates = spawnPirateFleets(state);
   seedAiFaction(state, state.homeGalaxyId);
   resetContextualTips();
-  tradeRoutePending = null;
   galaxyTargetStarId = state.stronghold;
   if (opts.victoryType) setVictoryType(state, opts.victoryType, opts.mode ?? 'sandbox');
   if (opts.mode === 'tutorial') initTutorial(state);
@@ -1583,6 +1602,7 @@ function doStartNewGame(opts = {}) {
   selection = null;
   selectedScoutId = null;
   selectedBattleGroupId = null;
+  selectedBuilderDroneId = null;
   state.paused = true;
   document.getElementById('title-screen')?.classList.add('hidden');
   setBootPhase(BOOT_PHASE.WARP_INTRO);
@@ -1717,8 +1737,6 @@ window.__buildHeroFlagship = (rallyStarId) => buildHeroFlagship(state, rallyStar
 window.__spawnHeroFlagship = (systemId) => spawnHeroFlagshipForTest(state, systemId ?? viewedSystemId);
 window.__setRelation = (factionId, status) => setRelation(state, factionId, status);
 window.__offerTreaty = (factionId, type) => offerTreaty(state, factionId, type);
-window.__addTradeRoute = (from, to) => addTradeRoute(state, from, to);
-window.__clearTradeRoutes = () => clearTradeRoutes(state);
 window.__startMission = (id) => startMission(state, id);
 window.__advanceMissionObjective = (missionId, objectiveId) =>
   advanceMissionObjective(state, missionId, objectiveId);
@@ -1734,14 +1752,15 @@ window.__buildStrategicStructure = (type, planetId) =>
   buildStrategicStructure(state, viewedSystemId, type, planetId ?? selection);
 window.__buildBodyStructure = (type, bodyId) =>
   buildBodyStructure(state, viewedSystemId, bodyId ?? selection, type);
-window.__sendBuilderDrone = (systemId, bodyId, buildType) =>
-  doSendBuilderDrone(systemId ?? viewedSystemId, bodyId ?? selection, buildType);
 window.__deployBuilderDrone = (systemId) => doDeployBuilderDrone(systemId ?? galaxyTargetStarId ?? viewedSystemId);
 window.__listBuilderDrones = () => builderDroneSummary(state);
-window.__canSendBuilderDrone = (systemId, bodyId, buildType) =>
-  canSendBuilderDrone(state, systemId ?? viewedSystemId, bodyId ?? selection, buildType);
 window.__canDeployBuilderDrone = (systemId) =>
   canDeployBuilderDrone(state, systemId ?? galaxyTargetStarId ?? viewedSystemId);
+window.__getDroneConstructionCatalog = (systemId, draft = []) =>
+  getDroneConstructionCatalog(state, systemId ?? viewedSystemId, draft);
+window.__confirmBuilderConstructionPlan = (systemId, draft = []) =>
+  confirmBuilderConstructionPlan(state, systemId ?? viewedSystemId, draft);
+window.__cancelBuilderConstructionOrder = (orderId) => cancelBuilderConstructionOrder(state, orderId);
 window.__cancelBuilderDrone = (droneId) => doCancelBuilderDrone(droneId);
 window.__galaxyPerfSummary = () => galaxyPerfSummary();
 window.__setBattleGroupHeroAnchor = (groupId, heroId) =>

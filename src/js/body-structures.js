@@ -322,12 +322,12 @@ export const BODY_STRUCTURE_DEFS = Object.freeze({
   },
   galactic_exchange: {
     label: 'Galactic Exchange',
-    description: 'Raises Trade Nexus delivery value and expands the empire route portfolio.',
+    description: 'Raises Trade Nexus delivery value and expands the empire convoy portfolio.',
     placement: 'orbital', cost: V13_BUILDING_COSTS.galactic_exchange, tech: 'trade_galactic_exchange', cap: 1,
     capScope: 'system', requiresOutpost: false, bodyTypes: ALL_BODY_TYPES, hp: V13_BUILDING_HP.galactic_exchange,
     effect: 'galactic_exchange', effects: [
       effect('nexusDeliveryValueMult', 'mult', V13_BUILDING_EFFECTS.exchangeNexusValue, 'Nexus delivery value'),
-      effect('manualTradeRouteBonus', 'add', V13_BUILDING_EFFECTS.exchangeManualRoutes, 'Manual trade routes'),
+      effect('activeConvoyRouteBonus', 'add', V13_BUILDING_EFFECTS.exchangeConvoyRoutes, 'Active convoy routes'),
     ],
     aiPriority: 'trade', visual: visual('exchange-ring', '#ffc96b', 'exchange'), combat: combat('commerce'),
   },
@@ -671,10 +671,6 @@ export const structureActiveConvoyRouteBonus = (state, systemId, opts = {}) => (
 export const structureNexusDeliveryMultiplier = (state, systemId, opts = {}) => (
   structureEffectMultiplier(state, systemId, 'nexusDeliveryValueMult', opts)
 );
-export function structureManualTradeRouteBonus(state, systemId = null, opts = {}) {
-  if (systemId) return structureEffectValue(state, systemId, 'manualTradeRouteBonus', { ...opts, base: 0, op: 'add' });
-  return empireStructureEffectValue(state, 'manualTradeRouteBonus', { ...opts, base: 0, op: 'add' });
-}
 export const structureResearchOutputMultiplier = (state, systemId, opts = {}) => (
   structureEffectMultiplier(state, systemId, 'researchOutputMult', opts)
     * structureEffectMultiplier(state, systemId, 'researchStationOutputMult', opts)
