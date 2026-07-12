@@ -541,6 +541,19 @@
     </div>
   </div>
 
-  <script type="module" src="./js/main.js"></script>
+  <!-- GAME_ENTRY_START -->
+  <!--
+    GitHub ZIP users commonly open this file directly from Finder/Explorer.
+    ES modules are blocked by browsers on file:// pages, so use the checked-in
+    IIFE bundle for that launch path while Vite keeps the source module in dev.
+  -->
+  <script>
+    if (location.protocol === 'file:') {
+      document.write('<script src="./js/main.standalone.js"><\/script>');
+    } else {
+      document.write('<script type="module" src="./js/main.js"><\/script>');
+    }
+  </script>
+  <!-- GAME_ENTRY_END -->
 </body>
 </html>

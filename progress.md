@@ -700,3 +700,20 @@ Never delete prior entries.
 - Direct six-drone render benchmark: `0.076 ms/frame` in the final verification run.
 - `node output/verify_drones.mjs` — 26/26 pass, including movement cadence, six-drone formation distance, cached-render budget, save behavior, construction behavior, and zero console errors.
 - Develop-web-game client completed a post-fix gameplay capture at `output/web-game/flagship-drone-cache-fix/`; final close-up re-inspected at `output/web-game/construction-drone-follow.png` with no clipping or loss of drone detail.
+
+## Session 2026-07-12 — GitHub ZIP direct-file launch
+
+**Task claimed:** Make the game interactive when `src/index.html` is opened directly from a downloaded GitHub ZIP.
+
+### Done
+- Reproduced the issue in Chromium: the source module graph was blocked by `file://` CORS before `main.js` could attach any button listeners.
+- Added a checked-in IIFE bundle at `src/js/main.standalone.js` and a `build:standalone` script to regenerate it.
+- Added a protocol-aware entry loader: direct file launches use the standalone bundle; Vite development keeps the source module graph.
+- Added a Vite production transform so `dist`/Electron builds still receive the hashed module entry instead of the file-launch loader.
+- Documented the ZIP launch path in `README.md`.
+
+### Verification
+- Direct `file://` launch exposes `render_game_to_text`, has no module/CORS errors, and clicking **New Campaign** hides the title screen and enters the warp intro.
+- Direct `file://` **Custom Campaign** opens the custom-campaign modal.
+- `npm run build` — pass; `dist/assets/index-D9S0Df_c.js` is emitted and referenced by `dist/index.html`.
+- `git diff --check` — pass.
