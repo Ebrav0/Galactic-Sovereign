@@ -47,6 +47,7 @@ import {
   transitEtaMs,
   transitStatus,
 } from './transit.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 
 let nextBuilderDroneId = 1;
 let nextBuilderOrderId = 1;
@@ -212,7 +213,14 @@ function completeBuildTarget(state, drone) {
 
 function makeTransit(state, fromId, targetId) {
   const galaxy = getGraph(state);
-  const path = findPath(galaxy, fromId, targetId);
+  const path = findPath(galaxy, fromId, targetId, {
+    canEnter: (systemId) => canRouteThroughSystem(
+      state,
+      systemId,
+      'player',
+      { galaxyId: state.activeGalaxyId, allowHostile: true },
+    ).ok,
+  });
   if (!path || path.length < 2) return null;
   const durationMs = (a, b) =>
     Math.max(BUILDER_DRONE_LANE_MIN_LEG_MS, Math.round((Math.hypot(
@@ -529,6 +537,9 @@ export function cancelBuilderDrone(state, droneId) {
   if (!drone) return { ok: false, reason: 'No such builder drone' };
   if (drone.status === 'building') return { ok: false, reason: 'Drone is already building' };
   if (drone.status === 'idle') return { ok: true };
+  if (drone.status === 'outbound' || drone.status === 'returning') {
+    return { ok: false, reason: 'Drone cannot reverse course between star systems' };
+  }
   drone.status = 'idle';
   drone.systemId = drone.originSystemId ?? state.flagship?.systemId ?? drone.systemId;
   drone.targetSystemId = null;
@@ -559,9 +570,14 @@ function returnDroneToOrigin(state, drone, fromSystemId = drone.systemId ?? dron
     }
   }
   drone.status = 'idle';
-  drone.systemId = originId;
+  // A treaty change can close the return corridor while a drone is working.
+  // Keep it at the work site instead of teleporting across forbidden space.
+  drone.systemId = fromSystemId ?? originId;
   drone.targetSystemId = null;
   drone.returnTransit = null;
+  if (fromSystemId && originId && fromSystemId !== originId) {
+    drone.lastError = 'Return route blocked by closed borders';
+  }
   drone.awaitingOrders = false;
 }
 
@@ -617,6 +633,26 @@ export function tickBuilderDrones(state) {
           drone.buildDurationMs = null;
           drone.awaitingOrders = true;
           events.push({ type: 'builder_drone_deployed', droneId: drone.id, systemId: destId });
+        },
+        null,
+        {
+          canEnter: (systemId) => canRouteThroughSystem(state, systemId, 'player', {
+            galaxyId: drone.galaxyId,
+            allowHostile: true,
+          }).ok,
+          onBlocked: (safeSystemId, blockedSystemId) => {
+            drone.status = 'idle';
+            drone.systemId = safeSystemId;
+            drone.transit = null;
+            drone.targetSystemId = null;
+            drone.lastError = `Route blocked at ${blockedSystemId}`;
+            events.push({
+              type: 'builder_drone_deploy_failed',
+              droneId: drone.id,
+              systemId: blockedSystemId,
+              reason: drone.lastError,
+            });
+          },
         },
       );
     }
@@ -678,6 +714,25 @@ export function tickBuilderDrones(state) {
           drone.systemId = destId;
           drone.returnTransit = null;
           events.push({ type: 'builder_drone_returned', droneId: drone.id, systemId: destId });
+        },
+        null,
+        {
+          canEnter: (systemId) => canRouteThroughSystem(state, systemId, 'player', {
+            galaxyId: drone.galaxyId,
+            allowHostile: true,
+          }).ok,
+          onBlocked: (safeSystemId, blockedSystemId) => {
+            drone.status = 'idle';
+            drone.systemId = safeSystemId;
+            drone.returnTransit = null;
+            drone.lastError = `Return route blocked at ${blockedSystemId}`;
+            events.push({
+              type: 'builder_drone_return_blocked',
+              droneId: drone.id,
+              systemId: safeSystemId,
+              blockedSystemId,
+            });
+          },
         },
       );
     }

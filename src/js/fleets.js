@@ -20,6 +20,7 @@ import {
   shipsInBattleGroup,
 } from './battle-groups.js';
 import { findHeroFlagship } from './hero-flagships.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 
 let nextShipId = 1;
 
@@ -106,7 +107,14 @@ export function orderShipTravel(state, shipId, targetId) {
   }
   if (targetId === ship.systemId) return { ok: false, reason: 'Ship is already at that star' };
 
-  const path = findPath(galaxy, ship.systemId, targetId);
+  const path = findPath(galaxy, ship.systemId, targetId, {
+    canEnter: (systemId) => canRouteThroughSystem(
+      state,
+      systemId,
+      'player',
+      { galaxyId: state.activeGalaxyId, allowHostile: true },
+    ).ok,
+  });
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   const speed = shipLaneSpeed(ship.hull);
@@ -141,6 +149,24 @@ export function tickPlayerShips(state, onArrive) {
         onArrive?.(destId, ship);
       },
       durFn,
+      {
+        canEnter: (systemId) => canRouteThroughSystem(state, systemId, 'player', {
+          galaxyId: ship.galaxyId,
+          allowHostile: true,
+        }).ok,
+        onBlocked: (safeSystemId, blockedSystemId) => {
+          ship.transit = null;
+          ship.systemId = safeSystemId;
+          arrivals.push({
+            shipId: ship.id,
+            systemId: safeSystemId,
+            hull: ship.hull,
+            blocked: true,
+            blockedSystemId,
+          });
+          onArrive?.(safeSystemId, ship);
+        },
+      },
     );
   }
   return arrivals;

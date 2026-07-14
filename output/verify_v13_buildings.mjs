@@ -85,6 +85,8 @@ const state = {
     }],
   },
 };
+const buildNow = (systemId, bodyId, type) =>
+  buildBodyStructure(state, systemId, bodyId, type, { immediate: true });
 
 const outpost = { id: 'outpost-1', type: 'outpost', bodyId: 'p1', level: 1, hp: 200, maxHp: 200 };
 systems.sol.structures.push(outpost);
@@ -114,16 +116,16 @@ check('6. requested placement/cap exceptions are exact',
   && BODY_STRUCTURE_DEFS.wormhole_observatory.capScope === 'galaxy'
   && BODY_STRUCTURE_DEFS.embassy_complex.empireCap === 3);
 
-const power = buildBodyStructure(state, 'sol', 'p1', 'power_grid');
-const habitat1 = buildBodyStructure(state, 'sol', 'p1', 'orbital_habitat');
-const habitat2 = buildBodyStructure(state, 'sol', 'p2', 'orbital_habitat');
-const habitat3 = buildBodyStructure(state, 'sol', 'p1', 'orbital_habitat');
+const power = buildNow('sol', 'p1', 'power_grid');
+const habitat1 = buildNow('sol', 'p1', 'orbital_habitat');
+const habitat2 = buildNow('sol', 'p2', 'orbital_habitat');
+const habitat3 = buildNow('sol', 'p1', 'orbital_habitat');
 check('7. system caps apply across different bodies', power.ok && habitat1.ok && habitat2.ok
   && !habitat3.ok && habitat3.reason === 'System cap reached', habitat3.reason);
 
-const silo1 = buildBodyStructure(state, 'sol', 'p1', 'missile_silo');
-const silo2 = buildBodyStructure(state, 'sol', 'p1', 'missile_silo');
-const silo3 = buildBodyStructure(state, 'sol', 'p1', 'missile_silo');
+const silo1 = buildNow('sol', 'p1', 'missile_silo');
+const silo2 = buildNow('sol', 'p1', 'missile_silo');
+const silo3 = buildNow('sol', 'p1', 'missile_silo');
 check('8. per-body cap permits exactly two missile silos', silo1.ok && silo2.ok
   && !silo3.ok && silo3.reason === 'Cap reached on this body', silo3.reason);
 
@@ -133,11 +135,11 @@ check('9. direct tech lock blocks construction', !lockedForge.ok && /Research/.t
 state.research.unlocked.push('eco_nanoforges');
 
 systems.sol.structures.push({ id: 'foundry-1', type: 'sail_foundry', bodyId: 'p1', level: 1 });
-const collector = buildBodyStructure(state, 'sol', null, 'solar_collector');
+const collector = buildNow('sol', null, 'solar_collector');
 check('10. Dyson-only collector accepts an active Dyson project', collector.ok, collector.reason ?? '');
 
 state.flagship.systemId = 'bh';
-const observatory = buildBodyStructure(state, 'bh', null, 'wormhole_observatory');
+const observatory = buildNow('bh', null, 'wormhole_observatory');
 const observatoryDuplicate = canBuildBodyStructure(state, 'bh', null, 'wormhole_observatory');
 check('11. one observatory is allowed on the neutral black-hole node', observatory.ok
   && !observatoryDuplicate.ok && observatoryDuplicate.reason === 'Galaxy cap reached', observatoryDuplicate.reason);
@@ -156,7 +158,7 @@ const siloId = siloStructure.id;
 const siloHp1 = siloStructure.maxHp;
 const upgradeCost = bodyStructureUpgradeCost('missile_silo', 1);
 const creditsBeforeUpgrade = state.credits;
-const siloUpgrade = upgradeBodyStructure(state, 'sol', siloId, { ignoreTechCap: true });
+const siloUpgrade = upgradeBodyStructure(state, 'sol', siloId, { ignoreTechCap: true, immediate: true });
 check('13. tier upgrade keeps the structure ID and charges its declared cost', siloUpgrade.ok
   && siloStructure.id === siloId && structureLevel(siloStructure) === 2
   && state.credits === creditsBeforeUpgrade - upgradeCost);
@@ -164,8 +166,8 @@ check('14. defensive level II scales max HP by 1.5', siloStructure.maxHp === Mat
   `${siloHp1} -> ${siloStructure.maxHp}`);
 
 const outpostId = outpost.id;
-const outpostUpgrade2 = upgradeBodyStructure(state, 'sol', outpostId, { ignoreTechCap: true });
-const outpostUpgrade3 = upgradeBodyStructure(state, 'sol', outpostId, { ignoreTechCap: true });
+const outpostUpgrade2 = upgradeBodyStructure(state, 'sol', outpostId, { ignoreTechCap: true, immediate: true });
+const outpostUpgrade3 = upgradeBodyStructure(state, 'sol', outpostId, { ignoreTechCap: true, immediate: true });
 check('15. core outpost upgrades retain ID through level III', outpostUpgrade2.ok && outpostUpgrade3.ok
   && outpost.id === outpostId && outpost.level === 3);
 check('16. level III outpost cargo/capacity values are exact',
@@ -183,7 +185,7 @@ const reactivate = reconcileStructureTechnology(state, 'sol');
 check('18. newly available tech reactivates the same structure', reactivate.reactivated.includes(siloId)
   && siloStructure.id === siloId && isOperationalStructure(state, siloStructure, { systemId: 'sol' }));
 
-const hub = buildBodyStructure(state, 'sol', 'p1', 'logistics_hub');
+const hub = buildNow('sol', 'p1', 'logistics_hub');
 check('19. reusable logistics effect queries expose the catalog values', hub.ok
   && structureDepotCapacityBonus(state, 'sol') >= 100
   && structureDispatchIntervalMultiplier(state, 'sol', 'local') === 0.8);

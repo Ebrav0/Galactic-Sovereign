@@ -2,6 +2,7 @@
 // Empire-at-War formation helpers.
 
 import {
+  TICK_MS,
   TACTICAL_SHIP_SPEED,
   TACTICAL_SHIP_ACCEL,
   TACTICAL_SHIP_DRAG,
@@ -23,6 +24,41 @@ import {
 const DEFAULT_TIER = TACTICAL_MOTION_TIERS.escort;
 const BATTLE_LINE_TIERS = new Set(['capital', 'carrier', 'line']);
 const WING_HULL_SET = new Set(CARRIER_WING_HULLS);
+
+const DISPLAY_PREV_POSE = Symbol('combatDisplayPrevPose');
+
+/** Capture the fixed-tick pose before simulation mutates a tactical unit. */
+export function captureCombatDisplayPose(unit) {
+  if (!unit || typeof unit !== 'object') return;
+  if (!unit[DISPLAY_PREV_POSE]) {
+    Object.defineProperty(unit, DISPLAY_PREV_POSE, {
+      value: { x: 0, y: 0, heading: 0 },
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  unit[DISPLAY_PREV_POSE].x = Number.isFinite(unit.x) ? unit.x : 0;
+  unit[DISPLAY_PREV_POSE].y = Number.isFinite(unit.y) ? unit.y : 0;
+  unit[DISPLAY_PREV_POSE].heading = Number.isFinite(unit.heading) ? unit.heading : 0;
+}
+
+/** Smooth render-only pose between fixed combat ticks; never mutates simulation state. */
+export function combatDisplayPose(unit, accumulatorMs = 0, paused = false) {
+  const current = {
+    x: Number.isFinite(unit?.x) ? unit.x : 0,
+    y: Number.isFinite(unit?.y) ? unit.y : 0,
+    heading: Number.isFinite(unit?.heading) ? unit.heading : 0,
+  };
+  const previous = unit?.[DISPLAY_PREV_POSE];
+  if (!previous || paused) return current;
+  const alpha = Math.min(1, Math.max(0, accumulatorMs / TICK_MS));
+  return {
+    x: previous.x + (current.x - previous.x) * alpha,
+    y: previous.y + (current.y - previous.y) * alpha,
+    heading: previous.heading + shortestAngleDelta(previous.heading, current.heading) * alpha,
+  };
+}
 
 export function hullMotionProfile(hull) {
   const tierId = TACTICAL_MOTION_HULL_TIER[hull] ?? 'escort';

@@ -10,6 +10,71 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-14 — Flagship interpolation boundary stutter
+
+**Task claimed:** Flagship and flagship-launched fighters still stutter after tactical interpolation was restored.
+
+### Diagnosis
+- `getFlagshipDisplayPose` special-cased a zero render accumulator by returning the current physics pose. The next animation frame resumed interpolation from the previous pose, producing a backward snap at every 50 ms simulation boundary.
+- The ambient flagship sprite, follow camera, and flagship-wing home pose all consume this display pose, so the same discontinuity appeared on the flagship and its carrier-based fighters.
+
+### Done
+- Zero accumulator now correctly renders the previous fixed-tick pose, matching tactical ship interpolation and preserving continuity across tick boundaries.
+- Added a regression check that samples the first milliseconds after a flagship physics tick and rejects any backward display movement.
+
+### Verification
+- `output/verify_combat_steering.mjs`: 29/29, including the new zero-accumulator flagship boundary regression.
+- `output/verify_flagship_wing.mjs`: 16/16; `output/verify_directed_combat.mjs`: 25/25, both with zero browser console errors.
+- Required web-game client completed with valid flagship/wing text state and no error artifact; its headless warp capture was black, so the visible `04-wing-wander.png` gameplay capture from the focused verifier was opened and visually inspected instead.
+- `npm run build` passes.
+
+---
+
+## Session 2026-07-14 — Tactical ship stutter regression
+
+**Task claimed:** Ships are visibly stuttering again after directed tactical combat landed.
+
+### Diagnosis
+- Tactical units are simulated on the fixed 50 ms combat tick but `drawCombatLayer` renders their raw tick positions and headings every animation frame.
+- Ambient/flagship paths already use display-time interpolation; commanded combat movement made the unsmoothed 20 Hz tactical pose updates newly obvious.
+
+### Done
+- Captured a transient pre-tick pose for every tactical unit and interpolate position plus shortest-arc heading across the 50 ms tick in the renderer.
+- Applied the same display pose to ship sprites, selection/firing arcs, focus-fire endpoints, FX heading lookup, and move-path origins so overlays stay attached to ships.
+- Interpolation metadata is non-enumerable and never enters saves; combat simulation, collision, targeting, and damage remain fixed-tick and unchanged.
+- Stabilized the combat UI browser fixture by pausing between deterministic phases; its focus-fire assertion now correctly accepts ships already holding inside weapon range.
+
+### Verification
+- `output/verify_combat_steering.mjs`: 28/28, including evenly spaced between-tick positions, short-arc heading continuity, and save-transience checks.
+- `output/verify_flagship_wing.mjs`: 16/16; `output/verify_directed_combat.mjs`: 25/25; `output/verify_combat_ui.mjs`: 20/20; `output/verify_sts_combat_fx.mjs`: 14/14.
+- `npm run build` passes. Required web-game client completed with no error artifact; final directed-combat screenshots were visually inspected.
+
+---
+
+## Session 2026-07-14 — Directed tactical combat, threat targeting, and destroyer AA
+
+**Task claimed:** Implement contextual/HUD tactical move and attack orders, move-and-defend anchors, threat-then-HP targeting, weapon firing arcs, and Point Defense Grid-gated destroyer AA.
+
+### Done
+- Added contextual right-click and armed HUD Move/Attack commands, including invalid-click persistence and Escape cancellation.
+- Added deterministic formation-slot move-and-defend anchors with turn-limited hull steering, approach braking, 420-unit interception leash, and return-to-slot behavior.
+- Added one threat board per side/tick: designated and immediate/recent threats outrank strike craft/in-range targets, then current absolute HP, distance, and stable ID.
+- Added enforced 360/240/70-degree weapon arcs plus 100-degree port/starboard flagship broadside arcs; flagship PD and destroyer AA target independently.
+- Point Defense Grid now unlocks a 30%-base-DPS destroyer AA battery while retaining the 20% PD multiplier, torpedo primary, and AI research parity.
+- Added move rings, slot ghosts/lines, selected-ship arc overlays, focus lines, HUD feedback, and expanded combat text state (command mode, directive, threat board, headings, anchors, recent threats, weapon/mount targets, arcs, AA state).
+- Existing tactical-order persistence stores/hydrates the move order without a feature-specific save bump; the concurrently updated worktree currently serializes v16.
+
+### Verification
+- `output/verify_directed_combat.mjs`: 25/25 (right-click + HUD, turn limits, slots, leash intercept/return, save/load, AI AA parity, dual target fire, destroyed-focus fallback, zero console errors).
+- `output/verify_combat_orders_unit.mjs`: 43/43; `output/verify_combat_steering.mjs`: 25/25; `output/verify_combat_ui.mjs`: 20/20; `output/verify_sts_combat_fx.mjs`: 14/14.
+- `output/verify_combat_doctrine_unit.mjs`: 9/9; `output/verify_v13_tech.mjs`: 92/92; `output/verify_save_v12.mjs`: 11/11.
+- `npm run build` passes. Web-game client state had no error artifact; visually inspected `directed-combat-move.png`, `directed-combat-aa.png`, and the final client capture.
+
+### Suggested next
+- Optional: add drag-box selection and waypoint/control-group queues in the deferred follow-up pass.
+
+---
+
 ## Session 2026-07-14 — Ship stutter (face-motion follow-up)
 
 **Task claimed:** Ships are stuttering again after facing-direction-of-motion work.
@@ -925,3 +990,22 @@ Never delete prior entries.
 - `npm run build` — pass.
 - `node output/verify_sts_combat_fx.mjs` — 14/14 pass (all six weapon profiles present; screenshot at `output/visuals/sts-combat-fx.png`).
 - `git diff --check` — pass.
+
+---
+
+## Session 2026-07-14 — Diplomacy, strategic expansion, and bulk production overhaul
+
+**Task claimed:** Implement the approved v16 grand-strategy diplomacy, Auto-Route & Build campaigns, construction templates, and aggregate late-game production orders.
+
+### In progress
+- Preserving the existing directed-combat work while adding isolated diplomacy, bulk-production, and strategic-operations cores before shared UI/simulation integration.
+- Baseline checks: combat orders 43/43 pass; fleet/shipyard integrity 28/28 pass.
+- The pre-existing directed-combat browser verifier currently has two baseline failures: move-slot convergence and concurrent capital/fighter damage; these are being tracked separately from overhaul regressions.
+
+### Verification planned
+- Focused diplomacy, bulk-production, strategic-operations, v16 save migration, AI/route legality, scale, browser interaction, direct-file, production build, and existing regression checks.
+
+### Bulk production order input update
+- Replaced the typed manifest textarea with repeatable ship rows: an unlocked-hull dropdown, a positive whole-number quantity input, and add/remove controls.
+- Kept mixed-fleet orders aggregate by merging duplicate dropdown selections before preview/creation.
+- Verification: operations UI 10/10, bulk production 37/37, v16 browser 16/16, production build pass, and screenshot inspection pass (`output/visuals/overhaul-operations.png`).

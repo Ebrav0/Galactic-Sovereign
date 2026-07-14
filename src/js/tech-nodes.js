@@ -182,7 +182,7 @@ export const TECH_NODES = {
   },
   mil_point_defense: {
     id: 'mil_point_defense', cluster: 'military', name: 'Point Defense Grid',
-    prereqs: ['mil_patrol_cutter'], creditCost: 850, solariiCost: 1, researchMs: 60000, effect: 'point_defense_20',
+    prereqs: ['mil_patrol_cutter'], creditCost: 850, solariiCost: 1, researchMs: 60000, effect: 'unlock_destroyer_aa',
   },
   mil_kinetic_batteries: {
     id: 'mil_kinetic_batteries', cluster: 'military', name: 'Kinetic Batteries',

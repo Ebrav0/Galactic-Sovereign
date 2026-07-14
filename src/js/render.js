@@ -112,6 +112,8 @@ import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGala
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
 import { builderDroneTransitPositions, builderDroneBuildPose } from './builder-drones.js';
 import { drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
+import { activeFleetOrders, weaponArcRadians, weaponMountBearing } from './combat-orders.js';
+import { combatDisplayPose } from './combat-steering.js';
 import {
   activeConvoys,
   convoyTransitStatus,
@@ -961,7 +963,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     );
   }
 
-  drawCombatLayer(ctx, state, systemId, canvas, z, t, combatOverlay);
+  drawCombatLayer(ctx, state, systemId, canvas, z, t, combatOverlay, accumulatorMs);
 
   flushStars(ctx, 'outer');
   flushStars(ctx, 'bloom');
@@ -1071,7 +1073,99 @@ function drawBattleEnvelope(ctx, battle, canvas, z, time) {
   ctx.restore();
 }
 
-function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, combatOverlay = null) {
+function drawWeaponArcIndicator(ctx, p, unit, radius, z) {
+  const r = radius + Math.max(12, 18 * z);
+  const mounts = unit.hull === 'flagship' && Array.isArray(unit.weapons)
+    ? unit.weapons
+    : [{ profile: unit.weaponProfile ?? 'kinetic', hardpoint: null }];
+  for (const mount of mounts) {
+    const arc = weaponArcRadians(mount.profile, mount.hardpoint);
+    ctx.save();
+    ctx.strokeStyle = mount.profile === 'point_defense'
+      ? 'rgba(121, 255, 198, 0.26)'
+      : 'rgba(111, 214, 255, 0.34)';
+    ctx.fillStyle = 'rgba(111, 214, 255, 0.025)';
+    ctx.lineWidth = Math.max(1, z);
+    ctx.setLineDash([3 * z, 3 * z]);
+    if (arc >= Math.PI * 2 - 1e-6) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      const bearing = weaponMountBearing(unit, mount.hardpoint);
+      const start = bearing - arc / 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.arc(p.x, p.y, r, start, start + arc);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+
+function drawCombatMoveOrders(ctx, battle, selectionIds, canvas, z, poseById = null) {
+  const selected = new Set([...selectionIds].map(String));
+  const moves = activeFleetOrders(battle, 'player')
+    .filter((order) => order.type === 'move' && order.point
+      && (order.subjectIds.length === 0 || order.subjectIds.some((id) => selected.has(String(id)))));
+  for (const order of moves) {
+    const anchor = worldToScreen(camera, order.point.x, order.point.y, canvas);
+    const leash = (order.engagementRadius ?? 420) * z;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(111, 214, 255, 0.26)';
+    ctx.fillStyle = 'rgba(111, 214, 255, 0.045)';
+    ctx.lineWidth = Math.max(1, 1.4 * z);
+    ctx.setLineDash([8 * z, 7 * z]);
+    ctx.beginPath();
+    ctx.arc(anchor.x, anchor.y, leash, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(111, 214, 255, 0.9)';
+    ctx.beginPath();
+    ctx.arc(anchor.x, anchor.y, Math.max(7, 11 * z), 0, Math.PI * 2);
+    ctx.moveTo(anchor.x - 15 * z, anchor.y);
+    ctx.lineTo(anchor.x + 15 * z, anchor.y);
+    ctx.moveTo(anchor.x, anchor.y - 15 * z);
+    ctx.lineTo(anchor.x, anchor.y + 15 * z);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  for (const unit of battle.units ?? []) {
+    if (unit.hp <= 0 || !selected.has(String(unit.id)) || !unit.moveAnchor) continue;
+    const pose = poseById?.get(unit.id) ?? unit;
+    const from = worldToScreen(camera, pose.x, pose.y, canvas);
+    const slot = worldToScreen(camera, unit.moveAnchor.slotX, unit.moveAnchor.slotY, canvas);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(111, 214, 255, 0.48)';
+    ctx.lineWidth = Math.max(1, z);
+    ctx.setLineDash([5 * z, 4 * z]);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(slot.x, slot.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(slot.x, slot.y, Math.max(4, 6 * z), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawCombatLayer(
+  ctx,
+  state,
+  systemId,
+  canvas,
+  z,
+  time = state.time,
+  combatOverlay = null,
+  accumulatorMs = 0,
+) {
   const system = systemById(state, systemId);
   if (!system) return;
   const baseR = Math.max(6, 11 * z);
@@ -1088,10 +1182,16 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
   if (battle?.active && battle.units?.length) {
     const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
     const mode = combatRenderMode(liveCount, z);
+    const poseById = new Map();
     const headingById = new Map();
-    for (const unit of battle.units) headingById.set(unit.id, unit.heading ?? 0);
+    for (const unit of battle.units) {
+      const pose = combatDisplayPose(unit, accumulatorMs, state.paused);
+      poseById.set(unit.id, pose);
+      headingById.set(unit.id, pose.heading);
+    }
     const feedback = hitFeedbackByTarget(battle, time);
     drawBattleEnvelope(ctx, battle, canvas, z, time);
+    drawCombatMoveOrders(ctx, battle, selectionIds, canvas, z, poseById);
     drawCombatFx({
       ctx,
       battle,
@@ -1108,13 +1208,17 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
       ? battle.units.find((unit) => String(unit.id) === String(focusTargetId) && unit.hp > 0)
       : null;
     const focusScreen = focusUnit
-      ? worldToScreen(camera, focusUnit.x, focusUnit.y, canvas)
+      ? (() => {
+        const pose = poseById.get(focusUnit.id) ?? focusUnit;
+        return worldToScreen(camera, pose.x, pose.y, canvas);
+      })()
       : null;
 
     for (const unit of battle.units) {
       if (unit.hp <= 0) continue;
       if (unit.hideSprite) continue;
-      const p = worldToScreen(camera, unit.x, unit.y, canvas);
+      const pose = poseById.get(unit.id) ?? unit;
+      const p = worldToScreen(camera, pose.x, pose.y, canvas);
       if (!screenInView(p, canvas, 70)) continue;
       const selected = selectionIds.has(String(unit.id));
       const isFocus = focusUnit && String(unit.id) === String(focusUnit.id);
@@ -1131,6 +1235,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
         ctx.arc(p.x, p.y, shipR + 8 * z, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
+        drawWeaponArcIndicator(ctx, p, { ...unit, heading: pose.heading }, shipR, z);
       }
       if (isFocus) {
         ctx.save();
@@ -1144,7 +1249,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
         ctx.restore();
       }
       drawCombatShipSprite(ctx, p.x, p.y, unit.hull, shipR, {
-        heading: unit.heading ?? 0,
+        heading: pose.heading,
         side: unit.side,
         hp: unit.hp,
         maxHp: unit.maxHp,
@@ -1416,6 +1521,23 @@ export function drawGalaxy(
     }
   }
   const fleetRoutes = fleetTransitLaneKeys(state, selectedBattleGroupId);
+  const strategicRoutes = new Set();
+  const strategicTargets = new Map();
+  for (const campaign of state.strategicOrders?.campaigns ?? []) {
+    if (['complete', 'cancelled'].includes(campaign.status)) continue;
+    for (const target of campaign.targets ?? []) {
+      if (target.galaxyId !== state.activeGalaxyId || ['complete', 'cancelled'].includes(target.phase)) continue;
+      strategicTargets.set(target.systemId, {
+        campaignId: campaign.id,
+        campaignName: campaign.name,
+        phase: target.phase,
+      });
+      const path = target.route ?? [];
+      for (let i = 0; i < path.length - 1; i++) {
+        strategicRoutes.add(laneKey(path[i], path[i + 1]));
+      }
+    }
+  }
   const piratePresence = new Set(pirateSystemsWithPresence(state));
   const pirateRoutes = pirateTransitLaneKeys(state);
   const scoutTransit = scoutTransitPositions(state);
@@ -1460,10 +1582,11 @@ export function drawGalaxy(
     const onScoutRoute = scoutRoutes.has(key);
     const onFleetRoute = fleetRoutes.all.has(key);
     const onFleetSelectedRoute = fleetRoutes.selected.has(key);
+    const onStrategicRoute = strategicRoutes.has(key);
     const onPirateRoute = pirateRoutes.has(key);
     const onLogisticsRoute = logisticsRoutes.has(key);
     const onBlockade = overlayState.blockade && blockadeRoutes.has(key);
-    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onFleetRoute && !onPirateRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
+    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onFleetRoute && !onStrategicRoute && !onPirateRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
       continue;
     }
     visibleLanes++;
@@ -1484,6 +1607,10 @@ export function drawGalaxy(
       ctx.setLineDash([6 * z, 4 * z]);
       ctx.strokeStyle = THEME.laneScout;
       ctx.lineWidth = Math.max(1, 1.8 * z);
+    } else if (onStrategicRoute) {
+      ctx.setLineDash([10 * z, 4 * z, 2 * z, 4 * z]);
+      ctx.strokeStyle = hexToRgba(THEME.accentGold, 0.9);
+      ctx.lineWidth = Math.max(1.6, 2.7 * z);
     } else if (onFleetSelectedRoute) {
       ctx.setLineDash([7 * z, 3 * z]);
       ctx.strokeStyle = THEME.laneFleetSelected;
@@ -1607,7 +1734,8 @@ export function drawGalaxy(
     const aiOwned = isAiOwned(state, star.id);
     const fleetAtStar = fleetMarkersBySystem.get(star.id) ?? [];
     const pirateAtStar = pirateMarkersBySystem.get(star.id) ?? [];
-    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0;
+    const strategicTarget = strategicTargets.get(star.id);
+    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0 || !!strategicTarget;
     if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
 
     if (!system?.star) {
@@ -1643,6 +1771,42 @@ export function drawGalaxy(
       );
       if (tier !== 'far') {
         labelText(ctx, 'Tutorial target', s.x, s.y - nodeR - 17 * z, Math.max(8, 10 * z), THEME.accentCyan);
+      }
+    }
+
+    if (strategicTarget) {
+      const phaseColor = {
+        planned: '#7083a8',
+        recon: THEME.accentCyan,
+        staging: THEME.accentGold,
+        traveling: '#ff9d57',
+        fighting: THEME.dangerHot,
+        capturing: '#b67cff',
+        constructing: THEME.accentGreen,
+        securing: '#55e1ca',
+      }[strategicTarget.phase] ?? THEME.accentGold;
+      const pulse = 0.5 + 0.5 * Math.sin((performance.now() / 1200) * Math.PI * 2);
+      ctx.save();
+      ctx.setLineDash([5 * z, 4 * z]);
+      drawGlowRing(
+        ctx,
+        s.x,
+        s.y,
+        nodeR + (16 + pulse * 4) * z,
+        phaseColor,
+        Math.max(1.2, 2 * z),
+        0.58 + pulse * 0.22,
+      );
+      ctx.restore();
+      if (tier === 'close') {
+        labelText(
+          ctx,
+          `AUTO · ${strategicTarget.phase.toUpperCase()}`,
+          s.x,
+          s.y - nodeR - 19 * z,
+          Math.max(8, 9.5 * z),
+          phaseColor,
+        );
       }
     }
 

@@ -17,7 +17,7 @@ import { getGalaxyCapture, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
 import { totalCaptureForceFromShips, captureForceFromAnchoredGroups } from './fleets.js';
 import { pirateCombatPresence } from './pirates.js';
-import { aiCombatPresence } from './ai-ships.js';
+import { aiShipFactionId, aiShipsInSystem } from './ai-ships.js';
 import {
   forwardBaseCaptureBonus,
   commandPostCaptureReduction,
@@ -25,6 +25,9 @@ import {
 import { heroesInSystem } from './hero-flagships.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
 import { isOperationalStructure, reconcileStructureTechnology } from './body-structures.js';
+import { canAttackSystem, isAtWar, recordOccupation } from './diplomacy.js';
+import { hostileStructureCombatPresence } from './combat.js';
+import { captureForceForShip } from './hull.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -65,7 +68,12 @@ export function captureForceInSystem(state, systemId) {
 }
 
 export function enemyCombatPresence(state, systemId) {
-  return pirateCombatPresence(state, systemId) + aiCombatPresence(state, systemId);
+  const hostileAi = aiShipsInSystem(state, systemId)
+    .filter((ship) => isAtWar(state, aiShipFactionId(state, ship)))
+    .reduce((total, ship) => total + captureForceForShip(ship), 0);
+  return pirateCombatPresence(state, systemId)
+    + hostileAi
+    + hostileStructureCombatPresence(state, systemId);
 }
 
 export function isCapturableSystem(state, systemId) {
@@ -76,6 +84,12 @@ export function isCapturableSystem(state, systemId) {
 
 export function canHoldCapture(state, systemId) {
   if (!isCapturableSystem(state, systemId)) return false;
+  if (state.systemBattles?.[systemId]?.active) return false;
+  const target = systemById(state, systemId);
+  if (target?.owner !== 'neutral') {
+    const attack = canAttackSystem(state, target, 'player');
+    if (!attack.ok) return false;
+  }
   if (!hasIntel(state, systemId)) return false;
   if (captureForceInSystem(state, systemId) < captureRequirement(state, systemId)) return false;
   if (enemyCombatPresence(state, systemId) > 0) return false;
@@ -129,15 +143,38 @@ export function tickCapture(state) {
 
       if (entry.progressMs >= CAPTURE_HOLD_MS) {
         const system = systemById(state, systemId);
-        system.owner = 'player';
-        system.factionId = null;
-        for (const structure of system.structures ?? []) structure.factionId = null;
+        const previousOwner = system.owner;
+        const previousFactionId = system.factionId
+          ?? (previousOwner === 'ai'
+            ? state.factions?.ai?.id ?? state.factions?.list?.[0]?.id ?? 'unknown-ai'
+            : null);
+        let occupation = null;
+        if (previousOwner === 'neutral') {
+          system.owner = 'player';
+          system.factionId = null;
+          for (const structure of system.structures ?? []) structure.factionId = null;
+        } else {
+          const occupied = recordOccupation(state, {
+            galaxyId: state.activeGalaxyId,
+            systemId,
+            occupier: 'player',
+            previousActor: previousFactionId,
+            previousOwner,
+            previousFactionId,
+          });
+          if (!occupied.ok) {
+            delete capture[systemId];
+            return { blocked: systemId, reason: occupied.reason };
+          }
+          occupation = occupied.occupation;
+        }
         const technology = reconcileStructureTechnology(state, systemId, { owner: 'player' });
         delete capture[systemId];
         return {
           captured: systemId,
           mothballed: technology.mothballed ?? [],
           reactivated: technology.reactivated ?? [],
+          occupationId: occupation?.id ?? null,
         };
       }
     } else if (capture[systemId]) {

@@ -55,7 +55,10 @@ import { BLACK_HOLE_ID } from './galaxy.js';
 import { enqueueHull, cancelQueueItem, pinQueueItem, empireQueueSummary, listPlayerShipyards } from './empire-queue.js';
 import { startResearch, canBuildResearchStation, buildResearchStation, researchSummary, researchStationCount } from './research.js';
 import { canBuildTradeStation, buildTradeStation, tradeSummary } from './trade.js';
-import { diplomacySummary, offerTreaty } from './diplomacy.js';
+import {
+  diplomacyPanelSnapshot,
+  renderDiplomacyCommandScreen,
+} from './diplomacy-ui.js';
 import { campaignSummary } from './campaign.js';
 import { listMissions, startMission } from './missions.js';
 import {
@@ -138,6 +141,10 @@ import {
   DOCTRINE_LABELS,
   normalizeDoctrine,
 } from './combat-doctrine.js';
+import {
+  operationsPanelSnapshot,
+  renderOperationsPanel,
+} from './operations-ui.js';
 
 const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
   ...new Set([
@@ -411,6 +418,7 @@ function updateTabBar(view, sidePanel) {
   el('tab-fleet')?.classList.toggle('tab--active', sidePanel === 'fleet');
   el('tab-logistics')?.classList.toggle('tab--active', sidePanel === 'logistics');
   el('tab-diplomacy')?.classList.toggle('tab--active', sidePanel === 'diplomacy');
+  el('tab-operations')?.classList.toggle('tab--active', sidePanel === 'operations');
   el('tab-campaign')?.classList.toggle('tab--active', sidePanel === 'campaign');
 }
 
@@ -629,6 +637,8 @@ function renderCombatHud(state, battle, systemName, ctx) {
     issueTacticalOrder,
     setCombatDoctrine,
     getCombatSelection,
+    getCombatCommandMode,
+    setCombatCommandMode,
     doTogglePause,
     doToggleView,
   } = ctx;
@@ -643,6 +653,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
     ? hostiles.find((unit) => String(unit.id) === String(focusOrder.targetId))
     : null;
   const doctrine = normalizeDoctrine(battle.doctrine ?? state.combatDoctrine);
+  const commandMode = getCombatCommandMode?.() ?? null;
   const elapsed = Math.max(0, (state.time ?? 0) - (battle.startedAt ?? state.time ?? 0));
 
   const systemEl = el('combat-hud-system');
@@ -657,9 +668,11 @@ function renderCombatHud(state, battle, systemName, ctx) {
   if (hostileEl) hostileEl.textContent = String(hostiles.length);
   if (formationEl) formationEl.textContent = `Formation: ${formationOrder?.formation ?? '—'}`;
   if (focusEl) {
-    focusEl.textContent = focusUnit
-      ? `Focus: ${focusUnit.hull?.replaceAll('_', ' ') ?? focusUnit.id}`
-      : 'Focus: —';
+    focusEl.textContent = commandMode
+      ? `${commandMode === 'move' ? 'Move' : 'Attack'} armed · click a valid ${commandMode === 'move' ? 'location' : 'hostile'} · Esc cancels`
+      : (focusUnit
+        ? `Focus: ${focusUnit.hull?.replaceAll('_', ' ') ?? focusUnit.id}`
+        : 'Right-click: contextual order');
   }
 
   const selectionEl = el('combat-hud-selection');
@@ -668,7 +681,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
     if (!selectedUnits.length) {
       const empty = document.createElement('p');
       empty.className = 'combat-hud__empty';
-      empty.textContent = 'Click friendlies to select · Shift multi-select · click enemy to focus fire';
+      empty.textContent = 'Click friendlies to select · Shift multi-select · right-click to command';
       selectionEl.appendChild(empty);
     } else {
       for (const unit of selectedUnits.slice(0, 6)) {
@@ -736,18 +749,25 @@ function renderCombatHud(state, battle, systemName, ctx) {
   const subjectIds = selectedUnits.length
     ? selectedUnits.map((unit) => unit.id)
     : friendlies.map((unit) => unit.id);
+  const moveBtn = el('combat-hud-move');
+  const attackBtn = el('combat-hud-attack');
   const holdBtn = el('combat-hud-hold');
-  const rallyBtn = el('combat-hud-rally');
   const retreatBtn = el('combat-hud-retreat');
   const pauseBtn = el('combat-hud-pause');
   const galaxyBtn = el('combat-hud-galaxy');
+  if (moveBtn) {
+    moveBtn.classList.toggle('btn--active', commandMode === 'move');
+    moveBtn.disabled = selectedUnits.length === 0;
+    moveBtn.onclick = () => setCombatCommandMode?.(commandMode === 'move' ? null : 'move');
+  }
+  if (attackBtn) {
+    attackBtn.classList.toggle('btn--active', commandMode === 'attack');
+    attackBtn.disabled = selectedUnits.length === 0;
+    attackBtn.onclick = () => setCombatCommandMode?.(commandMode === 'attack' ? null : 'attack');
+  }
   if (holdBtn && !holdBtn.dataset.bound) {
     holdBtn.onclick = () => issueTacticalOrder?.({ type: 'hold', subjectIds });
     holdBtn.dataset.bound = '1';
-  }
-  if (rallyBtn && !rallyBtn.dataset.bound) {
-    rallyBtn.onclick = () => issueTacticalOrder?.({ type: 'rally', point: { x: 0, y: 0 }, subjectIds });
-    rallyBtn.dataset.bound = '1';
   }
   if (retreatBtn && !retreatBtn.dataset.bound) {
     retreatBtn.onclick = () => issueTacticalOrder?.({
@@ -767,47 +787,12 @@ function renderCombatHud(state, battle, systemName, ctx) {
   }
   // Rebind subjectIds each frame via closures on fresh handlers for order buttons.
   if (holdBtn) holdBtn.onclick = () => issueTacticalOrder?.({ type: 'hold', subjectIds });
-  if (rallyBtn) {
-    rallyBtn.onclick = () => issueTacticalOrder?.({ type: 'rally', point: { x: 0, y: 0 }, subjectIds });
-  }
   if (retreatBtn) {
     retreatBtn.onclick = () => issueTacticalOrder?.({
       type: 'emergency_retreat',
       point: { x: -1500, y: 0 },
       subjectIds,
     });
-  }
-}
-
-function renderDiplomacyPanel(container, state) {
-  clearChildren(container);
-  const summary = diplomacySummary(state);
-  if (!summary.unlocked) {
-    const locked = document.createElement('p');
-    locked.className = 'empty-state';
-    locked.textContent = 'Complete a Dyson sphere (Shell #8) to unlock diplomacy.';
-    container.appendChild(locked);
-    return;
-  }
-  for (const f of summary.factions) {
-    const row = document.createElement('div');
-    row.className = 'intel-row';
-    row.innerHTML = `<span>${f.name}</span><span>${f.status}</span>`;
-    container.appendChild(row);
-    const actions = document.createElement('div');
-    actions.className = 'dev-row';
-    for (const [type, label] of [['truce', 'Truce'], ['trade', 'Trade'], ['alliance', 'Alliance']]) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn btn--ghost btn--xs';
-      btn.textContent = label;
-      btn.onclick = () => {
-        const res = offerTreaty(state, f.id, type);
-        toast(res.ok ? `${label} with ${f.name}` : res.reason, res.ok ? 'ok' : 'error');
-      };
-      actions.appendChild(btn);
-    }
-    container.appendChild(actions);
   }
 }
 
@@ -2396,6 +2381,8 @@ export function initUi(ctx) {
     selectCombatUnit,
     clearCombatSelection,
     combatFocus,
+    getCombatCommandMode,
+    setCombatCommandMode,
     combatUiActive,
     followConvoy,
     getBootPhase,
@@ -2451,6 +2438,7 @@ export function initUi(ctx) {
     combatCommand: '',
     techPanel: '',
     diplomacyPanel: '',
+    operationsPanel: '',
     campaignPanel: '',
     dysonPanel: '',
     buildPanel: '',
@@ -2977,6 +2965,10 @@ export function initUi(ctx) {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'diplomacy' ? null : 'diplomacy';
   });
+  el('tab-operations')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'operations' ? null : 'operations';
+  });
   el('tab-campaign')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'campaign' ? null : 'campaign';
@@ -3262,6 +3254,7 @@ export function initUi(ctx) {
 
     const techScreen = el('tech-screen');
     const diploScreen = el('diplomacy-screen');
+    const operationsScreen = el('operations-screen');
     const campScreen = el('campaign-screen');
     el('tech-panel')?.classList.add('hidden');
     if (sidePanel === 'tech') {
@@ -3287,14 +3280,39 @@ export function initUi(ctx) {
     }
     if (sidePanel === 'diplomacy') {
       diploScreen?.classList.remove('hidden');
-      const diploSnap = JSON.stringify(diplomacySummary(state));
-      if (diploSnap !== uiSnapshots.diplomacyPanel && !uiPointerActive) {
+      const diploSnap = JSON.stringify(diplomacyPanelSnapshot(state));
+      const diplomacyMounted = !!diploScreen?.querySelector('#diplomacy-command-screen');
+      // Diplomacy actions refresh their own mounted screen. Holding the live
+      // command DOM stable between actions prevents background relationship
+      // ticks from detaching buttons while the player is trying to click them.
+      if (!diplomacyMounted) {
         uiSnapshots.diplomacyPanel = diploSnap;
-        renderDiplomacyPanel(el('diplomacy-screen-body'), state);
-      }
+        renderDiplomacyCommandScreen(el('diplomacy-screen-body'), state, {
+          getGalaxyTargetStar,
+          toast,
+        });
+      } else uiSnapshots.diplomacyPanel = diploSnap;
     } else {
       diploScreen?.classList.add('hidden');
       uiSnapshots.diplomacyPanel = '';
+    }
+    if (sidePanel === 'operations') {
+      operationsScreen?.classList.remove('hidden');
+      const operationsSnap = JSON.stringify(operationsPanelSnapshot(state));
+      const operationsMounted = !!operationsScreen?.querySelector('#operations-command-screen');
+      const operationsInteracting = operationsMounted && (uiPointerActive
+        || operationsScreen?.matches(':hover')
+        || operationsScreen?.contains(document.activeElement));
+      if (operationsSnap !== uiSnapshots.operationsPanel && !operationsInteracting) {
+        uiSnapshots.operationsPanel = operationsSnap;
+        renderOperationsPanel(el('operations-screen-body'), state, {
+          getGalaxyTargetStar,
+          toast,
+        });
+      }
+    } else {
+      operationsScreen?.classList.add('hidden');
+      uiSnapshots.operationsPanel = '';
     }
     if (sidePanel === 'campaign') {
       campScreen?.classList.remove('hidden');
@@ -3386,6 +3404,8 @@ export function initUi(ctx) {
         issueTacticalOrder,
         setCombatDoctrine,
         getCombatSelection,
+        getCombatCommandMode,
+        setCombatCommandMode,
         doTogglePause,
         doToggleView,
       });

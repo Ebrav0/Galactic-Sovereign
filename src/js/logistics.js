@@ -41,6 +41,7 @@ import {
   structureDispatchIntervalMultiplier,
   structureNexusDeliveryMultiplier,
 } from './body-structures.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 import { techEffects } from './tech-web.js';
 import { factionTechContext } from './ai-tech.js';
 
@@ -447,6 +448,15 @@ export function discoverTradeNexuses(state, galaxyId = state.activeGalaxyId, own
 function bestNexusRoute(state, galaxyId, fromSystemId, options = {}) {
   const graph = getGraph(state, galaxyId);
   const blockades = routeBlockades(state, galaxyId);
+  const actorId = options.ownerId ?? 'player';
+  for (const system of Object.values(getSystems(state, galaxyId))) {
+    if (system.id === fromSystemId) continue;
+    const legality = canRouteThroughSystem(state, system, actorId, {
+      galaxyId,
+      allowHostile: true,
+    });
+    if (!legality.ok) blockades.blockedSystems.add(system.id);
+  }
   const requested = options.destinationSystemId ?? null;
   const candidates = discoverTradeNexuses(state, galaxyId, options.ownerId ?? 'player')
     .filter((nexus) => nexus.available && (!requested || nexus.systemId === requested));
@@ -1221,7 +1231,7 @@ function tryRerouteOrPause(state, convoy, reason, config) {
 function tickOneConvoy(state, convoy, config, events) {
   const now = state.time ?? 0;
   if (convoy.status === 'paused') {
-    if (convoy.pauseReason === 'blockade' || convoy.pauseReason === 'no_destination') {
+    if (['blockade', 'no_destination', 'closed_borders'].includes(convoy.pauseReason)) {
       const location = convoyAtRouteNode(convoy, now);
       const system = location.ok ? getSystems(state, convoy.galaxyId)[location.systemId] : null;
       if (location.ok && nexusAcceptsCargo(system, convoy.ownerId ?? 'player')) {
@@ -1262,6 +1272,19 @@ function tickOneConvoy(state, convoy, config, events) {
       || isSystemBlockaded(state, convoy.galaxyId, toId))) {
       if (!tryRerouteOrPause(state, convoy, 'blockade', config)) return;
       continue;
+    }
+    if (atLegStart) {
+      const destination = getSystems(state, convoy.galaxyId)[toId];
+      const legality = canRouteThroughSystem(
+        state,
+        destination ?? toId,
+        convoy.ownerId ?? 'player',
+        { galaxyId: convoy.galaxyId, allowHostile: true },
+      );
+      if (!legality.ok) {
+        if (!tryRerouteOrPause(state, convoy, 'closed_borders', config)) return;
+        continue;
+      }
     }
 
     const legEnd = convoy.legStartTime + convoy.legDurationMs;

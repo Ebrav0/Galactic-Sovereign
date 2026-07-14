@@ -27,8 +27,13 @@ import {
 import { isTechUnlocked, techEffects } from './tech-web.js';
 import { refreshMilestones } from './milestones.js';
 import { orderTravel } from './flagship.js';
+import {
+  canAttackSystem,
+  canRouteThroughSystem,
+  recordSystemDestroyed,
+  triggerSuperweaponPanic,
+} from './diplomacy.js';
 import { orderBattleGroupTravel, battleGroupsForGalaxy } from './battle-groups.js';
-import { triggerSuperweaponPanic } from './diplomacy.js';
 
 let nextCreatedStarIndex = 0;
 
@@ -249,10 +254,17 @@ function canStartAction(state, type, targetSystemId) {
     }
     if (onCooldown(state)) return { ok: false, reason: 'Superweapon on cooldown' };
     if (!getSystems(state)[targetSystemId]) return { ok: false, reason: 'No such system' };
+    const attack = canAttackSystem(state, targetSystemId, 'player', { galaxyId: state.activeGalaxyId });
+    if (!attack.ok) return attack;
   } else if (type === 'jump') {
     if (!isTechUnlocked(state, 'sw_jump_gate')) return { ok: false, reason: 'Research Superweapon Jump first' };
     if (onCooldown(state, 'jumpCooldownUntil')) return { ok: false, reason: 'Jump on cooldown' };
     if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid target star' };
+    const transit = canRouteThroughSystem(state, targetSystemId, 'player', {
+      galaxyId: state.activeGalaxyId,
+      allowHostile: true,
+    });
+    if (!transit.ok) return transit;
   } else {
     return { ok: false, reason: 'Unknown action' };
   }
@@ -337,8 +349,15 @@ function commitDestroy(state, targetSystemId) {
   const gal = getActiveGalaxy(state);
   const graph = getGraph(state);
   if (!gal.systems[targetSystemId]) return { ok: false, reason: 'No such system' };
+  const attack = canAttackSystem(state, targetSystemId, 'player', { galaxyId: state.activeGalaxyId });
+  if (!attack.ok) return attack;
 
-  purgeSystemEntities(state, targetSystemId);
+  recordSystemDestroyed(state, {
+    galaxyId: state.activeGalaxyId,
+    systemId: targetSystemId,
+    actor: 'player',
+  });
+  purgeSystemEntities(state, targetSystemId, state.activeGalaxyId);
   delete gal.systems[targetSystemId];
   graph.stars = graph.stars.filter((s) => s.id !== targetSystemId);
   graph.lanes = graph.lanes.filter(([a, b]) => a !== targetSystemId && b !== targetSystemId);
@@ -348,19 +367,13 @@ function commitDestroy(state, targetSystemId) {
 
 function commitJump(state, targetSystemId) {
   const travel = orderTravel(state, targetSystemId);
-  if (!travel.ok) {
-    state.flagship.systemId = targetSystemId;
-    state.flagship.transit = null;
-    state.flagship.wormholeTransit = null;
-    state.flagship.x = 0;
-    state.flagship.y = -200;
-  }
+  if (!travel.ok) return travel;
   for (const group of battleGroupsForGalaxy(state)) {
     if (group.shipIds.length > 0) {
       orderBattleGroupTravel(state, group.id, targetSystemId);
     }
   }
-  return { ok: true, targetSystemId, travel: travel.ok ? travel : { ok: true, instant: true } };
+  return { ok: true, targetSystemId, travel };
 }
 
 function resolveFireSequence(state, seq) {
@@ -368,6 +381,19 @@ function resolveFireSequence(state, seq) {
   seq.resolved = true;
 
   if (seq.type === 'destroy') {
+    const authorization = canAttackSystem(state, seq.targetSystemId, 'player', {
+      galaxyId: state.activeGalaxyId,
+    });
+    if (!authorization.ok) {
+      seq.blocked = true;
+      seq.failureReason = authorization.reason;
+      state.solarii = (state.solarii ?? 0) + (seq.costPaid ?? 0);
+      state.superweapon.lastAction = {
+        type: 'destroy', targetSystemId: seq.targetSystemId, at: state.time,
+        blocked: true, reason: authorization.reason,
+      };
+      return;
+    }
     const shield = tryBlockDestroyWithShield(state, seq.targetSystemId);
     if (shield.blocked) {
       seq.blocked = true;
@@ -384,6 +410,16 @@ function resolveFireSequence(state, seq) {
       return;
     }
     const result = commitDestroy(state, seq.targetSystemId);
+    if (!result.ok) {
+      seq.blocked = true;
+      seq.failureReason = result.reason;
+      state.solarii = (state.solarii ?? 0) + (seq.costPaid ?? 0);
+      state.superweapon.lastAction = {
+        type: 'destroy', targetSystemId: seq.targetSystemId, at: state.time,
+        blocked: true, reason: result.reason,
+      };
+      return;
+    }
     state.superweapon.cooldownUntil = state.time + cooldownMsFor('destroy', state);
     state.superweapon.lastAction = {
       type: 'destroy',
@@ -409,7 +445,17 @@ function resolveFireSequence(state, seq) {
   }
 
   if (seq.type === 'jump') {
-    commitJump(state, seq.targetSystemId);
+    const result = commitJump(state, seq.targetSystemId);
+    if (!result.ok) {
+      seq.blocked = true;
+      seq.failureReason = result.reason;
+      state.solarii = (state.solarii ?? 0) + (seq.costPaid ?? 0);
+      state.superweapon.lastAction = {
+        type: 'jump', targetSystemId: seq.targetSystemId, at: state.time,
+        blocked: true, reason: result.reason,
+      };
+      return;
+    }
     state.superweapon.jumpCooldownUntil = state.time + cooldownMsFor('jump', state);
     state.superweapon.lastAction = {
       type: 'jump',
@@ -461,6 +507,13 @@ export function superweaponDestroy(state, targetSystemId, { immediate = false } 
   if (shield.blocked) return { ok: false, ...shield };
   state.solarii -= check.cost;
   const result = commitDestroy(state, targetSystemId);
+  if (!result.ok) {
+    state.solarii += check.cost;
+    state.superweapon.lastAction = {
+      type: 'destroy', targetSystemId, at: state.time, blocked: true, reason: result.reason,
+    };
+    return result;
+  }
   state.superweapon.cooldownUntil = state.time + cooldownMsFor('destroy', state);
   state.superweapon.lastAction = { type: 'destroy', targetSystemId, at: state.time };
   return result;
@@ -472,17 +525,24 @@ export function superweaponJump(state, targetSystemId, { immediate = false } = {
   if (!check.ok) return check;
   state.solarii -= check.cost;
   const result = commitJump(state, targetSystemId);
+  if (!result.ok) {
+    state.solarii += check.cost;
+    return result;
+  }
   state.superweapon.jumpCooldownUntil = state.time + cooldownMsFor('jump', state);
   state.superweapon.lastAction = { type: 'jump', targetSystemId, at: state.time };
   return result;
 }
 
-function purgeSystemEntities(state, systemId) {
+function purgeSystemEntities(state, systemId, galaxyId = state.activeGalaxyId) {
+  const sameGalaxy = (entity) => (entity?.galaxyId ?? state.activeGalaxyId) === galaxyId;
   const referencesSystem = (entity) => entity?.systemId === systemId
     || entity?.targetSystemId === systemId
     || entity?.rallyStarId === systemId
     || entity?.transit?.path?.includes?.(systemId)
-    || entity?.returnTransit?.path?.includes?.(systemId);
+    || entity?.returnTransit?.path?.includes?.(systemId)
+    ? sameGalaxy(entity)
+    : false;
   state.playerShips = (state.playerShips ?? []).filter((entity) => !referencesSystem(entity));
   state.aiShips = (state.aiShips ?? []).filter((entity) => !referencesSystem(entity));
   state.scouts = (state.scouts ?? []).filter((entity) => !referencesSystem(entity));
@@ -521,46 +581,52 @@ function purgeSystemEntities(state, systemId) {
   if (logistics) {
     const removedDepotIds = new Set();
     for (const [depotId, depot] of Object.entries(logistics.depots ?? {})) {
-      if (depot.systemId === systemId || depot.nexusSystemId === systemId) {
+      if (sameGalaxy(depot) && (depot.systemId === systemId || depot.nexusSystemId === systemId)) {
         removedDepotIds.add(depotId);
         delete logistics.depots[depotId];
       }
     }
     logistics.routes = (logistics.routes ?? []).filter((route) => (
       !removedDepotIds.has(route.depotId)
-      && route.fromSystemId !== systemId
-      && route.toSystemId !== systemId
-      && route.nexusSystemId !== systemId
-      && !route.path?.includes?.(systemId)
+      && (!sameGalaxy(route) || (
+        route.fromSystemId !== systemId
+        && route.toSystemId !== systemId
+        && route.nexusSystemId !== systemId
+        && !route.path?.includes?.(systemId)
+      ))
     ));
     const removedConvoys = (logistics.convoys ?? []).filter((convoy) => (
-      removedDepotIds.has(convoy.depotId)
-      || convoy.fromSystemId === systemId
-      || convoy.toSystemId === systemId
-      || convoy.nexusSystemId === systemId
-      || convoy.path?.includes?.(systemId)
+      sameGalaxy(convoy) && (
+        removedDepotIds.has(convoy.depotId)
+        || convoy.fromSystemId === systemId
+        || convoy.toSystemId === systemId
+        || convoy.nexusSystemId === systemId
+        || convoy.path?.includes?.(systemId)
+      )
     ));
     logistics.convoys = (logistics.convoys ?? []).filter((convoy) => !removedConvoys.includes(convoy));
     logistics.stats ??= {};
     logistics.stats.convoysLost = (logistics.stats.convoysLost ?? 0) + removedConvoys.length;
     logistics.localTransports = (logistics.localTransports ?? []).filter((transport) => (
-      transport.systemId !== systemId && !removedDepotIds.has(transport.depotId)
+      !sameGalaxy(transport) || (transport.systemId !== systemId && !removedDepotIds.has(transport.depotId))
     ));
     for (const key of Object.keys(logistics.outpostStock ?? {})) {
       const stock = logistics.outpostStock[key];
-      if (stock?.systemId === systemId || key.includes(`:${systemId}:`)) delete logistics.outpostStock[key];
+      if ((stock?.galaxyId ?? state.activeGalaxyId) === galaxyId
+        && (stock?.systemId === systemId || key.includes(`:${systemId}:`))) delete logistics.outpostStock[key];
     }
     logistics.blockades.systems = (logistics.blockades?.systems ?? [])
-      .filter((key) => !key.endsWith(`:${systemId}`));
+      .filter((key) => !(key.startsWith(`${galaxyId}:`) && key.endsWith(`:${systemId}`)));
     logistics.blockades.lanes = (logistics.blockades?.lanes ?? [])
-      .filter((key) => !key.split(':').at(-1)?.split('|').includes(systemId));
+      .filter((key) => !(key.startsWith(`${galaxyId}:`)
+        && key.split(':').at(-1)?.split('|').includes(systemId)));
   }
 
   const galaxy = getActiveGalaxy(state);
   if (galaxy?.intel) delete galaxy.intel[systemId];
   if (galaxy?.capture) delete galaxy.capture[systemId];
   for (const faction of state.factions?.list ?? []) {
-    if (faction.homeSystemId !== systemId) continue;
+    if (faction.homeSystemId !== systemId || (faction.homeGalaxyId ?? galaxyId) !== galaxyId) continue;
     faction.homeSystemId = Object.values(getSystems(state))
       .find((system) => system.id !== systemId && system.owner === 'ai' && system.factionId === faction.id)?.id
       ?? null;

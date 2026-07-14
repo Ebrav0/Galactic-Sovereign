@@ -94,6 +94,14 @@ export function canBuildStrategicStructure(state, systemId, type, planetId = nul
   }
 
   if (def.perBody) {
+    // Dead-star frontier campaigns have no physical body to host an outpost.
+    // Their template-defined fallback commissions one system-node Forward Base
+    // instead, while retaining the normal one-per-system cap and tech gate.
+    if (!planetId && type === 'forward_base' && opts.remote && (system.bodies?.length ?? 0) === 0) {
+      const existing = system.structures.filter((s) => s.type === type).length;
+      if (existing >= def.cap) return { ok: false, reason: 'System cap reached' };
+      return { ok: true, systemNodeFallback: true };
+    }
     if (!planetId) return { ok: false, reason: 'Select a planet' };
     const planet = findPlanet(state, systemId, planetId);
     if (!planet) return { ok: false, reason: 'No such planet' };

@@ -26,6 +26,7 @@ import { getGraph } from './galaxy-scope.js';
 import { effectiveLegDurationMs } from './strategic-structures.js';
 import { keepOutRepulsion } from './ship-motion.js';
 import { getStarVisualProfile } from './star-types.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 import {
   legDurationMs,
   transitStatus as transitStatusCore,
@@ -72,17 +73,13 @@ export function getFlagshipDisplayPose(state, accumulatorMs) {
   const f = state.flagship;
   ensureOrbitField(f);
   if (!prevInit) syncPrevPose(f);
-  if (state.paused || f.transit || !accumulatorMs) {
+  if (state.paused || f.transit) {
     const heading = f.orbit ? headingFromMotion(f, f.vx, f.vy) : f.heading;
     return { x: f.x, y: f.y, heading };
   }
   const t = Math.min(1, Math.max(0, accumulatorMs / TICK_MS));
   const dx = f.x - prev.x;
   const dy = f.y - prev.y;
-  if (t === 0) {
-    const heading = f.orbit ? headingFromMotion(f, dx, dy) : f.heading;
-    return { x: f.x, y: f.y, heading };
-  }
 
   if (f.orbit) {
     return {
@@ -335,7 +332,14 @@ export function orderTravel(state, targetId) {
   if (!nodeById(galaxy, targetId)) return { ok: false, reason: 'No such star' };
   if (targetId === f.systemId) return { ok: false, reason: 'Flagship is already in that system' };
 
-  const path = findPath(galaxy, f.systemId, targetId);
+  const path = findPath(galaxy, f.systemId, targetId, {
+    canEnter: (systemId) => canRouteThroughSystem(
+      state,
+      systemId,
+      'player',
+      { galaxyId: state.activeGalaxyId, allowHostile: true },
+    ).ok,
+  });
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   clearOrbit(f);
@@ -401,6 +405,13 @@ export function tickFlagship(state) {
       LANE_MIN_LEG_MS,
       (destId, fromId) => arrive(state, destId, fromId),
       durFn,
+      {
+        canEnter: (systemId) => canRouteThroughSystem(state, systemId, 'player', {
+          galaxyId: state.activeGalaxyId,
+          allowHostile: true,
+        }).ok,
+        onBlocked: (safeSystemId, blockedSystemId) => arrive(state, safeSystemId, blockedSystemId),
+      },
     );
     return;
   }

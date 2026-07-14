@@ -27,6 +27,9 @@ import { initBuilderDrones } from './builder-drones.js';
 import { ensureLogisticsState, resetLogisticsIds } from './logistics.js';
 import { createSolCommanderState } from './sol-commander.js';
 import { allTechNodes } from './tech-web.js';
+import { ensureBulkProductionState } from './bulk-production.js';
+import { ensureStrategicOrdersState } from './strategic-operations.js';
+import { ensureDiplomacy } from './diplomacy.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -94,6 +97,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 12) e = migrateV12toV13(e);
   if (e.saveVersion === 13) e = migrateV13toV14(e);
   if (e.saveVersion === 14) e = migrateV14toV15(e);
+  if (e.saveVersion === 15) e = migrateV15toV16(e);
   return e;
 }
 
@@ -900,6 +904,67 @@ function migrateV14toV15(envelope) {
   };
 }
 
+export function initV16State(state) {
+  state.diplomacy = state.diplomacy && typeof state.diplomacy === 'object'
+    ? state.diplomacy
+    : { relations: {} };
+  state.diplomacy.version = 2;
+  state.diplomacy.relations ??= {};
+  state.diplomacy.contacts ??= {};
+  state.diplomacy.proposals = Array.isArray(state.diplomacy.proposals) ? state.diplomacy.proposals : [];
+  state.diplomacy.agreements = Array.isArray(state.diplomacy.agreements) ? state.diplomacy.agreements : [];
+  state.diplomacy.claims = Array.isArray(state.diplomacy.claims) ? state.diplomacy.claims : [];
+  state.diplomacy.wars = Array.isArray(state.diplomacy.wars) ? state.diplomacy.wars : [];
+  state.diplomacy.occupations = Array.isArray(state.diplomacy.occupations) ? state.diplomacy.occupations : [];
+  state.diplomacy.sanctions = Array.isArray(state.diplomacy.sanctions) ? state.diplomacy.sanctions : [];
+  state.diplomacy.history = Array.isArray(state.diplomacy.history) ? state.diplomacy.history : [];
+  state.diplomacy.council = state.diplomacy.council && typeof state.diplomacy.council === 'object'
+    ? state.diplomacy.council
+    : { resolutions: [], activeResolutionId: null, lastSessionAt: 0 };
+  state.diplomacy.council.resolutions = Array.isArray(state.diplomacy.council.resolutions)
+    ? state.diplomacy.council.resolutions
+    : [];
+  state.diplomacy.nextIds = {
+    proposal: Math.max(1, Math.floor(state.diplomacy.nextIds?.proposal ?? 1)),
+    agreement: Math.max(1, Math.floor(state.diplomacy.nextIds?.agreement ?? 1)),
+    claim: Math.max(1, Math.floor(state.diplomacy.nextIds?.claim ?? 1)),
+    war: Math.max(1, Math.floor(state.diplomacy.nextIds?.war ?? 1)),
+    resolution: Math.max(1, Math.floor(state.diplomacy.nextIds?.resolution ?? 1)),
+  };
+  state.diplomacy.revision = Math.max(0, Math.floor(state.diplomacy.revision ?? 0));
+  state.diplomacy.panicUntil = Math.max(0, Number(state.diplomacy.panicUntil ?? 0));
+  ensureDiplomacy(state);
+
+  // Migrate the short-lived pre-release v16 draft shape as well as v15 saves.
+  if (!Array.isArray(state.bulkProductionDeliveries)) {
+    state.bulkProductionDeliveries = Array.isArray(state.bulkProduction?.pendingDeliveries)
+      ? state.bulkProduction.pendingDeliveries
+      : [];
+  }
+  if (!state.bulkProductionMeta || typeof state.bulkProductionMeta !== 'object') {
+    state.bulkProductionMeta = {
+      nextOrderId: state.bulkProduction?.nextOrderId ?? 1,
+      nextDeliveryId: 1,
+    };
+  }
+  delete state.bulkProduction;
+  ensureBulkProductionState(state);
+  ensureStrategicOrdersState(state);
+  return state;
+}
+
+// v15 -> v16 (grand-strategy diplomacy, strategic operations, bulk production).
+function migrateV15toV16(envelope) {
+  const state = initV16State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 16,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -921,6 +986,7 @@ export function deserialize(envelopeJson) {
   if (envelope.saveVersion < SAVE_VERSION) {
     envelope = migrateSave(envelope);
   }
+  initV16State(envelope.state);
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;

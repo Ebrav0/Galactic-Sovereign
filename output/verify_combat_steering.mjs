@@ -17,6 +17,8 @@ import {
   pickFleetSlotGoal,
   blendCombatGoal,
   battleLineMembers,
+  captureCombatDisplayPose,
+  combatDisplayPose,
 } from '../src/js/combat-steering.js';
 import {
   TICK_MS,
@@ -24,6 +26,11 @@ import {
   TACTICAL_SHIP_SPEED,
   TACTICAL_FORMATION_BASE_SPACING,
 } from '../src/js/constants.js';
+import {
+  getFlagshipDisplayPose,
+  setFlagshipInput,
+  tickFlagship,
+} from '../src/js/flagship.js';
 
 const results = [];
 const check = (name, cond, detail = '') => {
@@ -39,6 +46,53 @@ function lineOffset(type, ordinal, count, spacing = TACTICAL_FORMATION_BASE_SPAC
 // --- Pure unit checks ---
 check('shortestAngleDelta wraps correctly', Math.abs(shortestAngleDelta(0.1, -0.1) + 0.2) < 1e-9);
 check('shortestAngleDelta prefers short arc across ±π', Math.abs(shortestAngleDelta(3.0, -3.0)) < 0.5);
+
+{
+  const unit = { id: 'display', x: 0, y: 0, heading: Math.PI - 0.1 };
+  captureCombatDisplayPose(unit);
+  unit.x = 12;
+  unit.y = 6;
+  unit.heading = -Math.PI + 0.1;
+  const samples = [0, 12.5, 25, 37.5, 50]
+    .map((ms) => combatDisplayPose(unit, ms));
+  check('combat display pose fills every animation interval between fixed ticks',
+    samples.every((pose, index) => Math.abs(pose.x - index * 3) < 1e-9
+      && Math.abs(pose.y - index * 1.5) < 1e-9),
+    samples.map((pose) => pose.x.toFixed(1)).join(','));
+  check('combat heading interpolation follows the short arc without wrapping jumps',
+    samples.every((pose, index) => index === 0
+      || Math.abs(shortestAngleDelta(samples[index - 1].heading, pose.heading)) < 0.06));
+  check('display interpolation metadata is transient and does not enter saves',
+    JSON.stringify(unit) === JSON.stringify({ id: 'display', x: 12, y: 6, heading: -Math.PI + 0.1 }));
+}
+
+{
+  const state = {
+    paused: false,
+    flagship: {
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      heading: 0,
+      systemId: null,
+      transit: null,
+      wormholeTransit: null,
+      orbit: null,
+    },
+  };
+  getFlagshipDisplayPose(state, 0);
+  setFlagshipInput(1, 0);
+  tickFlagship(state);
+  setFlagshipInput(0, 0);
+  const samples = [0, 1, 12.5, 25, 37.5, 49]
+    .map((ms) => getFlagshipDisplayPose(state, ms).x);
+  check('flagship display pose does not snap backward after a fixed-tick boundary',
+    samples.every((x, index) => index === 0 || x >= samples[index - 1])
+      && Math.abs(samples[0]) < 1e-9
+      && samples.at(-1) < state.flagship.x,
+    samples.map((x) => x.toFixed(4)).join(','));
+}
 
 {
   const unit = { x: 0, y: 0, heading: 0, vx: 0, vy: 0 };

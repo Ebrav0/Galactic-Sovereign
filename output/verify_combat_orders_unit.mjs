@@ -22,6 +22,7 @@ import {
   shieldFacingForHit,
   validateFleetOrder,
   validateLodConservation,
+  weaponCanBear,
 } from '../src/js/combat-orders.js';
 
 const results = [];
@@ -42,9 +43,16 @@ const allies = [
 ];
 
 // --- Order validation and recording ---
-check('order contract exposes all ten commands', FLEET_ORDER_TYPES.length === 10
+check('order contract exposes all eleven commands', FLEET_ORDER_TYPES.length === 11
   && ['formation', 'screen', 'protect', 'hold', 'attack_class', 'focus_fire', 'bombard',
-    'escort_convoy', 'rally', 'emergency_retreat'].every((type) => FLEET_ORDER_TYPES.includes(type)));
+    'escort_convoy', 'rally', 'move', 'emergency_retreat'].every((type) => FLEET_ORDER_TYPES.includes(type)));
+
+const move = validateFleetOrder({ type: 'move', point: { x: 120, y: -40 }, subjectIds: ['ally-a'] }, {
+  units: allies, side: 'player',
+});
+check('move defaults to 420 engagement radius', move.ok && move.order.engagementRadius === 420);
+check('move without battlefield point is rejected', validateFleetOrder({ type: 'move' }).errors
+  .some((error) => error.code === 'MOVE_POINT_REQUIRED'));
 
 const unknown = validateFleetOrder({ type: 'ram' });
 check('unknown order is rejected', !unknown.ok && unknown.errors[0]?.code === 'UNKNOWN_ORDER_TYPE');
@@ -109,6 +117,24 @@ check('priority is independent of input order', rankedA.map((entry) => entry.tar
 check('priority scoring repeats exactly', scoreTargetPriority(interceptor, targets[1], fighterOrder)
   === scoreTargetPriority(interceptor, targets[1], fighterOrder));
 check('priority selector returns ranked winner', selectPriorityTarget(interceptor, targets, fighterOrder)?.id === 'fighter-a');
+
+const threatTargets = [
+  { id: 'passive-high', side: 'enemy', hull: 'battleship', hp: 700, maxHp: 700, x: 270, y: 0 },
+  { id: 'active-low', side: 'enemy', hull: 'frigate', hp: 120, maxHp: 200, x: 250, y: 0, focusTargetId: 'ally-a' },
+];
+const generalAttacker = { id: 'ally-gun', side: 'player', hull: 'frigate', weaponProfile: 'kinetic', x: 0, y: 0 };
+check('active threat outranks passive higher HP', selectPriorityTarget(generalAttacker, threatTargets, null, {
+  friendlyUnits: allies, nowMs: 5000, range: 280,
+})?.id === 'active-low');
+threatTargets[1].focusTargetId = null;
+check('equal threat tier uses highest current HP', selectPriorityTarget(generalAttacker, threatTargets, null, {
+  friendlyUnits: allies, nowMs: 5000, range: 280,
+})?.id === 'passive-high');
+
+const arcUnit = { x: 0, y: 0, heading: 0, weaponProfile: 'torpedo' };
+check('prow weapon accepts target inside arc', weaponCanBear(arcUnit, { x: 100, y: 20 }, 'torpedo'));
+check('prow weapon rejects target behind ship', !weaponCanBear(arcUnit, { x: -100, y: 0 }, 'torpedo'));
+check('point defense has full coverage', weaponCanBear(arcUnit, { x: -100, y: 0 }, 'point_defense'));
 
 // --- Focus fire ---
 const missingFocus = validateFleetOrder({ type: 'focus_fire', subjectIds: ['ally-a'] }, { units: allies, side: 'player' });

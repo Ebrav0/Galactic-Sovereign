@@ -117,9 +117,16 @@ await page.evaluate(() => {
   const g = st.galaxies[st.activeGalaxyId].graph;
   const shielded = g.stars.find((x) => x.id !== st.stronghold && !String(x.id).startsWith('sys-created'));
   st._shieldTarget = shielded.id;
-  st.galaxies[st.activeGalaxyId].systems[shielded.id].dyson = {
+  const shieldedSystem = st.galaxies[st.activeGalaxyId].systems[shielded.id];
+  shieldedSystem.owner = 'ai';
+  shieldedSystem.factionId = st.factions.list[0].id;
+  shieldedSystem.dyson = {
     completedShells: 8, shellSails: 0, foundryStock: 0, launcherStock: {}, launcherLastFireAt: {},
   };
+  window.__establishContact(st.factions.list[0].id, { stage: 'established', trigger: 'test' });
+  window.__declareWar(st.factions.list[0].id, {
+    goals: [{ type: 'superweapon_containment', systemIds: [shielded.id] }],
+  });
   const neighbor = g.lanes.find(([a, b]) => a === shielded.id || b === shielded.id);
   const other = neighbor ? (neighbor[0] === shielded.id ? neighbor[1] : neighbor[0]) : null;
   if (other && other !== st.stronghold) {
@@ -152,6 +159,10 @@ await page.evaluate(() => {
     && !String(x.id).startsWith('sys-created')
     && (st.galaxies[st.activeGalaxyId].systems[x.id]?.dyson?.completedShells ?? 0) < 8);
   st._fireTarget = target?.id;
+  if (st._fireTarget) {
+    st.galaxies[st.activeGalaxyId].systems[st._fireTarget].owner = 'ai';
+    st.galaxies[st.activeGalaxyId].systems[st._fireTarget].factionId = st.factions.list[0].id;
+  }
 });
 await page.evaluate(() => {
   const st = window.getGameState();

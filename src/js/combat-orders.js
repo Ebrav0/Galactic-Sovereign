@@ -5,7 +5,11 @@
 
 import {
   CARRIER_WING_HULLS,
+  FLAGSHIP_BROADSIDE_ARC_RADIANS,
   HULL_STATS,
+  TACTICAL_MOVE_ENGAGEMENT_RADIUS,
+  TACTICAL_RECENT_THREAT_MS,
+  WEAPON_ARC_RADIANS,
   WEAPON_PROFILES,
 } from './constants.js';
 
@@ -14,6 +18,7 @@ export const FLEET_ORDER_TYPES = Object.freeze([
   'screen',
   'protect',
   'hold',
+  'move',
   'attack_class',
   'focus_fire',
   'bombard',
@@ -121,6 +126,9 @@ export function normalizeFleetOrder(order = {}, context = {}) {
     formation: order.formation == null ? null : String(order.formation),
     point: cleanPoint(order.point),
     radius: order.radius == null ? null : round6(nonNegative(order.radius)),
+    engagementRadius: order.engagementRadius == null
+      ? (String(order.type ?? '') === 'move' ? TACTICAL_MOVE_ENGAGEMENT_RADIUS : null)
+      : round6(nonNegative(order.engagementRadius)),
     priority: order.priority == null ? 0 : Math.trunc(finiteNumber(order.priority)),
   };
   return normalized;
@@ -148,6 +156,13 @@ export function validateFleetOrder(order, context = {}) {
   }
   if (normalized.radius != null && normalized.radius <= 0) {
     errors.push(orderError('INVALID_RADIUS', 'radius', 'Order radius must be greater than zero'));
+  }
+  if (normalized.engagementRadius != null && normalized.engagementRadius <= 0) {
+    errors.push(orderError(
+      'INVALID_ENGAGEMENT_RADIUS',
+      'engagementRadius',
+      'Engagement radius must be greater than zero',
+    ));
   }
 
   if (normalized.subjectIds.length && contextUnits(context).length) {
@@ -189,6 +204,11 @@ export function validateFleetOrder(order, context = {}) {
     case 'attack_class':
       if (!TARGET_CLASS_SET.has(normalized.targetClass)) {
         errors.push(orderError('INVALID_TARGET_CLASS', 'targetClass', 'A supported target class is required'));
+      }
+      break;
+    case 'move':
+      if (!normalized.point) {
+        errors.push(orderError('MOVE_POINT_REQUIRED', 'point', 'Move requires a battlefield point'));
       }
       break;
     case 'focus_fire': {
@@ -314,14 +334,77 @@ export function classifyCombatTarget(target) {
   return 'escort';
 }
 
-function weaponMultiplier(attacker, targetClass) {
-  const profile = WEAPON_PROFILES[attacker?.weaponProfile] ?? WEAPON_PROFILES.kinetic;
-  if (targetClass === 'fighter') return finiteNumber(profile?.antiFighter, 1);
-  if (targetClass === 'structure') return finiteNumber(profile?.structure, 1);
-  if (targetClass === 'capital' || targetClass === 'carrier' || targetClass === 'convoy') {
-    return finiteNumber(profile?.antiCapital, 1);
+function friendlyIds(context) {
+  return new Set((context.friendlyUnits ?? []).filter((unit) => unit?.hp > 0).map((unit) => String(unit.id)));
+}
+
+function highValueFriendly(unit) {
+  const cls = classifyCombatTarget(unit);
+  return unit?.isObjective || ['capital', 'carrier', 'convoy', 'structure'].includes(cls);
+}
+
+function distanceBetween(a, b) {
+  return Math.hypot(finiteNumber(a?.x) - finiteNumber(b?.x), finiteNumber(a?.y) - finiteNumber(b?.y));
+}
+
+/** Threat tier is evaluated before HP, distance, and the stable id tie-breaker. */
+export function combatThreatTier(attacker, target, context = {}) {
+  const sharedTier = context.threatTierById instanceof Map
+    ? context.threatTierById.get(String(target?.id))
+    : context.threatTierById?.[String(target?.id)];
+  if (Number.isFinite(sharedTier)) return sharedTier;
+  const friends = (context.friendlyUnits ?? []).filter((unit) => unit?.hp > 0);
+  const friendIds = friendlyIds(context);
+  const nowMs = finiteNumber(context.nowMs);
+  const recentWindow = nonNegative(context.recentThreatMs, TACTICAL_RECENT_THREAT_MS);
+  const targetFocusId = target?.focusTargetId == null ? null : String(target.focusTargetId);
+  const activelyThreatening = targetFocusId != null && friendIds.has(targetFocusId);
+  const recentlyAttacked = friends.some((unit) => String(unit.lastAttackerId ?? '') === String(target.id)
+    && nowMs - finiteNumber(unit.lastDamagedAt, -Infinity) <= recentWindow);
+  if (activelyThreatening || recentlyAttacked) return 3;
+
+  if (classifyCombatTarget(target) === 'fighter') {
+    const diving = friends.some((unit) => highValueFriendly(unit)
+      && distanceBetween(unit, target) <= nonNegative(context.strikeThreatRadius, TACTICAL_MOVE_ENGAGEMENT_RADIUS));
+    if (diving) return 2;
   }
-  return 1;
+
+  const range = Math.max(1, nonNegative(context.range, 280));
+  if (distanceBetween(attacker, target) <= range) return 1;
+  return 0;
+}
+
+function normalizedAngle(angle) {
+  let out = finiteNumber(angle);
+  while (out <= -Math.PI) out += Math.PI * 2;
+  while (out > Math.PI) out -= Math.PI * 2;
+  return out;
+}
+
+export function weaponArcRadians(profileId, hardpoint = null) {
+  if (['broadside_port', 'broadside_starboard', 'port', 'starboard'].includes(hardpoint)) {
+    return FLAGSHIP_BROADSIDE_ARC_RADIANS;
+  }
+  return WEAPON_ARC_RADIANS[profileId] ?? Math.PI * 2;
+}
+
+export function weaponMountBearing(unit, hardpoint = null) {
+  const heading = finiteNumber(unit?.heading);
+  if (hardpoint === 'broadside_port' || hardpoint === 'port') return normalizedAngle(heading - Math.PI / 2);
+  if (hardpoint === 'broadside_starboard' || hardpoint === 'starboard') return normalizedAngle(heading + Math.PI / 2);
+  if (hardpoint === 'aft_pd') return normalizedAngle(heading + Math.PI);
+  return heading;
+}
+
+/** True when a target lies inside the mount's current traverse cone. */
+export function weaponCanBear(unit, target, profileId = null, hardpoint = null) {
+  if (!unit || !target) return false;
+  const profile = profileId ?? unit.weaponProfile ?? 'kinetic';
+  const arc = weaponArcRadians(profile, hardpoint);
+  if (arc >= Math.PI * 2 - 1e-6) return true;
+  const targetAngle = Math.atan2(finiteNumber(target.y) - finiteNumber(unit.y), finiteNumber(target.x) - finiteNumber(unit.x));
+  const delta = Math.abs(normalizedAngle(targetAngle - weaponMountBearing(unit, hardpoint)));
+  return delta <= arc / 2 + 1e-9;
 }
 
 /**
@@ -338,39 +421,36 @@ export function scoreTargetPriority(attacker, target, order = null, context = {}
   const distance = Math.hypot(dx, dy);
   const range = Math.max(1, finiteNumber(context.range, finiteNumber(profile.range, 280)));
   const hp = nonNegative(target.hp);
-  const maxHp = Math.max(1, nonNegative(target.maxHp, hp || 1));
-  const hpRatio = Math.min(1, hp / maxHp);
-  let score = 1000;
+  const explicitlyDesignated = order?.targetId != null && String(order.targetId) === String(target.id);
+  if (!explicitlyDesignated && (attacker.weaponProfile ?? '') === 'point_defense' && cls !== 'fighter') return -Infinity;
+  if (order?.type === 'emergency_retreat') return -Infinity;
+  if (order?.type === 'move' && order.point) {
+    const leash = nonNegative(order.engagementRadius, TACTICAL_MOVE_ENGAGEMENT_RADIUS);
+    if (distanceBetween(order.point, target) > leash) return -Infinity;
+  }
 
-  score += weaponMultiplier(attacker, cls) * 900;
-  score += distance <= range ? 700 : -Math.min(1200, ((distance - range) / range) * 500);
-  score += (1 - hpRatio) * 340;
-  score += nonNegative(target.threatLevel) * 40;
-  if (target.isObjective) score += 425;
+  let threatTier = combatThreatTier(attacker, target, { ...context, range });
 
   if (order) {
-    if (order.targetId && String(order.targetId) === String(target.id)) score += 10000;
+    if (order.targetId && String(order.targetId) === String(target.id)) threatTier = Math.max(threatTier, 100);
     if (order.type === 'focus_fire') {
-      score += order.targetId && String(order.targetId) === String(target.id) ? 2500 : -800;
+      if (!order.targetId || String(order.targetId) !== String(target.id)) return -Infinity;
     }
     if (order.type === 'attack_class') {
-      score += order.targetClass === cls ? 5000 : -1100;
+      threatTier += order.targetClass === cls ? 50 : -10;
     }
-    if (order.type === 'bombard') score += cls === 'structure' ? 4800 : -5000;
+    if (order.type === 'bombard' && cls !== 'structure') return -Infinity;
     if ((order.type === 'protect' || order.type === 'screen')
-      && target.threatensId != null
-      && String(target.threatensId) === String(order.targetId)) score += 4200;
+      && target.focusTargetId != null
+      && String(target.focusTargetId) === String(order.targetId)) threatTier += 40;
     if (order.type === 'escort_convoy'
       && target.threatensConvoyId != null
-      && String(target.threatensConvoyId) === String(order.convoyId)) score += 4600;
-    if (order.type === 'emergency_retreat') score -= 100000;
-    score += finiteNumber(order.priority) * 10;
+      && String(target.threatensConvoyId) === String(order.convoyId)) threatTier += 40;
+    threatTier += finiteNumber(order.priority);
   }
 
-  if (attacker.hull === 'interceptor' && cls === 'fighter') score += 1100;
-  if (attacker.hull === 'bomber' && (cls === 'capital' || cls === 'carrier' || cls === 'structure')) {
-    score += 1250;
-  }
+  // Threat tier dominates, then absolute current HP, then nearest distance.
+  const score = threatTier * 1e9 + hp * 1e4 - distance;
   return round6(score);
 }
 
@@ -816,8 +896,13 @@ export function validateLodConservation(units, aggregateOrInputs, epsilon = 1e-6
     observed[field] = round6(buckets.reduce((sum, bucket) => sum + finiteNumber(bucket[field]), 0));
   }
   const errors = [];
+  // Bucket totals are rounded to save-safe six-decimal values. Comparing a
+  // once-rounded fleet total with the sum of many individually rounded unit
+  // contributions needs a unit-count-scaled epsilon to avoid false drift in
+  // late-game battles while still detecting meaningful conservation errors.
+  const roundingTolerance = epsilon * Math.max(1, expected.unitCount);
   for (const field of Object.keys(expected)) {
-    if (Math.abs(expected[field] - observed[field]) > epsilon) {
+    if (Math.abs(expected[field] - observed[field]) > roundingTolerance) {
       errors.push({ field, expected: expected[field], observed: observed[field] });
     }
   }

@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 15;
+export const SAVE_VERSION = 16;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -226,6 +226,19 @@ export const TACTICAL_SEPARATION_RADIUS = 26;    // soft bubble for baseline esc
 export const TACTICAL_SEPARATION_STRENGTH = 90;  // repulsion accel at contact
 export const TACTICAL_TARGET_STICK_MS = 1200;    // sticky focus target duration
 export const TACTICAL_TARGET_LEASH_MULT = 2.4;   // drop sticky if beyond range * leash
+export const TACTICAL_RECENT_THREAT_MS = 3000;   // recent damage keeps an attacker elevated
+export const TACTICAL_MOVE_ENGAGEMENT_RADIUS = 420;
+export const TACTICAL_MOVE_ARRIVAL_RADIUS = 18;
+export const DESTROYER_AA_DAMAGE_SHARE = 0.30;
+export const WEAPON_ARC_RADIANS = Object.freeze({
+  point_defense: Math.PI * 2,
+  repair: Math.PI * 2,
+  kinetic: Math.PI * (4 / 3),          // 240-degree forward turret traverse
+  ion: Math.PI * (4 / 3),
+  torpedo: Math.PI * (70 / 180),       // 70-degree prow cone
+  beam_lance: Math.PI * (70 / 180),
+});
+export const FLAGSHIP_BROADSIDE_ARC_RADIANS = Math.PI * (100 / 180);
 export const TACTICAL_FORMATION_PULL_MIN = 40;    // blend formation only beyond this distance (escorts)
 export const TACTICAL_APPROACH_BAND = 0.92;      // thrust toward target when dist > range * band
 export const TACTICAL_BATTLE_LINE_DISCIPLINE_MIN = 0.5; // auto soft battle-line if discipline >= this

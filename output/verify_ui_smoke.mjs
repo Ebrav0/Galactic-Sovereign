@@ -36,13 +36,20 @@ try {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1024, height: 640 } });
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
-  await page.waitForTimeout(2500);
+  await page.waitForFunction(() => typeof window.__newGame === 'function');
+  await page.evaluate(() => {
+    window.__newGame(42, { mode: 'sandbox' });
+    document.getElementById('title-screen')?.classList.add('hidden');
+    window.__setBootPhase('playing');
+    window.getGameState().paused = false;
+  });
+  await page.waitForTimeout(500);
 
   check('page loads', await page.title() === 'Galactic Sovereign');
-  check('tokens.css linked', await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-deep').trim() === '#05070f'));
+  check('tokens.css linked', await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-deep').trim() === '#02040b'));
   check('header visible', await page.locator('#top-bar').isVisible());
   check('tab bar present', await page.locator('#tab-bar').isVisible());
-  check('tab stub disabled count', (await page.locator('.tab--disabled').count()) === 3);
+  check('all main command tabs present', (await page.locator('#tab-bar .tab').count()) === 9);
   check('canvas renders', await page.evaluate(() => {
     const c = document.getElementById('game-canvas');
     const ctx = c.getContext('2d');

@@ -34,6 +34,10 @@ export function attachInput(canvas, ctx) {
     onSelect,
     onCombatSelect,
     onCombatFocus,
+    getCombatCommandMode,
+    onCombatCommand,
+    onCombatContextCommand,
+    onCombatCancelCommand,
     onCombatClearSelection,
     combatUiActive,
     onTogglePause,
@@ -82,6 +86,12 @@ export function attachInput(canvas, ctx) {
       e.preventDefault();
       onTogglePause();
     } else if (e.code === 'Escape') {
+      if (getCombatCommandMode?.()) {
+        e.preventDefault();
+        onCombatCancelCommand?.();
+        canvas.classList.remove('combat-command-move', 'combat-command-attack');
+        return;
+      }
       if (onCloseSidePanel) onCloseSidePanel();
       onSelect(null);
     } else if (e.code === 'KeyM') {
@@ -128,6 +138,7 @@ export function attachInput(canvas, ctx) {
   });
 
   canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
     pointerDown = true;
     dragging = false;
     lastX = e.clientX;
@@ -154,8 +165,13 @@ export function attachInput(canvas, ctx) {
       const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
       const hit = getView() === 'galaxy'
         ? hitTestFleetMarker(getState(), w.x, w.y) ?? hitTestStar(getState(), w.x, w.y) ?? hitTestScout(getState(), w.x, w.y)
-        : hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
+        : (combatUiActive?.()
+          ? hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y)
+          : hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y));
       canvas.classList.toggle('hover-body', hit !== null);
+      const commandMode = getCombatCommandMode?.();
+      canvas.classList.toggle('combat-command-move', commandMode === 'move');
+      canvas.classList.toggle('combat-command-attack', commandMode === 'attack');
     }
   });
 
@@ -170,6 +186,11 @@ export function attachInput(canvas, ctx) {
     if (getView() === 'system') {
       if (combatUiActive?.()) {
         const unit = hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y);
+        const commandMode = getCombatCommandMode?.();
+        if (commandMode) {
+          onCombatCommand?.(w, unit, commandMode);
+          return;
+        }
         if (unit) {
           if (unit.side === 'player') {
             onCombatSelect?.(unit.id, { additive: !!(e.shiftKey || shiftHeld) });
@@ -236,6 +257,14 @@ export function attachInput(canvas, ctx) {
         onStarTravel(starId);
       }, DOUBLE_CLICK_MS),
     };
+  });
+
+  canvas.addEventListener('contextmenu', (e) => {
+    if (!combatUiActive?.()) return;
+    e.preventDefault();
+    const w = screenToWorld(camera, e.clientX, e.clientY, canvas);
+    const unit = hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y);
+    onCombatContextCommand?.(w, unit);
   });
 
   canvas.addEventListener('wheel', (e) => {

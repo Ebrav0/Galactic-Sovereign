@@ -110,7 +110,7 @@ import {
   recommendFormation,
 } from './combat-doctrine.js';
 import { combatFxSummary } from './combat-fx.js';
-import { applyFleetOrder } from './combat-orders.js';
+import { activeFleetOrders, applyFleetOrder, weaponArcRadians } from './combat-orders.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
 import { structureSites } from './structure-sites.js';
@@ -176,7 +176,7 @@ import {
   listPlayerShipyards,
 } from './empire-queue.js';
 import { startResearch, researchSummary, buildResearchStation, canBuildResearchStation, ensureResearchState } from './research.js';
-import { applyTechEffect } from './tech-web.js';
+import { applyTechEffect, techEffects } from './tech-web.js';
 import { buildTradeStation, canBuildTradeStation, tradeSummary } from './trade.js';
 import { aiFactionSummary, forceAiCapture, listAiFactions } from './ai-faction.js';
 import { resetAiShipIds, aiShipsSummary } from './ai-ships.js';
@@ -204,10 +204,35 @@ import {
   resetHeroFlagshipIds,
 } from './hero-flagships.js';
 import {
+  castCouncilVote,
+  concludePeace,
+  createClaim,
+  declareWar,
+  establishContact,
   offerTreaty,
+  previewProposal,
+  respondToProposal,
   setRelation,
   diplomacySummary,
+  submitProposal,
 } from './diplomacy.js';
+import {
+  bulkProductionSummary,
+  cancelBulkProductionOrder,
+  createBulkProductionOrder,
+  pauseBulkProductionOrder,
+  previewBulkProductionOrder,
+  resumeBulkProductionOrder,
+} from './bulk-production.js';
+import {
+  cancelExpansionCampaign,
+  createExpansionCampaign,
+  pauseExpansionCampaign,
+  previewExpansionCampaign,
+  resumeExpansionCampaign,
+  strategicOrdersSummary,
+} from './strategic-operations.js';
+import { strategicIntegrationHooks } from './strategic-integration.js';
 import { setVictoryType, checkVictory, checkDefeat, campaignSummary } from './campaign.js';
 import { startMission, completeMissionForTest, advanceMissionObjective, missionsSummary } from './missions.js';
 import {
@@ -273,6 +298,7 @@ let selectedBuilderDroneId = null;
 let galaxyTargetStarId = null;
 let followedConvoyId = null;
 let combatSelectionIds = [];
+let combatCommandMode = null;
 
 const COMBAT_SELECTION_CAP = 24;
 
@@ -280,6 +306,7 @@ function pruneCombatSelection() {
   const battle = getBattleState(state, viewedSystemId);
   if (!battle?.active || !battle.units) {
     combatSelectionIds = [];
+    combatCommandMode = null;
     return;
   }
   const live = new Set(
@@ -339,11 +366,68 @@ function doCombatFocus(targetId) {
     toast('Select ships first', 'error');
     return { ok: false, reason: 'Select ships first' };
   }
-  return doIssueTacticalOrder({
+  const result = doIssueTacticalOrder({
     type: 'focus_fire',
     targetId,
     subjectIds: [...combatSelectionIds],
   });
+  if (result.ok) combatCommandMode = null;
+  return result;
+}
+
+function doCombatMove(point) {
+  pruneCombatSelection();
+  if (!combatSelectionIds.length) {
+    toast('Select ships first', 'error');
+    return { ok: false, reason: 'Select ships first' };
+  }
+  const result = doIssueTacticalOrder({
+    type: 'move',
+    point,
+    engagementRadius: 420,
+    subjectIds: [...combatSelectionIds],
+  });
+  if (result.ok) combatCommandMode = null;
+  return result;
+}
+
+function doSetCombatCommandMode(mode = null) {
+  const next = mode == null ? null : String(mode);
+  if (next != null && !['move', 'attack'].includes(next)) {
+    return { ok: false, reason: 'Unknown combat command mode' };
+  }
+  if (next != null) {
+    pruneCombatSelection();
+    if (!combatSelectionIds.length) {
+      toast('Select ships first', 'error');
+      return { ok: false, reason: 'Select ships first' };
+    }
+  }
+  combatCommandMode = next;
+  return { ok: true, mode: combatCommandMode };
+}
+
+function doCombatCommandAt(point, unit = null, mode = combatCommandMode) {
+  if (mode === 'attack') {
+    if (!unit || unit.side === 'player') {
+      toast('Attack requires a hostile ship', 'error');
+      return { ok: false, reason: 'Attack requires a hostile ship' };
+    }
+    return doCombatFocus(unit.id);
+  }
+  if (mode === 'move') {
+    if (unit) {
+      toast('Move requires open battlefield space', 'error');
+      return { ok: false, reason: 'Move requires open battlefield space' };
+    }
+    return doCombatMove(point);
+  }
+  return { ok: false, reason: 'No combat command is armed' };
+}
+
+function doCombatContextCommand(point, unit = null) {
+  if (unit && unit.side !== 'player') return doCombatFocus(unit.id);
+  return doCombatMove(point);
 }
 
 function combatOverlayForRender() {
@@ -352,6 +436,7 @@ function combatOverlayForRender() {
   return {
     selectionIds: [...combatSelectionIds],
     focusTargetId: summary?.focusTargetId ?? null,
+    commandMode: combatCommandMode,
   };
 }
 
@@ -994,6 +1079,8 @@ const { updateUi, closeSidePanel } = initUi({
   selectCombatUnit: doSelectCombatUnit,
   clearCombatSelection: doClearCombatSelection,
   combatFocus: doCombatFocus,
+  getCombatCommandMode: () => combatCommandMode,
+  setCombatCommandMode: doSetCombatCommandMode,
   combatUiActive,
   followConvoy: doFollowConvoy,
   getBootPhase,
@@ -1009,6 +1096,10 @@ attachInput(canvas, {
   onSelect: (id) => { selection = id; },
   onCombatSelect: doSelectCombatUnit,
   onCombatFocus: doCombatFocus,
+  getCombatCommandMode: () => combatCommandMode,
+  onCombatCommand: doCombatCommandAt,
+  onCombatContextCommand: doCombatContextCommand,
+  onCombatCancelCommand: () => doSetCombatCommandMode(null),
   onCombatClearSelection: doClearCombatSelection,
   combatUiActive,
   onCloseSidePanel: closeSidePanel,
@@ -1158,8 +1249,13 @@ function frame(now) {
     }
   }
   for (const cap of tickEvents.captures ?? []) {
+    if (!cap?.captured) continue;
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
     toast(`Captured: ${name}`, 'ok');
+  }
+  for (const ev of tickEvents.strategicOperationEvents ?? []) {
+    if (ev.type === 'campaign_complete') toast(`Expansion campaign ${ev.campaignId} complete`, 'ok');
+    if (ev.type === 'blocked') toast(`Expansion campaign blocked: ${ev.code}`, 'error');
   }
   for (const ev of tickEvents.dysonEvents ?? []) {
     if (ev.shellCompleted) {
@@ -1498,14 +1594,57 @@ window.render_game_to_text = () => {
     combatUi: (() => {
       pruneCombatSelection();
       const summary = battleSummaryForSystem(state, viewedSystemId);
+      const battle = getBattleState(state, viewedSystemId);
+      const selected = new Set([...combatSelectionIds].map(String));
+      const directives = activeFleetOrders(battle, 'player')
+        .filter((order) => order.type !== 'formation'
+          && (order.subjectIds.length === 0
+            || order.subjectIds.some((id) => selected.has(String(id)))));
+      const activeDirective = directives.at(-1) ?? null;
+      const selectedUnits = (battle?.units ?? [])
+        .filter((unit) => unit.hp > 0 && selected.has(String(unit.id)))
+        .map((unit) => ({
+          id: unit.id,
+          hull: unit.hull,
+          position: { x: Math.round(unit.x * 10) / 10, y: Math.round(unit.y * 10) / 10 },
+          headingRadians: Math.round((unit.heading ?? 0) * 1000) / 1000,
+          weaponProfile: unit.weaponProfile,
+          weaponArcRadians: Math.round(weaponArcRadians(unit.weaponProfile) * 1000) / 1000,
+          weaponTargetId: unit.weaponTargetId ?? null,
+          recentThreat: unit.lastAttackerId == null ? null : {
+            attackerId: unit.lastAttackerId,
+            damagedAt: unit.lastDamagedAt ?? null,
+            ageMs: Math.max(0, state.time - (unit.lastDamagedAt ?? state.time)),
+          },
+          destinationAnchor: unit.moveAnchor ?? null,
+          destroyerAa: unit.aaBattery ? {
+            unlocked: true,
+            targetId: unit.aaBattery.targetId ?? null,
+            cooldownMs: Math.round(unit.aaBattery.cooldownMs ?? 0),
+            damageShare: unit.aaBattery.damageShare,
+            firingArcRadians: Math.PI * 2,
+          } : null,
+          mountTargets: (unit.weapons ?? []).map((slot) => ({
+            profile: slot.profile,
+            targetId: slot.targetId ?? null,
+            hardpoint: slot.hardpoint ?? null,
+            firingArcRadians: Math.round(weaponArcRadians(slot.profile, slot.hardpoint) * 1000) / 1000,
+          })),
+        }));
       return {
         active: combatUiActive(),
+        commandMode: combatCommandMode,
         doctrine: summary?.doctrine ?? state.combatDoctrine ?? null,
         selectionIds: [...combatSelectionIds],
         focusTargetId: summary?.focusTargetId ?? null,
+        activeDirective,
+        threatBoard: battle?.threatBoards?.player ?? null,
+        selectedUnits,
+        destroyerAaUnlocked: !!techEffects(state).unlockDestroyerAa,
         formation: summary?.formation ?? null,
         autoFormationApplied: !!summary?.autoFormationApplied,
         playerFormationOverride: !!summary?.playerFormationOverride,
+        coordinateSystem: 'World coordinates; heading 0 points east and increases clockwise on screen.',
       };
     })(),
     battleReports: (state.battleReports ?? []).slice(-5),
@@ -1627,6 +1766,8 @@ window.render_game_to_text = () => {
       : null,
     milestones: milestonesSummary(state),
     diplomacy: diplomacySummary(state),
+    bulkProduction: bulkProductionSummary(state),
+    strategicOrders: strategicOrdersSummary(state),
     superweapon: superweaponSummary(state),
     heroFlagships: heroFlagshipsSummary(state),
     campaign: campaignSummary(state),
@@ -1763,6 +1904,9 @@ window.__hitTestCombatUnit = (wx, wy) => {
   return unit ? { id: unit.id, side: unit.side, hull: unit.hull, x: unit.x, y: unit.y } : null;
 };
 window.__combatFocus = (targetId) => doCombatFocus(targetId);
+window.__combatMove = (x, y) => doCombatMove({ x, y });
+window.__setCombatCommandMode = (mode) => doSetCombatCommandMode(mode);
+window.__getCombatCommandMode = () => combatCommandMode;
 window.__getLogistics = () => JSON.parse(JSON.stringify(ensureLogisticsState(state)));
 window.__listTradeNexuses = () => discoverTradeNexuses(state);
 window.__registerExportDepot = (systemId, opts = {}) =>
@@ -1945,6 +2089,36 @@ window.__buildHeroFlagship = (rallyStarId) => buildHeroFlagship(state, rallyStar
 window.__spawnHeroFlagship = (systemId) => spawnHeroFlagshipForTest(state, systemId ?? viewedSystemId);
 window.__setRelation = (factionId, status) => setRelation(state, factionId, status);
 window.__offerTreaty = (factionId, type) => offerTreaty(state, factionId, type);
+window.__diplomacySummary = () => diplomacySummary(state);
+window.__establishContact = (factionId, options = {}) => establishContact(state, factionId, options);
+window.__previewDiplomaticProposal = (input, options = {}) => previewProposal(state, input, options);
+window.__submitDiplomaticProposal = (input, options = {}) => submitProposal(state, input, options);
+window.__respondToDiplomaticProposal = (proposalId, decision, options = {}) =>
+  respondToProposal(state, proposalId, decision, options);
+window.__declareWar = (factionIdOrInput, options = {}) => declareWar(state, factionIdOrInput, options);
+window.__concludePeace = (factionIdOrWar, terms = {}) => concludePeace(state, factionIdOrWar, terms);
+window.__createClaim = (factionIdOrInput, systemId = null, options = {}) =>
+  createClaim(state, factionIdOrInput, systemId, options);
+window.__castCouncilVote = (resolutionId, voterId, vote) =>
+  castCouncilVote(state, resolutionId, voterId, vote);
+window.__bulkProductionSummary = (orderId = null) => bulkProductionSummary(state, orderId);
+window.__previewBulkProductionOrder = (input = {}) => previewBulkProductionOrder(state, input);
+window.__createBulkProductionOrder = (input = {}) => createBulkProductionOrder(state, input);
+window.__pauseBulkProductionOrder = (orderId) => pauseBulkProductionOrder(state, orderId);
+window.__resumeBulkProductionOrder = (orderId) => resumeBulkProductionOrder(state, orderId);
+window.__cancelBulkProductionOrder = (orderId) => cancelBulkProductionOrder(state, orderId);
+window.__strategicOrdersSummary = () => strategicOrdersSummary(state);
+window.__previewExpansionCampaign = (spec = {}) => previewExpansionCampaign(state, spec, {
+  hooks: strategicIntegrationHooks(),
+});
+window.__createExpansionCampaign = (spec = {}) => createExpansionCampaign(state, spec, {
+  hooks: strategicIntegrationHooks(),
+});
+window.__pauseExpansionCampaign = (campaignId, reason) =>
+  pauseExpansionCampaign(state, campaignId, reason);
+window.__resumeExpansionCampaign = (campaignId) => resumeExpansionCampaign(state, campaignId);
+window.__cancelExpansionCampaign = (campaignId, mode = 'hold') =>
+  cancelExpansionCampaign(state, campaignId, mode, { hooks: strategicIntegrationHooks() });
 window.__startMission = (id) => startMission(state, id);
 window.__advanceMissionObjective = (missionId, objectiveId) =>
   advanceMissionObjective(state, missionId, objectiveId);

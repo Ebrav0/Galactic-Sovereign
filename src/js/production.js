@@ -35,6 +35,7 @@ import {
   structureEffectValue,
   structureShipBuildTimeMultiplier,
 } from './body-structures.js';
+import { recordBulkShipCompletion } from './bulk-production.js';
 
 export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
@@ -173,10 +174,21 @@ export function tickProduction(state) {
           continue;
         }
         const hull = build.hull;
-        if (build.queueItemId) completeQueueItem(state, build.queueItemId);
+        const queueItem = build.queueItemId
+          ? completeQueueItem(state, build.queueItemId)
+          : null;
         if (hull === 'scout') {
           const scout = spawnScout(state, system.id);
-          completed.push({ systemId: system.id, hull, scoutId: scout.id, shipId: null });
+          const completion = {
+            systemId: system.id,
+            hull,
+            scoutId: scout.id,
+            shipId: null,
+            queueItemId: queueItem?.id ?? build.queueItemId ?? null,
+            queueItem,
+          };
+          if (queueItem?.bulkOrderId) recordBulkShipCompletion(state, completion);
+          completed.push(completion);
         } else {
           const ship = spawnPlayerShip(state, system.id, hull, structure.bodyId);
           const startingVeterancy = structureEffectValue(
@@ -186,7 +198,16 @@ export function tickProduction(state) {
             { base: 0, op: 'max' },
           );
           if (startingVeterancy > 0) applyVeterancy(ship, startingVeterancy);
-          completed.push({ systemId: system.id, hull, scoutId: null, shipId: ship.id });
+          const completion = {
+            systemId: system.id,
+            hull,
+            scoutId: null,
+            shipId: ship.id,
+            queueItemId: queueItem?.id ?? build.queueItemId ?? null,
+            queueItem,
+          };
+          if (queueItem?.bulkOrderId) recordBulkShipCompletion(state, completion, ship);
+          completed.push(completion);
         }
       }
       structure.builds = remaining;

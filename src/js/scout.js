@@ -13,6 +13,7 @@ import {
   transitEtaMs,
   advanceTransit,
 } from './transit.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 import { gatherIntel } from './intel.js';
 
 let nextScoutId = 1;
@@ -75,11 +76,19 @@ export function orderScoutTravel(state, scoutId, targetId) {
   const scout = findScout(state, scoutId);
   const galaxy = getGraph(state);
   if (!scout) return { ok: false, reason: 'No such scout' };
+  if (scout.galaxyId !== state.activeGalaxyId) return { ok: false, reason: 'Scout not in active galaxy' };
   if (scout.transit) return { ok: false, reason: 'Scout is already in transit' };
   if (!nodeById(galaxy, targetId)) return { ok: false, reason: 'No such star' };
   if (targetId === scout.systemId) return { ok: false, reason: 'Scout is already at that star' };
 
-  const path = findPath(galaxy, scout.systemId, targetId);
+  const path = findPath(galaxy, scout.systemId, targetId, {
+    canEnter: (systemId) => canRouteThroughSystem(
+      state,
+      systemId,
+      'player',
+      { galaxyId: scout.galaxyId ?? state.activeGalaxyId, allowHostile: true },
+    ).ok,
+  });
   if (!path || path.length < 2) return { ok: false, reason: 'No lane route to that star' };
 
   scout.transit = {
@@ -114,6 +123,18 @@ export function tickScouts(state) {
         scout.systemId = destId;
         gatherIntel(state, destId);
         arrivals.push({ scoutId: scout.id, systemId: destId });
+      },
+      null,
+      {
+        canEnter: (systemId) => canRouteThroughSystem(state, systemId, 'player', {
+          galaxyId: scout.galaxyId,
+          allowHostile: true,
+        }).ok,
+        onBlocked: (safeSystemId, blockedSystemId) => {
+          scout.transit = null;
+          scout.systemId = safeSystemId;
+          arrivals.push({ scoutId: scout.id, systemId: safeSystemId, blocked: true, blockedSystemId });
+        },
       },
     );
   }

@@ -61,7 +61,7 @@ export function canBuildOutpost(state, systemId, planetId, opts = {}) {
   if (!system) return { ok: false, reason: 'No such system' };
   const remote = !!opts.remote;
   if (!isPlayerOwned(state, systemId)) {
-    if (!remote || system.owner !== 'neutral') return { ok: false, reason: 'System not under your control' };
+    return { ok: false, reason: 'System not under your control' };
   }
   const planet = findPlanet(state, systemId, planetId);
   if (!planet) return { ok: false, reason: 'No such planet' };
@@ -97,7 +97,6 @@ export function buildOutpost(state, systemId, planetId, opts = {}) {
 
   if (!opts.alreadyPaid) state.credits -= OUTPOST_COST;
   const system = systemById(state, systemId);
-  if (opts.remote && system.owner === 'neutral') system.owner = 'player';
   system.structures.push({
     id: allocateStructureId(),
     type: 'outpost',

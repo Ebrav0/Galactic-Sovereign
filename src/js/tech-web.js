@@ -163,6 +163,7 @@ function createDefaultTechEffects() {
     carrierDpsMult: 1,
     carrierWings: false,
     carrierWingCapacityMult: 1,
+    unlockDestroyerAa: false,
     pointDefenseMult: 1,
     kineticDamageMult: 1,
     bomberDamageMult: 1,
@@ -285,6 +286,10 @@ function applyLegacyEffect(effects, effect) {
     case 'battleship_dps_10': effects.battleshipDpsMult *= 1.1; break;
     case 'carrier_dps_10': effects.carrierDpsMult *= 1.1; break;
     case 'carrier_wings': effects.carrierWings = true; break;
+    case 'unlock_destroyer_aa':
+      effects.unlockDestroyerAa = true;
+      effects.pointDefenseMult *= 1.2;
+      break;
     case 'point_defense_20': effects.pointDefenseMult *= 1.2; break;
     case 'kinetic_damage_10': effects.kineticDamageMult *= 1.1; break;
     case 'bomber_damage_20':

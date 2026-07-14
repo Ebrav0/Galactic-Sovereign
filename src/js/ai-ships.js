@@ -15,6 +15,7 @@ import {
   transitStatus as transitStatusCore,
   advanceTransit,
 } from './transit.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 import { factionTechContext } from './ai-tech.js';
 
 let nextAiShipId = 1;
@@ -28,10 +29,14 @@ export function resetAiShipIds(state) {
   nextAiShipId = max + 1;
 }
 
-export function aiShipFactionId(state, ship, fallback = 'ai-0') {
+export function aiShipFactionId(state, ship, fallback = null) {
   if (ship?.factionId) return ship.factionId;
   const system = state.galaxies?.[ship?.galaxyId ?? state.activeGalaxyId]?.systems?.[ship?.systemId];
-  return system?.factionId ?? state.factions?.ai?.id ?? fallback;
+  return system?.factionId
+    ?? state.factions?.ai?.id
+    ?? state.factions?.list?.[0]?.id
+    ?? fallback
+    ?? 'unknown-ai';
 }
 
 export function assignAiShipFactionIds(state, fallback = 'ai-0') {
@@ -101,11 +106,21 @@ export function aiShipLaneSpeed(hull) {
 }
 
 export function orderAiShipTravel(state, ship, targetId) {
+  if (!ship) return { ok: false, reason: 'No such AI ship' };
+  if (ship.galaxyId !== state.activeGalaxyId) return { ok: false, reason: 'AI ship not in active galaxy' };
   if (ship?.systemId && state.systemBattles?.[ship.systemId]?.active) {
     return { ok: false, reason: 'Fleet is engaged in combat' };
   }
   const galaxy = getGraph(state);
-  const path = findPath(galaxy, ship.systemId, targetId);
+  const actorId = aiShipFactionId(state, ship);
+  const path = findPath(galaxy, ship.systemId, targetId, {
+    canEnter: (systemId) => canRouteThroughSystem(
+      state,
+      systemId,
+      actorId,
+      { galaxyId: ship.galaxyId ?? state.activeGalaxyId, allowHostile: true },
+    ).ok,
+  });
   if (!path || path.length < 2) return { ok: false, reason: 'No path' };
 
   const nextId = path[1];
@@ -143,6 +158,22 @@ export function tickAiShips(state, onArrival) {
         ship.transit = null;
         arrivals.push(ship);
         onArrival?.(destId, ship);
+      },
+      null,
+      {
+        canEnter: (systemId) => canRouteThroughSystem(
+          state,
+          systemId,
+          aiShipFactionId(state, ship),
+          { galaxyId: ship.galaxyId, allowHostile: true },
+        ).ok,
+        onBlocked: (safeSystemId, blockedSystemId) => {
+          ship.systemId = safeSystemId;
+          ship.transit = null;
+          ship.routeBlockedAt = blockedSystemId;
+          arrivals.push(ship);
+          onArrival?.(safeSystemId, ship);
+        },
       },
     );
   }

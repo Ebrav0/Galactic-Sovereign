@@ -274,14 +274,16 @@ export function laneBezierAngle(from, ctrl, to, t) {
   return Math.atan2(dy, dx);
 }
 
-export function findPath(galaxy, fromId, toId) {
+export function findPath(galaxy, fromId, toId, options = {}) {
   if (fromId === toId) return [fromId];
+  const canEnter = typeof options.canEnter === 'function' ? options.canEnter : null;
   const cameFrom = new Map([[fromId, null]]);
   const queue = [fromId];
   while (queue.length > 0) {
     const current = queue.shift();
     for (const next of neighborsOf(galaxy, current)) {
       if (cameFrom.has(next)) continue;
+      if (canEnter && !canEnter(next, current, toId)) continue;
       cameFrom.set(next, current);
       if (next === toId) {
         const path = [toId];

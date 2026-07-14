@@ -285,6 +285,16 @@ html, body {
   margin-bottom: 10px;
 }
 
+.combat-hud__actions .btn--active {
+  border-color: rgba(111, 214, 255, 0.82);
+  color: rgba(225, 246, 255, 1);
+  background: rgba(111, 214, 255, 0.17);
+  box-shadow: 0 0 12px rgba(111, 214, 255, 0.16);
+}
+
+#game-canvas.combat-command-move { cursor: crosshair; }
+#game-canvas.combat-command-attack { cursor: cell; }
+
 .combat-hud__formation {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 12px;
@@ -2470,4 +2480,216 @@ button {
 .structure-build-card:disabled .structure-build-card__icon {
   box-shadow: none;
   filter: grayscale(0.75);
+}
+
+/* Grand-strategy diplomacy and strategic operations screens. */
+.command-screen {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.command-screen__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.command-screen__header > .command-metrics {
+  flex: 0 1 480px;
+  width: min(480px, 50vw);
+  grid-template-columns: repeat(4, minmax(88px, 1fr));
+  margin: 0;
+}
+
+.command-screen__title {
+  margin: 0;
+  color: var(--text-primary);
+  font: 700 18px/1.2 var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.command-screen__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: var(--space-3);
+}
+
+.command-card {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: linear-gradient(145deg, rgba(15, 24, 40, 0.92), rgba(6, 12, 22, 0.88));
+  box-shadow: inset 0 1px rgba(118, 221, 255, 0.06);
+}
+
+.command-card--wide {
+  grid-column: 1 / -1;
+}
+
+.command-card__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  color: var(--accent-cyan);
+  font: 700 var(--text-sm)/1.2 var(--font-display);
+  letter-spacing: 0.05em;
+}
+
+.command-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 6px;
+  margin: var(--space-2) 0;
+}
+
+.command-metric {
+  padding: 7px;
+  border: 1px solid rgba(118, 221, 255, 0.12);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.command-metric strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-primary);
+  font: 700 13px/1.2 var(--font-mono);
+}
+
+.command-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: var(--space-2);
+}
+
+.command-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.command-form input,
+.command-form select,
+.command-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: rgba(3, 8, 15, 0.88);
+  color: var(--text-primary);
+  font: 11px/1.3 var(--font-mono);
+}
+
+.command-form textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.bulk-manifest-builder {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.bulk-manifest-builder legend {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.bulk-manifest-rows {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.bulk-manifest-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(90px, 0.35fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.bulk-manifest-row__remove:disabled {
+  visibility: hidden;
+}
+
+@media (max-width: 560px) {
+  .bulk-manifest-row {
+    grid-template-columns: minmax(0, 1fr) 90px;
+  }
+
+  .bulk-manifest-row__remove {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+.command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.command-ledger {
+  max-height: 220px;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.command-ledger__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(118, 221, 255, 0.08);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.command-ledger__row strong {
+  color: var(--text-primary);
+}
+
+.command-status--blocked,
+.command-status--war,
+.command-score--negative {
+  color: var(--danger-hot);
+}
+
+.command-status--active,
+.command-status--alliance,
+.command-score--positive {
+  color: var(--accent-green);
+}
+
+@media (max-width: 820px) {
+  .command-screen__header {
+    flex-direction: column;
+  }
+
+  .command-screen__header > .command-metrics {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(88px, 1fr));
+  }
+
+  .command-screen__grid,
+  .command-form {
+    grid-template-columns: 1fr;
+  }
 }

@@ -64,6 +64,11 @@ import {
   fillAiResearchQueue,
   tickAiResearch,
 } from './ai-tech.js';
+import {
+  canAttackFaction,
+  isAtWar,
+  recordOccupation,
+} from './diplomacy.js';
 
 const PERSONALITIES = ['expansionist', 'economic', 'megastructure', 'wormhole'];
 const OUTPOST_CREDITS_PER_SECOND = OUTPOST_PASSIVE_INCOME;
@@ -311,9 +316,7 @@ export function ensureFactions(state) {
 }
 
 function aiShouldContestPlayerLocal(state, factionId = 'ai-0') {
-  const rel = state.diplomacy?.relations?.[factionId];
-  if (!rel) return true;
-  return rel.status === 'war' || rel.status === 'neutral';
+  return isAtWar(state, factionId);
 }
 
 function isSuperweaponPanicLocal(state) {
@@ -1046,30 +1049,62 @@ function adjacentSystemsOwnedBy(state, systemId, owner) {
 export function aiCaptureSystem(state, systemId, factionId = null) {
   ensureFactions(state);
   const system = systemById(state, systemId);
-  if (!system || !['neutral', 'player'].includes(system.owner) || systemId === BLACK_HOLE_ID) return false;
-  if (state.systemBattles?.[systemId]?.active) return false;
+  const clearProgress = () => {
+    for (const key of Object.keys(state.aiCaptureProgress ?? {})) {
+      if (key.endsWith(`:${state.activeGalaxyId}:${systemId}`)) delete state.aiCaptureProgress[key];
+    }
+  };
+  if (!system || !['neutral', 'player'].includes(system.owner) || systemId === BLACK_HOLE_ID) {
+    clearProgress();
+    return false;
+  }
+  if (state.systemBattles?.[systemId]?.active) {
+    clearProgress();
+    return false;
+  }
   const playerDefenders = (state.playerShips ?? []).some((ship) => ship.galaxyId === state.activeGalaxyId
     && ship.systemId === systemId && !ship.transit && ship.hp > 0)
     || (state.flagship?.galaxyId === state.activeGalaxyId && state.flagship.systemId === systemId
       && !state.flagship.transit && (state.flagship.hp ?? 1) > 0)
     || (state.heroFlagships ?? []).some((hero) => hero.galaxyId === state.activeGalaxyId
       && hero.systemId === systemId && !hero.transit && hero.hp > 0);
-  if (system.owner === 'player' && playerDefenders) return false;
+  if (system.owner === 'player' && playerDefenders) {
+    clearProgress();
+    return false;
+  }
   const factions = factionId
     ? [aiFactionById(state, factionId)].filter(Boolean)
     : state.factions.list;
   const winner = factions
+    .filter((faction) => system.owner !== 'player'
+      || canAttackFaction(state, 'player', faction.id).ok)
     .map((faction) => ({ faction, force: aiCombatPresence(state, systemId, faction.id) }))
     .filter((entry) => entry.force >= captureRequirement(state, systemId))
     .sort((a, b) => b.force - a.force || a.faction.id.localeCompare(b.faction.id))[0];
-  if (!winner) return false;
+  if (!winner) {
+    clearProgress();
+    return false;
+  }
   state.aiCaptureProgress ??= {};
   const progressId = `${winner.faction.id}:${state.activeGalaxyId}:${systemId}`;
   state.aiCaptureProgress[progressId] = (state.aiCaptureProgress[progressId] ?? 0) + TICK_MS;
   if (state.aiCaptureProgress[progressId] < CAPTURE_HOLD_MS) return false;
   delete state.aiCaptureProgress[progressId];
-  system.owner = 'ai';
-  system.factionId = winner.faction.id;
+  const previousOwner = system.owner;
+  if (previousOwner === 'player') {
+    const occupied = recordOccupation(state, {
+      galaxyId: state.activeGalaxyId,
+      systemId,
+      occupier: winner.faction.id,
+      previousActor: 'player',
+      previousOwner,
+      previousFactionId: null,
+    });
+    if (!occupied.ok) return false;
+  } else {
+    system.owner = 'ai';
+    system.factionId = winner.faction.id;
+  }
   for (const structure of system.structures ?? []) {
     structure.factionId = winner.faction.id;
     syncMothballState(winner.faction, structure);
@@ -1093,8 +1128,20 @@ export function forceAiCapture(state, systemId, factionId = null) {
     return { ok: false, reason: 'Cannot force capture' };
   }
   const faction = aiFactionById(state, factionId) ?? state.factions.ai;
-  system.owner = 'ai';
-  system.factionId = faction.id;
+  if (system.owner === 'player') {
+    const occupied = recordOccupation(state, {
+      galaxyId: state.activeGalaxyId,
+      systemId,
+      occupier: faction.id,
+      previousActor: 'player',
+      previousOwner: 'player',
+      force: true,
+    });
+    if (!occupied.ok) return occupied;
+  } else {
+    system.owner = 'ai';
+    system.factionId = faction.id;
+  }
   for (const structure of system.structures ?? []) {
     structure.factionId = faction.id;
     syncMothballState(faction, structure);
@@ -1122,7 +1169,7 @@ function aiDispatchToNeutral(state, faction, rng) {
 }
 
 function aiDispatchToPlayerBorder(state, faction, rng) {
-  if (!aiShouldContestPlayerLocal(state, faction.id) && !isSuperweaponPanicLocal(state)) return false;
+  if (!aiShouldContestPlayerLocal(state, faction.id)) return false;
   for (const from of aiOwnedSystems(state, faction.id).sort((a, b) => a.id.localeCompare(b.id))) {
     const borders = adjacentSystemsOwnedBy(state, from.id, 'player');
     if (!borders.length) continue;

@@ -301,6 +301,7 @@
         <button type="button" class="tab" data-panel="tech" id="tab-tech">Tech</button>
         <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
         <button type="button" class="tab" data-panel="diplomacy" id="tab-diplomacy">Diplomacy</button>
+        <button type="button" class="tab" data-panel="operations" id="tab-operations">Operations</button>
         <button type="button" class="tab" data-panel="campaign" id="tab-campaign">Campaign</button>
       </nav>
       <div id="overlay-controls" class="overlay-controls" aria-label="Galaxy overlays">
@@ -342,15 +343,16 @@
         <div id="combat-hud-doctrine" class="combat-hud__doctrine"></div>
         <div class="combat-hud__section-title">Orders</div>
         <div class="combat-hud__actions">
+          <button id="combat-hud-move" type="button" class="btn btn--ghost btn--xs">Move</button>
+          <button id="combat-hud-attack" type="button" class="btn btn--ghost btn--xs">Attack</button>
           <button id="combat-hud-hold" type="button" class="btn btn--ghost btn--xs">Hold</button>
-          <button id="combat-hud-rally" type="button" class="btn btn--ghost btn--xs">Rally</button>
           <button id="combat-hud-retreat" type="button" class="btn btn--danger btn--xs">Retreat</button>
         </div>
         <div id="combat-hud-formation" class="combat-hud__formation">Formation: —</div>
       </div>
       <div class="combat-hud__bottom">
         <div id="combat-hud-chips" class="combat-hud__chips"></div>
-        <div id="combat-hud-focus" class="combat-hud__focus">Focus: —</div>
+        <div id="combat-hud-focus" class="combat-hud__focus">Right-click: contextual order</div>
       </div>
     </div>
 
@@ -628,6 +630,10 @@
 
       <div id="diplomacy-screen" class="tech-screen hidden">
         <div id="diplomacy-screen-body" class="tech-screen__body panel__body"></div>
+      </div>
+
+      <div id="operations-screen" class="tech-screen hidden">
+        <div id="operations-screen-body" class="tech-screen__body panel__body"></div>
       </div>
 
       <div id="campaign-screen" class="tech-screen hidden">

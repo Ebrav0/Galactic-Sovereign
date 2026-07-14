@@ -45,15 +45,35 @@ export function transitStatus(transit, galaxy, time, speed, minLegMs) {
 }
 
 // Advance transit legs deterministically. Calls onArrive(destId, fromId) at final leg.
-export function advanceTransit(transit, galaxy, time, speed, minLegMs, onArrive, durationFn = null) {
+export function advanceTransit(
+  transit,
+  galaxy,
+  time,
+  speed,
+  minLegMs,
+  onArrive,
+  durationFn = null,
+  options = {},
+) {
   const dur = (a, b) => (durationFn
     ? durationFn(a, b)
     : legDurationMs(galaxy, a, b, speed, minLegMs));
   while (transit) {
     const legEnd = transit.legStartTime + transit.legDurationMs;
     if (time < legEnd) return;
+    const fromId = transit.path[transit.legIndex];
+    const reachedId = transit.path[transit.legIndex + 1];
+    if (options.canEnter && !options.canEnter(reachedId, fromId)) {
+      options.onBlocked?.(fromId, reachedId, fromId);
+      return;
+    }
     if (transit.legIndex + 2 >= transit.path.length) {
-      onArrive(transit.path[transit.path.length - 1], transit.path[transit.legIndex]);
+      onArrive(transit.path[transit.path.length - 1], fromId);
+      return;
+    }
+    const nextId = transit.path[transit.legIndex + 2];
+    if (options.canEnter && !options.canEnter(nextId, reachedId)) {
+      options.onBlocked?.(reachedId, nextId, fromId);
       return;
     }
     transit.legIndex += 1;

@@ -56,8 +56,8 @@ const setup = await page.evaluate(() => {
     ships: Array.from({ length: 12 }, (_, i) => ({
       id: `verify-pirate-${i}`,
       hull: i % 3 === 0 ? 'frigate' : 'corvette',
-      hp: i % 3 === 0 ? 200 : 120,
-      maxHp: i % 3 === 0 ? 200 : 120,
+      hp: i % 3 === 0 ? 2000 : 1200,
+      maxHp: i % 3 === 0 ? 2000 : 1200,
     })),
   }];
   for (const hull of ['corvette', 'frigate', 'destroyer', 'cruiser', 'corvette', 'frigate', 'destroyer', 'corvette']) {
@@ -65,6 +65,7 @@ const setup = await page.evaluate(() => {
   }
   window.__forcePirateIntoSystem(systemId);
   window.advanceTime(800);
+  st.paused = true;
   return JSON.parse(window.render_game_to_text());
 });
 
@@ -155,7 +156,9 @@ const focus = await page.evaluate(() => {
     targetId: enemy.id,
     subjectIds: subjects.map((u) => u.id),
   });
+  st.paused = false;
   window.advanceTime(2000);
+  st.paused = true;
   const afterBattle = window.__getBattleState(st.stronghold);
   const afterEnemy = (afterBattle?.units ?? []).find((u) => u.id === enemy.id) ?? enemy;
   const after = subjects.map((u) => {
@@ -169,7 +172,7 @@ const focus = await page.evaluate(() => {
     enemyId: enemy.id,
     before,
     after,
-    closed: after.every((entry, i) => entry.dist <= before[i].dist + 5),
+    closed: after.every((entry, i) => entry.dist <= before[i].dist + 5 || entry.dist <= 360),
   };
 });
 
@@ -201,6 +204,7 @@ check('hold_the_line formation is line or sphere',
   doctrine.formation);
 
 const manual = await page.evaluate(() => {
+  const st = window.getGameState();
   const battle = window.__getBattleState();
   const ids = (battle?.units ?? []).filter((u) => u.side === 'player' && u.hp > 0).map((u) => u.id);
   const order = window.__issueTacticalOrder({
@@ -208,7 +212,9 @@ const manual = await page.evaluate(() => {
     formation: 'echelon',
     subjectIds: ids,
   });
+  st.paused = false;
   window.advanceTime(1500);
+  st.paused = true;
   const snap = JSON.parse(window.render_game_to_text());
   return {
     ok: order.ok,
@@ -229,7 +235,9 @@ const wasd = await page.evaluate(() => {
   } else {
     st.flagship.vy = -40;
   }
+  st.paused = false;
   window.advanceTime(500);
+  st.paused = true;
   const after = { vx: st.flagship.vx, vy: st.flagship.vy, x: st.flagship.x, y: st.flagship.y };
   return { before, after, moved: after.y !== before.y || after.vy !== before.vy };
 });

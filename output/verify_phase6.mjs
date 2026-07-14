@@ -46,7 +46,7 @@ await page.evaluate(() => window.__newGame(42));
 const text = () => page.evaluate(() => JSON.parse(window.render_game_to_text()));
 
 let s = await text();
-check('1.1 saveVersion is 15', s.saveVersion === 15);
+check('1.1 saveVersion is 16', s.saveVersion === 16);
 check('1.2 milestones object', s.milestones != null);
 check('1.3 campaign object', s.campaign != null);
 check('1.4 diplomacy object', s.diplomacy != null);
@@ -84,7 +84,7 @@ await page.evaluate(([raw, checksum]) => localStorage.setItem('gs-save-slot-v8',
 })), [v8Json, crc32(v8Json)]);
 await page.evaluate(() => window.__loadSlot('slot-v8'));
 s = await text();
-check('1.9 v8 migrates to v15', s.saveVersion === 15 && s.milestones != null);
+check('1.9 v8 migrates to v16', s.saveVersion === 16 && s.milestones != null);
 
 await page.evaluate(() => window.__newGame(42));
 await page.evaluate(() => window.__setCompletedDysons(1));
@@ -295,10 +295,10 @@ s = await text();
 check('10.2 all missions complete', s.missions.completed.length >= 6);
 
 await page.evaluate(() => window.__initTutorial());
-await page.evaluate(() => window.__setTutorialStep(7));
+await page.evaluate(() => window.__setTutorialStep(12));
 s = await text();
-check('11.2 tutorial completion step', s.tutorial?.step === 7 && s.tutorial?.current?.readyToFinish === true);
-const invalidTutorialStep = await page.evaluate(() => window.__setTutorialStep(8));
+check('11.2 tutorial completion step', s.tutorial?.step === 12 && s.tutorial?.current?.readyToFinish === true);
+const invalidTutorialStep = await page.evaluate(() => window.__setTutorialStep(13));
 check('11.3 tutorial rejects obsolete late-game step', invalidTutorialStep.ok === false);
 
 await page.evaluate(() => window.__newGame(42));

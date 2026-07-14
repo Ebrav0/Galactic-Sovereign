@@ -1,6 +1,7 @@
 // Representative v11 -> v12 migration and corruption-safety verifier.
 import { createNewGame, createDefaultDyson } from '../src/js/state.js';
 import { crc32, deserialize, serialize } from '../src/js/save.js';
+import { SAVE_VERSION } from '../src/js/constants.js';
 
 const results = [];
 function check(name, condition, detail = '') {
@@ -92,7 +93,8 @@ if (migrated.ok) {
   check('v12 logistics, reports, and offline Sol state exist',
     state.logistics?.version === 1 && Array.isArray(state.battleReports)
       && state.solCommander?.settings?.providerMode === 'offline');
-  check('migrated save serializes as v14', JSON.parse(serialize(state)).saveVersion === 14);
+  check(`migrated save serializes as current v${SAVE_VERSION}`,
+    JSON.parse(serialize(state)).saveVersion === SAVE_VERSION);
 }
 
 const corrupt = JSON.parse(envelope);

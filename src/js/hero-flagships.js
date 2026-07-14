@@ -13,6 +13,7 @@ import { neighborsOf } from './galaxy.js';
 import { getGraph } from './galaxy-scope.js';
 import { systemById } from './state.js';
 import { effectiveLegDurationMs } from './strategic-structures.js';
+import { canRouteThroughSystem } from './diplomacy.js';
 
 let nextHeroId = 1;
 
@@ -126,6 +127,7 @@ export function setHeroRally(state, heroId, starId) {
 export function orderHeroTravel(state, heroId, targetStarId) {
   const hero = findHeroFlagship(state, heroId);
   if (!hero || hero.transit) return { ok: false, reason: 'Hero unavailable' };
+  if (hero.galaxyId !== state.activeGalaxyId) return { ok: false, reason: 'Hero flagship not in active galaxy' };
   if (hero.systemId && state.systemBattles?.[hero.systemId]?.active) {
     return { ok: false, reason: 'Hero flagship is engaged in combat' };
   }
@@ -135,6 +137,11 @@ export function orderHeroTravel(state, heroId, targetStarId) {
   if (!neighborsOf(graph, from).includes(targetStarId)) {
     return { ok: false, reason: 'Target not adjacent' };
   }
+  const legality = canRouteThroughSystem(state, targetStarId, 'player', {
+    galaxyId: hero.galaxyId ?? state.activeGalaxyId,
+    allowHostile: true,
+  });
+  if (!legality.ok) return legality;
   const stats = hullStats('hero_flagship');
   const legMs = effectiveLegDurationMs(state, graph, from, targetStarId, stats.laneSpeed, 2000);
   hero.transit = {
@@ -156,6 +163,22 @@ export function tickHeroFlagships(state) {
     const t = hero.transit;
     const elapsed = state.time - t.startedAt;
     if (elapsed < t.legMs) continue;
+    const legality = canRouteThroughSystem(state, t.destId, 'player', {
+      galaxyId: hero.galaxyId ?? state.activeGalaxyId,
+      allowHostile: true,
+    });
+    if (!legality.ok) {
+      hero.systemId = t.fromId;
+      hero.transit = null;
+      arrivals.push({
+        heroId: hero.id,
+        systemId: hero.systemId,
+        blocked: true,
+        blockedSystemId: t.destId,
+        reason: legality.reason,
+      });
+      continue;
+    }
     hero.systemId = t.destId;
     hero.transit = null;
     hero.x = 80;
