@@ -70,7 +70,7 @@ import {
   convoyTransitStatus,
   interceptConvoy,
 } from './logistics.js';
-import { emitHealFx, emitShotFx, emitSparseLodFx } from './combat-fx.js';
+import { combatFxSummary, emitHealFx, emitShotFx, emitSparseLodFx } from './combat-fx.js';
 
 function techStateForUnit(state, unit) {
   if (unit?.side === 'player') return state;
@@ -1268,7 +1268,7 @@ export function battleSummaryForSystem(state, systemId) {
       defense: bodyStructureDefensePower(state, systemId),
       ion: bodyStructureIonPower(state, systemId),
     } : null,
-    fx: combatFxSummaryForBattle(battle, state.time),
+    fx: combatFxSummary(battle, state.time),
     environment: combatEnvironmentModifiers(systemById(state, systemId)),
     lastResolve: battle.lastResolve,
   };

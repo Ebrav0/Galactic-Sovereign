@@ -104,6 +104,7 @@ import {
   syncFlagshipAnchoredFleets,
 } from './battle-groups.js';
 import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
+import { combatFxSummary } from './combat-fx.js';
 import { applyFleetOrder } from './combat-orders.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
 import { outpostSurfaceSites } from './surface-structures.js';
@@ -1561,6 +1562,11 @@ window.__forcePirateIntoSystem = (systemId) => {
   checkBattleTrigger(state, systemId);
 };
 window.__getBattleState = (systemId) => getBattleState(state, systemId);
+window.__combatFxSummary = (systemId = null) => {
+  const id = systemId ?? viewedSystemId;
+  const battle = getBattleState(state, id);
+  return combatFxSummary(battle, state.time);
+};
 window.__issueTacticalOrder = (order, groupId = null) => doIssueTacticalOrder(order, groupId);
 window.__getLogistics = () => JSON.parse(JSON.stringify(ensureLogisticsState(state)));
 window.__listTradeNexuses = () => discoverTradeNexuses(state);

@@ -717,3 +717,20 @@ Never delete prior entries.
 - Direct `file://` **Custom Campaign** opens the custom-campaign modal.
 - `npm run build` — pass; `dist/assets/index-D9S0Df_c.js` is emitted and referenced by `dist/index.html`.
 - `git diff --check` — pass.
+
+---
+
+## Session 2026-07-14 — Advanced StS combat animations
+
+**Task claimed:** Replace shared heading tracers with aimed, per-weapon ship-to-ship combat FX.
+
+### Done
+- Combat emits ring-buffered `battle.fxEvents` on shots, heals, kills, and sparse large-battle LOD pulses (`BATTLE_FX_EVENT_CAP=128`); events are not saved.
+- Added `src/js/combat-fx.js` with profile-specific draw styles: kinetic streaks, PD micro-bursts, torpedo projectiles, beam holds, ion arcs, repair ribbons, shield-facing flashes, and kill blooms.
+- `drawCombatLayer` now uses LOD-aware `drawCombatFx` plus hit-feedback rims on recently struck ships.
+- Theme/constants extended for FX colors, durations, and draw caps; `__combatFxSummary` test hook wired in `main.js`.
+
+### Verification
+- `npm run build` — pass.
+- `node output/verify_sts_combat_fx.mjs` — 14/14 pass (all six weapon profiles present; screenshot at `output/visuals/sts-combat-fx.png`).
+- `git diff --check` — pass.
