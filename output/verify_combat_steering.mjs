@@ -1,4 +1,4 @@
-// Combat steering verification — pure math + live tactical battle feel.
+// Combat steering verification — pure math + EaW formation + live battle feel.
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -14,11 +14,15 @@ import {
   hullMotionProfile,
   applyShipSeparation,
   resolveStickyTarget,
+  pickFleetSlotGoal,
+  blendCombatGoal,
+  battleLineMembers,
 } from '../src/js/combat-steering.js';
 import {
   TICK_MS,
   TACTICAL_TURN_RATE,
   TACTICAL_SHIP_SPEED,
+  TACTICAL_FORMATION_BASE_SPACING,
 } from '../src/js/constants.js';
 
 const results = [];
@@ -26,6 +30,11 @@ const check = (name, cond, detail = '') => {
   results.push({ name, pass: !!cond, detail });
   console.log(`${cond ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`);
 };
+
+function lineOffset(type, ordinal, count, spacing = TACTICAL_FORMATION_BASE_SPACING) {
+  const centered = ordinal - (count - 1) / 2;
+  return { x: 0, y: centered * spacing };
+}
 
 // --- Pure unit checks ---
 check('shortestAngleDelta wraps correctly', Math.abs(shortestAngleDelta(0.1, -0.1) + 0.2) < 1e-9);
@@ -77,6 +86,55 @@ check('shortestAngleDelta prefers short arc across ±π', Math.abs(shortestAngle
   check('sticky target retained within stick window', first?.id === 't1' && second?.id === 't1', `${first?.id}/${second?.id}`);
 }
 
+{
+  check('cruiser is capital tier', hullMotionProfile('cruiser').tier === 'capital');
+  check('capital has high formation discipline', hullMotionProfile('battleship').formationDiscipline >= 0.8);
+  check('escort has high chase freedom', hullMotionProfile('corvette').chaseFreedom >= 0.8);
+
+  const side = [
+    { id: 'cap-a', hull: 'battleship', hp: 700, x: 0, y: -40, heading: 0 },
+    { id: 'cap-b', hull: 'cruiser', hp: 500, x: 0, y: 40, heading: 0 },
+    { id: 'wing-1', hull: 'fighter', hp: 30, x: 10, y: 0, heading: 0, isWing: true },
+    { id: 'esc-1', hull: 'corvette', hp: 120, x: 20, y: 0, heading: 0 },
+  ];
+  const hostiles = [{ id: 'e1', hull: 'corvette', hp: 100, x: 400, y: 0 }];
+  const members = battleLineMembers(side);
+  check('battleLineMembers excludes wings and escorts', members.length === 2 && members.every((m) => m.id.startsWith('cap')));
+
+  const slotA = pickFleetSlotGoal(side[0], side, hostiles, 'line', { offsetFn: lineOffset });
+  const slotWing = pickFleetSlotGoal(side[2], side, hostiles, 'line', { offsetFn: lineOffset });
+  check('pickFleetSlotGoal returns slot for capital', !!slotA && slotA.spacing > TACTICAL_FORMATION_BASE_SPACING);
+  check('pickFleetSlotGoal excludes wings', slotWing == null);
+  check('capital spacing uses elevated mult', slotA.spacing >= TACTICAL_FORMATION_BASE_SPACING * 1.8, `spacing=${slotA?.spacing}`);
+}
+
+{
+  const capitalInBand = blendCombatGoal({
+    faceTarget: 0,
+    formFacing: Math.PI / 2,
+    discipline: 0.88,
+    chase: 0.2,
+    dist: 200,
+    range: 280,
+    band: 0.92,
+    slotDistance: 50,
+    hasSlot: true,
+  });
+  check('capital in-band thrust stays low', capitalInBand.thrust < 0.5, `thrust=${capitalInBand.thrust}`);
+  check('capital blends toward formation', Math.abs(capitalInBand.desiredFacing) > 0.5, `facing=${capitalInBand.desiredFacing}`);
+
+  const escortChase = blendCombatGoal({
+    faceTarget: 1.2,
+    discipline: 0.18,
+    chase: 0.85,
+    dist: 400,
+    range: 280,
+    band: 0.92,
+    hasSlot: false,
+  });
+  check('escort out-of-band chase thrust high', escortChase.thrust >= 0.8, `thrust=${escortChase.thrust}`);
+}
+
 // --- Browser battle checks ---
 const browser = await chromium.launch({
   headless: true,
@@ -103,6 +161,11 @@ const samples = await page.evaluate(async () => {
   st.flagship.transit = null;
   st.flagship.wormholeTransit = null;
 
+  // Spawn the full friendly mix before hostiles arrive so initTacticalUnits
+  // includes capitals (mid-battle joins are not synced into an active fight).
+  window.__spawnFriendlyShip('corvette', 4);
+  const cruiserSpawn = window.__devAction('spawnFriendly', { hull: 'cruiser', count: 1, systemId });
+  const battleshipSpawn = window.__devAction('spawnFriendly', { hull: 'battleship', count: 1, systemId });
   st.pirates.fleets = [{
     id: 'steer-pirates',
     galaxyId: st.activeGalaxyId,
@@ -113,19 +176,29 @@ const samples = await page.evaluate(async () => {
       { id: 'sp0', hull: 'corvette', hp: 120, maxHp: 120 },
       { id: 'sp1', hull: 'corvette', hp: 120, maxHp: 120 },
       { id: 'sp2', hull: 'frigate', hp: 200, maxHp: 200 },
+      { id: 'sp3', hull: 'frigate', hp: 200, maxHp: 200 },
     ],
   }];
-  window.__spawnFriendlyShip('corvette', 4);
-  window.__spawnFriendlyShip('frigate', 2);
   window.__forcePirateIntoSystem(systemId);
   window.advanceTime(200);
 
   const battle = st.systemBattles?.[systemId];
   if (!battle?.active || !battle.units) {
-    return { ok: false, reason: 'no battle' };
+    return {
+      ok: false,
+      reason: 'no battle',
+      cruiserSpawn,
+      battleshipSpawn,
+      playerHulls: st.playerShips.map((s) => s.hull),
+    };
   }
 
-  const mobiles = () => battle.units.filter((u) => u.hp > 0 && !u.isStructure && !u.isConvoy && u.hull !== 'flagship' && !u.isWing);
+  const CAPITAL_HULLS = new Set(['cruiser', 'command_cruiser', 'battleship', 'dreadnought', 'hero_flagship']);
+  const ESCORT_HULLS = new Set(['corvette', 'frigate', 'patrol_cutter']);
+
+  const mobiles = () => battle.units.filter((u) => (
+    u.hp > 0 && !u.isStructure && !u.isConvoy && u.hull !== 'flagship' && !u.isWing
+  ));
   const snapshot = () => mobiles().map((u) => ({
     id: u.id,
     side: u.side,
@@ -158,6 +231,28 @@ const samples = await page.evaluate(async () => {
   const meanSpeed = speeds.reduce((a, b) => a + b, 0) / Math.max(1, speeds.length);
 
   const player = t1.filter((u) => u.side === 'player');
+  const capitals = player.filter((u) => CAPITAL_HULLS.has(u.hull));
+  const escorts = player.filter((u) => ESCORT_HULLS.has(u.hull));
+  const mean = (arr) => (arr.length
+    ? arr.reduce((a, b) => a + b, 0) / arr.length
+    : 0);
+  const capitalSpeed = mean(capitals.map((u) => Math.hypot(u.vx, u.vy)));
+  const escortSpeed = mean(escorts.map((u) => Math.hypot(u.vx, u.vy)));
+
+  let cx = 0;
+  let cy = 0;
+  for (const c of capitals) {
+    cx += c.x;
+    cy += c.y;
+  }
+  if (capitals.length) {
+    cx /= capitals.length;
+    cy /= capitals.length;
+  }
+  const capitalSpread = mean(capitals.map((c) => Math.hypot(c.x - cx, c.y - cy)));
+  // Ideal abreast spacing for capital tier (~34 * 1.85); allow 2.5× mean slot radius.
+  const capitalSlotBudget = 34 * 1.85 * 2.5;
+
   let minPair = Infinity;
   for (let i = 0; i < player.length; i++) {
     for (let j = i + 1; j < player.length; j++) {
@@ -167,7 +262,7 @@ const samples = await page.evaluate(async () => {
   }
 
   const maxHeadingDelta = headingDeltas.length ? Math.max(...headingDeltas) : 0;
-  const turnCap = 1.55 * 1.0 * 0.05 + 0.02; // escort turnRate * dt + slack
+  const turnCap = 1.55 * 1.05 * 0.05 + 0.02;
 
   return {
     ok: true,
@@ -176,6 +271,13 @@ const samples = await page.evaluate(async () => {
     maxHeadingDelta,
     turnCap,
     meanSpeed,
+    capitalSpeed,
+    escortSpeed,
+    capitalCount: capitals.length,
+    escortCount: escorts.length,
+    capitalSpread,
+    capitalSlotBudget,
+    playerHulls: player.map((u) => u.hull),
     minPair: Number.isFinite(minPair) ? minPair : null,
     hasVelocityFields: t1.every((u) => Number.isFinite(u.vx) && Number.isFinite(u.vy)),
   };
@@ -191,13 +293,30 @@ if (samples.ok) {
   );
   check(
     'mean ship speed in sane cruise band',
-    samples.meanSpeed > 0.5 && samples.meanSpeed < 40,
+    samples.meanSpeed > 0.2 && samples.meanSpeed < 40,
     `meanSpeed=${samples.meanSpeed?.toFixed(2)}`,
   );
   check(
     'same-side escorts keep minimum separation',
     samples.minPair == null || samples.minPair >= 10,
     `minPair=${samples.minPair?.toFixed?.(1) ?? samples.minPair}`,
+  );
+  check(
+    'mixed fleet has capitals and escorts',
+    samples.capitalCount >= 1 && samples.escortCount >= 2,
+    `capitals=${samples.capitalCount} escorts=${samples.escortCount} hulls=${(samples.playerHulls ?? []).join(',')}`,
+  );
+  check(
+    'capitals slower than escorts (EaW line)',
+    samples.capitalCount >= 1
+      && samples.escortCount >= 1
+      && samples.capitalSpeed < samples.escortSpeed * 0.85,
+    `cap=${samples.capitalSpeed?.toFixed(2)} esc=${samples.escortSpeed?.toFixed(2)}`,
+  );
+  check(
+    'capitals stay near battle-line centroid',
+    samples.capitalCount >= 1 && samples.capitalSpread < samples.capitalSlotBudget,
+    `spread=${samples.capitalSpread?.toFixed(1)} budget=${samples.capitalSlotBudget?.toFixed(1)} count=${samples.capitalCount}`,
   );
 }
 

@@ -9,6 +9,8 @@ import {
   TACTICAL_FORMATION_PULL_MIN,
   TACTICAL_APPROACH_BAND,
   TACTICAL_SEPARATION_STRENGTH,
+  TACTICAL_BATTLE_LINE_DISCIPLINE_MIN,
+  TACTICAL_FORMATION_BASE_SPACING,
   FLEET_STATION_ORBIT_PAD,
   STANCE_MODIFIERS,
   HEALER_AUTO_COEF,
@@ -88,6 +90,11 @@ import {
   motionOptsForUnit,
   blendFacing,
   separationRadiusForUnit,
+  hullMotionProfile,
+  battleLineMembers,
+  pickFleetSlotGoal,
+  blendCombatGoal,
+  isWingUnit,
 } from './combat-steering.js';
 
 const APPROACH_BAND_INNER = TACTICAL_WEAPON_RANGE;
@@ -376,6 +383,34 @@ function launchCarrierWings(state, battle, carrier, side, ordinal) {
   });
 }
 
+function seedBattleLinePositions(state, system, battle, side, facing, battleOrbit) {
+  const sideUnits = (battle.units ?? []).filter((unit) => unit.side === side && unit.hp > 0);
+  const line = battleLineMembers(sideUnits);
+  if (!line.length) return;
+
+  let maxSpacingMult = 1;
+  for (const member of line) {
+    maxSpacingMult = Math.max(maxSpacingMult, hullMotionProfile(member.hull).formationSpacingMult);
+  }
+  const spacing = TACTICAL_FORMATION_BASE_SPACING * maxSpacingMult;
+  // Stand on the side opposite the threat facing, looking toward it.
+  const centerAngle = facing + Math.PI;
+  const lineRadius = battleOrbit * 0.72;
+  const cx = Math.cos(centerAngle) * lineRadius;
+  const cy = Math.sin(centerAngle) * lineRadius;
+
+  for (let ordinal = 0; ordinal < line.length; ordinal++) {
+    const unit = line[ordinal];
+    const offset = formationOffset('line', ordinal, line.length, spacing);
+    const slotX = cx + offset.x * Math.cos(facing) - offset.y * Math.sin(facing);
+    const slotY = cy + offset.x * Math.sin(facing) + offset.y * Math.cos(facing);
+    const safe = softKeepOut(state, system, slotX, slotY);
+    unit.x = safe.x;
+    unit.y = safe.y;
+    unit.heading = facing;
+  }
+}
+
 function initTacticalUnits(state, systemId, battle) {
   const system = getSystems(state)[systemId];
   const starR = system?.star?.radius ?? 200;
@@ -448,6 +483,11 @@ function initTacticalUnits(state, systemId, battle) {
     battle.units.push(unit);
     battle.units.push(...launchCarrierWings(state, battle, unit, 'enemy', i));
   });
+
+  // Seed capital/line/carrier ships into an EaW battle line facing the enemy entry,
+  // so heavies do not start strewn around the station ring.
+  seedBattleLinePositions(state, system, battle, 'player', entryAngle, battleOrbit);
+  seedBattleLinePositions(state, system, battle, 'enemy', entryAngle + Math.PI, battleOrbit);
 
   for (const unit of battle.units) {
     const capital = ['flagship', 'hero_flagship', 'cruiser', 'battleship', 'dreadnought', 'command_cruiser']
@@ -894,7 +934,7 @@ function formationOrderForUnit(battle, unit) {
   return orders.find((order) => order.subjectIds.length === 0 || order.subjectIds.includes(String(unit.id))) ?? null;
 }
 
-function formationOffset(type, ordinal, count, spacing = 34) {
+function formationOffset(type, ordinal, count, spacing = TACTICAL_FORMATION_BASE_SPACING) {
   const centered = ordinal - (count - 1) / 2;
   if (type === 'column') return { x: -ordinal * spacing, y: 0 };
   if (type === 'echelon') return { x: -Math.abs(centered) * spacing * 0.65, y: centered * spacing };
@@ -1094,8 +1134,37 @@ function pooledRepair(units, amount) {
   }
 }
 
+function formationDriftThrust(tier, approaching) {
+  if (tier === 'capital' || tier === 'carrier') {
+    return approaching ? { thrust: 0.35, strafeScale: 0.10 } : { thrust: 0.15, strafeScale: 0.10 };
+  }
+  if (tier === 'line') {
+    return approaching ? { thrust: 0.50, strafeScale: 0.20 } : { thrust: 0.25, strafeScale: 0.20 };
+  }
+  if (tier === 'wing') {
+    return approaching ? { thrust: 0.70, strafeScale: 0.45 } : { thrust: 0.45, strafeScale: 0.45 };
+  }
+  return approaching ? { thrust: 0.60, strafeScale: 0.35 } : { thrust: 0.35, strafeScale: 0.35 };
+}
+
 function formationDrift(units, target, sideOffset, tickIndex) {
   const dt = TICK_MS / 1000;
+  const line = battleLineMembers(units);
+  const lineCenter = line.length
+    ? {
+      x: line.reduce((s, u) => s + u.x, 0) / line.length,
+      y: line.reduce((s, u) => s + u.y, 0) / line.length,
+    }
+    : null;
+  const facingToTarget = lineCenter
+    ? Math.atan2(target.y - lineCenter.y, target.x - lineCenter.x)
+    : 0;
+  let maxSpacingMult = 1;
+  for (const member of line) {
+    maxSpacingMult = Math.max(maxSpacingMult, hullMotionProfile(member.hull).formationSpacingMult);
+  }
+  const spacing = TACTICAL_FORMATION_BASE_SPACING * maxSpacingMult;
+
   for (let i = 0; i < units.length; i++) {
     const unit = units[i];
     if (unit.hp <= 0 || unit.isStructure || unit.isConvoy) continue;
@@ -1110,12 +1179,30 @@ function formationDrift(units, target, sideOffset, tickIndex) {
     const approachFacing = Math.atan2(dy, dx);
     const strafeFacing = Math.atan2(ny * sideOffset, -nx * sideOffset);
     const strafeMix = Math.sin((tickIndex + i * 13) * 0.17);
+    const profile = hullMotionProfile(unit.hull);
+    const approaching = dist > desired;
+    const drift = formationDriftThrust(profile.tier, approaching);
     let facing = approachFacing;
-    let thrust = 0.6;
-    if (dist <= desired) {
-      facing = blendFacing(approachFacing, strafeFacing + strafeMix * 0.35, 0.85);
-      thrust = 0.35;
+    let thrust = drift.thrust;
+    if (!approaching) {
+      facing = blendFacing(approachFacing, strafeFacing + strafeMix * drift.strafeScale, 0.85);
     }
+
+    // Capitals/carriers soft-hold a lateral battle line even in large-battle drift.
+    if (lineCenter && (profile.tier === 'capital' || profile.tier === 'carrier' || profile.tier === 'line')) {
+      const ordinal = line.findIndex((member) => member.id === unit.id);
+      if (ordinal >= 0) {
+        const offset = formationOffset('line', ordinal, line.length, spacing);
+        const slotX = lineCenter.x + offset.x * Math.cos(facingToTarget) - offset.y * Math.sin(facingToTarget);
+        const slotY = lineCenter.y + offset.x * Math.sin(facingToTarget) + offset.y * Math.cos(facingToTarget);
+        const slotFacing = Math.atan2(slotY - unit.y, slotX - unit.x);
+        const slotDist = Math.hypot(slotX - unit.x, slotY - unit.y);
+        const discipline = profile.formationDiscipline;
+        facing = blendFacing(facing, slotFacing, discipline);
+        if (slotDist > 18) thrust = Math.max(thrust, discipline * 0.35);
+      }
+    }
+
     const damageSpeed = damageStateModifiers(unit).speed;
     steerUnit(unit, facing, motionOptsForUnit(unit, { dt, thrust, damageSpeed }));
   }
@@ -1224,6 +1311,24 @@ function tickTacticalBattle(state, systemId, battle) {
   const flagshipSkipIds = new Set();
   const unitById = new Map(battle.units.map((u) => [u.id, u]));
 
+  const bySideLive = new Map();
+  const bySideLine = new Map();
+  const hostileBySide = new Map();
+  for (const unit of context.live) {
+    const side = unit.side ?? 'player';
+    if (!bySideLive.has(side)) bySideLive.set(side, []);
+    bySideLive.get(side).push(unit);
+  }
+  for (const [side, units] of bySideLive) {
+    bySideLine.set(side, battleLineMembers(units));
+    const hostiles = [];
+    for (const [otherSide, otherUnits] of bySideLive) {
+      if (otherSide === side) continue;
+      hostiles.push(...otherUnits);
+    }
+    hostileBySide.set(side, hostiles);
+  }
+
   for (const unit of battle.units) {
     if (unit.hp <= 0) continue;
     ensureUnitMotion(unit);
@@ -1291,69 +1396,101 @@ function tickTacticalBattle(state, systemId, battle) {
       if (canSteer) {
         let desiredFacing = unit.heading;
         let thrust = 0;
+        const motionProfile = hullMotionProfile(unit.hull);
+        const discipline = motionProfile.formationDiscipline;
+        const chase = motionProfile.chaseFreedom;
+        const sideLive = bySideLive.get(unit.side) ?? [];
+        const sideLine = bySideLine.get(unit.side) ?? [];
+        const hostiles = hostileBySide.get(unit.side) ?? [];
+        const formationType = formationOrder?.formation ?? 'line';
+        const useBattleLine = !!formationOrder || discipline >= TACTICAL_BATTLE_LINE_DISCIPLINE_MIN;
 
-        if (target) {
-          const dx = target.x - unit.x;
-          const dy = target.y - unit.y;
-          const dist = Math.hypot(dx, dy) || 1;
-          const faceTarget = Math.atan2(dy, dx);
-          desiredFacing = faceTarget;
+        const faceTarget = target
+          ? Math.atan2(target.y - unit.y, target.x - unit.x)
+          : unit.heading;
+        const dist = target
+          ? (Math.hypot(target.x - unit.x, target.y - unit.y) || 1)
+          : 0;
 
-          const rallyPoint = order?.type === 'rally' ? order.point : null;
-          if (rallyPoint) {
-            const rdx = rallyPoint.x - unit.x;
-            const rdy = rallyPoint.y - unit.y;
-            const rallyDistance = Math.hypot(rdx, rdy) || 1;
-            if (rallyDistance > Math.max(20, order.radius ?? 45)) {
-              desiredFacing = Math.atan2(rdy, rdx);
+        // High-priority orders can fully own facing/thrust.
+        let orderOwned = false;
+        const rallyPoint = order?.type === 'rally' ? order.point : null;
+        if (rallyPoint) {
+          const rdx = rallyPoint.x - unit.x;
+          const rdy = rallyPoint.y - unit.y;
+          const rallyDistance = Math.hypot(rdx, rdy) || 1;
+          if (rallyDistance > Math.max(20, order.radius ?? 45)) {
+            desiredFacing = Math.atan2(rdy, rdx);
+            thrust = 1;
+            orderOwned = true;
+          }
+        } else if (['screen', 'protect', 'escort_convoy'].includes(order?.type)) {
+          const anchorId = order.type === 'escort_convoy' ? order.convoyId : order.targetId;
+          const anchor = battle.units.find((candidate) => candidate.id === anchorId && candidate.hp > 0);
+          if (anchor && anchor.id !== unit.id) {
+            const adx = anchor.x - unit.x;
+            const ady = anchor.y - unit.y;
+            const anchorDistance = Math.hypot(adx, ady) || 1;
+            const desiredScreen = order.type === 'screen' ? 95 : 65;
+            if (anchorDistance > desiredScreen) {
+              desiredFacing = Math.atan2(ady, adx);
               thrust = 1;
-            }
-          } else if (['screen', 'protect', 'escort_convoy'].includes(order?.type)) {
-            const anchorId = order.type === 'escort_convoy' ? order.convoyId : order.targetId;
-            const anchor = battle.units.find((candidate) => candidate.id === anchorId && candidate.hp > 0);
-            if (anchor && anchor.id !== unit.id) {
-              const adx = anchor.x - unit.x;
-              const ady = anchor.y - unit.y;
-              const anchorDistance = Math.hypot(adx, ady) || 1;
-              const desiredScreen = order.type === 'screen' ? 95 : 65;
-              if (anchorDistance > desiredScreen) {
-                desiredFacing = Math.atan2(ady, adx);
-                thrust = 1;
-              }
+              orderOwned = true;
             }
           }
+        }
 
-          if (formationOrder && order?.type !== 'hold' && order?.type !== 'rally' && thrust < 1) {
-            const formationUnits = context.live
-              .filter((candidate) => candidate.side === unit.side && candidate.hp > 0)
-              .sort((a, b) => String(a.id).localeCompare(String(b.id)));
-            const ordinal = formationUnits.findIndex((candidate) => candidate.id === unit.id);
-            const ownCenter = sideCentroid(formationUnits);
-            const hostileCenter = sideCentroid(context.live.filter((candidate) => candidate.side !== unit.side));
-            const formFacing = Math.atan2(hostileCenter.y - ownCenter.y, hostileCenter.x - ownCenter.x);
-            const offset = formationOffset(formationOrder.formation, Math.max(0, ordinal), formationUnits.length);
-            const desiredX = ownCenter.x + offset.x * Math.cos(formFacing) - offset.y * Math.sin(formFacing);
-            const desiredY = ownCenter.y + offset.x * Math.sin(formFacing) + offset.y * Math.cos(formFacing);
-            const fdx = desiredX - unit.x;
-            const fdy = desiredY - unit.y;
-            const formationDistance = Math.hypot(fdx, fdy) || 1;
-            if (formationDistance > TACTICAL_FORMATION_PULL_MIN) {
-              desiredFacing = blendFacing(desiredFacing, Math.atan2(fdy, fdx), 0.3);
-              thrust = Math.max(thrust, 0.35);
-            }
-          }
+        if (!orderOwned) {
+          const forceEscortSlots = !!formationOrder && motionProfile.tier === 'escort';
+          const slot = (useBattleLine && !isWingUnit(unit))
+            ? pickFleetSlotGoal(unit, sideLive, hostiles, formationType, {
+              offsetFn: formationOffset,
+              members: forceEscortSlots ? undefined : sideLine,
+              forceEscortSlots,
+            })
+            : null;
 
-          if (order?.type === 'hold') {
-            desiredFacing = faceTarget;
-            thrust = 0;
-          } else if (order?.type !== 'rally') {
-            if (dist > range * TACTICAL_APPROACH_BAND) {
-              if (thrust < 1) {
-                desiredFacing = faceTarget;
-                thrust = 1;
+          if (slot) {
+            const formFacing = Math.atan2(slot.y - unit.y, slot.x - unit.x);
+            const blended = blendCombatGoal({
+              faceTarget,
+              formFacing,
+              discipline,
+              chase,
+              dist,
+              range,
+              band: TACTICAL_APPROACH_BAND,
+              slotDistance: slot.distance,
+              holdOrder: order?.type === 'hold',
+              hasSlot: true,
+            });
+            desiredFacing = blended.desiredFacing;
+            thrust = blended.thrust;
+          } else {
+            const blended = blendCombatGoal({
+              faceTarget,
+              discipline,
+              chase,
+              dist,
+              range,
+              band: TACTICAL_APPROACH_BAND,
+              holdOrder: order?.type === 'hold',
+              hasSlot: false,
+            });
+            desiredFacing = blended.desiredFacing;
+            thrust = blended.thrust;
+
+            // Explicit formation order including escorts: weak pull toward side line if any.
+            if (formationOrder && !isWingUnit(unit) && order?.type !== 'hold') {
+              const escortSlot = pickFleetSlotGoal(unit, sideLive, hostiles, formationType, {
+                offsetFn: formationOffset,
+                forceEscortSlots: true,
+              });
+              if (escortSlot && escortSlot.distance > TACTICAL_FORMATION_PULL_MIN) {
+                const formFacing = Math.atan2(escortSlot.y - unit.y, escortSlot.x - unit.x);
+                desiredFacing = blendFacing(desiredFacing, formFacing, discipline);
+                thrust = Math.max(thrust, discipline * 0.3);
               }
-            } else {
-              desiredFacing = faceTarget;
             }
           }
         }

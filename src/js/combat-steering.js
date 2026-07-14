@@ -1,4 +1,5 @@
-// Pure tactical steering: turn-then-thrust, soft separation, sticky targeting.
+// Pure tactical steering: turn-then-thrust, soft separation, sticky targeting,
+// Empire-at-War formation helpers.
 
 import {
   TACTICAL_SHIP_SPEED,
@@ -11,9 +12,17 @@ import {
   TACTICAL_MOTION_TIERS,
   TACTICAL_MOTION_HULL_TIER,
   TACTICAL_SPATIAL_CELL,
+  TACTICAL_FORMATION_BASE_SPACING,
+  TACTICAL_APPROACH_BAND,
+  TACTICAL_CAPITAL_SLOT_HOLD_DIST,
+  TACTICAL_CAPITAL_LINE_ADVANCE,
+  CARRIER_WING_HULLS,
+  FLAGSHIP_WING_COMBAT_SPEED_MULT,
 } from './constants.js';
 
 const DEFAULT_TIER = TACTICAL_MOTION_TIERS.escort;
+const BATTLE_LINE_TIERS = new Set(['capital', 'carrier', 'line']);
+const WING_HULL_SET = new Set(CARRIER_WING_HULLS);
 
 export function hullMotionProfile(hull) {
   const tierId = TACTICAL_MOTION_HULL_TIER[hull] ?? 'escort';
@@ -24,6 +33,9 @@ export function hullMotionProfile(hull) {
     accelMult: tier.accel,
     turnRateMult: tier.turnRate,
     separationMult: tier.separation,
+    formationDiscipline: tier.formationDiscipline ?? 0.2,
+    chaseFreedom: tier.chaseFreedom ?? 0.85,
+    formationSpacingMult: tier.formationSpacingMult ?? 1.0,
   };
 }
 
@@ -47,6 +59,160 @@ export function shortestAngleDelta(from, to) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+export function isWingUnit(unit) {
+  if (!unit) return false;
+  if (unit.isWing) return true;
+  return WING_HULL_SET.has(unit.hull);
+}
+
+export function isBattleLineUnit(unit) {
+  if (!unit || unit.hp <= 0) return false;
+  if (unit.isStructure || unit.isConvoy) return false;
+  if (isWingUnit(unit)) return false;
+  if (unit.hull === 'flagship' || unit.id === 'flagship') return false;
+  const tier = hullMotionProfile(unit.hull).tier;
+  return BATTLE_LINE_TIERS.has(tier);
+}
+
+export function battleLineMembers(sideUnits = []) {
+  return sideUnits
+    .filter((unit) => isBattleLineUnit(unit))
+    .slice()
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
+export function screenMembers(sideUnits = []) {
+  return sideUnits
+    .filter((unit) => {
+      if (!unit || unit.hp <= 0 || unit.isStructure || unit.isConvoy) return false;
+      if (isWingUnit(unit)) return false;
+      return hullMotionProfile(unit.hull).tier === 'escort';
+    })
+    .slice()
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
+function centroid(units) {
+  if (!units?.length) return { x: 0, y: 0 };
+  let x = 0;
+  let y = 0;
+  for (const unit of units) {
+    x += unit.x ?? 0;
+    y += unit.y ?? 0;
+  }
+  return { x: x / units.length, y: y / units.length };
+}
+
+/**
+ * Battle-line / formation slot for a unit.
+ * @param {object} opts.offsetFn - (type, ordinal, count, spacing) => {x,y}
+ * @param {boolean} opts.forceEscortSlots - include escorts when explicit formation orders them
+ * @param {object[]} opts.members - precomputed battle-line members (optional)
+ */
+export function pickFleetSlotGoal(unit, sideUnits, hostileUnits, formationType = 'line', opts = {}) {
+  if (!unit || isWingUnit(unit)) return null;
+
+  const forceEscortSlots = !!opts.forceEscortSlots;
+  const profile = hullMotionProfile(unit.hull);
+  const isLine = BATTLE_LINE_TIERS.has(profile.tier);
+  if (!isLine && !forceEscortSlots) return null;
+
+  let members = opts.members;
+  if (!members) {
+    members = forceEscortSlots && !isLine
+      ? screenMembers(sideUnits)
+      : battleLineMembers(sideUnits);
+  }
+  if (!members.length) {
+    if (isLine) members = [unit];
+    else return null;
+  }
+
+  const ordinal = members.findIndex((candidate) => candidate.id === unit.id);
+  if (ordinal < 0) return null;
+
+  const ownCenter = centroid(members);
+  const hostiles = (hostileUnits ?? []).filter((h) => h && h.hp > 0);
+  const hostileCenter = hostiles.length ? centroid(hostiles) : {
+    x: ownCenter.x + Math.cos(unit.heading ?? 0) * 200,
+    y: ownCenter.y + Math.sin(unit.heading ?? 0) * 200,
+  };
+  const facing = Math.atan2(hostileCenter.y - ownCenter.y, hostileCenter.x - ownCenter.x);
+
+  let maxSpacingMult = profile.formationSpacingMult;
+  for (const member of members) {
+    maxSpacingMult = Math.max(maxSpacingMult, hullMotionProfile(member.hull).formationSpacingMult);
+  }
+  const spacing = (opts.baseSpacing ?? TACTICAL_FORMATION_BASE_SPACING) * maxSpacingMult;
+
+  const offsetFn = opts.offsetFn;
+  const offset = typeof offsetFn === 'function'
+    ? offsetFn(formationType, ordinal, members.length, spacing)
+    : { x: 0, y: (ordinal - (members.length - 1) / 2) * spacing };
+
+  const slotX = ownCenter.x + offset.x * Math.cos(facing) - offset.y * Math.sin(facing);
+  const slotY = ownCenter.y + offset.x * Math.sin(facing) + offset.y * Math.cos(facing);
+  const distance = Math.hypot(slotX - (unit.x ?? 0), slotY - (unit.y ?? 0));
+
+  return {
+    x: slotX,
+    y: slotY,
+    facing,
+    distance,
+    ordinal,
+    spacing,
+    memberCount: members.length,
+  };
+}
+
+/**
+ * EaW-weighted facing/thrust from formation discipline + chase freedom.
+ */
+export function blendCombatGoal({
+  faceTarget,
+  formFacing = null,
+  discipline = 0,
+  chase = 1,
+  dist = 0,
+  range = 280,
+  band = TACTICAL_APPROACH_BAND,
+  slotDistance = 0,
+  holdDist = TACTICAL_CAPITAL_SLOT_HOLD_DIST,
+  lineAdvance = TACTICAL_CAPITAL_LINE_ADVANCE,
+  holdOrder = false,
+  hasSlot = false,
+} = {}) {
+  let desiredFacing = Number.isFinite(faceTarget) ? faceTarget : 0;
+  let thrust = 0;
+
+  if (holdOrder) {
+    return { desiredFacing, thrust: 0 };
+  }
+
+  if (hasSlot && formFacing != null && Number.isFinite(formFacing)) {
+    desiredFacing = blendFacing(faceTarget, formFacing, discipline);
+
+    if (slotDistance > holdDist) {
+      thrust = Math.max(thrust, discipline * lineAdvance + (1 - discipline) * 0.25);
+    } else {
+      thrust = Math.max(thrust, discipline * 0.15);
+    }
+
+    if (discipline >= 0.5 && dist > range * band) {
+      desiredFacing = blendFacing(desiredFacing, faceTarget, chase);
+      thrust = Math.max(thrust, chase * 0.85);
+    } else if (discipline >= 0.5) {
+      desiredFacing = blendFacing(desiredFacing, faceTarget, 0.35);
+    }
+    return { desiredFacing, thrust: clamp(thrust, 0, 1) };
+  }
+
+  // Escorts / wings / low-discipline chase-first.
+  desiredFacing = faceTarget;
+  if (dist > range * band) thrust = chase;
+  return { desiredFacing, thrust: clamp(thrust, 0, 1) };
 }
 
 /**
@@ -182,7 +348,6 @@ export function applyShipSeparation(liveUnits, opts = {}) {
       unit.vx *= scale;
       unit.vy *= scale;
     }
-    // Same-frame displacement (impulse applied after steer integrate).
     unit.x += dvx;
     unit.y += dvy;
   }
@@ -230,13 +395,16 @@ export function motionOptsForUnit(unit, {
   speedMult = 1,
 } = {}) {
   const profile = hullMotionProfile(unit?.hull);
-  const speedScale = envSpeed * damageSpeed * speedMult;
+  const flagshipWingBoost = (isWingUnit(unit) && unit.parentCarrierId === 'flagship')
+    ? FLAGSHIP_WING_COMBAT_SPEED_MULT
+    : 1;
+  const speedScale = envSpeed * damageSpeed * speedMult * flagshipWingBoost;
   return {
     dt,
     thrust,
     maxSpeed: TACTICAL_SHIP_SPEED * profile.maxSpeedMult * speedScale,
     turnRate: TACTICAL_TURN_RATE * profile.turnRateMult,
-    accel: TACTICAL_SHIP_ACCEL * profile.accelMult * damageSpeed,
+    accel: TACTICAL_SHIP_ACCEL * profile.accelMult * damageSpeed * Math.min(1.35, flagshipWingBoost),
     drag,
   };
 }
