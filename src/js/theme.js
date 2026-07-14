@@ -46,6 +46,15 @@ export const THEME = {
     tracerEnemy: 'rgba(255, 94, 94, 0.70)',
     tracerHeal: 'rgba(125, 255, 168, 0.55)',
     hazard: 'rgba(255, 82, 112, 0.16)',
+    kinetic: 'rgba(210, 230, 255, 0.92)',
+    pointDefense: 'rgba(180, 245, 255, 0.95)',
+    torpedo: 'rgba(255, 178, 95, 0.95)',
+    beamLance: 'rgba(125, 223, 255, 0.95)',
+    ion: 'rgba(176, 124, 255, 0.95)',
+    repair: 'rgba(125, 255, 168, 0.7)',
+    shieldFlash: 'rgba(140, 210, 255, 0.85)',
+    hullSpark: 'rgba(255, 210, 150, 0.95)',
+    killBloom: 'rgba(255, 140, 90, 0.75)',
   },
 
   planet: {

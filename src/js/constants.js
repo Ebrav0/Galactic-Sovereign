@@ -564,6 +564,21 @@ export const SELECTION_PULSE_MS = 1600;
 export const BATTLE_RENDER_LOD_UNITS = 64;
 export const BATTLE_RENDER_SWARM_UNITS = 140;
 export const BATTLE_TRACER_LIMIT = 96;
+export const BATTLE_FX_EVENT_CAP = 128;
+export const BATTLE_FX_DRAW_LIMIT = 96;
+export const BATTLE_FX_SWARM_DRAW_LIMIT = 48;
+export const BATTLE_FX_HIT_FEEDBACK_MS = 120;
+export const BATTLE_FX_KILL_MS = 250;
+export const BATTLE_FX_DURATIONS = {
+  kinetic: 160,
+  point_defense: 120,
+  torpedo: 360,
+  beam_lance: 220,
+  ion: 200,
+  repair: 280,
+  kill: 250,
+  lod_pulse: 140,
+};
 export const STAR_BLOOM_SCALE = 1.0;           // bloom FBO resolution fraction (full res avoids blocky upscale)
 export const STAR_BLOOM_THRESHOLD = 0.38;      // luminance threshold for HDR bloom
 export const STAR_GL_QUALITY = 'high';        // 'high' | 'medium' | 'low'

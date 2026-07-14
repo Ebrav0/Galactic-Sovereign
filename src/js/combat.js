@@ -15,6 +15,7 @@ import {
 } from './constants.js';
 import {
   carrierWingLoadout,
+  defaultWeaponProfileForHull,
   effectiveDps,
   effectiveDamageAgainst,
   healRateForShip,
@@ -69,6 +70,7 @@ import {
   convoyTransitStatus,
   interceptConvoy,
 } from './logistics.js';
+import { emitHealFx, emitShotFx, emitSparseLodFx } from './combat-fx.js';
 
 function techStateForUnit(state, unit) {
   if (unit?.side === 'player') return state;
@@ -419,6 +421,7 @@ function initTacticalUnits(state, systemId, battle) {
     const shieldPerFacing = Math.round((unit.maxHp ?? unit.hp ?? 0) * (capital ? 0.22 : 0.1));
     normalizeShieldFacings(unit, shieldPerFacing);
     unit.damageState = unit.damageState ?? 'nominal';
+    unit.weaponProfile = unit.weaponProfile ?? defaultWeaponProfileForHull(unit.hull);
     if (unit.isWing) {
       unit.ammo = unit.ammo ?? (unit.hull === 'bomber' ? 4 : 8);
       unit.fuel = unit.fuel ?? 100;
@@ -440,6 +443,7 @@ function startBattle(state, systemId) {
     tacticalOrders: {},
     orderSequence: 0,
     events: [],
+    fxEvents: [],
     objectives: [],
   };
   if (tactical) {
@@ -841,13 +845,28 @@ function priorityTarget(unit, context, spatialIndex, state, battle, environment 
   });
 }
 
-function healAllies(unit, allies, repairMult, techState = null) {
+function healAllies(unit, allies, repairMult, techState = null, battle = null, state = null) {
   if (!allies?.length) return;
   const delta = (healRateForShip(unit, techState) * repairMult * TICK_MS) / 1000;
   if (delta <= 0) return;
+  let primary = null;
+  let deepest = 0;
   for (const ally of allies) {
     if (ally.id === unit.id || ally.hp <= 0 || ally.hp >= ally.maxHp) continue;
+    const missing = ally.maxHp - ally.hp;
     ally.hp = Math.min(ally.maxHp, ally.hp + delta);
+    if (missing > deepest) {
+      deepest = missing;
+      primary = ally;
+    }
+  }
+  if (battle && state && primary) {
+    // Throttle heal ribbons so every 50ms tick does not flood the FX buffer.
+    const last = unit._lastHealFxAt ?? -Infinity;
+    if (state.time - last >= 200) {
+      unit._lastHealFxAt = state.time;
+      emitHealFx(battle, { state, healer: unit, ally: primary });
+    }
   }
 }
 
@@ -953,6 +972,7 @@ function tickLargeTacticalBattle(state, systemId, battle, context, repairMult) {
   pooledDamage(enemies, friendlyDamage);
   pooledDamage(friendlies, enemyDamage);
   pooledRepair(friendlies, friendlyPower.heal * repairMult * dt);
+  emitSparseLodFx(battle, { state, friendlies, enemies });
 
   const fc = sideCentroid(friendlies);
   const ec = sideCentroid(enemies);
@@ -1044,7 +1064,7 @@ function tickTacticalBattle(state, systemId, battle) {
     const unitTechState = techStateForUnit(state, unit);
     const healRate = healRateForShip(unit, unitTechState);
     if (healRate > 0) {
-      healAllies(unit, context.bySide.get(unit.side), repairMult, unitTechState);
+      healAllies(unit, context.bySide.get(unit.side), repairMult, unitTechState, battle, state);
     } else {
       const target = priorityTarget(unit, context, spatialIndex, state, battle, environment);
       if (!target) continue;
@@ -1116,6 +1136,13 @@ function tickTacticalBattle(state, systemId, battle) {
         if (battle.events.length < 100 && (hit.damageState === 'critical' || hit.damageState === 'destroyed')) {
           battle.events.push({ at: state.time - battle.startedAt, type: hit.damageState, actorId: unit.id, targetId: target.id });
         }
+        emitShotFx(battle, {
+          state,
+          attacker: unit,
+          target,
+          hit,
+          profile: unit.weaponProfile ?? defaultWeaponProfileForHull(unit.hull),
+        });
         if (unit.isWing) unit.ammo = Math.max(0, (unit.ammo ?? 0) - 1);
         unit.cooldownMs = profile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS;
       }
@@ -1241,6 +1268,7 @@ export function battleSummaryForSystem(state, systemId) {
       defense: bodyStructureDefensePower(state, systemId),
       ion: bodyStructureIonPower(state, systemId),
     } : null,
+    fx: combatFxSummaryForBattle(battle, state.time),
     environment: combatEnvironmentModifiers(systemById(state, systemId)),
     lastResolve: battle.lastResolve,
   };

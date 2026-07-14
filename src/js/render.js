@@ -16,9 +16,6 @@ import {
   CAPTURE_HOLD_MS,
   BATTLE_RENDER_LOD_UNITS,
   BATTLE_RENDER_SWARM_UNITS,
-  BATTLE_TRACER_LIMIT,
-  TACTICAL_WEAPON_COOLDOWN_MS,
-  TACTICAL_WEAPON_RANGE,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
 import {
@@ -103,8 +100,8 @@ import {
 } from './ship-sprites.js';
 import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
-import { weaponProfile } from './hull.js';
 import { builderDroneTransitPositions } from './builder-drones.js';
+import { drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
 import {
   activeConvoys,
   convoyTransitStatus,
@@ -943,18 +940,34 @@ function drawCombatShipSprite(ctx, x, y, hull, baseR, opts, mode = 'detail') {
   });
 }
 
-function sideTracer(side, hull) {
-  if (hull === 'healer') return THEME.battle.tracerHeal;
-  if (side === 'enemy') return THEME.battle.tracerEnemy;
-  return THEME.battle.tracerPlayer;
-}
-
-function weaponTracer(unit) {
-  if (unit.weaponProfile === 'point_defense') return 'rgba(180, 245, 255, 0.92)';
-  if (unit.weaponProfile === 'torpedo') return 'rgba(255, 178, 95, 0.95)';
-  if (unit.weaponProfile === 'beam_lance') return 'rgba(125, 223, 255, 0.95)';
-  if (unit.weaponProfile === 'ion') return 'rgba(176, 124, 255, 0.95)';
-  return sideTracer(unit.side, unit.hull);
+function drawHitFeedbackOverlay(ctx, x, y, baseR, unit, feedback, z) {
+  if (!feedback) return;
+  const r = Math.max(8, baseR * 1.8);
+  const heading = unit.heading ?? 0;
+  if (feedback.shieldAbsorbed && feedback.facing) {
+    const spans = {
+      front: [heading - 0.55, heading + 0.55],
+      aft: [heading + Math.PI - 0.55, heading + Math.PI + 0.55],
+      port: [heading + Math.PI / 2 - 0.55, heading + Math.PI / 2 + 0.55],
+      starboard: [heading - Math.PI / 2 - 0.55, heading - Math.PI / 2 + 0.55],
+    };
+    const [a0, a1] = spans[feedback.facing] ?? [heading - 0.7, heading + 0.7];
+    ctx.beginPath();
+    ctx.strokeStyle = THEME.battle.shieldFlash;
+    ctx.lineWidth = Math.max(1.4, 2.2 * z);
+    ctx.arc(x, y, r, a0, a1);
+    ctx.stroke();
+  }
+  if (feedback.hullDamage || feedback.ionDisrupt) {
+    const pulse = feedback.ionDisrupt ? 0.55 + 0.35 * Math.sin(performance.now() / 40) : 0.7;
+    ctx.beginPath();
+    ctx.strokeStyle = feedback.ionDisrupt
+      ? THEME.battle.ion.replace(/[\d.]+\)$/, `${pulse})`)
+      : THEME.battle.hullSpark.replace(/[\d.]+\)$/, `${pulse})`);
+    ctx.lineWidth = Math.max(1, 1.5 * z);
+    ctx.arc(x, y, r * 0.72, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
 
 function drawBattleEnvelope(ctx, battle, canvas, z, time) {
@@ -992,41 +1005,6 @@ function drawBattleEnvelope(ctx, battle, canvas, z, time) {
   ctx.restore();
 }
 
-function drawBattleTracers(ctx, battle, canvas, mode, time) {
-  if (!battle?.units?.length) return;
-  let drawn = 0;
-  ctx.save();
-  ctx.lineCap = 'round';
-  for (const unit of battle.units) {
-    if (drawn >= BATTLE_TRACER_LIMIT) break;
-    if (unit.hp <= 0) continue;
-    const profile = weaponProfile(unit.weaponProfile ?? 'kinetic');
-    const cooldown = profile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS;
-    const sinceFire = cooldown - (unit.cooldownMs ?? 0);
-    if (sinceFire < 0 || sinceFire > 170) continue;
-    const start = worldToScreen(camera, unit.x, unit.y, canvas);
-    if (!screenInView(start, canvas, 80)) continue;
-    const len = (mode === 'detail' ? (profile.range ?? TACTICAL_WEAPON_RANGE) * 0.62 : (profile.range ?? TACTICAL_WEAPON_RANGE) * 0.44) * camera.zoom;
-    const heading = unit.heading ?? 0;
-    const alpha = Math.max(0, 1 - sinceFire / 170);
-    const endX = start.x + Math.cos(heading) * len;
-    const endY = start.y + Math.sin(heading) * len;
-    const g = ctx.createLinearGradient(start.x, start.y, endX, endY);
-    const tracer = weaponTracer(unit);
-    g.addColorStop(0, tracer.replace(/[\d.]+\)$/, `${0.15 * alpha})`));
-    g.addColorStop(0.35, tracer);
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.strokeStyle = g;
-    ctx.lineWidth = Math.max(1, (mode === 'detail' ? 1.6 : 1.1) * camera.zoom);
-    ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(endX, endY);
-    ctx.stroke();
-    drawn++;
-  }
-  ctx.restore();
-}
-
 function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   const system = systemById(state, systemId);
   if (!system) return;
@@ -1036,12 +1014,26 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
   if (battle?.active && battle.units?.length) {
     const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
     const mode = combatRenderMode(liveCount, z);
+    const headingById = new Map();
+    for (const unit of battle.units) headingById.set(unit.id, unit.heading ?? 0);
+    const feedback = hitFeedbackByTarget(battle, time);
     drawBattleEnvelope(ctx, battle, canvas, z, time);
-    drawBattleTracers(ctx, battle, canvas, mode, time);
+    drawCombatFx({
+      ctx,
+      battle,
+      canvas,
+      mode,
+      time,
+      camera,
+      worldToScreen,
+      screenInView,
+      unitHeadingById: headingById,
+    });
     for (const unit of battle.units) {
       if (unit.hp <= 0) continue;
       const p = worldToScreen(camera, unit.x, unit.y, canvas);
       if (!screenInView(p, canvas, 70)) continue;
+      const fb = feedback.get(unit.id);
       drawCombatShipSprite(ctx, p.x, p.y, unit.hull, baseR, {
         heading: unit.heading ?? 0,
         side: unit.side,
@@ -1049,6 +1041,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
         maxHp: unit.maxHp,
         showHp: mode === 'detail',
       }, mode);
+      if (mode !== 'swarm' && fb) drawHitFeedbackOverlay(ctx, p.x, p.y, baseR, unit, fb, z);
     }
     return;
   }
