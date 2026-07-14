@@ -129,6 +129,7 @@ function syncDronesForSystem(state, systemId) {
       galaxyId,
       systemId,
       jobId: null,
+      missionStartedAt: null,
       slotIndex: drones.length,
     };
     state.drones.push(drone);
@@ -150,6 +151,7 @@ function unassignDroneFromJob(state, droneId) {
     job.assignedDroneIds = job.assignedDroneIds.filter((id) => id !== droneId);
   }
   drone.jobId = null;
+  drone.missionStartedAt = null;
 }
 
 function pauseJobsInSystem(state, systemId) {
@@ -185,6 +187,7 @@ function assignDronesToJobs(state, systemId) {
     while (job.assignedDroneIds.length < DRONE_MAX_PER_JOB && idleDrones.length > 0) {
       const drone = idleDrones.shift();
       drone.jobId = job.id;
+      drone.missionStartedAt = state.time;
       job.assignedDroneIds.push(drone.id);
       if (job.status === 'queued') job.status = 'active';
     }

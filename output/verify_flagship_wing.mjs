@@ -76,7 +76,7 @@ const spread = await page.evaluate(() => {
   }
   return { maxD, minD, n: poses.length };
 });
-check('4b. wing contained near flagship', spread.maxD < 200 && spread.minD < 100, `min=${spread.minD.toFixed(1)} max=${spread.maxD.toFixed(1)}`);
+check('4b. wing contained near flagship', spread.maxD < 160 && spread.minD < 80, `min=${spread.minD.toFixed(1)} max=${spread.maxD.toFixed(1)}`);
 
 // Motion should not be a shared circular sweep (angles shouldn't all advance together).
 const orbitish = await page.evaluate(async () => {
@@ -124,6 +124,67 @@ const noLag = await page.evaluate(() => {
 });
 check('4e. wing has no thrust trail lag', noLag.err < 8, `err=${noLag.err.toFixed(2)} dx=${noLag.dx.toFixed(1)} dy=${noLag.dy.toFixed(1)}`);
 
+const faceMotion = await page.evaluate(async () => {
+  const st = window.getGameState();
+  st.flagship.vx = 0;
+  st.flagship.vy = 0;
+  const a = window.__flagshipWingPoses();
+  await window.advanceTime(120);
+  const b = window.__flagshipWingPoses();
+  let aligned = 0;
+  for (let i = 0; i < a.length; i++) {
+    const dx = b[i].x - a[i].x;
+    const dy = b[i].y - a[i].y;
+    if (Math.hypot(dx, dy) < 0.4) continue;
+    const move = Math.atan2(dy, dx);
+    let d = b[i].heading - move;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    if (Math.abs(d) < 0.55) aligned += 1;
+  }
+  return { aligned, n: a.length };
+});
+check('4f. escorts face direction of motion', faceMotion.aligned >= Math.max(4, faceMotion.n * 0.5),
+  `aligned=${faceMotion.aligned}/${faceMotion.n}`);
+
+// Continuity: relative escort offsets must not jump while the flagship cruises.
+const continuity = await page.evaluate(async () => {
+  const st = window.getGameState();
+  st.flagship.vx = 160;
+  st.flagship.vy = 55;
+  st.paused = false;
+  let prev = null;
+  let maxRelJump = 0;
+  let maxHeadingJump = 0;
+  for (let i = 0; i < 24; i++) {
+    await window.advanceTime(16);
+    const poses = window.__flagshipWingPoses();
+    const fx = st.flagship.x;
+    const fy = st.flagship.y;
+    const rel = poses.map((p) => ({
+      x: p.x - fx,
+      y: p.y - fy,
+      h: p.heading,
+    }));
+    if (prev) {
+      for (let j = 0; j < rel.length; j++) {
+        maxRelJump = Math.max(maxRelJump, Math.hypot(rel[j].x - prev[j].x, rel[j].y - prev[j].y));
+        let dh = rel[j].h - prev[j].h;
+        while (dh > Math.PI) dh -= Math.PI * 2;
+        while (dh < -Math.PI) dh += Math.PI * 2;
+        maxHeadingJump = Math.max(maxHeadingJump, Math.abs(dh));
+      }
+    }
+    prev = rel;
+  }
+  st.flagship.vx = 0;
+  st.flagship.vy = 0;
+  return { maxRelJump, maxHeadingJump };
+});
+check('4g. wing relative motion continuous while cruising',
+  continuity.maxRelJump < 4.5 && continuity.maxHeadingJump < 0.85,
+  `relJump=${continuity.maxRelJump.toFixed(2)} headingJump=${continuity.maxHeadingJump.toFixed(2)}`);
+
 await page.evaluate(() => {
   window.__viewSystem(window.getGameState().stronghold);
   const st = window.getGameState();
@@ -132,12 +193,12 @@ await page.evaluate(() => {
 await page.evaluate(() => window.advanceTime(80));
 await page.screenshot({ path: path.join(outDir, '01-wing-escort.png') });
 
-// Zoom scale: fighter screen radius must track zoom (was floored to ~4px).
+// Zoom scale: fighter screen radius must track zoom proportionally (no readability floor).
 const zoomSizes = await page.evaluate(() => {
-  const wingR = 9 * 1.55; // FLAGSHIP_RADIUS * FLAGSHIP_WING_DRAW_SCALE
-  const hullScale = 1.0; // fighter HULL_RENDER.scale
+  const wingR = 9 * 0.72; // FLAGSHIP_RADIUS * FLAGSHIP_WING_DRAW_SCALE
+  const hullScale = 0.7; // fighter HULL_RENDER.scale
   const sizeAt = (z) => {
-    const baseR = Math.max(6.5, wingR * z);
+    const baseR = Math.max(0.75, wingR * z);
     const r = baseR * hullScale;
     const rKey = Math.max(1.5, Math.round(r * 2) / 2);
     return { r, rKey };
@@ -150,12 +211,15 @@ const zoomSizes = await page.evaluate(() => {
     farKey: far.rKey,
     nearKey: near.rKey,
     ratio: near.r / far.r,
+    zoomRatio: 2.2 / 0.55,
   };
 });
 check(
   '4c. wing sprite scales with zoom',
-  zoomSizes.ratio > 2.5 && zoomSizes.near > zoomSizes.far,
-  `far=${zoomSizes.far.toFixed(2)} near=${zoomSizes.near.toFixed(2)} farKey=${zoomSizes.farKey} ratio=${zoomSizes.ratio.toFixed(2)}`,
+  zoomSizes.ratio > 3.5
+    && Math.abs(zoomSizes.ratio - zoomSizes.zoomRatio) < 0.15
+    && zoomSizes.near > zoomSizes.far,
+  `far=${zoomSizes.far.toFixed(2)} near=${zoomSizes.near.toFixed(2)} farKey=${zoomSizes.farKey} ratio=${zoomSizes.ratio.toFixed(2)} zoomRatio=${zoomSizes.zoomRatio.toFixed(2)}`,
 );
 
 await page.evaluate(() => {
@@ -198,12 +262,50 @@ const hidden = await page.evaluate(() => {
 });
 check('5. hidden during transit', hidden === 0, String(hidden));
 
+// Hangar recall: escorts fly into the flagship and stow.
+const hangar = await page.evaluate(async () => {
+  const st = window.getGameState();
+  st.flagship.transit = null;
+  st.flagship.wormholeTransit = null;
+  st.flagship.systemId = st.stronghold;
+  window.__viewSystem(st.stronghold);
+  window.__snapCamera(st.flagship.x, st.flagship.y, 1.2);
+  const before = window.__flagshipWingPoses().length;
+  const res = window.__toggleFlagshipWingHangar();
+  const mid = window.__flagshipWingPoses();
+  let minD = Infinity;
+  for (const p of mid) {
+    minD = Math.min(minD, Math.hypot(p.x - st.flagship.x, p.y - st.flagship.y));
+  }
+  await window.advanceTime(1800);
+  const after = window.__flagshipWingPoses().length;
+  const hangarState = window.__flagshipWing()?.hangar;
+  return { before, mid: mid.length, minD, after, hangarState, ok: res?.ok };
+});
+check('5b. hangar recall starts with escorts visible', hangar.before >= 10 && hangar.mid > 0, `before=${hangar.before} mid=${hangar.mid}`);
+check('5c. hangar recall stows escorts', hangar.after === 0 && hangar.hangarState === 'stowed', `after=${hangar.after} hangar=${hangar.hangarState}`);
+await page.screenshot({ path: path.join(outDir, '05-wing-stowed.png') });
+
+const relaunch = await page.evaluate(async () => {
+  const res = window.__toggleFlagshipWingHangar();
+  await window.advanceTime(1600);
+  return {
+    ok: res?.ok,
+    hangar: window.__flagshipWing()?.hangar,
+    poses: window.__flagshipWingPoses().length,
+  };
+});
+check('5d. hangar launch redeploys escorts', relaunch.ok && relaunch.hangar === 'deployed' && relaunch.poses >= 10,
+  `hangar=${relaunch.hangar} poses=${relaunch.poses}`);
+
 // Combat launch + attrition
 await page.evaluate(() => {
   const st = window.getGameState();
   st.flagship.systemId = st.stronghold;
   st.flagship.transit = null;
   st.flagship.wormholeTransit = null;
+  // Ensure wing is out for combat launch test.
+  if (st.flagship.wing?.hangar === 'stowed') window.__toggleFlagshipWingHangar();
   window.__spawnEnemyFleet(st.stronghold);
 });
 await page.evaluate(() => window.advanceTime(800));

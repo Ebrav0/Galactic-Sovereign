@@ -377,6 +377,7 @@ function applyFlagshipKeepOut(state) {
   const system = systemById(state, f.systemId);
   if (!system) return;
   const dt = TICK_MS / 1000;
+  // Velocity-only repulsion — never snap position (that fights display interpolation and stutters).
   const rep = keepOutRepulsion(state, system, f.x, f.y);
   f.vx += rep.ax * dt;
   f.vy += rep.ay * dt;

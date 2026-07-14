@@ -1047,6 +1047,8 @@ function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScout
     builderOrders: (state.builderConstructionOrders ?? []).map((order) => [order.id, order.status, order.assignedDroneId]),
     yards: listPlayerShipyards(state).length,
     queuePending: empireQueueSummary(state).filter((q) => q.status === 'pending').length,
+    wingHangar: state.flagship?.wing?.hangar ?? 'deployed',
+    wingReady: state.flagship?.wing?.ready ?? 0,
   });
 }
 
@@ -1069,6 +1071,26 @@ function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId, s
       <span>Shipyards: <strong>${listPlayerShipyards(state).length}</strong></span>
       <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
     `;
+  }
+
+  const hangar = state.flagship?.wing?.hangar ?? 'deployed';
+  const hangarStatus = el('fleet-wing-hangar-status');
+  if (hangarStatus) {
+    hangarStatus.textContent = hangar === 'stowed' ? 'stowed in hangar'
+      : hangar === 'recalling' ? 'returning to hangar'
+      : hangar === 'launching' ? 'launching'
+      : 'on patrol';
+  }
+  const hangarBtn = el('wing-hangar-btn');
+  if (hangarBtn) {
+    if (hangar === 'stowed' || hangar === 'recalling') {
+      hangarBtn.textContent = hangar === 'recalling' ? 'Docking…' : 'Launch';
+      hangarBtn.title = 'Launch escort fighters from the hangar';
+    } else {
+      hangarBtn.textContent = hangar === 'launching' ? 'Launching…' : 'Hangar';
+      hangarBtn.title = 'Recall escort fighters into the flagship hangar';
+    }
+    hangarBtn.disabled = hangar === 'recalling' || hangar === 'launching';
   }
 
   for (const row of container.querySelectorAll('.fleet-ship-row')) {
@@ -1568,6 +1590,7 @@ function renderFleetPanel(container, state, ctx) {
     builderDroneSummary,
     cancelBuilderDrone,
     openBuilderDronePlanner,
+    doToggleWingHangar,
   } = ctx;
   clearChildren(container);
   const galaxy = getGraph(state);
@@ -1596,6 +1619,49 @@ function renderFleetPanel(container, state, ctx) {
     <span>Queue: <strong>${queue.filter((q) => q.status === 'pending').length}</strong></span>
   `;
   container.appendChild(stats);
+
+  const wing = state.flagship?.wing;
+  if (wing) {
+    const hangar = wing.hangar ?? 'deployed';
+    const wingTitle = document.createElement('div');
+    wingTitle.className = 'intel-section-title fleet-section-header';
+    wingTitle.textContent = 'Flagship Escorts';
+    container.appendChild(wingTitle);
+
+    const wingRow = document.createElement('div');
+    wingRow.className = 'list-row';
+    const wingMain = document.createElement('span');
+    wingMain.className = 'list-row__main';
+    const wingName = document.createElement('div');
+    wingName.className = 'list-row__title';
+    wingName.textContent = `Fighter wing · ${Math.floor(wing.ready ?? 0)}/${wing.capacity ?? 0}`;
+    const wingSub = document.createElement('div');
+    wingSub.className = 'list-row__sub';
+    wingSub.id = 'fleet-wing-hangar-status';
+    const hangarStatus = hangar === 'stowed' ? 'stowed in hangar'
+      : hangar === 'recalling' ? 'returning to hangar'
+      : hangar === 'launching' ? 'launching'
+      : 'on patrol';
+    wingSub.textContent = hangarStatus;
+    wingMain.append(wingName, wingSub);
+    wingRow.appendChild(wingMain);
+
+    const hangarBtn = document.createElement('button');
+    hangarBtn.type = 'button';
+    hangarBtn.className = 'btn btn--ghost btn--xs';
+    hangarBtn.id = 'wing-hangar-btn';
+    if (hangar === 'stowed' || hangar === 'recalling') {
+      hangarBtn.textContent = hangar === 'recalling' ? 'Docking…' : 'Launch';
+      hangarBtn.title = 'Launch escort fighters from the hangar';
+    } else {
+      hangarBtn.textContent = hangar === 'launching' ? 'Launching…' : 'Hangar';
+      hangarBtn.title = 'Recall escort fighters into the flagship hangar';
+    }
+    hangarBtn.disabled = hangar === 'recalling' || hangar === 'launching';
+    hangarBtn.onclick = () => doToggleWingHangar?.();
+    wingRow.appendChild(hangarBtn);
+    container.appendChild(wingRow);
+  }
 
   if (drones?.unlocked) {
     const droneTitle = document.createElement('div');
@@ -2294,6 +2360,7 @@ export function initUi(ctx) {
     doQueueHull,
     doTogglePause,
     doToggleView,
+    doToggleWingHangar,
     doSaveSlot,
     doLoadSlot,
     doImportState,
@@ -3275,6 +3342,7 @@ export function initUi(ctx) {
           builderDroneSummary,
           cancelBuilderDrone,
           openBuilderDronePlanner: (systemId) => openDronePlanner(systemId, { auto: false }),
+          doToggleWingHangar,
         });
       } else {
         updateFleetPanelLabels(

@@ -115,6 +115,33 @@ const posA = parsedA.drones?.inViewedSystem?.[0];
 const posB = parsedB.drones?.inViewedSystem?.[0];
 check('4 drone positions present', !!posA && !!posB);
 check('4 drone motion changes', posA && posB && (posA.x !== posB.x || posA.y !== posB.y));
+
+const launchSample = await page.evaluate(() => {
+  localStorage.clear();
+  window.__newGame(42);
+  const st = window.getGameState();
+  const planet = st.galaxies[st.activeGalaxyId].systems[st.stronghold].bodies.find((b) => b.type === 'habitable');
+  window.__queueOutpost(planet.id);
+  const snap0 = JSON.parse(window.render_game_to_text());
+  const phases0 = (snap0.drones?.inViewedSystem ?? []).map((d) => d.phase);
+  window.advanceTime(400);
+  const snap1 = JSON.parse(window.render_game_to_text());
+  const assigned = (snap1.drones?.inViewedSystem ?? []).filter((d) => d.jobId);
+  const outbound = assigned.filter((d) => d.phase === 'outbound' || d.phase === 'launching');
+  const fx = snap1.flagship?.x ?? st.flagship.x;
+  const fy = snap1.flagship?.y ?? st.flagship.y;
+  let nearShip = 0;
+  for (const d of outbound) {
+    if (Math.hypot(d.x - fx, d.y - fy) < 420) nearShip += 1;
+  }
+  return { phases0, outbound: outbound.length, assigned: assigned.length, nearShip };
+});
+check(
+  '4 drones launch outbound from flagship',
+  launchSample.outbound > 0 && launchSample.nearShip > 0,
+  `outbound=${launchSample.outbound} nearShip=${launchSample.nearShip} assigned=${launchSample.assigned}`,
+);
+
 const worksiteSample = await page.evaluate(() => {
   for (let i = 0; i < 24; i++) {
     window.advanceTime(200);
@@ -170,9 +197,9 @@ check('4 moving flagship preserves baseline-relative frame cadence',
   movingFrames.frames >= Math.max(2, stationaryFrames.frames - 2)
     && movingFrames.worstGapMs <= Math.max(100, stationaryFrames.worstGapMs * 1.7),
   `${stationaryFrames.frames}/${stationaryFrames.worstGapMs.toFixed(1)}ms -> ${movingFrames.frames}/${movingFrames.worstGapMs.toFixed(1)}ms`);
-check('4 six-drone escort remains tight to moving flagship',
-  followFormation.length === 6 && Math.max(...followFormation) <= 95,
-  `count=${followFormation.length}, max=${Math.max(...followFormation).toFixed(1)}`);
+check('4 idle drones stay stowed (not escorting flagship)',
+  followFormation.length === 0,
+  `count=${followFormation.length}`);
 const cachedDroneRenderCost = await page.evaluate(async () => {
   const { drawConstructionDrone } = await import('/js/drone-render.js');
   const canvas = document.createElement('canvas');
@@ -180,13 +207,13 @@ const cachedDroneRenderCost = await page.evaluate(async () => {
   canvas.height = 300;
   const ctx = canvas.getContext('2d');
   for (let i = 0; i < 12; i++) {
-    drawConstructionDrone(ctx, 200, 150, i, 2.5, { time: i * 16, seed: i });
+    drawConstructionDrone(ctx, 200, 150, i, 2.5, { time: i * 16, seed: i, phase: 'outbound' });
   }
   const frames = 1200;
   const startedAt = performance.now();
   for (let frame = 0; frame < frames; frame++) {
     for (let i = 0; i < 6; i++) {
-      drawConstructionDrone(ctx, 190 + i * 4, 150, i * 0.4, 2.5, { time: frame * 16, seed: i });
+      drawConstructionDrone(ctx, 190 + i * 4, 150, i * 0.4, 2.5, { time: frame * 16, seed: i, phase: 'working', working: true });
     }
   }
   return (performance.now() - startedAt) / frames;
@@ -199,7 +226,7 @@ await page.evaluate(() => {
   window.__snapCamera(flagship.x, flagship.y, 2.5);
 });
 await page.waitForTimeout(120);
-await page.screenshot({ path: 'output/web-game/construction-drone-follow.png', fullPage: true });
+await page.screenshot({ path: 'output/web-game/construction-drone-stowed.png', fullPage: true });
 
 // --- 5. Builder ship capacity ---
 await page.evaluate(() => {

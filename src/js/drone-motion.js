@@ -1,14 +1,11 @@
 // Construction drone motion — positions are pure functions of state.time (never serialized).
 
 import {
-  DRONE_CYCLE_MS,
-  DRONE_PATROL_RADIUS,
   DRONE_TRIP_MS_MIN,
   DRONE_TRIP_MS_MAX,
   DRONE_TRIP_MS_PER_UNIT,
   DRONE_WORK_DWELL_MS,
   CELESTIAL_VISUAL_SCALE,
-  SHIPYARD_ORBIT_PAD,
   LAUNCHER_ORBIT_PAD,
   LAUNCHER_ORBIT_SPREAD,
 } from './constants.js';
@@ -37,10 +34,7 @@ function motionParams(drone) {
   const seed = (hashSeed(0xd20e0000, drone.id) % 10000) / 10000;
   params = {
     seed,
-    omega: 0.55 + seed * 0.35,
-    patrolScale: 0.75 + seed * 0.4,
     phase: seed * Math.PI * 2 + drone.slotIndex * 1.4,
-    cycleOffset: (hashSeed(0xabc123, drone.id) % 1000) / 1000,
     workDirection: drone.slotIndex % 2 === 0 ? 1 : -1,
   };
   motionParamsCache.set(drone, params);
@@ -171,24 +165,10 @@ export function constructionSiteAnchor(state, job, time = state.time) {
   };
 }
 
-function idlePatrolPose(state, drone, time, homeOverride = null) {
+function hangarPose(state, drone, homeOverride = null) {
   const home = flagshipHome(state, homeOverride);
-  const params = motionParams(drone);
-  const t = time / 1000;
-  const omega = params.omega;
-  const radius = DRONE_PATROL_RADIUS * params.patrolScale;
-  const phase = params.phase;
-  const angle = t * omega + phase;
-  const wobble = Math.sin(t * omega * 2.1 + phase) * radius * 0.35;
-  const cx = Math.cos(angle) * radius + Math.cos(angle + Math.PI / 2) * wobble;
-  const cy = Math.sin(angle) * radius + Math.sin(angle + Math.PI / 2) * wobble;
-  const x = home.x + cx;
-  const y = home.y + cy;
-  const heading = Math.atan2(
-    Math.cos(angle + Math.PI / 2) * wobble * omega * 2.1 + Math.cos(angle) * radius * omega,
-    -Math.sin(angle + Math.PI / 2) * wobble * omega * 2.1 - Math.sin(angle) * radius * omega,
-  );
-  return { x, y, heading, phase: 'idle', working: false };
+  const heading = state.flagship?.heading ?? 0;
+  return { x: home.x, y: home.y, heading, phase: 'docked', working: false, hidden: true };
 }
 
 function workingPose(site, drone, time) {
@@ -210,11 +190,16 @@ function workingPose(site, drone, time) {
 
 /**
  * Deterministic drone pose for render + observability.
- * @returns {{ x, y, heading, phase, working }}
+ * Idle craft stay stowed aboard the flagship (no escort orbit).
+ * Mission clock starts on assign so sorties launch from the hangar.
+ * @returns {{ x, y, heading, phase, working, hidden? } | null}
  */
 export function dronePose(state, drone, job, time = state.time, homeOverride = null) {
-  if (!job || job.status === 'paused' || job.status === 'complete') {
-    return idlePatrolPose(state, drone, time, homeOverride);
+  if (!job || job.status === 'paused' || job.status === 'complete' || job.status === 'failed') {
+    return null;
+  }
+  if (job.status !== 'active' && job.status !== 'queued') {
+    return null;
   }
 
   const home = flagshipHome(state, homeOverride);
@@ -222,9 +207,18 @@ export function dronePose(state, drone, job, time = state.time, homeOverride = n
   const tripMs = tripDurationMs(home, site);
   const cycleMs = tripMs * 2 + DRONE_WORK_DWELL_MS;
   const params = motionParams(drone);
-  const offset = params.cycleOffset * cycleMs;
-  const cycleT = (time + offset) % cycleMs;
+  const launchStagger = (drone.slotIndex ?? 0) * 240;
+  const missionT0 = Number.isFinite(drone.missionStartedAt)
+    ? drone.missionStartedAt
+    : (job.startedAt ?? time);
+  const elapsed = Math.max(0, time - missionT0 - launchStagger);
 
+  // Staggered bay hold — still stowed until this craft's launch slot.
+  if (time < missionT0 + launchStagger) {
+    return hangarPose(state, drone, homeOverride);
+  }
+
+  const cycleT = elapsed % cycleMs;
   const bulgeSign = params.workDirection;
 
   if (cycleT < tripMs) {
@@ -249,14 +243,17 @@ export function dronePoses(state, systemId, time = state.time, homeOverride = nu
       .filter((j) => j.systemId === systemId && j.galaxyId === state.activeGalaxyId)
       .map((j) => [j.id, j]),
   );
-  return drones.map((drone) => {
+  const out = [];
+  for (const drone of drones) {
     const job = drone.jobId ? jobsById.get(drone.jobId) ?? null : null;
     const pose = dronePose(state, drone, job, time, homeOverride);
-    return { drone, jobId: drone.jobId, ...pose };
-  });
+    if (!pose || pose.hidden || pose.phase === 'docked') continue;
+    out.push({ drone, jobId: drone.jobId, ...pose });
+  }
+  return out;
 }
 
 export function isDroneWorkingPhase(state, drone, job, time = state.time) {
   if (!job || job.status !== 'active') return false;
-  return dronePose(state, drone, job, time).working;
+  return !!dronePose(state, drone, job, time)?.working;
 }

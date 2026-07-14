@@ -130,11 +130,20 @@ export const FLAGSHIP_WING_SPEC = {
   bomber: 2,
 };
 
-export const FLAGSHIP_WING_PATROL_RADIUS = 130;  // home-offset envelope around flagship
-export const FLAGSHIP_WING_WANDER_RADIUS = 58;   // local jitter within each craft's pocket
-export const FLAGSHIP_WING_DRAW_SCALE = 1.55;    // escort sprite size vs FLAGSHIP_RADIUS
+export const FLAGSHIP_WING_PATROL_RADIUS = 95;   // home-offset envelope around flagship
+export const FLAGSHIP_WING_WANDER_RADIUS = 42;   // local jitter within each craft's pocket
+export const FLAGSHIP_WING_DRAW_SCALE = 0.72;    // escort sprite size vs FLAGSHIP_RADIUS
+export const FLAGSHIP_WING_WANDER_SPEED = 2.05;  // Lissajous frequency (slightly calmer escort motion)
 export const FLAGSHIP_WING_CATCHUP_SPEED = 1;    // keep wing locked to flagship pose (no trail lag)
 export const FLAGSHIP_WING_REPLENISH_MS = 90000;
+export const FLAGSHIP_WING_RECALL_MS = 1600;     // fly-in duration when docking to hangar
+export const FLAGSHIP_WING_LAUNCH_MS = 1400;     // fly-out duration when launching from hangar
+/** Extra combat cruise mult for wings launched from the player flagship. */
+export const FLAGSHIP_WING_COMBAT_SPEED_MULT = 1.25;
+/** Soft clear core around flagship hull for ambient wing keep-out. */
+export const FLAGSHIP_WING_HULL_CLEARANCE = 14;
+/** Outer falloff multiple of (FLAGSHIP_RADIUS + clearance) for gradual keep-out. */
+export const FLAGSHIP_WING_KEEP_SOFT_ZONE = 2.35;
 
 /** Multi-battery hardpoint suite for the sovereign flagship. */
 export const FLAGSHIP_WEAPON_SUITE = [
@@ -217,20 +226,39 @@ export const TACTICAL_SEPARATION_RADIUS = 26;    // soft bubble for baseline esc
 export const TACTICAL_SEPARATION_STRENGTH = 90;  // repulsion accel at contact
 export const TACTICAL_TARGET_STICK_MS = 1200;    // sticky focus target duration
 export const TACTICAL_TARGET_LEASH_MULT = 2.4;   // drop sticky if beyond range * leash
-export const TACTICAL_FORMATION_PULL_MIN = 40;    // blend formation only beyond this distance
+export const TACTICAL_FORMATION_PULL_MIN = 40;    // blend formation only beyond this distance (escorts)
 export const TACTICAL_APPROACH_BAND = 0.92;      // thrust toward target when dist > range * band
+export const TACTICAL_BATTLE_LINE_DISCIPLINE_MIN = 0.5; // auto soft battle-line if discipline >= this
+export const TACTICAL_FORMATION_BASE_SPACING = 34;
+export const TACTICAL_CAPITAL_SLOT_HOLD_DIST = 18; // below → station-keeping thrust
+export const TACTICAL_CAPITAL_LINE_ADVANCE = 0.45; // base thrust when creeping into slot
 export const TACTICAL_BATTLE_RADIUS = 900;
 export const TACTICAL_LARGE_BATTLE_UNITS = 72;
 export const TACTICAL_SWARM_BATTLE_UNITS = 150;
 export const TACTICAL_SPATIAL_CELL = 360;
 
-/** Hull-class motion multipliers for tactical steering. */
+/** Hull-class motion multipliers for tactical steering + EaW formation feel. */
 export const TACTICAL_MOTION_TIERS = Object.freeze({
-  wing: Object.freeze({ maxSpeed: 1.45, accel: 1.55, turnRate: 1.7, separation: 0.55 }),
-  escort: Object.freeze({ maxSpeed: 1.0, accel: 1.0, turnRate: 1.0, separation: 1.0 }),
-  line: Object.freeze({ maxSpeed: 0.82, accel: 0.75, turnRate: 0.7, separation: 1.25 }),
-  capital: Object.freeze({ maxSpeed: 0.68, accel: 0.55, turnRate: 0.5, separation: 1.7 }),
-  carrier: Object.freeze({ maxSpeed: 0.72, accel: 0.5, turnRate: 0.45, separation: 1.85 }),
+  wing: Object.freeze({
+    maxSpeed: 2.35, accel: 2.15, turnRate: 2.35, separation: 0.38,
+    formationDiscipline: 0.05, chaseFreedom: 1.00, formationSpacingMult: 0.48,
+  }),
+  escort: Object.freeze({
+    maxSpeed: 1.05, accel: 1.05, turnRate: 1.05, separation: 1.00,
+    formationDiscipline: 0.18, chaseFreedom: 0.85, formationSpacingMult: 1.00,
+  }),
+  line: Object.freeze({
+    maxSpeed: 0.78, accel: 0.70, turnRate: 0.65, separation: 1.30,
+    formationDiscipline: 0.55, chaseFreedom: 0.45, formationSpacingMult: 1.30,
+  }),
+  capital: Object.freeze({
+    maxSpeed: 0.55, accel: 0.48, turnRate: 0.42, separation: 1.85,
+    formationDiscipline: 0.88, chaseFreedom: 0.20, formationSpacingMult: 1.85,
+  }),
+  carrier: Object.freeze({
+    maxSpeed: 0.58, accel: 0.45, turnRate: 0.40, separation: 2.00,
+    formationDiscipline: 0.90, chaseFreedom: 0.15, formationSpacingMult: 2.00,
+  }),
 });
 
 export const TACTICAL_MOTION_HULL_TIER = Object.freeze({
@@ -243,15 +271,15 @@ export const TACTICAL_MOTION_HULL_TIER = Object.freeze({
   frigate: 'escort',
   scout: 'escort',
   destroyer: 'line',
-  cruiser: 'line',
   healer: 'line',
   sensor_ship: 'line',
   builder_ship: 'line',
-  command_cruiser: 'line',
   miner: 'line',
   light_hauler: 'line',
   bulk_freighter: 'line',
   armored_convoy: 'line',
+  cruiser: 'capital',
+  command_cruiser: 'capital',
   battleship: 'capital',
   dreadnought: 'capital',
   hero_flagship: 'capital',

@@ -10,6 +10,115 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-14 — Ship stutter (face-motion follow-up)
+
+**Task claimed:** Ships are stuttering again after facing-direction-of-motion work.
+
+### Done
+- Flagship keep-out stays velocity-only (no position snap fighting display interpolation).
+- Ambient/pirate poses keep analytical patrol headings (no second softKeepOut look-ahead).
+- Wing heading uses local analytical delta + flagship velocity (no double keep-out resolve).
+- Softened wing hull clear to a single light pass; celestial keep-out capped + body-cached once per pose batch.
+
+### Verification
+- `output/verify_flagship_wing.mjs` including continuity check `4g`.
+
+### Suggested next
+- If hitching remains with Fleet panel open, profile panel rebuilds next.
+
+---
+
+## Session 2026-07-14 — Flagship hangar recall button
+
+**Task claimed:** Add a little button so escort fighters fly into the flagship hangar.
+
+### Done
+- Wing hangar modes: `deployed` / `recalling` / `stowed` / `launching` with fly-in/out animation.
+- HUD **Hangar** button (toggles to **Launch** when stowed) beside the flagship chip.
+- `toggleFlagshipWingHangar` + test hook `__toggleFlagshipWingHangar`.
+
+### Verification
+- `output/verify_flagship_wing.mjs`: 14/14
+- Screenshots: `05-wing-recalling.png`, `05-wing-stowed.png`
+
+### Suggested next
+- Optional: hotkey (e.g. H) for hangar toggle.
+
+---
+
+## Session 2026-07-14 — Construction drones stowed when idle
+
+**Task claimed:** Hide construction drones around the flagship unless they are out on a build job.
+
+### Done
+- Idle/paused/complete drones return no pose (stowed aboard); only outbound/working/returning sorties render.
+- Launch stagger holds craft docked/hidden until their sortie slot; removed ambient escort patrol.
+- `verify_drones.mjs` now asserts idle count=0 near flagship.
+
+### Verification
+- `output/verify_drones.mjs`: 27/27
+- Screenshot: `output/web-game/construction-drone-stowed.png`
+
+### Suggested next
+- Optional: hide mid-cycle return legs when within a few units of the hangar so reload looks instantaneous.
+
+---
+
+## Session 2026-07-14 — Soft keep-out + proportional fighter zoom
+
+**Task claimed:** Gradual flagship keep-out, slightly slower escorts, and fix fighters not scaling with zoom-out.
+
+### Done
+- Ambient wing keep-out is a soft quadratic bubble with tangential swirl + heading lookahead (no hard sphere snap).
+- Slower motion: wander speed 2.05; combat wing tier ~2.35; flagship combat mult 1.25.
+- Removed readability floors on ambient/combat fighter draw radii so size tracks `z` (ratio matches zoom 4.00).
+
+### Verification
+- `output/verify_flagship_wing.mjs`: 11/11 (`4c` far/near ratio=4.00)
+- Screenshots: `02-wing-zoom-out.png`, `03-wing-zoom-in.png`, `01-wing-escort.png`
+
+### Suggested next
+- Optional: combat capital ships still use `Math.max(6, 11*z)` readability floors — leave unless requested.
+
+---
+
+## Session 2026-07-14 — Fighter size, keep-out, drone sorties
+
+**Task claimed:** Slightly enlarge fighters; apply celestial keep-out to flagship + wing; make construction drones launch from the ship to build sites.
+
+### Done
+- Fighter draw mid-size: `FLAGSHIP_WING_DRAW_SCALE` 0.72; wing hull scales ~0.65–0.82; combat `wingBaseR` raised.
+- Ambient wing uses `softKeepOut` + flagship hull clearance (min dist 25); flagship keep-out adds soft position proof vs deep clipping.
+- Local drones start mission clock on assign → outbound from flagship; builder drones fly bezier sortie to worksite (no static orbit pip).
+
+### Verification
+- `output/verify_flagship_wing.mjs`: 11/11 (containment min=25)
+- `output/verify_drones.mjs`: 27/27 including launch-from-flagship check
+
+### Suggested next
+- Optional: brief thruster streaks on builder-drone outbound legs for readability at far zoom.
+
+---
+
+## Session 2026-07-14 — Compact fast fighters
+
+**Task claimed:** Make fighters much smaller/compact and much faster, especially flagship escorts.
+
+### Done
+- Shrunk wing draw: `FLAGSHIP_WING_DRAW_SCALE` 1.55→0.38; fighter/interceptor/HF/bomber `HULL_RENDER` scales ~0.4; combat layer uses smaller `wingBaseR`.
+- Tighter ambient cloud: patrol 95 / wander 42; `FLAGSHIP_WING_WANDER_SPEED` 2.85 for darty motion; tighter combat launch rings + wing separation.
+- Combat wing tier maxSpeed 2.85 (≈63 wu/s); flagship-launched wings get ×1.4 via `FLAGSHIP_WING_COMBAT_SPEED_MULT` (≈88 wu/s).
+
+### Verification
+- `output/verify_flagship_wing.mjs`: 11/11
+- `output/verify_combat_steering.mjs`: 25/25
+- Screenshots: `output/web-game/flagship-wing/01-wing-escort.png`, `03-wing-zoom-in.png`, `04-wing-wander.png`
+
+### Suggested next
+- Optional: brief engine trail streaks on fast wing craft so speed reads better at a glance.
+
+---
+
 ## Session 2026-07-14 — Flagship wing wander + zoom scale fix
 
 **Task claimed:** Replace circular flagship escort orbit with contained wander; fix fighter sprites not resizing with camera zoom.

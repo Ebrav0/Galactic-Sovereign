@@ -27,7 +27,7 @@ import {
 } from './body-structures.js';
 import { findPath } from './galaxy.js';
 import { getGraph } from './galaxy-scope.js';
-import { isPlayerOwned, systemById } from './state.js';
+import { isPlayerOwned, systemById, planetPosition, moonPosition } from './state.js';
 import { isTechUnlocked } from './tech-web.js';
 import {
   buildFoundry,
@@ -701,6 +701,100 @@ export function builderDroneTransitPositions(state) {
     if (status) out.push({ drone, ...status });
   }
   return out;
+}
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
+}
+
+/**
+ * In-system build pose: launch from the flagship (or a star hangar) and fly to the worksite.
+ * Replaces the old static orbit pip so construction reads as a sortie from the ship.
+ */
+export function builderDroneBuildPose(state, drone, time = state.time) {
+  if (!drone || drone.status !== 'building') return null;
+  const systemId = drone.targetSystemId;
+  const system = systemById(state, systemId);
+  if (!system) return null;
+
+  let siteX = 0;
+  let siteY = 0;
+  if (drone.targetBodyId) {
+    for (const planet of system.bodies ?? []) {
+      if (planet.id === drone.targetBodyId) {
+        const pp = planetPosition(planet, time);
+        siteX = pp.x + 42;
+        siteY = pp.y - 28;
+        break;
+      }
+      const moon = planet.moons?.find((m) => m.id === drone.targetBodyId);
+      if (moon) {
+        const mp = moonPosition(planet, moon, time);
+        siteX = mp.x + 28;
+        siteY = mp.y - 18;
+        break;
+      }
+    }
+  } else {
+    // Star-node / research builds — work just outside the corona.
+    const starR = (system.star?.radius ?? 200) * 1.35 + 160;
+    const ang = ((drone.id?.length ?? 1) % 7) * 0.9;
+    siteX = Math.cos(ang) * starR;
+    siteY = Math.sin(ang) * starR;
+  }
+
+  const flagshipHere = state.flagship
+    && state.flagship.systemId === systemId
+    && !state.flagship.transit
+    && !state.flagship.wormholeTransit;
+  const home = flagshipHere
+    ? { x: state.flagship.x, y: state.flagship.y }
+    : { x: siteX * 0.15, y: siteY * 0.15 };
+
+  const dx = siteX - home.x;
+  const dy = siteY - home.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const flightMs = Math.min(5200, Math.max(1400, 900 + dist * 0.55));
+  const started = drone.buildStartedAt ?? time;
+  const elapsed = Math.max(0, time - started);
+
+  if (elapsed < flightMs) {
+    const u = easeInOutCubic(elapsed / flightMs);
+    const mx = (home.x + siteX) / 2;
+    const my = (home.y + siteY) / 2;
+    const bulge = Math.min(90, dist * 0.12);
+    const ctrlX = mx - (dy / dist) * bulge;
+    const ctrlY = my + (dx / dist) * bulge;
+    const omu = 1 - u;
+    const x = omu * omu * home.x + 2 * omu * u * ctrlX + u * u * siteX;
+    const y = omu * omu * home.y + 2 * omu * u * ctrlY + u * u * siteY;
+    const tx = 2 * omu * (ctrlX - home.x) + 2 * u * (siteX - ctrlX);
+    const ty = 2 * omu * (ctrlY - home.y) + 2 * u * (siteY - ctrlY);
+    return {
+      x,
+      y,
+      heading: Math.atan2(ty, tx),
+      phase: 'outbound',
+      working: false,
+      workTargetX: siteX,
+      workTargetY: siteY,
+    };
+  }
+
+  const hoverT = (time - started - flightMs) / 1000;
+  const hoverR = 10 + (drone.id?.length ?? 0) % 5;
+  const hoverA = hoverT * 1.35 + (drone.id?.length ?? 0);
+  const x = siteX + Math.cos(hoverA) * hoverR * 0.35;
+  const y = siteY + Math.sin(hoverA) * hoverR * 0.35;
+  return {
+    x,
+    y,
+    heading: Math.atan2(siteY - y, siteX - x),
+    phase: 'working',
+    working: true,
+    workTargetX: siteX,
+    workTargetY: siteY,
+  };
 }
 
 export function builderDroneSummary(state) {

@@ -194,7 +194,7 @@ import {
   fireSequenceStatus,
 } from './superweapon.js';
 import { ensureFlagshipWeapons } from './hull.js';
-import { ensureFlagshipWing, flagshipWingPoses, flagshipWingSummary } from './flagship-wing.js';
+import { ensureFlagshipWing, flagshipWingPoses, flagshipWingSummary, toggleFlagshipWingHangar } from './flagship-wing.js';
 import {
   buildHeroFlagship,
   spawnHeroFlagshipForTest,
@@ -532,6 +532,22 @@ function doToggleOrbit() {
   } else {
     toast(res.reason, 'error');
   }
+}
+
+function doToggleWingHangar() {
+  const res = toggleFlagshipWingHangar(state);
+  if (!res.ok) {
+    toast(res.reason, 'error');
+    return res;
+  }
+  if (res.already) {
+    toast(res.hangar === 'stowed' || res.hangar === 'recalling'
+      ? 'Escorts already in hangar'
+      : 'Escorts already deployed', 'ok');
+    return res;
+  }
+  toast(res.hangar === 'recalling' ? 'Escorts returning to hangar' : 'Escorts launching', 'ok');
+  return res;
 }
 
 function doOrderTravel(targetId) {
@@ -942,6 +958,7 @@ const { updateUi, closeSidePanel } = initUi({
   doQueueHull,
   doTogglePause,
   doToggleView,
+  doToggleWingHangar,
   doSaveSlot,
   doLoadSlot,
   doImportState,
@@ -1923,6 +1940,7 @@ window.__fireSequenceStatus = () => fireSequenceStatus(state);
 window.__flagshipWeapons = () => ensureFlagshipWeapons(state);
 window.__flagshipWing = () => flagshipWingSummary(state);
 window.__flagshipWingPoses = () => flagshipWingPoses(state);
+window.__toggleFlagshipWingHangar = () => doToggleWingHangar();
 window.__buildHeroFlagship = (rallyStarId) => buildHeroFlagship(state, rallyStarId);
 window.__spawnHeroFlagship = (systemId) => spawnHeroFlagshipForTest(state, systemId ?? viewedSystemId);
 window.__setRelation = (factionId, status) => setRelation(state, factionId, status);

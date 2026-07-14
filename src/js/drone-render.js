@@ -89,7 +89,7 @@ function createSpriteCanvas(size) {
 
 function cachedDroneSprite(scale, working, phase) {
   const scaleBucket = Math.max(0.25, Math.round(scale * 8) / 8);
-  const moving = phase === 'outbound' || phase === 'returning';
+  const moving = phase === 'outbound' || phase === 'returning' || phase === 'launching';
   const key = `${scaleBucket}:${working ? 1 : 0}:${moving ? 1 : 0}`;
   const cached = droneSpriteCache.get(key);
   if (cached) return cached;
@@ -267,7 +267,7 @@ export function drawConstructionAssembly(ctx, x, y, scale, opts = {}) {
 }
 
 export function drawDroneTrail(ctx, x, y, heading, scale, phase) {
-  if (phase !== 'outbound' && phase !== 'returning') return;
+  if (phase !== 'outbound' && phase !== 'returning' && phase !== 'launching') return;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading + Math.PI);

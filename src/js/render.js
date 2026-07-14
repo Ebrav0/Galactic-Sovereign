@@ -110,7 +110,7 @@ import {
 } from './ship-sprites.js';
 import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
-import { builderDroneTransitPositions } from './builder-drones.js';
+import { builderDroneTransitPositions, builderDroneBuildPose } from './builder-drones.js';
 import { drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
 import {
   activeConvoys,
@@ -940,7 +940,8 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     for (const wing of flagshipWingPoses(state, accumulatorMs, pose)) {
       const ws = worldToScreen(camera, wing.x, wing.y, canvas);
       if (!screenInView(ws, canvas, 40)) continue;
-      drawHullSprite(ctx, ws.x, ws.y, wing.hull, Math.max(6.5, wing.radius * z), {
+      // No screen-size floor — scale continuously with zoom (ship-sprites half-pixel buckets).
+      drawHullSprite(ctx, ws.x, ws.y, wing.hull, Math.max(0.75, wing.radius * z), {
         heading: wing.heading,
         side: 'player',
         showHp: false,
@@ -1074,6 +1075,8 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
   const system = systemById(state, systemId);
   if (!system) return;
   const baseR = Math.max(6, 11 * z);
+  // Wing craft scale with zoom only (tiny floor for bitmap stability, no readability clamp).
+  const wingBaseR = Math.max(0.75, 6.5 * z);
   const battle = getBattleState(state, systemId);
   const selectionIds = new Set(
     (combatOverlay?.selectionIds ?? battle?.uiSelectionIds ?? []).map(String),
@@ -1116,12 +1119,16 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
       const selected = selectionIds.has(String(unit.id));
       const isFocus = focusUnit && String(unit.id) === String(focusUnit.id);
       const fb = feedback.get(unit.id);
+      const shipR = (unit.isWing || unit.hull === 'fighter' || unit.hull === 'interceptor'
+        || unit.hull === 'heavy_fighter' || unit.hull === 'bomber')
+        ? wingBaseR
+        : baseR;
       if (selected) {
         ctx.save();
         ctx.strokeStyle = 'rgba(111, 214, 255, 0.95)';
         ctx.lineWidth = Math.max(1.5, 2 * z);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, baseR + 8 * z, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, shipR + 8 * z, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
@@ -1131,12 +1138,12 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
         ctx.lineWidth = Math.max(1.5, 2.2 * z);
         ctx.setLineDash([4 * z, 3 * z]);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, baseR + 11 * z, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, shipR + 11 * z, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.restore();
       }
-      drawCombatShipSprite(ctx, p.x, p.y, unit.hull, baseR, {
+      drawCombatShipSprite(ctx, p.x, p.y, unit.hull, shipR, {
         heading: unit.heading ?? 0,
         side: unit.side,
         hp: unit.hp,
@@ -1145,7 +1152,7 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, com
         showHp: mode !== 'swarm',
         alwaysShowBars: true,
       }, mode);
-      if (mode !== 'swarm' && fb) drawHitFeedbackOverlay(ctx, p.x, p.y, baseR, unit, fb, z);
+      if (mode !== 'swarm' && fb) drawHitFeedbackOverlay(ctx, p.x, p.y, shipR, unit, fb, z);
       if (selected && focusScreen && unit.side === 'player') {
         ctx.save();
         ctx.strokeStyle = 'rgba(255, 140, 100, 0.45)';
@@ -1211,46 +1218,24 @@ function drawBuilderDroneConstruction(ctx, state, system, canvas, z, time) {
   const drones = (state.builderDrones ?? []).filter(
     (d) => d.galaxyId === state.activeGalaxyId
       && d.status === 'building'
-      && d.targetSystemId === system.id
-      && d.targetBodyId,
+      && d.targetSystemId === system.id,
   );
   for (const drone of drones) {
-    const pos = bodyWorldPosition(system, drone.targetBodyId, time);
-    if (!pos) continue;
-    const phase = Math.sin(time / 220 + drone.id.length) * 0.5 + 0.5;
-    const x = pos.x + 56;
-    const y = pos.y - 46;
-    const s = worldToScreen(camera, x, y, canvas);
+    const pose = builderDroneBuildPose(state, drone, time);
+    if (!pose) continue;
+    const s = worldToScreen(camera, pose.x, pose.y, canvas);
     if (!screenInView(s, canvas, 50)) continue;
-    ctx.save();
-    ctx.translate(s.x, s.y);
-    ctx.strokeStyle = `rgba(255, 184, 92, ${0.35 + phase * 0.35})`;
-    ctx.lineWidth = Math.max(1, 1.4 * z);
-    ctx.setLineDash([4 * z, 5 * z]);
-    ctx.beginPath();
-    ctx.arc(0, 0, Math.max(7, 18 * z), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.shadowColor = 'rgba(255, 184, 92, 0.9)';
-    ctx.shadowBlur = 8;
-    ctx.fillStyle = 'rgba(255, 184, 92, 0.95)';
-    const r = Math.max(3, 5 * z);
-    ctx.beginPath();
-    ctx.moveTo(r * 1.8, 0);
-    ctx.lineTo(-r, -r * 0.8);
-    ctx.lineTo(-r * 0.4, 0);
-    ctx.lineTo(-r, r * 0.8);
-    ctx.closePath();
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = 'rgba(157, 229, 255, 0.8)';
-    ctx.beginPath();
-    ctx.moveTo(-r * 2.2, r * 1.6);
-    ctx.lineTo(-r * 3.2 - phase * r, r * 2.3);
-    ctx.moveTo(-r * 1.8, -r * 1.4);
-    ctx.lineTo(-r * 3.0 - phase * r, -r * 2.1);
-    ctx.stroke();
-    ctx.restore();
+    if (pose.working && Number.isFinite(pose.workTargetX) && Number.isFinite(pose.workTargetY)) {
+      const target = worldToScreen(camera, pose.workTargetX, pose.workTargetY, canvas);
+      drawDroneWorkBeam(ctx, s.x, s.y, target.x, target.y, z, time, drone.id?.length ?? 0);
+    }
+    drawDroneTrail(ctx, s.x, s.y, pose.heading, z, pose.phase);
+    drawConstructionDrone(ctx, s.x, s.y, pose.heading, z * 1.05, {
+      phase: pose.phase,
+      working: pose.working,
+      time,
+      seed: drone.id?.length ?? 0,
+    });
   }
 }
 

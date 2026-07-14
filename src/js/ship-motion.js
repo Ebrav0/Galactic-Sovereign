@@ -174,6 +174,7 @@ export function ambientShipPose(state, system, ship, idx, total, time = state.ti
     heading: patrol.heading,
   };
   const safe = softKeepOut(state, system, raw.x, raw.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
+  // Keep analytical patrol heading — second keep-out look-ahead was doubling work and jittering.
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 
