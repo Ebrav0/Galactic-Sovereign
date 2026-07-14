@@ -93,6 +93,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 11) e = migrateV11toV12(e);
   if (e.saveVersion === 12) e = migrateV12toV13(e);
   if (e.saveVersion === 13) e = migrateV13toV14(e);
+  if (e.saveVersion === 14) e = migrateV14toV15(e);
   return e;
 }
 
@@ -881,6 +882,24 @@ function migrateV13toV14(envelope) {
   };
 }
 
+// v14 -> v15 (flagship arsenal + wing + Novacula fireSequence).
+function migrateV14toV15(envelope) {
+  const state = envelope.state;
+  if (state.flagship) {
+    state.flagship.weapons = Array.isArray(state.flagship.weapons) ? state.flagship.weapons : [];
+    state.flagship.wing = state.flagship.wing ?? null;
+  }
+  state.superweapon = state.superweapon ?? {};
+  state.superweapon.fireSequence = state.superweapon.fireSequence ?? null;
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 15,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -905,6 +924,13 @@ export function deserialize(envelopeJson) {
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;
+    envelope.state.flagship.weapons = Array.isArray(envelope.state.flagship.weapons)
+      ? envelope.state.flagship.weapons
+      : [];
+    envelope.state.flagship.wing = envelope.state.flagship.wing ?? null;
+  }
+  if (envelope.state?.superweapon) {
+    envelope.state.superweapon.fireSequence = envelope.state.superweapon.fireSequence ?? null;
   }
 
   for (const system of Object.values(envelope.state?.systems ?? {})) {
@@ -924,6 +950,7 @@ export function deserialize(envelopeJson) {
   resetLogisticsIds(envelope.state);
   envelope.state.tacticalOrders = envelope.state.tacticalOrders ?? {};
   envelope.state.battleReports = Array.isArray(envelope.state.battleReports) ? envelope.state.battleReports : [];
+  envelope.state.combatDoctrine = envelope.state.combatDoctrine ?? 'assault';
   envelope.state.mapOverlays = { threat: true, sensor: false, blockade: true, ...(envelope.state.mapOverlays ?? {}) };
   envelope.state.solCommander = envelope.state.solCommander?.settings && Array.isArray(envelope.state.solCommander.history)
     ? envelope.state.solCommander

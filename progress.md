@@ -10,6 +10,88 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-14 — Flagship wing wander + zoom scale fix
+
+**Task claimed:** Replace circular flagship escort orbit with contained wander; fix fighter sprites not resizing with camera zoom.
+
+### Done
+- `flagship-wing.js`: Lissajous pocket wander with soft containment (no shared orbital sweep); headings follow local wander velocity.
+- Tuned `FLAGSHIP_WING_PATROL_RADIUS` / `WANDER_RADIUS` for a tighter irregular cloud.
+- `ship-sprites.js` hull bitmap cache: half-pixel buckets (min 1.5) + scale-to-requested-radius so fighters shrink/grow with zoom instead of flooring to 4px.
+
+### Verification
+- `output/verify_flagship_wing.mjs`: 10/10 (containment, non-orbit motion, zoom scale ratio, combat launch)
+- Screenshots: `output/web-game/flagship-wing/01-wing-escort.png`, `02-wing-zoom-out.png`, `03-wing-zoom-in.png`, `04-wing-wander.png`
+
+### Suggested next
+- Optional: soft min screen size for far-zoom wing readability without breaking proportional zoom.
+
+---
+
+## Session 2026-07-14 — Flagship arsenal + Novacula superweapon
+
+**Task claimed:** Multi-battery flagship weapons + ambient fighter wing; deferred Novacula cradle fire cinema with v13 tech multipliers.
+
+### Done
+- `FLAGSHIP_WEAPON_SUITE` (beam/kinetic/torpedo/PD/ion), `HULL_STATS.flagship`, persist `flagship.weapons`; multi-hardpoint tactical fire + hardpoint pulse sprites.
+- `flagship-wing.js`: 13-craft escort wander/follow; combat launch via carrier-wing path; Stronghold replenish; hide in transit.
+- `superweapon-render.js` Novacula gimbal cradle + cyan/white beam + flare; galaxy corridor/impact VFX.
+- Deferred `fireSequence` phases in `superweapon.js` (mutate at impact); shield block at impact with partial refund; v13 power/genesis/gate/sovereign cost+timing multipliers; richer galaxy Superweapon panel.
+- `SAVE_VERSION=15` + `migrateV14toV15`.
+
+### Verification
+- `output/verify_flagship_arsenal.mjs`: 11/11
+- `output/verify_flagship_wing.mjs`: 7/7
+- `output/verify_superweapon_novacula.mjs`: 12/12 (screenshots under `output/web-game/superweapon-novacula/`)
+- `output/verify_sts_combat_fx.mjs`: 14/14
+- `output/verify_phase6.mjs`: 40/42 (2 pre-existing tutorial coach step mismatches unrelated to this work)
+
+### Suggested next
+- Further polish cradle silhouette vs Dyson shell-8 cage at Stronghold; optional camera soft-pan along galaxy beam.
+
+---
+
+## Session 2026-07-14 — Combat shield + hull bars
+
+**Task claimed:** Show shield and health bars on player and pirate ships during combat.
+
+### Done
+- Replaced single damaged-only HP pip with stacked combat status bars in `ship-sprites.js`: cyan shield (top) + green/red hull (bottom).
+- Combat layer always draws both bars for live units in detail/lite LOD (hidden only in swarm LOD); passes facing-shield totals via `unitShieldTotals`.
+- Combat HUD selection rows now show `S cur/max · H cur/max` when shields exist.
+
+### Verification
+- `output/verify_combat_status_bars.mjs`: 8/8 (shield data on both fleets; cyan+green canvas pixels).
+- `output/verify_combat_ui.mjs`: 20/20 regression.
+- Screenshots: `output/visuals/combat-status-bars.png`, `output/visuals/combat-status-bars-zoom.png` show stacked cyan/green bars above player and pirate ships.
+
+### Suggested next
+- Optional: facing-arc shield wedges for capital ships; hide bars until first damage if clutter becomes an issue at high unit counts.
+
+---
+
+## Session 2026-07-14 — Balance pass + coach-mark tutorial
+
+**Task claimed:** Progressive income / Solarii drain / cost retune, and replace the top tutorial panel with button-anchored coach marks covering the full early-game loop.
+
+### Done
+- Progressive outpost income: base × moons × shell credit bonus × tech `outpostIncomeMult` / `creditIncomeMult` in `economy.js` (`OUTPOST_BASE_INCOME = 10`).
+- Solarii passive drain (`SOLARII_DRAIN_PER_SHELL`) applied as net income in `dyson.js`.
+- Retuned sail burn (2.5×5), capture weights, V13/strategic costs, hero flagship HP/DPS; wing readiness shown as whole craft in Fleet rows.
+- Wired dead tech effects: `hero_combat_bonus`, `diplomacy_trade_bonus`, `dysonShellSync`, `dysonShellBonus`.
+- Tutorial: removed `#tutorial-guide` panel; `#tutorial-coach` floats beside HUD anchors (13 steps through logistics, combat escort, capture, foundry teaser).
+
+### Verification
+- `output/verify_balance_pass.mjs`: 14/14
+- `output/verify_v13_income_save.mjs`: 20/20
+- `output/verify_tutorial_coach.mjs`: 20/20
+- `output/verify_tutorial_browser.mjs`: 9/9; screenshot `output/web-game/tutorial-coach.png` shows compact tip at Build Outpost
+
+### Suggested next
+- Broader playtest of early-game pace with progressive income; optional salvage yard.
+
+---
+
 ## Session 2026-07-10 — Ctrl/Cmd-click construction planner (save v14)
 
 **Task claimed:** Replace manual trade routes with owned-system construction-drone dispatch and an unlimited multi-world arrival planner.

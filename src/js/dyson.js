@@ -15,6 +15,7 @@ import {
   SAIL_SHUTTLE_CAPACITY,
   SOLARII_BASE_RATE,
   SOLARII_SHELL_MULTIPLIERS,
+  SOLARII_DRAIN_PER_SHELL,
   SHELL_BONUS_CREDIT_MULT,
   SHELL_BONUS_SAIL_EFFICIENCY,
   SHELL_TRADE_BONUS,
@@ -263,12 +264,29 @@ export function solariiPerSecond(state) {
     const shells = system.dyson?.completedShells ?? 0;
     if (shells < 1) continue;
     const mult = SOLARII_SHELL_MULTIPLIERS[shells] ?? 0;
-    total += SOLARII_BASE_RATE * mult
+    let rate = SOLARII_BASE_RATE * mult
       * persistentSolariiMultiplier(state, system, galaxyId, active)
       * effects.solariiIncomeMult
       * effects.dysonOutputMult;
+    if (effects.dysonShellBonus) rate *= 1.08;
+    total += rate;
   }
   return total;
+}
+
+/** Passive Solarii upkeep across completed player shells. */
+export function solariiDrainPerSecond(state) {
+  let shells = 0;
+  for (const { system } of persistentDysonSystems(state)) {
+    if (system.owner !== 'player') continue;
+    shells += system.dyson?.completedShells ?? 0;
+  }
+  return shells * SOLARII_DRAIN_PER_SHELL;
+}
+
+/** Net Solarii/s after upkeep (can be negative while stocks remain). */
+export function solariiNetPerSecond(state) {
+  return solariiPerSecond(state) - solariiDrainPerSecond(state);
 }
 
 export function solariiPerSecondInSystem(state, systemId) {
@@ -277,16 +295,19 @@ export function solariiPerSecondInSystem(state, systemId) {
   const shells = system.dyson?.completedShells ?? 0;
   if (shells < 1) return 0;
   const effects = techEffects(state);
-  return SOLARII_BASE_RATE
+  let rate = SOLARII_BASE_RATE
     * (SOLARII_SHELL_MULTIPLIERS[shells] ?? 0)
     * structureSolariiIncomeMultiplier(state, systemId)
     * effects.solariiIncomeMult
     * effects.dysonOutputMult;
+  if (effects.dysonShellBonus) rate *= 1.08;
+  return rate;
 }
 
 export function applySolariiTick(state) {
   if (!state.solariiUnlocked) return;
-  state.solarii = (state.solarii ?? 0) + solariiPerSecond(state) * (TICK_MS / 1000);
+  const net = solariiNetPerSecond(state) * (TICK_MS / 1000);
+  state.solarii = Math.max(0, (state.solarii ?? 0) + net);
 }
 
 function completeShell(state, system, dyson) {
@@ -355,7 +376,8 @@ function tickSystemDyson(state, system) {
     const launcherThroughput = structureLevelMultiplier(launcher)
       * structureLauncherRateMultiplier(state, system.id)
       * effects.launcherRateMult
-      * effects.dysonOutputMult;
+      * effects.dysonOutputMult
+      * (effects.dysonShellSync ? 1.12 : 1);
     const intervalMs = LAUNCHER_LAUNCH_INTERVAL_MS / Math.max(0.1, launcherThroughput);
     if (state.time - lastFire < intervalMs) continue;
 

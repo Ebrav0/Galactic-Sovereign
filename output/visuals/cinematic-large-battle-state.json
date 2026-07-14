@@ -1,7 +1,8 @@
 {
-  "saveVersion": 9,
-  "time": 7150,
+  "saveVersion": 14,
+  "time": 7300,
   "paused": false,
+  "aiDifficulty": "normal",
   "credits": 250000,
   "solarii": 0,
   "solariiUnlocked": false,
@@ -9,6 +10,8 @@
   "view": "system",
   "currentSystem": "sys-142",
   "systemName": "Solara Prime",
+  "systemKind": "star",
+  "tradeNexus": false,
   "strongholdSystem": "sys-142",
   "systemOwner": "player",
   "metaGalaxy": {
@@ -41,10 +44,10 @@
     {
       "galaxyId": "gal-1",
       "name": "Spiral II",
-      "aiCredits": 1804.62,
-      "aiSolarii": 0.649,
-      "fleetPower": 33.44,
-      "dysonShellProgress": 0.129,
+      "aiCredits": 1805.09,
+      "aiSolarii": 0.655,
+      "fleetPower": 33.68,
+      "dysonShellProgress": 0.13,
       "ownedSystemCount": 6,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -53,10 +56,10 @@
     {
       "galaxyId": "gal-2",
       "name": "Spiral III",
-      "aiCredits": 1882.31,
-      "aiSolarii": 4.456,
-      "fleetPower": 26.48,
-      "dysonShellProgress": 0.172,
+      "aiCredits": 1882.79,
+      "aiSolarii": 4.462,
+      "fleetPower": 26.72,
+      "dysonShellProgress": 0.173,
       "ownedSystemCount": 10,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -65,10 +68,10 @@
     {
       "galaxyId": "gal-3",
       "name": "Spiral IV",
-      "aiCredits": 960.47,
-      "aiSolarii": 1.058,
-      "fleetPower": 28.35,
-      "dysonShellProgress": 0.143,
+      "aiCredits": 960.93,
+      "aiSolarii": 1.064,
+      "fleetPower": 28.59,
+      "dysonShellProgress": 0.144,
       "ownedSystemCount": 8,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -77,10 +80,10 @@
     {
       "galaxyId": "gal-4",
       "name": "Spiral V",
-      "aiCredits": 1581.1,
-      "aiSolarii": 5.153,
-      "fleetPower": 31.34,
-      "dysonShellProgress": 0.227,
+      "aiCredits": 1581.51,
+      "aiSolarii": 5.159,
+      "fleetPower": 31.59,
+      "dysonShellProgress": 0.228,
       "ownedSystemCount": 5,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -89,10 +92,10 @@
     {
       "galaxyId": "gal-5",
       "name": "Spiral VI",
-      "aiCredits": 556.62,
-      "aiSolarii": 3.647,
-      "fleetPower": 57.33,
-      "dysonShellProgress": 0.24,
+      "aiCredits": 557.08,
+      "aiSolarii": 3.653,
+      "fleetPower": 57.61,
+      "dysonShellProgress": 0.242,
       "ownedSystemCount": 12,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -101,10 +104,10 @@
     {
       "galaxyId": "gal-6",
       "name": "Spiral VII",
-      "aiCredits": 1917.49,
-      "aiSolarii": 2.468,
-      "fleetPower": 57.43,
-      "dysonShellProgress": 0.289,
+      "aiCredits": 1918.01,
+      "aiSolarii": 2.473,
+      "fleetPower": 57.64,
+      "dysonShellProgress": 0.29,
       "ownedSystemCount": 4,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -113,10 +116,10 @@
     {
       "galaxyId": "gal-7",
       "name": "Spiral VIII",
-      "aiCredits": 734.92,
-      "aiSolarii": 5.086,
-      "fleetPower": 50.59,
-      "dysonShellProgress": 0.205,
+      "aiCredits": 735.39,
+      "aiSolarii": 5.093,
+      "fleetPower": 50.85,
+      "dysonShellProgress": 0.207,
       "ownedSystemCount": 9,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -125,10 +128,10 @@
     {
       "galaxyId": "gal-8",
       "name": "Spiral IX",
-      "aiCredits": 1706.4,
-      "aiSolarii": 5.25,
-      "fleetPower": 49.55,
-      "dysonShellProgress": 0.35,
+      "aiCredits": 1706.85,
+      "aiSolarii": 5.256,
+      "fleetPower": 49.78,
+      "dysonShellProgress": 0.352,
       "ownedSystemCount": 4,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -137,10 +140,10 @@
     {
       "galaxyId": "gal-9",
       "name": "Spiral X",
-      "aiCredits": 971.37,
-      "aiSolarii": 2.44,
-      "fleetPower": 45.44,
-      "dysonShellProgress": 0.258,
+      "aiCredits": 971.8,
+      "aiSolarii": 2.446,
+      "fleetPower": 45.68,
+      "dysonShellProgress": 0.259,
       "ownedSystemCount": 11,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -155,15 +158,21 @@
   },
   "selection": null,
   "selectedScoutId": null,
+  "selectedBattleGroupId": null,
+  "passiveOutpostCreditsPerSecond": 0,
+  "cargoDeliveryCreditsPerSecond": 0,
+  "totalProjectedCreditsPerSecond": 0,
   "incomePerSec": 0,
   "incomePerSecInViewedSystem": 0,
   "flagship": {
     "galaxyId": "gal-0",
+    "hp": 2000,
+    "maxHp": 2000,
     "systemId": "sys-142",
     "x": 0,
-    "y": -730.65,
+    "y": -732.6,
     "vx": 0,
-    "vy": -13.21,
+    "vy": -12.98,
     "heading": -1.571,
     "inTransit": false,
     "orbiting": false,
@@ -204,27 +213,13 @@
     "contested": true
   },
   "production": {
-    "shipyardCount": 7,
+    "shipyardCount": 6,
     "buildingScout": false,
     "scoutCount": 0,
-    "combatQueues": [
-      {
-        "shipyardId": "ai-yard-sys-338",
-        "systemId": "sys-338",
-        "hull": "corvette",
-        "progress": 0.1431818181818182,
-        "queueItemId": null
-      },
-      {
-        "shipyardId": "ai-yard-sys-387",
-        "systemId": "sys-387",
-        "hull": "corvette",
-        "progress": 0.09772727272727273,
-        "queueItemId": null
-      }
-    ],
+    "combatQueues": [],
     "shipyardSlots": 1,
-    "activeBuilds": 2
+    "totalShipyardSlots": 0,
+    "activeBuilds": 0
   },
   "empireQueue": [],
   "research": {
@@ -241,50 +236,424 @@
     "stationCount": 0,
     "componentCount": 0,
     "largestComponent": 0,
-    "incomePerSec": 0
+    "incomePerSec": 0,
+    "projectedLegacyIncomePerSec": 0
+  },
+  "drones": {
+    "capacity": 6,
+    "count": 6,
+    "active": 0,
+    "idle": 6,
+    "inViewedSystem": [
+      {
+        "id": "drone-1",
+        "jobId": null,
+        "phase": "idle",
+        "x": -30.9,
+        "y": -767.5,
+        "heading": -1.019
+      },
+      {
+        "id": "drone-2",
+        "jobId": null,
+        "phase": "idle",
+        "x": -35.8,
+        "y": -750.5,
+        "heading": -1.121
+      },
+      {
+        "id": "drone-3",
+        "jobId": null,
+        "phase": "idle",
+        "x": -37.9,
+        "y": -736.4,
+        "heading": -1.179
+      },
+      {
+        "id": "drone-4",
+        "jobId": null,
+        "phase": "idle",
+        "x": -13.2,
+        "y": -689.4,
+        "heading": -2.548
+      },
+      {
+        "id": "drone-5",
+        "jobId": null,
+        "phase": "idle",
+        "x": -43.3,
+        "y": -733.3,
+        "heading": -1.619
+      },
+      {
+        "id": "drone-6",
+        "jobId": null,
+        "phase": "idle",
+        "x": -39.3,
+        "y": -719.9,
+        "heading": -1.599
+      }
+    ]
+  },
+  "constructionJobs": [],
+  "logistics": {
+    "galaxyId": "gal-0",
+    "ownerId": "player",
+    "nexusCount": 4,
+    "availableNexusCount": 4,
+    "depotCount": 0,
+    "operationalDepotCount": 0,
+    "pausedRouteCount": 0,
+    "activeConvoyRouteCapacity": 0,
+    "convoyCount": 0,
+    "activeConvoyCount": 0,
+    "convoyStatuses": {},
+    "cargoAtOutposts": {
+      "rawMaterials": 0,
+      "fuel": 0,
+      "manufacturedGoods": 0
+    },
+    "cargoAtDepots": {
+      "rawMaterials": 0,
+      "fuel": 0,
+      "manufacturedGoods": 0
+    },
+    "cargoInTransit": {
+      "rawMaterials": 0,
+      "fuel": 0,
+      "manufacturedGoods": 0
+    },
+    "storedCargo": 0,
+    "throughputCreditsPerMinute": 0,
+    "deliveredCredits": 0,
+    "lostCargo": {
+      "rawMaterials": 0,
+      "fuel": 0,
+      "manufacturedGoods": 0
+    },
+    "laneBlockadeCount": 0,
+    "systemBlockadeCount": 0,
+    "nexuses": [
+      {
+        "galaxyId": "gal-0",
+        "systemId": "sys-129",
+        "name": "Jorvik 6 Exchange",
+        "owner": "neutral",
+        "available": true
+      },
+      {
+        "galaxyId": "gal-0",
+        "systemId": "sys-279",
+        "name": "Praxis 12 Exchange",
+        "owner": "neutral",
+        "available": true
+      },
+      {
+        "galaxyId": "gal-0",
+        "systemId": "sys-319",
+        "name": "Halcyon 14 Exchange",
+        "owner": "neutral",
+        "available": true
+      },
+      {
+        "galaxyId": "gal-0",
+        "systemId": "sys-80",
+        "name": "Iskra 4 Exchange",
+        "owner": "neutral",
+        "available": true
+      }
+    ],
+    "depots": [
+      {
+        "id": "depot:gal-0:sys-21",
+        "systemId": "sys-21",
+        "operational": true,
+        "routePaused": false,
+        "preferredNexusId": null,
+        "inventory": {
+          "rawMaterials": 1.00625,
+          "fuel": 0.4025,
+          "manufacturedGoods": 0.60375
+        }
+      },
+      {
+        "id": "depot:gal-0:sys-317",
+        "systemId": "sys-317",
+        "operational": true,
+        "routePaused": false,
+        "preferredNexusId": null,
+        "inventory": {
+          "rawMaterials": 0,
+          "fuel": 0,
+          "manufacturedGoods": 0
+        }
+      },
+      {
+        "id": "depot:gal-0:sys-355",
+        "systemId": "sys-355",
+        "operational": true,
+        "routePaused": false,
+        "preferredNexusId": null,
+        "inventory": {
+          "rawMaterials": 1.00625,
+          "fuel": 0.4025,
+          "manufacturedGoods": 0.60375
+        }
+      },
+      {
+        "id": "depot:gal-0:sys-397",
+        "systemId": "sys-397",
+        "operational": true,
+        "routePaused": false,
+        "preferredNexusId": null,
+        "inventory": {
+          "rawMaterials": 0,
+          "fuel": 0,
+          "manufacturedGoods": 0
+        }
+      }
+    ],
+    "convoys": []
+  },
+  "solCommander": {
+    "enabled": false,
+    "providerMode": "offline",
+    "model": "gpt-5.6-sol",
+    "confirmationRequired": true,
+    "previewData": true,
+    "historyCount": 0
   },
   "factions": {
     "ai": {
       "id": "ai-0",
       "name": "Dominion of Helix",
       "personality": "expansionist",
-      "homeSystemId": "sys-354",
-      "credits": 100,
-      "ownedSystemCount": 6,
+      "difficulty": "normal",
+      "homeSystemId": "sys-355",
+      "credits": 543,
+      "solarii": 0,
+      "ownedSystemCount": 4,
       "ownedSystems": [
-        "sys-38",
-        "sys-151",
-        "sys-338",
-        "sys-354",
-        "sys-387",
-        "sys-397"
+        "sys-152",
+        "sys-347",
+        "sys-355",
+        "sys-365"
       ],
       "fleetCount": 0,
+      "research": {
+        "activeNodeId": "eco_surveyor",
+        "progress": 0.175,
+        "unlockedCount": 1,
+        "queue": []
+      },
+      "production": {
+        "shipQueueCount": 1,
+        "constructionQueueCount": 1
+      },
+      "strategy": {
+        "researchClusters": [
+          "military",
+          "economy",
+          "flagship"
+        ],
+        "buildingFocus": [
+          "outpost",
+          "fleet_academy",
+          "missile_silo",
+          "orbital_defense",
+          "shipyard"
+        ],
+        "fleetFocus": [
+          "dreadnought",
+          "battleship",
+          "cruiser",
+          "destroyer",
+          "corvette"
+        ]
+      },
       "factionCount": 4,
       "all": [
         {
           "id": "ai-0",
           "name": "Dominion of Helix",
           "personality": "expansionist",
-          "homeSystemId": "sys-354"
+          "difficulty": "normal",
+          "homeSystemId": "sys-355",
+          "credits": 543,
+          "solarii": 0,
+          "ownedSystemCount": 4,
+          "ownedSystems": [
+            "sys-152",
+            "sys-347",
+            "sys-355",
+            "sys-365"
+          ],
+          "fleetCount": 0,
+          "research": {
+            "activeNodeId": "eco_surveyor",
+            "progress": 0.175,
+            "unlockedCount": 1,
+            "queue": []
+          },
+          "production": {
+            "shipQueueCount": 1,
+            "constructionQueueCount": 1
+          },
+          "strategy": {
+            "researchClusters": [
+              "military",
+              "economy",
+              "flagship"
+            ],
+            "buildingFocus": [
+              "outpost",
+              "fleet_academy",
+              "missile_silo",
+              "orbital_defense",
+              "shipyard"
+            ],
+            "fleetFocus": [
+              "dreadnought",
+              "battleship",
+              "cruiser",
+              "destroyer",
+              "corvette"
+            ]
+          }
         },
         {
           "id": "ai-1",
           "name": "Veridian Compact",
           "personality": "economic",
-          "homeSystemId": "sys-397"
+          "difficulty": "normal",
+          "homeSystemId": "sys-397",
+          "credits": 623,
+          "solarii": 0,
+          "ownedSystemCount": 1,
+          "ownedSystems": [
+            "sys-397"
+          ],
+          "fleetCount": 0,
+          "research": {
+            "activeNodeId": "eco_surveyor",
+            "progress": 0.175,
+            "unlockedCount": 1,
+            "queue": []
+          },
+          "production": {
+            "shipQueueCount": 0,
+            "constructionQueueCount": 1
+          },
+          "strategy": {
+            "researchClusters": [
+              "economy",
+              "trade",
+              "research"
+            ],
+            "buildingFocus": [
+              "galactic_exchange",
+              "logistics_hub",
+              "power_grid",
+              "storage_depot",
+              "refinery"
+            ],
+            "fleetFocus": [
+              "armored_convoy",
+              "bulk_freighter",
+              "light_hauler",
+              "patrol_cutter",
+              "corvette"
+            ]
+          }
         },
         {
           "id": "ai-2",
           "name": "Solar Architects",
           "personality": "megastructure",
-          "homeSystemId": "sys-338"
+          "difficulty": "normal",
+          "homeSystemId": "sys-317",
+          "credits": 573,
+          "solarii": 0,
+          "ownedSystemCount": 1,
+          "ownedSystems": [
+            "sys-317"
+          ],
+          "fleetCount": 0,
+          "research": {
+            "activeNodeId": "res_lab_1",
+            "progress": 0.14,
+            "unlockedCount": 1,
+            "queue": []
+          },
+          "production": {
+            "shipQueueCount": 0,
+            "constructionQueueCount": 1
+          },
+          "strategy": {
+            "researchClusters": [
+              "megastructure",
+              "research",
+              "economy"
+            ],
+            "buildingFocus": [
+              "sail_foundry",
+              "dyson_launcher",
+              "solar_collector",
+              "nanoforge",
+              "quantum_archive"
+            ],
+            "fleetFocus": [
+              "builder_ship",
+              "miner",
+              "command_cruiser",
+              "cruiser",
+              "corvette"
+            ]
+          }
         },
         {
           "id": "ai-3",
           "name": "Void Runners",
           "personality": "wormhole",
-          "homeSystemId": "sys-38"
+          "difficulty": "normal",
+          "homeSystemId": "sys-21",
+          "credits": 346,
+          "solarii": 0,
+          "ownedSystemCount": 1,
+          "ownedSystems": [
+            "sys-21"
+          ],
+          "fleetCount": 0,
+          "research": {
+            "activeNodeId": "wh_scout_range",
+            "progress": 0.14,
+            "unlockedCount": 1,
+            "queue": []
+          },
+          "production": {
+            "shipQueueCount": 0,
+            "constructionQueueCount": 1
+          },
+          "strategy": {
+            "researchClusters": [
+              "wormhole",
+              "research",
+              "military"
+            ],
+            "buildingFocus": [
+              "wormhole_observatory",
+              "sensor_array",
+              "interdiction_array",
+              "logistics_hub"
+            ],
+            "fleetFocus": [
+              "sensor_ship",
+              "scout",
+              "command_cruiser",
+              "patrol_cutter",
+              "corvette"
+            ]
+          }
         }
       ]
     },
@@ -293,7 +662,7 @@
         "id": "ai-0",
         "name": "Dominion of Helix",
         "personality": "expansionist",
-        "homeSystemId": "sys-354"
+        "homeSystemId": "sys-355"
       },
       {
         "id": "ai-1",
@@ -305,13 +674,13 @@
         "id": "ai-2",
         "name": "Solar Architects",
         "personality": "megastructure",
-        "homeSystemId": "sys-338"
+        "homeSystemId": "sys-317"
       },
       {
         "id": "ai-3",
         "name": "Void Runners",
         "personality": "wormhole",
-        "homeSystemId": "sys-38"
+        "homeSystemId": "sys-21"
       }
     ]
   },
@@ -323,7 +692,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-1",
@@ -331,7 +702,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-2",
@@ -339,7 +712,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-3",
@@ -347,7 +722,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-4",
@@ -355,7 +732,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-5",
@@ -363,7 +742,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-6",
@@ -371,7 +752,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-7",
@@ -379,7 +762,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-8",
@@ -387,7 +772,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-9",
@@ -395,7 +782,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-10",
@@ -403,7 +792,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-11",
@@ -411,7 +802,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-12",
@@ -419,7 +812,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-13",
@@ -427,7 +822,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-14",
@@ -435,7 +832,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-15",
@@ -443,7 +842,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-16",
@@ -451,7 +852,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-17",
@@ -459,7 +862,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-18",
@@ -467,7 +872,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-19",
@@ -475,7 +882,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-20",
@@ -483,7 +892,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-21",
@@ -491,7 +902,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-22",
@@ -499,7 +912,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-23",
@@ -507,7 +922,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-24",
@@ -515,7 +932,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-25",
@@ -523,7 +942,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-26",
@@ -531,7 +952,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-27",
@@ -539,7 +962,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-28",
@@ -547,7 +972,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-29",
@@ -555,7 +982,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-30",
@@ -563,7 +992,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-31",
@@ -571,7 +1002,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-32",
@@ -579,7 +1012,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-33",
@@ -587,7 +1022,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-34",
@@ -595,7 +1032,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-35",
@@ -603,7 +1042,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-36",
@@ -611,7 +1052,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-37",
@@ -619,7 +1062,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-38",
@@ -627,7 +1072,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-39",
@@ -635,7 +1082,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-40",
@@ -643,7 +1092,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-41",
@@ -651,7 +1102,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-42",
@@ -659,7 +1112,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-43",
@@ -667,7 +1122,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-44",
@@ -675,7 +1132,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-45",
@@ -683,7 +1142,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-46",
@@ -691,7 +1152,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-47",
@@ -699,7 +1162,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-48",
@@ -707,7 +1172,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-49",
@@ -715,7 +1182,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-50",
@@ -723,7 +1192,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-51",
@@ -731,7 +1202,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-52",
@@ -739,7 +1212,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-53",
@@ -747,7 +1222,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-54",
@@ -755,7 +1232,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-55",
@@ -763,7 +1242,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-56",
@@ -771,7 +1252,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-57",
@@ -779,7 +1262,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-58",
@@ -787,7 +1272,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-59",
@@ -795,7 +1282,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-60",
@@ -803,7 +1292,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-61",
@@ -811,7 +1302,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-62",
@@ -819,7 +1312,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-63",
@@ -827,7 +1322,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-64",
@@ -835,7 +1332,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-65",
@@ -843,7 +1342,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 350,
-      "maxHp": 350
+      "maxHp": 350,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-66",
@@ -851,7 +1352,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-67",
@@ -859,7 +1362,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-68",
@@ -867,7 +1372,9 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     },
     {
       "id": "cin-corvette-69",
@@ -875,10 +1382,20 @@
       "systemId": "sys-142",
       "inTransit": false,
       "hp": 120,
-      "maxHp": 120
+      "maxHp": 120,
+      "weaponProfile": null,
+      "wingState": null
     }
   ],
   "battleGroups": [],
+  "builderDrones": {
+    "unlocked": false,
+    "capacity": 0,
+    "idle": 0,
+    "active": 0,
+    "drones": [],
+    "orders": []
+  },
   "pirates": {
     "fleetCount": 3,
     "inViewedSystem": true,
@@ -887,26 +1404,71 @@
       "sys-167",
       "sys-142"
     ],
+    "galaxyMarkers": [
+      {
+        "fleetId": "pirate-1",
+        "systemId": "sys-375",
+        "shipCount": 3,
+        "power": 39,
+        "intent": "wander",
+        "targetSystemId": null,
+        "side": "enemy"
+      },
+      {
+        "fleetId": "pirate-2",
+        "systemId": "sys-167",
+        "shipCount": 3,
+        "power": 39,
+        "intent": "wander",
+        "targetSystemId": null,
+        "side": "enemy"
+      },
+      {
+        "fleetId": "cinematic-swarm",
+        "systemId": "sys-142",
+        "shipCount": 105,
+        "power": 1245,
+        "intent": "wander",
+        "targetSystemId": null,
+        "side": "enemy"
+      }
+    ],
+    "transitMarkers": [],
     "fleets": [
       {
         "id": "pirate-1",
         "systemId": "sys-375",
         "inTransit": false,
+        "destination": null,
+        "etaMs": null,
+        "intent": "wander",
+        "targetSystemId": null,
         "shipCount": 3,
+        "power": 39,
         "totalHp": 440
       },
       {
         "id": "pirate-2",
         "systemId": "sys-167",
         "inTransit": false,
+        "destination": null,
+        "etaMs": null,
+        "intent": "wander",
+        "targetSystemId": null,
         "shipCount": 3,
+        "power": 39,
         "totalHp": 440
       },
       {
         "id": "cinematic-swarm",
         "systemId": "sys-142",
         "inTransit": false,
+        "destination": null,
+        "etaMs": null,
+        "intent": "wander",
+        "targetSystemId": null,
         "shipCount": 105,
+        "power": 1245,
         "totalHp": 13800
       }
     ]
@@ -918,8 +1480,374 @@
     "enemyShips": 105,
     "playerHp": 13620,
     "enemyHp": 13800,
-    "lastResolve": null
+    "wingState": {
+      "launched": 0,
+      "ready": 0,
+      "lost": 0
+    },
+    "weaponSummary": {
+      "antiFighter": 0,
+      "bomber": 0,
+      "defense": 0,
+      "ion": 0
+    },
+    "fx": {
+      "total": 128,
+      "active": 16,
+      "byProfile": {
+        "point_defense": 109,
+        "torpedo": 14,
+        "kinetic": 4,
+        "beam_lance": 1
+      },
+      "byKind": {
+        "lod_pulse": 128
+      },
+      "activeByProfile": {
+        "point_defense": 13,
+        "torpedo": 3
+      },
+      "profiles": [
+        "beam_lance",
+        "kinetic",
+        "point_defense",
+        "torpedo"
+      ]
+    },
+    "environment": {
+      "speed": 1,
+      "range": 1,
+      "damage": 1,
+      "label": "Clear space"
+    },
+    "lastResolve": null,
+    "doctrine": "assault",
+    "formation": "wedge",
+    "autoFormationApplied": true,
+    "playerFormationOverride": false,
+    "approachBand": true,
+    "focusTargetId": null,
+    "selectedCount": 0
   },
+  "tacticalOrders": {
+    "enemy|units:cin-pirate-0,cin-pirate-1,cin-pirate-10,cin-pirate-100,cin-pirate-101,cin-pirate-102,cin-pirate-103,cin-pirate-104,cin-pirate-11,cin-pirate-12,cin-pirate-13,cin-pirate-14,cin-pirate-15,cin-pirate-16,cin-pirate-17,cin-pirate-18,cin-pirate-19,cin-pirate-2,cin-pirate-20,cin-pirate-21,cin-pirate-22,cin-pirate-23,cin-pirate-24,cin-pirate-25,cin-pirate-26,cin-pirate-27,cin-pirate-28,cin-pirate-29,cin-pirate-3,cin-pirate-30,cin-pirate-31,cin-pirate-32,cin-pirate-33,cin-pirate-34,cin-pirate-35,cin-pirate-36,cin-pirate-37,cin-pirate-38,cin-pirate-39,cin-pirate-4,cin-pirate-40,cin-pirate-41,cin-pirate-42,cin-pirate-43,cin-pirate-44,cin-pirate-45,cin-pirate-46,cin-pirate-47,cin-pirate-48,cin-pirate-49,cin-pirate-5,cin-pirate-50,cin-pirate-51,cin-pirate-52,cin-pirate-53,cin-pirate-54,cin-pirate-55,cin-pirate-56,cin-pirate-57,cin-pirate-58,cin-pirate-59,cin-pirate-6,cin-pirate-60,cin-pirate-61,cin-pirate-62,cin-pirate-63,cin-pirate-64,cin-pirate-65,cin-pirate-66,cin-pirate-67,cin-pirate-68,cin-pirate-69,cin-pirate-7,cin-pirate-70,cin-pirate-71,cin-pirate-72,cin-pirate-73,cin-pirate-74,cin-pirate-75,cin-pirate-76,cin-pirate-77,cin-pirate-78,cin-pirate-79,cin-pirate-8,cin-pirate-80,cin-pirate-81,cin-pirate-82,cin-pirate-83,cin-pirate-84,cin-pirate-85,cin-pirate-86,cin-pirate-87,cin-pirate-88,cin-pirate-89,cin-pirate-9,cin-pirate-90,cin-pirate-91,cin-pirate-92,cin-pirate-93,cin-pirate-94,cin-pirate-95,cin-pirate-96,cin-pirate-97,cin-pirate-98,cin-pirate-99|directive": {
+      "type": "attack_class",
+      "side": "enemy",
+      "groupId": null,
+      "fleetId": null,
+      "subjectIds": [
+        "cin-pirate-0",
+        "cin-pirate-1",
+        "cin-pirate-10",
+        "cin-pirate-100",
+        "cin-pirate-101",
+        "cin-pirate-102",
+        "cin-pirate-103",
+        "cin-pirate-104",
+        "cin-pirate-11",
+        "cin-pirate-12",
+        "cin-pirate-13",
+        "cin-pirate-14",
+        "cin-pirate-15",
+        "cin-pirate-16",
+        "cin-pirate-17",
+        "cin-pirate-18",
+        "cin-pirate-19",
+        "cin-pirate-2",
+        "cin-pirate-20",
+        "cin-pirate-21",
+        "cin-pirate-22",
+        "cin-pirate-23",
+        "cin-pirate-24",
+        "cin-pirate-25",
+        "cin-pirate-26",
+        "cin-pirate-27",
+        "cin-pirate-28",
+        "cin-pirate-29",
+        "cin-pirate-3",
+        "cin-pirate-30",
+        "cin-pirate-31",
+        "cin-pirate-32",
+        "cin-pirate-33",
+        "cin-pirate-34",
+        "cin-pirate-35",
+        "cin-pirate-36",
+        "cin-pirate-37",
+        "cin-pirate-38",
+        "cin-pirate-39",
+        "cin-pirate-4",
+        "cin-pirate-40",
+        "cin-pirate-41",
+        "cin-pirate-42",
+        "cin-pirate-43",
+        "cin-pirate-44",
+        "cin-pirate-45",
+        "cin-pirate-46",
+        "cin-pirate-47",
+        "cin-pirate-48",
+        "cin-pirate-49",
+        "cin-pirate-5",
+        "cin-pirate-50",
+        "cin-pirate-51",
+        "cin-pirate-52",
+        "cin-pirate-53",
+        "cin-pirate-54",
+        "cin-pirate-55",
+        "cin-pirate-56",
+        "cin-pirate-57",
+        "cin-pirate-58",
+        "cin-pirate-59",
+        "cin-pirate-6",
+        "cin-pirate-60",
+        "cin-pirate-61",
+        "cin-pirate-62",
+        "cin-pirate-63",
+        "cin-pirate-64",
+        "cin-pirate-65",
+        "cin-pirate-66",
+        "cin-pirate-67",
+        "cin-pirate-68",
+        "cin-pirate-69",
+        "cin-pirate-7",
+        "cin-pirate-70",
+        "cin-pirate-71",
+        "cin-pirate-72",
+        "cin-pirate-73",
+        "cin-pirate-74",
+        "cin-pirate-75",
+        "cin-pirate-76",
+        "cin-pirate-77",
+        "cin-pirate-78",
+        "cin-pirate-79",
+        "cin-pirate-8",
+        "cin-pirate-80",
+        "cin-pirate-81",
+        "cin-pirate-82",
+        "cin-pirate-83",
+        "cin-pirate-84",
+        "cin-pirate-85",
+        "cin-pirate-86",
+        "cin-pirate-87",
+        "cin-pirate-88",
+        "cin-pirate-89",
+        "cin-pirate-9",
+        "cin-pirate-90",
+        "cin-pirate-91",
+        "cin-pirate-92",
+        "cin-pirate-93",
+        "cin-pirate-94",
+        "cin-pirate-95",
+        "cin-pirate-96",
+        "cin-pirate-97",
+        "cin-pirate-98",
+        "cin-pirate-99"
+      ],
+      "targetId": null,
+      "targetClass": "capital",
+      "convoyId": null,
+      "destinationId": null,
+      "formation": null,
+      "point": null,
+      "radius": null,
+      "priority": 1,
+      "scope": "units:cin-pirate-0,cin-pirate-1,cin-pirate-10,cin-pirate-100,cin-pirate-101,cin-pirate-102,cin-pirate-103,cin-pirate-104,cin-pirate-11,cin-pirate-12,cin-pirate-13,cin-pirate-14,cin-pirate-15,cin-pirate-16,cin-pirate-17,cin-pirate-18,cin-pirate-19,cin-pirate-2,cin-pirate-20,cin-pirate-21,cin-pirate-22,cin-pirate-23,cin-pirate-24,cin-pirate-25,cin-pirate-26,cin-pirate-27,cin-pirate-28,cin-pirate-29,cin-pirate-3,cin-pirate-30,cin-pirate-31,cin-pirate-32,cin-pirate-33,cin-pirate-34,cin-pirate-35,cin-pirate-36,cin-pirate-37,cin-pirate-38,cin-pirate-39,cin-pirate-4,cin-pirate-40,cin-pirate-41,cin-pirate-42,cin-pirate-43,cin-pirate-44,cin-pirate-45,cin-pirate-46,cin-pirate-47,cin-pirate-48,cin-pirate-49,cin-pirate-5,cin-pirate-50,cin-pirate-51,cin-pirate-52,cin-pirate-53,cin-pirate-54,cin-pirate-55,cin-pirate-56,cin-pirate-57,cin-pirate-58,cin-pirate-59,cin-pirate-6,cin-pirate-60,cin-pirate-61,cin-pirate-62,cin-pirate-63,cin-pirate-64,cin-pirate-65,cin-pirate-66,cin-pirate-67,cin-pirate-68,cin-pirate-69,cin-pirate-7,cin-pirate-70,cin-pirate-71,cin-pirate-72,cin-pirate-73,cin-pirate-74,cin-pirate-75,cin-pirate-76,cin-pirate-77,cin-pirate-78,cin-pirate-79,cin-pirate-8,cin-pirate-80,cin-pirate-81,cin-pirate-82,cin-pirate-83,cin-pirate-84,cin-pirate-85,cin-pirate-86,cin-pirate-87,cin-pirate-88,cin-pirate-89,cin-pirate-9,cin-pirate-90,cin-pirate-91,cin-pirate-92,cin-pirate-93,cin-pirate-94,cin-pirate-95,cin-pirate-96,cin-pirate-97,cin-pirate-98,cin-pirate-99",
+      "sequence": 1,
+      "orderId": "order-enemy-1",
+      "issuedAt": 50
+    },
+    "player|units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship|formation": {
+      "type": "formation",
+      "side": "player",
+      "groupId": null,
+      "fleetId": null,
+      "subjectIds": [
+        "cin-corvette-0",
+        "cin-corvette-1",
+        "cin-corvette-10",
+        "cin-corvette-11",
+        "cin-corvette-12",
+        "cin-corvette-13",
+        "cin-corvette-14",
+        "cin-corvette-15",
+        "cin-corvette-16",
+        "cin-corvette-17",
+        "cin-corvette-18",
+        "cin-corvette-19",
+        "cin-corvette-2",
+        "cin-corvette-20",
+        "cin-corvette-21",
+        "cin-corvette-22",
+        "cin-corvette-23",
+        "cin-corvette-24",
+        "cin-corvette-25",
+        "cin-corvette-26",
+        "cin-corvette-27",
+        "cin-corvette-28",
+        "cin-corvette-29",
+        "cin-corvette-3",
+        "cin-corvette-30",
+        "cin-corvette-31",
+        "cin-corvette-32",
+        "cin-corvette-33",
+        "cin-corvette-34",
+        "cin-corvette-35",
+        "cin-corvette-36",
+        "cin-corvette-37",
+        "cin-corvette-38",
+        "cin-corvette-39",
+        "cin-corvette-4",
+        "cin-corvette-40",
+        "cin-corvette-41",
+        "cin-corvette-42",
+        "cin-corvette-43",
+        "cin-corvette-44",
+        "cin-corvette-45",
+        "cin-corvette-46",
+        "cin-corvette-47",
+        "cin-corvette-48",
+        "cin-corvette-49",
+        "cin-corvette-5",
+        "cin-corvette-50",
+        "cin-corvette-51",
+        "cin-corvette-52",
+        "cin-corvette-53",
+        "cin-corvette-54",
+        "cin-corvette-55",
+        "cin-corvette-56",
+        "cin-corvette-57",
+        "cin-corvette-58",
+        "cin-corvette-59",
+        "cin-corvette-6",
+        "cin-corvette-60",
+        "cin-corvette-61",
+        "cin-corvette-62",
+        "cin-corvette-63",
+        "cin-corvette-64",
+        "cin-corvette-65",
+        "cin-corvette-66",
+        "cin-corvette-67",
+        "cin-corvette-68",
+        "cin-corvette-69",
+        "cin-corvette-7",
+        "cin-corvette-8",
+        "cin-corvette-9",
+        "flagship"
+      ],
+      "targetId": null,
+      "targetClass": null,
+      "convoyId": null,
+      "destinationId": null,
+      "formation": "wedge",
+      "point": null,
+      "radius": null,
+      "priority": 0,
+      "scope": "units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship",
+      "sequence": 4,
+      "orderId": "order-player-4",
+      "issuedAt": 50
+    },
+    "player|units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship|directive": {
+      "type": "attack_class",
+      "side": "player",
+      "groupId": null,
+      "fleetId": null,
+      "subjectIds": [
+        "cin-corvette-0",
+        "cin-corvette-1",
+        "cin-corvette-10",
+        "cin-corvette-11",
+        "cin-corvette-12",
+        "cin-corvette-13",
+        "cin-corvette-14",
+        "cin-corvette-15",
+        "cin-corvette-16",
+        "cin-corvette-17",
+        "cin-corvette-18",
+        "cin-corvette-19",
+        "cin-corvette-2",
+        "cin-corvette-20",
+        "cin-corvette-21",
+        "cin-corvette-22",
+        "cin-corvette-23",
+        "cin-corvette-24",
+        "cin-corvette-25",
+        "cin-corvette-26",
+        "cin-corvette-27",
+        "cin-corvette-28",
+        "cin-corvette-29",
+        "cin-corvette-3",
+        "cin-corvette-30",
+        "cin-corvette-31",
+        "cin-corvette-32",
+        "cin-corvette-33",
+        "cin-corvette-34",
+        "cin-corvette-35",
+        "cin-corvette-36",
+        "cin-corvette-37",
+        "cin-corvette-38",
+        "cin-corvette-39",
+        "cin-corvette-4",
+        "cin-corvette-40",
+        "cin-corvette-41",
+        "cin-corvette-42",
+        "cin-corvette-43",
+        "cin-corvette-44",
+        "cin-corvette-45",
+        "cin-corvette-46",
+        "cin-corvette-47",
+        "cin-corvette-48",
+        "cin-corvette-49",
+        "cin-corvette-5",
+        "cin-corvette-50",
+        "cin-corvette-51",
+        "cin-corvette-52",
+        "cin-corvette-53",
+        "cin-corvette-54",
+        "cin-corvette-55",
+        "cin-corvette-56",
+        "cin-corvette-57",
+        "cin-corvette-58",
+        "cin-corvette-59",
+        "cin-corvette-6",
+        "cin-corvette-60",
+        "cin-corvette-61",
+        "cin-corvette-62",
+        "cin-corvette-63",
+        "cin-corvette-64",
+        "cin-corvette-65",
+        "cin-corvette-66",
+        "cin-corvette-67",
+        "cin-corvette-68",
+        "cin-corvette-69",
+        "cin-corvette-7",
+        "cin-corvette-8",
+        "cin-corvette-9",
+        "flagship"
+      ],
+      "targetId": null,
+      "targetClass": "escort",
+      "convoyId": null,
+      "destinationId": null,
+      "formation": null,
+      "point": null,
+      "radius": null,
+      "priority": 0,
+      "scope": "units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship",
+      "sequence": 5,
+      "orderId": "order-player-5",
+      "issuedAt": 50
+    }
+  },
+  "combatUi": {
+    "active": true,
+    "doctrine": "assault",
+    "selectionIds": [],
+    "focusTargetId": null,
+    "formation": "wedge",
+    "autoFormationApplied": true,
+    "playerFormationOverride": false
+  },
+  "battleReports": [],
   "hullStats": [
     "scout",
     "corvette",
@@ -951,7 +1879,15 @@
     "laneCount": 701,
     "blackHole": "core",
     "galaxyId": "gal-0",
-    "galaxyName": "Spiral I"
+    "galaxyName": "Spiral I",
+    "perf": {
+      "tier": "close",
+      "visibleStars": 0,
+      "visibleLanes": 0,
+      "fleetMarkers": 0,
+      "droneMarkers": 0,
+      "lastDrawMs": 0
+    }
   },
   "bodies": [
     {
@@ -1084,11 +2020,14 @@
     "count": 0,
     "pads": 0,
     "rigs": 0,
+    "buildings": 0,
     "active": 0
   },
   "structureVisuals": {
     "shipyards": [],
-    "launchers": []
+    "launchers": [],
+    "drydocks": [],
+    "orbitalDefense": []
   },
   "sailShuttles": {
     "active": false,
@@ -1193,6 +2132,8 @@
     "defeated": false,
     "won": false,
     "tutorialStep": null,
+    "tutorialTargetSystemId": null,
+    "tutorialCompletedAt": null,
     "activeMissionId": null,
     "completedMissions": [],
     "missionProgress": {}
@@ -1236,18 +2177,10 @@
   "tutorial": {
     "active": false,
     "step": null,
-    "totalSteps": 9,
-    "current": {
-      "id": 0,
-      "title": "Stronghold",
-      "hint": "Your home system produces credits via outposts."
-    }
-  },
-  "manualTradeRoutes": {
-    "count": 0,
-    "max": 12,
-    "bonus": 1,
-    "routes": []
+    "totalSteps": 13,
+    "targetSystemId": null,
+    "current": null,
+    "completedAt": null
   },
   "strategicStructures": {
     "listening_post": 0,
@@ -1256,6 +2189,75 @@
     "forward_base": 0,
     "supply_cache": 0,
     "command_post": 0
+  },
+  "bodyStructures": {
+    "empire": {
+      "mining_complex": 0,
+      "refinery": 0,
+      "storage_depot": 0,
+      "fighter_factory": 0,
+      "planetary_shield": 0,
+      "ion_battery": 0,
+      "drydock": 0,
+      "orbital_defense": 0,
+      "asteroid_harvester": 0,
+      "power_grid": 0,
+      "orbital_habitat": 0,
+      "nanoforge": 0,
+      "fleet_academy": 0,
+      "missile_silo": 0,
+      "interdiction_array": 0,
+      "carrier_command": 0,
+      "sensor_array": 0,
+      "solar_collector": 0,
+      "logistics_hub": 0,
+      "galactic_exchange": 0,
+      "salvage_yard": 0,
+      "wormhole_observatory": 0,
+      "quantum_archive": 0,
+      "embassy_complex": 0
+    },
+    "viewedSystem": {
+      "counts": {
+        "mining_complex": 0,
+        "refinery": 0,
+        "storage_depot": 0,
+        "fighter_factory": 0,
+        "planetary_shield": 0,
+        "ion_battery": 0,
+        "drydock": 0,
+        "orbital_defense": 0,
+        "asteroid_harvester": 0,
+        "power_grid": 0,
+        "orbital_habitat": 0,
+        "nanoforge": 0,
+        "fleet_academy": 0,
+        "missile_silo": 0,
+        "interdiction_array": 0,
+        "carrier_command": 0,
+        "sensor_array": 0,
+        "solar_collector": 0,
+        "logistics_hub": 0,
+        "galactic_exchange": 0,
+        "salvage_yard": 0,
+        "wormhole_observatory": 0,
+        "quantum_archive": 0,
+        "embassy_complex": 0
+      },
+      "byPlacement": {
+        "surface": 0,
+        "orbital": 0,
+        "star-node": 0
+      },
+      "rows": [],
+      "incomeMult": 1,
+      "cargoMult": 1,
+      "tradeMult": 1,
+      "researchMult": 1,
+      "defensePower": 0,
+      "ionPower": 0
+    },
+    "buildRows": []
   },
   "shellBonuses": {
     "shield": 1,

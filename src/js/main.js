@@ -103,7 +103,12 @@ import {
   setBattleGroupFlagshipAnchor,
   syncFlagshipAnchoredFleets,
 } from './battle-groups.js';
-import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger } from './combat.js';
+import { battleSummaryForSystem, getBattleState, setBattleStance, checkBattleTrigger, setCombatDoctrine } from './combat.js';
+import {
+  analyzeFleetMix,
+  normalizeDoctrine,
+  recommendFormation,
+} from './combat-doctrine.js';
 import { combatFxSummary } from './combat-fx.js';
 import { applyFleetOrder } from './combat-orders.js';
 import { activeShuttleCount, shuttlePositions } from './shuttles.js';
@@ -130,6 +135,7 @@ import {
   snapCameraTo,
   camera,
   galaxyCamera,
+  hitTestCombatUnit,
 } from './render.js';
 import { attachInput } from './input.js';
 import { writeSlot, readSlot } from './save.js';
@@ -185,7 +191,10 @@ import {
   superweaponSummary,
   completeDysonShellForTest,
   resetSuperweaponIds,
+  fireSequenceStatus,
 } from './superweapon.js';
+import { ensureFlagshipWeapons } from './hull.js';
+import { ensureFlagshipWing, flagshipWingPoses, flagshipWingSummary } from './flagship-wing.js';
 import {
   buildHeroFlagship,
   spawnHeroFlagshipForTest,
@@ -206,6 +215,8 @@ import {
   getTutorialState,
   setTutorialStep,
   initTutorial,
+  markTutorialSystemViewed,
+  markTutorialLogisticsOpened,
 } from './tutorial.js';
 import { buildStrategicStructure, strategicStructuresSummary, STRUCTURE_DEFS } from './strategic-structures.js';
 import {
@@ -261,6 +272,93 @@ let selectedBattleGroupId = null;
 let selectedBuilderDroneId = null;
 let galaxyTargetStarId = null;
 let followedConvoyId = null;
+let combatSelectionIds = [];
+
+const COMBAT_SELECTION_CAP = 24;
+
+function pruneCombatSelection() {
+  const battle = getBattleState(state, viewedSystemId);
+  if (!battle?.active || !battle.units) {
+    combatSelectionIds = [];
+    return;
+  }
+  const live = new Set(
+    battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0).map((unit) => String(unit.id)),
+  );
+  combatSelectionIds = combatSelectionIds.filter((id) => live.has(String(id)));
+  battle.uiSelectionIds = [...combatSelectionIds];
+  battle.uiFocusTargetId = battleSummaryForSystem(state, viewedSystemId)?.focusTargetId ?? null;
+}
+
+function doSelectCombatUnit(unitId, { additive = false } = {}) {
+  const battle = getBattleState(state, viewedSystemId);
+  if (!battle?.active || battle.mode !== 'tactical') return [];
+  const unit = battle.units?.find((entry) => String(entry.id) === String(unitId) && entry.hp > 0);
+  if (!unit || unit.side !== 'player') return combatSelectionIds;
+  const id = String(unit.id);
+  if (additive) {
+    if (combatSelectionIds.includes(id)) {
+      combatSelectionIds = combatSelectionIds.filter((entry) => entry !== id);
+    } else if (combatSelectionIds.length < COMBAT_SELECTION_CAP) {
+      combatSelectionIds = [...combatSelectionIds, id];
+    } else {
+      toast('Selection capped at 24 ships', 'error');
+    }
+  } else {
+    combatSelectionIds = [id];
+  }
+  pruneCombatSelection();
+  return combatSelectionIds;
+}
+
+function doClearCombatSelection() {
+  combatSelectionIds = [];
+  pruneCombatSelection();
+  return combatSelectionIds;
+}
+
+function doSetCombatSelection(ids = []) {
+  const battle = getBattleState(state, viewedSystemId);
+  if (!battle?.active || battle.mode !== 'tactical') {
+    combatSelectionIds = [];
+    return combatSelectionIds;
+  }
+  const live = new Set(
+    battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0).map((unit) => String(unit.id)),
+  );
+  combatSelectionIds = [...new Set((ids ?? []).map(String))]
+    .filter((id) => live.has(id))
+    .slice(0, COMBAT_SELECTION_CAP);
+  pruneCombatSelection();
+  return combatSelectionIds;
+}
+
+function doCombatFocus(targetId) {
+  pruneCombatSelection();
+  if (!combatSelectionIds.length) {
+    toast('Select ships first', 'error');
+    return { ok: false, reason: 'Select ships first' };
+  }
+  return doIssueTacticalOrder({
+    type: 'focus_fire',
+    targetId,
+    subjectIds: [...combatSelectionIds],
+  });
+}
+
+function combatOverlayForRender() {
+  pruneCombatSelection();
+  const summary = battleSummaryForSystem(state, viewedSystemId);
+  return {
+    selectionIds: [...combatSelectionIds],
+    focusTargetId: summary?.focusTargetId ?? null,
+  };
+}
+
+function combatUiActive() {
+  const battle = getBattleState(state, viewedSystemId);
+  return view === 'system' && !!battle?.active && battle.mode === 'tactical';
+}
 
 const SOL_BUILD_CATALOG = Object.freeze({
   outpost: { cost: OUTPOST_COST, requiresBody: true, disallowOnTradeNexus: true },
@@ -379,8 +477,6 @@ function doFocusTutorial() {
     const graph = getGraph(state);
     const target = graph?.stars.find((star) => star.id === focus.systemId);
     if (target) {
-      // Keep the marked star outside the centered tutorial card so the player
-      // can see and click the destination the guide is describing.
       const targetScreenX = Math.min(canvas.width - 88, canvas.width * 0.86);
       const targetScreenY = canvas.height * 0.42;
       galaxyCamera.x = target.x - (targetScreenX - canvas.width / 2) / galaxyCamera.zoom;
@@ -391,6 +487,20 @@ function doFocusTutorial() {
 
   doViewSystem(focus.systemId);
   selection = focus.bodyId ?? null;
+  markTutorialSystemViewed(state);
+
+  if (focus.panel === 'logistics') {
+    document.getElementById('tab-logistics')?.click();
+    markTutorialLogisticsOpened(state);
+  } else if (focus.panel === 'fleet') {
+    document.getElementById('tab-fleet')?.click();
+  } else if (focus.panel === 'campaign') {
+    document.getElementById('tab-campaign')?.click();
+  } else if (focus.showIntel) {
+    const intel = document.getElementById('intel-panel');
+    intel?.classList.remove('hidden');
+  }
+
   return { ok: true };
 }
 
@@ -642,6 +752,7 @@ function doImportState(newState) {
   snapCameraTo(f.systemId ? f.x : 0, f.systemId ? f.y : 0);
   setBootPhase(BOOT_PHASE.PLAYING);
   state.paused = false;
+  combatSelectionIds = [];
   document.getElementById('title-screen')?.classList.add('hidden');
 }
 
@@ -692,10 +803,17 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
     return { ok: false, reason: 'No controllable tactical battle is active' };
   }
   const allPlayerUnits = battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0);
-  const subjectIds = allPlayerUnits
-    .filter((unit) => !group || fleetShipIds.has(unit.id) || fleetShipIds.has(unit.parentCarrierId))
-    .map((unit) => unit.id);
-  if (!subjectIds.length) return { ok: false, reason: 'Selected fleet has no live units in this battle' };
+  const liveIds = new Set(allPlayerUnits.map((unit) => String(unit.id)));
+  let subjectIds;
+  if (Array.isArray(order?.subjectIds) && order.subjectIds.length) {
+    subjectIds = [...new Set(order.subjectIds.map(String))].filter((id) => liveIds.has(id));
+    if (!subjectIds.length) return { ok: false, reason: 'No live selected units in this battle' };
+  } else {
+    subjectIds = allPlayerUnits
+      .filter((unit) => !group || fleetShipIds.has(unit.id) || fleetShipIds.has(unit.parentCarrierId))
+      .map((unit) => unit.id);
+    if (!subjectIds.length) return { ok: false, reason: 'Selected fleet has no live units in this battle' };
+  }
   const canonical = {
     ...order,
     side: 'player',
@@ -710,9 +828,28 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
     convoyIds: activeConvoys(state).map((convoy) => convoy.id),
     destinationIds: getGraph(state).stars.map((star) => star.id),
   });
+  if (result.ok && order?.type === 'formation') {
+    battle.playerFormationOverride = true;
+  }
   if (result.ok) toast(`Order #${result.order.sequence}: ${result.order.type.replaceAll('_', ' ')}`, 'ok');
   else toast(result.reason, 'error');
   return result;
+}
+
+function doSetCombatDoctrine(doctrine) {
+  const result = setCombatDoctrine(state, doctrine, viewedSystemId);
+  if (result.ok) toast(`Doctrine: ${normalizeDoctrine(doctrine).replaceAll('_', ' ')}`, 'ok');
+  return result;
+}
+
+function doRecommendCombatFormation() {
+  const battle = getBattleState(state, viewedSystemId);
+  if (!battle?.active) return null;
+  return recommendFormation({
+    doctrine: battle.doctrine ?? state.combatDoctrine,
+    ownMix: analyzeFleetMix(battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0)),
+    enemyMix: analyzeFleetMix(battle.units.filter((unit) => unit.side !== 'player' && unit.hp > 0)),
+  });
 }
 
 function validateSolRecommendationForGame(recommendation, options = {}) {
@@ -835,6 +972,12 @@ const { updateUi, closeSidePanel } = initUi({
   executeSolRecommendation,
   validateSolRecommendation: validateSolRecommendationForGame,
   issueTacticalOrder: doIssueTacticalOrder,
+  setCombatDoctrine: doSetCombatDoctrine,
+  getCombatSelection: () => [...combatSelectionIds],
+  selectCombatUnit: doSelectCombatUnit,
+  clearCombatSelection: doClearCombatSelection,
+  combatFocus: doCombatFocus,
+  combatUiActive,
   followConvoy: doFollowConvoy,
   getBootPhase,
   setBootPhase,
@@ -847,6 +990,10 @@ attachInput(canvas, {
   getSelectedBuilderDroneId: () => selectedBuilderDroneId,
   getSelectedScoutId: () => selectedScoutId,
   onSelect: (id) => { selection = id; },
+  onCombatSelect: doSelectCombatUnit,
+  onCombatFocus: doCombatFocus,
+  onCombatClearSelection: doClearCombatSelection,
+  combatUiActive,
   onCloseSidePanel: closeSidePanel,
   onTogglePause: doTogglePause,
   onToggleView: doToggleView,
@@ -1061,8 +1208,9 @@ function frame(now) {
       tutorialFocus?.view === 'galaxy' ? tutorialFocus.systemId : null,
     );
   } else {
+    markTutorialSystemViewed(state);
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
-    drawSystem(ctx2d, state, viewedSystemId, selection, accumulator);
+    drawSystem(ctx2d, state, viewedSystemId, selection, accumulator, combatOverlayForRender());
   }
   updateUi();
   if (devPanel?.isOpen()) devPanel.updateDevPanel();
@@ -1177,6 +1325,13 @@ window.render_game_to_text = () => {
       } : null,
       atCore: f.systemId === BLACK_HOLE_ID && !f.transit && !f.wormholeTransit,
       canEnterWormhole: canEnterWormhole(state).ok,
+      weapons: ensureFlagshipWeapons(state).map((w) => ({
+        id: w.id,
+        profile: w.profile,
+        hardpoint: w.hardpoint,
+        cooldownMs: w.cooldownMs ?? 0,
+      })),
+      wing: flagshipWingSummary(state),
     },
     scouts: scoutSummaries,
     scoutCount: state.scouts.length,
@@ -1323,6 +1478,19 @@ window.render_game_to_text = () => {
     },
     battle: battleSummaryForSystem(state, viewedSystemId),
     tacticalOrders: getBattleState(state, viewedSystemId)?.tacticalOrders ?? {},
+    combatUi: (() => {
+      pruneCombatSelection();
+      const summary = battleSummaryForSystem(state, viewedSystemId);
+      return {
+        active: combatUiActive(),
+        doctrine: summary?.doctrine ?? state.combatDoctrine ?? null,
+        selectionIds: [...combatSelectionIds],
+        focusTargetId: summary?.focusTargetId ?? null,
+        formation: summary?.formation ?? null,
+        autoFormationApplied: !!summary?.autoFormationApplied,
+        playerFormationOverride: !!summary?.playerFormationOverride,
+      };
+    })(),
     battleReports: (state.battleReports ?? []).slice(-5),
     hullStats: Object.keys(HULL_STATS),
     galaxy: {
@@ -1561,13 +1729,23 @@ window.__forcePirateIntoSystem = (systemId) => {
   forcePirateIntoSystem(state, systemId);
   checkBattleTrigger(state, systemId);
 };
-window.__getBattleState = (systemId) => getBattleState(state, systemId);
+window.__getBattleState = (systemId = null) => getBattleState(state, systemId ?? viewedSystemId);
 window.__combatFxSummary = (systemId = null) => {
   const id = systemId ?? viewedSystemId;
   const battle = getBattleState(state, id);
   return combatFxSummary(battle, state.time);
 };
 window.__issueTacticalOrder = (order, groupId = null) => doIssueTacticalOrder(order, groupId);
+window.__selectCombatUnits = (ids) => doSetCombatSelection(ids);
+window.__clearCombatSelection = () => doClearCombatSelection();
+window.__getCombatSelection = () => [...combatSelectionIds];
+window.__setCombatDoctrine = (doctrine) => doSetCombatDoctrine(doctrine);
+window.__recommendCombatFormation = () => doRecommendCombatFormation();
+window.__hitTestCombatUnit = (wx, wy) => {
+  const unit = hitTestCombatUnit(state, viewedSystemId, wx, wy);
+  return unit ? { id: unit.id, side: unit.side, hull: unit.hull, x: unit.x, y: unit.y } : null;
+};
+window.__combatFocus = (targetId) => doCombatFocus(targetId);
 window.__getLogistics = () => JSON.parse(JSON.stringify(ensureLogisticsState(state)));
 window.__listTradeNexuses = () => discoverTradeNexuses(state);
 window.__registerExportDepot = (systemId, opts = {}) =>
@@ -1627,7 +1805,7 @@ function doStartNewGame(opts = {}) {
       camera.zoom = 0.3 + (CAMERA_DEFAULT_ZOOM - 0.3) * dropT;
       ctx.save();
       ctx.globalAlpha = fade;
-      drawSystem(ctx, state, viewedSystemId, selection, 0);
+      drawSystem(ctx, state, viewedSystemId, selection, 0, combatOverlayForRender());
       ctx.restore();
       camera.zoom = savedZoom;
     },
@@ -1683,7 +1861,6 @@ window.__setGalaxyScaleForTests = ({ stars, galaxies }) => {
   if (stars != null) setGalaxyStarCountForTests(stars);
   if (galaxies != null) setGalaxyCountForTests(galaxies);
 };
-window.__enterWormhole = (opts = {}) => doEnterWormhole(opts);
 window.__buildWormholeAnchor = (targetGalaxyId) => doBuildWormholeAnchor(targetGalaxyId);
 window.__hydrateGalaxy = (galaxyId) => hydrateGalaxy(state, galaxyId);
 window.__dehydrateGalaxy = (galaxyId) => dehydrateGalaxy(state, galaxyId);
@@ -1736,9 +1913,16 @@ window.__completeDysonShell = (systemId, shellNum) =>
   completeDysonShellForTest(state, systemId ?? viewedSystemId, shellNum);
 window.__setCompletedDysons = (n) => setCompletedDysonsForTest(state, n);
 window.__buildSuperweaponCradle = () => buildSuperweaponCradle(state);
-window.__superweaponCreate = (anchorId) => superweaponCreate(state, anchorId ?? state.stronghold);
-window.__superweaponDestroy = (systemId) => superweaponDestroy(state, systemId);
-window.__superweaponJump = (starId) => superweaponJump(state, starId ?? state.stronghold);
+window.__superweaponCreate = (anchorId, opts) => superweaponCreate(state, anchorId ?? state.stronghold, opts ?? { immediate: true });
+window.__superweaponDestroy = (systemId, opts) => superweaponDestroy(state, systemId, opts ?? { immediate: true });
+window.__superweaponJump = (starId, opts) => superweaponJump(state, starId ?? state.stronghold, opts ?? { immediate: true });
+window.__superweaponCreateDeferred = (anchorId) => superweaponCreate(state, anchorId ?? state.stronghold, { immediate: false });
+window.__superweaponDestroyDeferred = (systemId) => superweaponDestroy(state, systemId, { immediate: false });
+window.__superweaponJumpDeferred = (starId) => superweaponJump(state, starId ?? state.stronghold, { immediate: false });
+window.__fireSequenceStatus = () => fireSequenceStatus(state);
+window.__flagshipWeapons = () => ensureFlagshipWeapons(state);
+window.__flagshipWing = () => flagshipWingSummary(state);
+window.__flagshipWingPoses = () => flagshipWingPoses(state);
 window.__buildHeroFlagship = (rallyStarId) => buildHeroFlagship(state, rallyStarId);
 window.__spawnHeroFlagship = (systemId) => spawnHeroFlagshipForTest(state, systemId ?? viewedSystemId);
 window.__setRelation = (factionId, status) => setRelation(state, factionId, status);

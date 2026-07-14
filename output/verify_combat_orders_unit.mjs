@@ -42,8 +42,8 @@ const allies = [
 ];
 
 // --- Order validation and recording ---
-check('order contract exposes all nine commands', FLEET_ORDER_TYPES.length === 9
-  && ['formation', 'screen', 'protect', 'hold', 'attack_class', 'bombard',
+check('order contract exposes all ten commands', FLEET_ORDER_TYPES.length === 10
+  && ['formation', 'screen', 'protect', 'hold', 'attack_class', 'focus_fire', 'bombard',
     'escort_convoy', 'rally', 'emergency_retreat'].every((type) => FLEET_ORDER_TYPES.includes(type)));
 
 const unknown = validateFleetOrder({ type: 'ram' });
@@ -109,6 +109,44 @@ check('priority is independent of input order', rankedA.map((entry) => entry.tar
 check('priority scoring repeats exactly', scoreTargetPriority(interceptor, targets[1], fighterOrder)
   === scoreTargetPriority(interceptor, targets[1], fighterOrder));
 check('priority selector returns ranked winner', selectPriorityTarget(interceptor, targets, fighterOrder)?.id === 'fighter-a');
+
+// --- Focus fire ---
+const missingFocus = validateFleetOrder({ type: 'focus_fire', subjectIds: ['ally-a'] }, { units: allies, side: 'player' });
+check('O2 focus_fire without targetId → TARGET_REQUIRED', !missingFocus.ok
+  && missingFocus.errors.some((error) => error.code === 'TARGET_REQUIRED'));
+
+const friendlyFocus = validateFleetOrder(
+  { type: 'focus_fire', targetId: 'ally-carrier', subjectIds: ['ally-a'] },
+  { units: allies, side: 'player' },
+);
+check('O3 focus_fire on friendly → TARGET_NOT_HOSTILE', !friendlyFocus.ok
+  && friendlyFocus.errors.some((error) => error.code === 'TARGET_NOT_HOSTILE'));
+
+const focusBattle = {
+  time: 2000,
+  units: [
+    ...allies,
+    { id: 'enemy-cap', side: 'enemy', hull: 'battleship', hp: 500, maxHp: 500, x: 400, y: 0 },
+  ],
+  tacticalOrders: {},
+  orderSequence: 0,
+};
+applyFleetOrder(focusBattle, {
+  type: 'formation', formation: 'wedge', groupId: 'bg-1', subjectIds: ['ally-a', 'ally-carrier'],
+}, { side: 'player', time: 2000, units: focusBattle.units });
+const focusApply = applyFleetOrder(focusBattle, {
+  type: 'focus_fire', targetId: 'enemy-cap', groupId: 'bg-1', subjectIds: ['ally-a'],
+}, { side: 'player', time: 2100, units: focusBattle.units });
+check('O4 valid focus_fire applies as directive', focusApply.ok
+  && activeFleetOrders(focusBattle).some((order) => order.type === 'focus_fire'));
+
+const focusOrder = { type: 'focus_fire', targetId: 'capital-z' };
+const focusPick = selectPriorityTarget(interceptor, targets, focusOrder);
+check('O5 focus_fire selects named enemy even if farther', focusPick?.id === 'capital-z');
+
+check('O6 formation slot remains when focus_fire replaces attack directive',
+  activeFleetOrders(focusBattle).some((order) => order.type === 'formation' && order.formation === 'wedge')
+    && activeFleetOrders(focusBattle).some((order) => order.type === 'focus_fire'));
 
 // --- Shield facings and damage states ---
 const shielded = {

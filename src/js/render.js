@@ -29,6 +29,13 @@ import {
   drawInProgressSailDots,
 } from './dyson-render.js';
 import { drawDysonLensFlare } from './dyson-megastructure-render.js';
+import {
+  drawSuperweaponCradle,
+  drawNovaculaBeam,
+  cradleWorldPose,
+  drawGalaxyNovaculaBeam,
+} from './superweapon-render.js';
+import { fireSequenceStatus, hasSuperweaponCradle } from './superweapon.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { typeSizeBonus } from './star-types.js';
 import {
@@ -75,6 +82,8 @@ import {
   researchStationLabelAnchor,
 } from './research-render.js';
 import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
+import { flagshipWingPoses } from './flagship-wing.js';
+import { ensureFlagshipWeapons } from './hull.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
@@ -97,6 +106,7 @@ import {
   drawScoutSprite,
   drawShuttleSprite,
   drawFleetMarker,
+  unitShieldTotals,
 } from './ship-sprites.js';
 import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
@@ -456,7 +466,7 @@ function labelText(ctx, text, x, y, size, color, align = 'center') {
 
 // ============================= SYSTEM VIEW =============================
 
-export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
+export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, combatOverlay = null) {
   const canvas = ctx.canvas;
   const system = systemById(state, systemId);
   ctx.fillStyle = THEME.bgDeep;
@@ -529,6 +539,42 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       system.star.radius,
       t,
     );
+  }
+
+  // Novacula cradle megastructure at Stronghold when online.
+  if (intel && hasSuperweaponCradle(state, systemId)) {
+    const cradlePose = cradleWorldPose(system, t);
+    const cs = worldToScreen(camera, cradlePose.x, cradlePose.y, canvas);
+    const seq = fireSequenceStatus(state);
+    const activeHere = seq && (seq.fromSystemId === systemId || state.superweapon?.cradleSystemId === systemId);
+    const phase = activeHere ? (seq.phase ?? 'idle') : 'idle';
+    const charge = activeHere
+      ? (phase === 'charge' ? 0.35 + seq.progress * 0.4
+        : phase === 'aim' ? 0.75
+          : (phase === 'fire' || phase === 'impact') ? 1 : 0.2)
+      : 0.1;
+    let aimAngle = cradlePose.angle + Math.PI / 2;
+    if (activeHere && seq.targetSystemId) {
+      // Aim outward from star through cradle (system-local beam toward off-map target).
+      aimAngle = Math.atan2(cradlePose.y, cradlePose.x);
+    }
+    drawSuperweaponCradle(ctx, cs.x, cs.y, z, t, { phase, charge, aimAngle });
+
+    if (activeHere && (phase === 'fire' || phase === 'impact' || phase === 'aim')) {
+      const beamLen = Math.max(320, 720 * z);
+      const bx = cs.x + Math.cos(aimAngle) * beamLen;
+      const by = cs.y + Math.sin(aimAngle) * beamLen;
+      const intensity = phase === 'aim' ? 0.45 : (phase === 'fire' ? 1 : 0.75);
+      drawNovaculaBeam(ctx, cs.x, cs.y, bx, by, z, t, intensity);
+
+      // Soft letterbox during fire cinema.
+      if (phase === 'fire' || phase === 'impact') {
+        const letter = Math.max(16, canvas.height * 0.04);
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, canvas.width, letter);
+        ctx.fillRect(0, canvas.height - letter, canvas.width, letter);
+      }
+    }
   }
 
   const depotStructure = intel
@@ -872,7 +918,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
 
   drawBuilderDroneConstruction(ctx, state, system, canvas, z, t);
 
-  if (f.systemId === systemId && !f.transit) {
+  if (f.systemId === systemId && !f.transit && flagshipDisplayPose) {
     const orbitVisual = getFlagshipOrbitVisual(state, t);
     if (orbitVisual) {
       const os = worldToScreen(camera, orbitVisual.cx, orbitVisual.cy, canvas);
@@ -884,6 +930,23 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
     const inp = getFlagshipInput();
     const orbiting = isFlagshipOrbiting(state);
     const thrusting = !state.paused && !orbiting && (inp.x !== 0 || inp.y !== 0);
+    const hardpointFireAt = {};
+    for (const slot of ensureFlagshipWeapons(state)) {
+      if (slot.lastFiredAt) hardpointFireAt[slot.id] = slot.lastFiredAt;
+    }
+    const battleUnit = state.systemBattles?.[systemId]?.units?.find((u) => u.hull === 'flagship');
+    if (battleUnit?.hardpointFireAt) Object.assign(hardpointFireAt, battleUnit.hardpointFireAt);
+
+    for (const wing of flagshipWingPoses(state, accumulatorMs, pose)) {
+      const ws = worldToScreen(camera, wing.x, wing.y, canvas);
+      if (!screenInView(ws, canvas, 40)) continue;
+      drawHullSprite(ctx, ws.x, ws.y, wing.hull, Math.max(6.5, wing.radius * z), {
+        heading: wing.heading,
+        side: 'player',
+        showHp: false,
+      });
+    }
+
     drawFlagshipSprite(
       ctx,
       fs.x,
@@ -893,10 +956,11 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0) {
       thrusting,
       state.flagship.hp ?? state.systemBattles?.[systemId]?.flagshipHp ?? 1,
       state.flagship.maxHp ?? 1,
+      { time: t, hardpointFireAt },
     );
   }
 
-  drawCombatLayer(ctx, state, systemId, canvas, z, t);
+  drawCombatLayer(ctx, state, systemId, canvas, z, t, combatOverlay);
 
   flushStars(ctx, 'outer');
   flushStars(ctx, 'bloom');
@@ -935,7 +999,8 @@ function drawCombatShipSprite(ctx, x, y, hull, baseR, opts, mode = 'detail') {
   }
   drawHullSpriteLite(ctx, x, y, hull, baseR, {
     ...opts,
-    showHp: mode === 'lite' && opts.hp < opts.maxHp * 0.55,
+    // Keep bars readable in mid-size fights; hide only in dense swarm LOD.
+    showHp: mode === 'lite' ? (opts.showHp !== false) : false,
     alpha: mode === 'swarm' ? 0.82 : 1,
   });
 }
@@ -1005,11 +1070,17 @@ function drawBattleEnvelope(ctx, battle, canvas, z, time) {
   ctx.restore();
 }
 
-function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
+function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time, combatOverlay = null) {
   const system = systemById(state, systemId);
   if (!system) return;
-  const baseR = Math.max(4, 6 * z);
+  const baseR = Math.max(6, 11 * z);
   const battle = getBattleState(state, systemId);
+  const selectionIds = new Set(
+    (combatOverlay?.selectionIds ?? battle?.uiSelectionIds ?? []).map(String),
+  );
+  const focusTargetId = combatOverlay?.focusTargetId
+    ?? battle?.uiFocusTargetId
+    ?? null;
 
   if (battle?.active && battle.units?.length) {
     const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
@@ -1029,19 +1100,62 @@ function drawCombatLayer(ctx, state, systemId, canvas, z, time = state.time) {
       screenInView,
       unitHeadingById: headingById,
     });
+
+    const focusUnit = focusTargetId
+      ? battle.units.find((unit) => String(unit.id) === String(focusTargetId) && unit.hp > 0)
+      : null;
+    const focusScreen = focusUnit
+      ? worldToScreen(camera, focusUnit.x, focusUnit.y, canvas)
+      : null;
+
     for (const unit of battle.units) {
       if (unit.hp <= 0) continue;
+      if (unit.hideSprite) continue;
       const p = worldToScreen(camera, unit.x, unit.y, canvas);
       if (!screenInView(p, canvas, 70)) continue;
+      const selected = selectionIds.has(String(unit.id));
+      const isFocus = focusUnit && String(unit.id) === String(focusUnit.id);
       const fb = feedback.get(unit.id);
+      if (selected) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(111, 214, 255, 0.95)';
+        ctx.lineWidth = Math.max(1.5, 2 * z);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, baseR + 8 * z, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (isFocus) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 120, 90, 0.95)';
+        ctx.lineWidth = Math.max(1.5, 2.2 * z);
+        ctx.setLineDash([4 * z, 3 * z]);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, baseR + 11 * z, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
       drawCombatShipSprite(ctx, p.x, p.y, unit.hull, baseR, {
         heading: unit.heading ?? 0,
         side: unit.side,
         hp: unit.hp,
         maxHp: unit.maxHp,
-        showHp: mode === 'detail',
+        ...unitShieldTotals(unit),
+        showHp: mode !== 'swarm',
+        alwaysShowBars: true,
       }, mode);
       if (mode !== 'swarm' && fb) drawHitFeedbackOverlay(ctx, p.x, p.y, baseR, unit, fb, z);
+      if (selected && focusScreen && unit.side === 'player') {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 140, 100, 0.45)';
+        ctx.lineWidth = Math.max(1, 1.2 * z);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(focusScreen.x, focusScreen.y);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
     return;
   }
@@ -1794,14 +1908,67 @@ export function drawGalaxy(
 
   flushStars(ctx, 'bloom');
 
+  const seq = fireSequenceStatus(state);
+  const cradleId = state.superweapon?.cradleSystemId ?? state.stronghold;
+  if (seq && ['charge', 'aim', 'fire', 'impact', 'aftermath'].includes(seq.phase)) {
+    const fromNode = nodePos(galaxy, seq.fromSystemId ?? cradleId);
+    const toId = seq.resultSystemId && seq.resolved && seq.type === 'create'
+      ? seq.resultSystemId
+      : seq.targetSystemId;
+    const toNode = nodePos(galaxy, toId);
+    if (fromNode) {
+      const fs = worldToScreen(galaxyCamera, fromNode.x, fromNode.y, canvas);
+      drawGlowRing(ctx, fs.x, fs.y, (18 + 22 * (seq.totalProgress ?? 0)) * z, '#88e8ff', Math.max(1.5, 2.5 * z), 0.3 + 0.4 * (seq.progress ?? 0));
+      if (toNode && (seq.phase === 'aim' || seq.phase === 'fire' || seq.phase === 'impact')) {
+        const ts = worldToScreen(galaxyCamera, toNode.x, toNode.y, canvas);
+        const intensity = seq.phase === 'aim' ? 0.4 : 1;
+        drawGalaxyNovaculaBeam(ctx, fs, ts, z, state.time, {
+          type: seq.type,
+          intensity,
+          blocked: !!seq.blocked,
+        });
+      }
+    }
+  }
+
   const swAction = state.superweapon?.lastAction;
   if (swAction && state.time - swAction.at < 4000) {
     const target = nodePos(galaxy, swAction.targetSystemId);
     if (target) {
       const ts = worldToScreen(galaxyCamera, target.x, target.y, canvas);
       const pulse = 1 - (state.time - swAction.at) / 4000;
-      const color = swAction.type === 'destroy' ? '#ff4466' : swAction.type === 'create' ? '#66ffaa' : '#aa88ff';
+      const color = swAction.blocked
+        ? '#66ddff'
+        : swAction.type === 'destroy' ? '#ff4466' : swAction.type === 'create' ? '#66ffaa' : '#aa88ff';
       drawGlowRing(ctx, ts.x, ts.y, (40 + 30 * pulse) * z, color, Math.max(2, 3 * z), 0.25 + 0.45 * pulse);
+      if (swAction.type === 'jump') {
+        const from = nodePos(galaxy, cradleId);
+        if (from) {
+          const fs = worldToScreen(galaxyCamera, from.x, from.y, canvas);
+          drawGlowRing(ctx, fs.x, fs.y, (28 + 20 * pulse) * z, '#aa88ff', Math.max(1.5, 2.5 * z), 0.2 + 0.35 * pulse);
+        }
+      }
+    }
+  }
+
+  // Distinct cradle marker on Stronghold when online.
+  if (state.superweapon?.online && cradleId) {
+    const cradleStar = nodePos(galaxy, cradleId);
+    if (cradleStar) {
+      const cs = worldToScreen(galaxyCamera, cradleStar.x, cradleStar.y, canvas);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(120, 230, 255, 0.85)';
+      ctx.lineWidth = Math.max(1.2, 1.8 * z);
+      ctx.beginPath();
+      ctx.arc(cs.x, cs.y, Math.max(8, 14 * z), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cs.x - 10 * z, cs.y);
+      ctx.lineTo(cs.x + 10 * z, cs.y);
+      ctx.moveTo(cs.x, cs.y - 10 * z);
+      ctx.lineTo(cs.x, cs.y + 10 * z);
+      ctx.stroke();
+      ctx.restore();
     }
   }
 
@@ -1829,6 +1996,24 @@ function nodePos(galaxy, id) {
 
 
 // ============================= HIT TESTS =============================
+
+export function hitTestCombatUnit(state, systemId, wx, wy, { maxDist = 28 } = {}) {
+  const battle = getBattleState(state, systemId);
+  if (!battle?.active || !battle.units?.length) return null;
+  let best = null;
+  let bestDist = maxDist;
+  for (const unit of battle.units) {
+    if (unit.hp <= 0) continue;
+    const dx = wx - (unit.x ?? 0);
+    const dy = wy - (unit.y ?? 0);
+    const dist = Math.hypot(dx, dy);
+    if (dist > bestDist) continue;
+    if (best && dist === bestDist && String(unit.id) >= String(best.id)) continue;
+    best = unit;
+    bestDist = dist;
+  }
+  return best;
+}
 
 export function hitTestPlanet(state, systemId, wx, wy) {
   const system = systemById(state, systemId);

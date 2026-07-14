@@ -15,6 +15,7 @@ export const FLEET_ORDER_TYPES = Object.freeze([
   'protect',
   'hold',
   'attack_class',
+  'focus_fire',
   'bombard',
   'escort_convoy',
   'rally',
@@ -190,6 +191,20 @@ export function validateFleetOrder(order, context = {}) {
         errors.push(orderError('INVALID_TARGET_CLASS', 'targetClass', 'A supported target class is required'));
       }
       break;
+    case 'focus_fire': {
+      if (!normalized.targetId) {
+        errors.push(orderError('TARGET_REQUIRED', 'targetId', 'Focus fire requires a hostile target'));
+      }
+      const focusTarget = normalized.targetId ? unitById(context, normalized.targetId) : null;
+      if (focusTarget) {
+        if (focusTarget.hp <= 0) {
+          errors.push(orderError('INVALID_TARGET', 'targetId', 'Focus fire target is destroyed'));
+        } else if (String(focusTarget.side) === normalized.side) {
+          errors.push(orderError('TARGET_NOT_HOSTILE', 'targetId', 'Focus fire target must be hostile'));
+        }
+      }
+      break;
+    }
     case 'bombard': {
       if (!normalized.targetId && !normalized.point) {
         errors.push(orderError('TARGET_REQUIRED', 'targetId', 'Bombard requires a structure target or point'));
@@ -335,6 +350,9 @@ export function scoreTargetPriority(attacker, target, order = null, context = {}
 
   if (order) {
     if (order.targetId && String(order.targetId) === String(target.id)) score += 10000;
+    if (order.type === 'focus_fire') {
+      score += order.targetId && String(order.targetId) === String(target.id) ? 2500 : -800;
+    }
     if (order.type === 'attack_class') {
       score += order.targetClass === cls ? 5000 : -1100;
     }

@@ -13,6 +13,7 @@ import {
   hitTestStar,
   hitTestScout,
   hitTestFleetMarker,
+  hitTestCombatUnit,
 } from './render.js';
 
 const DRAG_THRESHOLD_PX = 5;
@@ -31,6 +32,10 @@ export function attachInput(canvas, ctx) {
     getView,
     getViewedSystemId,
     onSelect,
+    onCombatSelect,
+    onCombatFocus,
+    onCombatClearSelection,
+    combatUiActive,
     onTogglePause,
     onToggleView,
     onFlagshipInput,
@@ -163,6 +168,19 @@ export function attachInput(canvas, ctx) {
     const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
 
     if (getView() === 'system') {
+      if (combatUiActive?.()) {
+        const unit = hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y);
+        if (unit) {
+          if (unit.side === 'player') {
+            onCombatSelect?.(unit.id, { additive: !!(e.shiftKey || shiftHeld) });
+          } else {
+            onCombatFocus?.(unit.id);
+          }
+          return;
+        }
+        onCombatClearSelection?.();
+        return;
+      }
       const hit = hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
       onSelect(hit);
       return;

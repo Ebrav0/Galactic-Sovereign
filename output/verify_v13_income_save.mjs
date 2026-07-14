@@ -7,9 +7,12 @@ import {
   incomePerSecond,
   incomePerSecondInSystem,
   operationalOutpostCount,
+  outpostIncomePerSecond,
 } from '../src/js/economy.js';
+import { OUTPOST_BASE_INCOME, MOON_YIELD_BONUS, SHELL_BONUS_CREDIT_MULT } from '../src/js/constants.js';
 import { seedAiFaction } from '../src/js/ai-faction.js';
 import { crc32, deserialize, serialize } from '../src/js/save.js';
+import { techEffects } from '../src/js/tech-web.js';
 
 let passed = 0;
 let failed = 0;
@@ -23,51 +26,82 @@ function check(label, condition, details = '') {
   }
 }
 
+function approx(a, b, eps = 1e-6) {
+  return Math.abs(a - b) < eps;
+}
+
 const state = createNewGame(1313);
 const systems = state.galaxies[state.activeGalaxyId].systems;
 const system = systems[state.stronghold];
 const bodies = system.bodies.filter((body) => body.type === 'habitable');
+const firstBody = bodies[0];
+const moons = firstBody.moons?.length ?? 0;
+const expectedFirst = OUTPOST_BASE_INCOME * (1 + moons * MOON_YIELD_BONUS);
+
 const first = {
-  id: 'v13-outpost-1', type: 'outpost', bodyId: bodies[0].id,
+  id: 'v13-outpost-1', type: 'outpost', bodyId: firstBody.id,
   level: 3, hp: 240, maxHp: 240, operational: true,
 };
 system.structures.push(first);
-check('one operational outpost reports exactly 40 cr/s', incomePerSecond(state) === 40);
-check('system passive rate is exactly 40 cr/s', incomePerSecondInSystem(state, system.id) === 40);
+check('one operational outpost uses progressive base+moons', approx(incomePerSecond(state), expectedFirst),
+  `got=${incomePerSecond(state)} expected=${expectedFirst}`);
+check('system income matches progressive formula', approx(incomePerSecondInSystem(state, system.id), expectedFirst));
 
 const creditsBefore = state.credits;
 for (let tick = 0; tick < 20; tick += 1) {
   state.time += 50;
   applyIncomeTick(state);
 }
-check('one outpost awards exactly 40 credits in one second', Math.abs(state.credits - creditsBefore - 40) < 1e-8);
+check('one outpost awards progressive credits in one second',
+  approx(state.credits - creditsBefore, expectedFirst));
 
+const secondBody = bodies[1] ?? bodies[0];
+const secondMoons = secondBody.moons?.length ?? 0;
+const expectedSecond = OUTPOST_BASE_INCOME * (1 + secondMoons * MOON_YIELD_BONUS);
 const second = {
-  id: 'v13-outpost-2', type: 'outpost', bodyId: bodies[1]?.id ?? bodies[0].id,
+  id: 'v13-outpost-2', type: 'outpost', bodyId: secondBody.id,
   level: 1, hp: 240, maxHp: 240, operational: true,
 };
 system.structures.push(second);
-check('two operational outposts report exactly 80 cr/s', incomePerSecond(state) === 80);
+const expectedTwo = expectedFirst + expectedSecond;
+check('two operational outposts sum progressive rates', approx(incomePerSecond(state), expectedTwo));
 
 first.level = 1;
 first.productionMultiplier = 100;
+system.dyson = system.dyson ?? {};
 system.dyson.completedShells = 8;
+const shellMult = SHELL_BONUS_CREDIT_MULT[8];
+const withShell = expectedTwo * shellMult;
+check('Dyson shell credit bonus increases income', approx(incomePerSecond(state), withShell),
+  `got=${incomePerSecond(state)} expected=${withShell}`);
+
 state.research.unlocked.push('eco_outpost_2', 'eco_outpost_3', 'eco_finance_hub');
-check('levels tech moon and Dyson state do not modify passive rate', incomePerSecond(state) === 80);
+const fx = techEffects(state);
+const withTech = withShell * fx.outpostIncomeMult * fx.creditIncomeMult;
+check('income tech multipliers apply', approx(incomePerSecond(state), withTech)
+  && (fx.outpostIncomeMult > 1 || fx.creditIncomeMult > 1),
+  `mults=${fx.outpostIncomeMult}/${fx.creditIncomeMult}`);
+
+system.dyson.completedShells = 0;
+state.research.unlocked = state.research.unlocked.filter(
+  (id) => !['eco_outpost_2', 'eco_outpost_3', 'eco_finance_hub'].includes(id),
+);
 
 second.disabledUntil = state.time + 1000;
-check('disabled outpost pays nothing', incomePerSecond(state) === 40);
+check('disabled outpost pays nothing', approx(incomePerSecond(state), expectedFirst));
 second.disabledUntil = 0;
 second.hp = 0;
-check('destroyed outpost pays nothing', incomePerSecond(state) === 40);
+check('destroyed outpost pays nothing', approx(incomePerSecond(state), expectedFirst));
 second.hp = 240;
 second.mothballed = true;
-check('mothballed outpost pays nothing', incomePerSecond(state) === 40);
+check('mothballed outpost pays nothing', approx(incomePerSecond(state), expectedFirst));
 second.mothballed = false;
 first.operational = false;
-check('offline outpost pays nothing', incomePerSecond(state) === 40);
+check('offline outpost pays nothing', approx(incomePerSecond(state), expectedSecond));
 first.operational = true;
 check('operational count matches payable outposts', operationalOutpostCount(state) === 2);
+check('outpostIncomePerSecond helper matches body moons',
+  approx(outpostIncomePerSecond(state, system, first), expectedFirst));
 
 state.paused = true;
 const pausedCredits = state.credits;
@@ -112,7 +146,7 @@ check('migration defaults structures to level I', Object.values(migrated.state?.
   ),
 ));
 const reserialized = JSON.parse(serialize(migrated.state));
-check('migrated state serializes as save-v13', reserialized.saveVersion === 13);
+check('migrated state serializes as current save', reserialized.saveVersion >= 13);
 
 const schema = JSON.parse(fs.readFileSync(new URL('../docs/schemas/save-v13.json', import.meta.url), 'utf8'));
 check('save-v13 schema declares version 13', schema.properties?.saveVersion?.const === 13);

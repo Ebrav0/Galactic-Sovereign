@@ -63,6 +63,8 @@ import {
   finishTutorial,
   getTutorialState,
   initTutorial,
+  markTutorialLogisticsOpened,
+  markTutorialSystemViewed,
 } from './tutorial.js';
 import { milestonesSummary } from './milestones.js';
 import {
@@ -131,6 +133,11 @@ import {
   FORMATION_TYPES,
   TARGET_CLASSES,
 } from './combat-orders.js';
+import {
+  COMBAT_DOCTRINES,
+  DOCTRINE_LABELS,
+  normalizeDoctrine,
+} from './combat-doctrine.js';
 
 const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
   ...new Set([
@@ -617,6 +624,161 @@ function renderCombatCommandPanel(container, state, battle, issueTacticalOrder) 
   }
 }
 
+function renderCombatHud(state, battle, systemName, ctx) {
+  const {
+    issueTacticalOrder,
+    setCombatDoctrine,
+    getCombatSelection,
+    doTogglePause,
+    doToggleView,
+  } = ctx;
+  const selectionIds = getCombatSelection?.() ?? [];
+  const selectedSet = new Set(selectionIds.map(String));
+  const friendlies = (battle.units ?? []).filter((unit) => unit.side === 'player' && unit.hp > 0);
+  const hostiles = (battle.units ?? []).filter((unit) => unit.side !== 'player' && unit.hp > 0);
+  const selectedUnits = friendlies.filter((unit) => selectedSet.has(String(unit.id)));
+  const formationOrder = activeFleetOrders(battle, 'player').filter((o) => o.type === 'formation').at(-1);
+  const focusOrder = activeFleetOrders(battle, 'player').filter((o) => o.type === 'focus_fire').at(-1);
+  const focusUnit = focusOrder?.targetId
+    ? hostiles.find((unit) => String(unit.id) === String(focusOrder.targetId))
+    : null;
+  const doctrine = normalizeDoctrine(battle.doctrine ?? state.combatDoctrine);
+  const elapsed = Math.max(0, (state.time ?? 0) - (battle.startedAt ?? state.time ?? 0));
+
+  const systemEl = el('combat-hud-system');
+  const elapsedEl = el('combat-hud-elapsed');
+  const friendlyEl = el('combat-hud-friendly');
+  const hostileEl = el('combat-hud-hostile');
+  const formationEl = el('combat-hud-formation');
+  const focusEl = el('combat-hud-focus');
+  if (systemEl) systemEl.textContent = systemName ?? '—';
+  if (elapsedEl) elapsedEl.textContent = formatEta(elapsed);
+  if (friendlyEl) friendlyEl.textContent = String(friendlies.length);
+  if (hostileEl) hostileEl.textContent = String(hostiles.length);
+  if (formationEl) formationEl.textContent = `Formation: ${formationOrder?.formation ?? '—'}`;
+  if (focusEl) {
+    focusEl.textContent = focusUnit
+      ? `Focus: ${focusUnit.hull?.replaceAll('_', ' ') ?? focusUnit.id}`
+      : 'Focus: —';
+  }
+
+  const selectionEl = el('combat-hud-selection');
+  if (selectionEl) {
+    clearChildren(selectionEl);
+    if (!selectedUnits.length) {
+      const empty = document.createElement('p');
+      empty.className = 'combat-hud__empty';
+      empty.textContent = 'Click friendlies to select · Shift multi-select · click enemy to focus fire';
+      selectionEl.appendChild(empty);
+    } else {
+      for (const unit of selectedUnits.slice(0, 6)) {
+        const row = document.createElement('div');
+        row.className = 'combat-hud__selection-row';
+        const name = document.createElement('span');
+        name.textContent = (unit.hull ?? unit.id).replaceAll('_', ' ');
+        const stats = document.createElement('span');
+        const shields = unit.shieldFacings ?? unit.shields;
+        let shieldCur = 0;
+        let shieldMax = 0;
+        if (shields && typeof shields === 'object') {
+          for (const facing of Object.values(shields)) {
+            shieldCur += Math.max(0, facing?.value ?? 0);
+            shieldMax += Math.max(0, facing?.max ?? 0);
+          }
+        }
+        const hpLine = `H ${Math.round(unit.hp)}/${Math.round(unit.maxHp ?? unit.hp)}`;
+        stats.textContent = shieldMax > 0
+          ? `S ${Math.round(shieldCur)}/${Math.round(shieldMax)} · ${hpLine}`
+          : hpLine;
+        row.append(name, stats);
+        selectionEl.appendChild(row);
+      }
+      if (selectedUnits.length > 6) {
+        const more = document.createElement('p');
+        more.className = 'combat-hud__empty';
+        more.textContent = `+${selectedUnits.length - 6} more`;
+        selectionEl.appendChild(more);
+      }
+    }
+  }
+
+  const chipsEl = el('combat-hud-chips');
+  if (chipsEl) {
+    clearChildren(chipsEl);
+    for (const unit of selectedUnits.slice(0, 8)) {
+      const chip = document.createElement('span');
+      chip.className = 'combat-hud__chip';
+      chip.textContent = (unit.hull ?? 'ship').replaceAll('_', ' ');
+      chipsEl.appendChild(chip);
+    }
+  }
+
+  const doctrineEl = el('combat-hud-doctrine');
+  if (doctrineEl && !doctrineEl.dataset.bound) {
+    clearChildren(doctrineEl);
+    for (const id of COMBAT_DOCTRINES) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn--ghost btn--xs';
+      button.dataset.doctrine = id;
+      button.textContent = DOCTRINE_LABELS[id] ?? id;
+      button.onclick = () => setCombatDoctrine?.(id);
+      doctrineEl.appendChild(button);
+    }
+    doctrineEl.dataset.bound = '1';
+  }
+  if (doctrineEl) {
+    for (const button of doctrineEl.querySelectorAll('[data-doctrine]')) {
+      button.classList.toggle('btn--active', button.dataset.doctrine === doctrine);
+    }
+  }
+
+  const subjectIds = selectedUnits.length
+    ? selectedUnits.map((unit) => unit.id)
+    : friendlies.map((unit) => unit.id);
+  const holdBtn = el('combat-hud-hold');
+  const rallyBtn = el('combat-hud-rally');
+  const retreatBtn = el('combat-hud-retreat');
+  const pauseBtn = el('combat-hud-pause');
+  const galaxyBtn = el('combat-hud-galaxy');
+  if (holdBtn && !holdBtn.dataset.bound) {
+    holdBtn.onclick = () => issueTacticalOrder?.({ type: 'hold', subjectIds });
+    holdBtn.dataset.bound = '1';
+  }
+  if (rallyBtn && !rallyBtn.dataset.bound) {
+    rallyBtn.onclick = () => issueTacticalOrder?.({ type: 'rally', point: { x: 0, y: 0 }, subjectIds });
+    rallyBtn.dataset.bound = '1';
+  }
+  if (retreatBtn && !retreatBtn.dataset.bound) {
+    retreatBtn.onclick = () => issueTacticalOrder?.({
+      type: 'emergency_retreat',
+      point: { x: -1500, y: 0 },
+      subjectIds,
+    });
+    retreatBtn.dataset.bound = '1';
+  }
+  if (pauseBtn && !pauseBtn.dataset.bound) {
+    pauseBtn.onclick = () => doTogglePause?.();
+    pauseBtn.dataset.bound = '1';
+  }
+  if (galaxyBtn && !galaxyBtn.dataset.bound) {
+    galaxyBtn.onclick = () => doToggleView?.();
+    galaxyBtn.dataset.bound = '1';
+  }
+  // Rebind subjectIds each frame via closures on fresh handlers for order buttons.
+  if (holdBtn) holdBtn.onclick = () => issueTacticalOrder?.({ type: 'hold', subjectIds });
+  if (rallyBtn) {
+    rallyBtn.onclick = () => issueTacticalOrder?.({ type: 'rally', point: { x: 0, y: 0 }, subjectIds });
+  }
+  if (retreatBtn) {
+    retreatBtn.onclick = () => issueTacticalOrder?.({
+      type: 'emergency_retreat',
+      point: { x: -1500, y: 0 },
+      subjectIds,
+    });
+  }
+}
+
 function renderDiplomacyPanel(container, state) {
   clearChildren(container);
   const summary = diplomacySummary(state);
@@ -994,6 +1156,7 @@ function renderGroupedHullButtons(container, state) {
       btn.type = 'button';
       btn.className = 'btn btn--primary btn--block';
       btn.dataset.queueHull = hull;
+      if (hull === 'corvette') btn.id = 'queue-corvette-btn';
       const cost = HULL_STATS[hull]?.cost ?? 0;
       btn.textContent = `Queue ${hullLabel(hull)} (${cost} cr)`;
       btns.appendChild(btn);
@@ -1207,7 +1370,16 @@ function renderFleetShipRow(ship, galaxy, state) {
     sub.textContent = `→ ${dest?.name ?? destId} · ${Math.ceil(playerShipEtaMs(state, ship) / 1000)}s`;
   } else {
     const loc = systemById(state, ship.systemId)?.name ?? ship.systemId ?? '—';
-    sub.textContent = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+    let line = `@ ${loc} · HP ${Math.ceil(ship.hp)}/${ship.maxHp}`;
+    if (ship.wingState) {
+      const ready = Math.round(ship.wingState.ready ?? 0);
+      const lost = Math.round(ship.wingState.lost ?? 0);
+      const launched = Math.round(ship.wingState.launched ?? 0);
+      line += ` · Wings ${ready}`;
+      if (launched > 0) line += ` (${launched} out)`;
+      if (lost > 0) line += ` · ${lost} lost`;
+    }
+    sub.textContent = line;
   }
 
   main.appendChild(title);
@@ -2152,6 +2324,12 @@ export function initUi(ctx) {
     executeSolRecommendation,
     validateSolRecommendation,
     issueTacticalOrder,
+    setCombatDoctrine,
+    getCombatSelection,
+    selectCombatUnit,
+    clearCombatSelection,
+    combatFocus,
+    combatUiActive,
     followConvoy,
     getBootPhase,
     setBootPhase,
@@ -2423,102 +2601,148 @@ export function initUi(ctx) {
     document.querySelectorAll('.tutorial-target').forEach((node) => {
       node.classList.remove('tutorial-target');
     });
-    if (targetId) el(targetId)?.classList.add('tutorial-target');
+    if (!targetId) return null;
+    const node = el(targetId);
+    if (!node || node.classList.contains('hidden') || node.offsetParent === null) return null;
+    node.classList.add('tutorial-target');
+    return node;
+  }
+
+  function positionTutorialCoach(coach, anchor, placement = 'left') {
+    const rect = anchor.getBoundingClientRect();
+    const gap = 12;
+    coach.style.visibility = 'hidden';
+    coach.classList.remove('hidden');
+    const tip = coach.getBoundingClientRect();
+    let left = rect.left;
+    let top = rect.top;
+    if (placement === 'left') {
+      left = rect.left - tip.width - gap;
+      top = rect.top + rect.height / 2 - 22;
+    } else if (placement === 'right') {
+      left = rect.right + gap;
+      top = rect.top + rect.height / 2 - 22;
+    } else if (placement === 'top') {
+      left = rect.left + rect.width / 2 - tip.width / 2;
+      top = rect.top - tip.height - gap;
+    } else {
+      left = rect.left + rect.width / 2 - tip.width / 2;
+      top = rect.bottom + gap;
+    }
+    left = Math.max(8, Math.min(left, window.innerWidth - tip.width - 8));
+    top = Math.max(8, Math.min(top, window.innerHeight - tip.height - 8));
+    coach.style.transform = '';
+    coach.style.left = `${Math.round(left)}px`;
+    coach.style.top = `${Math.round(top)}px`;
+    coach.dataset.placement = placement;
+    coach.style.visibility = 'visible';
   }
 
   function renderTutorialGuide(state, phase) {
-    const guide = el('tutorial-guide');
-    if (!guide) return;
+    const coach = el('tutorial-coach');
+    if (!coach) return;
     const tutorial = getTutorialState(state);
     if (phase !== 'playing' || !tutorial.active || !tutorial.current) {
-      guide.classList.add('hidden');
+      coach.classList.add('hidden');
       setTutorialTarget(null);
       uiSnapshots.tutorialGuide = '';
       return;
     }
 
     const current = tutorial.current;
-    setTutorialTarget(current.uiTargetId);
-    const snapshot = JSON.stringify({ step: tutorial.step, current });
-    if (snapshot === uiSnapshots.tutorialGuide) return;
-    uiSnapshots.tutorialGuide = snapshot;
-    guide.classList.remove('hidden');
-    clearChildren(guide);
+    const anchor = setTutorialTarget(current.uiTargetId);
+    const snapshot = JSON.stringify({
+      step: tutorial.step,
+      title: current.title,
+      status: current.status,
+      canConfirm: current.canConfirm,
+      readyToFinish: current.readyToFinish,
+      target: current.uiTargetId,
+      anchorVisible: !!anchor,
+    });
+    if (snapshot !== uiSnapshots.tutorialGuide) {
+      uiSnapshots.tutorialGuide = snapshot;
+      clearChildren(coach);
 
-    const header = document.createElement('div');
-    header.className = 'tutorial-guide__header';
-    const eyebrow = document.createElement('span');
-    eyebrow.className = 'tutorial-guide__eyebrow';
-    eyebrow.textContent = 'Guided tutorial';
-    const step = document.createElement('span');
-    step.className = 'tutorial-guide__step';
-    step.textContent = `${current.id + 1} / ${tutorial.totalSteps}`;
-    header.append(eyebrow, step);
+      const meta = document.createElement('div');
+      meta.className = 'tutorial-coach__meta';
+      const step = document.createElement('span');
+      step.className = 'tutorial-coach__step';
+      step.textContent = `${current.id + 1}/${tutorial.totalSteps}`;
+      meta.appendChild(step);
 
-    const body = document.createElement('div');
-    body.className = 'tutorial-guide__body';
-    const title = document.createElement('h2');
-    title.className = 'tutorial-guide__title';
-    title.textContent = current.title;
-    const objective = document.createElement('p');
-    objective.className = 'tutorial-guide__objective';
-    objective.textContent = current.objective;
-    const instruction = document.createElement('p');
-    instruction.className = 'tutorial-guide__instruction';
-    instruction.textContent = current.instruction;
-    const status = document.createElement('p');
-    status.className = 'tutorial-guide__status';
-    status.textContent = current.status;
-    body.append(title, objective, instruction, status);
+      const title = document.createElement('h2');
+      title.className = 'tutorial-coach__title';
+      title.textContent = current.title;
 
-    const actions = document.createElement('div');
-    actions.className = 'tutorial-guide__actions';
-    if (current.readyToFinish) {
-      const finish = document.createElement('button');
-      finish.type = 'button';
-      finish.className = 'btn btn--primary btn--sm';
-      finish.textContent = 'Finish tutorial';
-      finish.onclick = () => {
-        const result = finishTutorial(getState());
-        toast(result.ok ? 'Tutorial complete — command is yours' : result.reason, result.ok ? 'ok' : 'error');
-      };
-      actions.appendChild(finish);
-    } else if (current.canConfirm) {
-      const confirm = document.createElement('button');
-      confirm.type = 'button';
-      confirm.className = 'btn btn--primary btn--sm';
-      confirm.textContent = 'Continue';
-      confirm.onclick = () => {
-        const result = acknowledgeTutorialStep(getState());
-        toast(result.ok ? 'Capture briefing understood' : result.reason, result.ok ? 'ok' : 'error');
-      };
-      actions.appendChild(confirm);
-    } else if (current.actionLabel) {
-      const focus = document.createElement('button');
-      focus.type = 'button';
-      focus.className = 'btn btn--primary btn--sm';
-      focus.textContent = current.actionLabel;
-      focus.onclick = () => {
-        closeSidePanel();
-        const result = doFocusTutorial?.();
-        if (!result?.ok) toast(result?.reason ?? 'Tutorial target unavailable', 'error');
-      };
-      actions.appendChild(focus);
+      const copy = document.createElement('p');
+      copy.className = 'tutorial-coach__copy';
+      copy.textContent = current.objective;
+
+      const status = document.createElement('p');
+      status.className = 'tutorial-coach__copy';
+      status.textContent = current.status;
+
+      const actions = document.createElement('div');
+      actions.className = 'tutorial-coach__actions';
+      if (current.readyToFinish) {
+        const finish = document.createElement('button');
+        finish.type = 'button';
+        finish.className = 'btn btn--primary btn--xs';
+        finish.textContent = 'Finish';
+        finish.onclick = () => {
+          const result = finishTutorial(getState());
+          toast(result.ok ? 'Tutorial complete — command is yours' : result.reason, result.ok ? 'ok' : 'error');
+        };
+        actions.appendChild(finish);
+      } else if (current.canConfirm) {
+        const confirm = document.createElement('button');
+        confirm.type = 'button';
+        confirm.className = 'btn btn--primary btn--xs';
+        confirm.textContent = 'Continue';
+        confirm.onclick = () => {
+          const result = acknowledgeTutorialStep(getState());
+          toast(result.ok ? 'Continue' : result.reason, result.ok ? 'ok' : 'error');
+        };
+        actions.appendChild(confirm);
+      } else if (current.actionLabel) {
+        const focus = document.createElement('button');
+        focus.type = 'button';
+        focus.className = 'btn btn--primary btn--xs';
+        focus.textContent = 'Show';
+        focus.onclick = () => {
+          closeSidePanel();
+          const result = doFocusTutorial?.();
+          if (!result?.ok) toast(result?.reason ?? 'Tutorial target unavailable', 'error');
+        };
+        actions.appendChild(focus);
+      }
+
+      if (!current.readyToFinish) {
+        const skip = document.createElement('button');
+        skip.type = 'button';
+        skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip';
+        skip.textContent = 'Skip';
+        skip.onclick = () => {
+          const result = finishTutorial(getState(), { skipped: true });
+          toast(result.ok ? 'Tutorial skipped' : result.reason, result.ok ? 'info' : 'error');
+        };
+        actions.appendChild(skip);
+      }
+
+      coach.append(meta, title, copy, status, actions);
     }
 
-    if (!current.readyToFinish) {
-      const skip = document.createElement('button');
-      skip.type = 'button';
-      skip.className = 'btn btn--ghost btn--xs tutorial-guide__skip';
-      skip.textContent = 'Skip tutorial';
-      skip.onclick = () => {
-        const result = finishTutorial(getState(), { skipped: true });
-        toast(result.ok ? 'Tutorial skipped — restart it anytime from Campaign' : result.reason, result.ok ? 'info' : 'error');
-      };
-      actions.appendChild(skip);
+    if (anchor) {
+      positionTutorialCoach(coach, anchor, current.placement ?? 'left');
+    } else {
+      coach.classList.remove('hidden');
+      coach.style.left = '50%';
+      coach.style.top = '72px';
+      coach.style.transform = 'translateX(-50%)';
+      coach.dataset.placement = 'bottom';
+      coach.style.visibility = 'visible';
     }
-
-    guide.append(header, body, actions);
   }
 
   function queueHullFromUi(hull) {
@@ -2659,6 +2883,7 @@ export function initUi(ctx) {
   el('tab-system').addEventListener('click', () => {
     closeSidePanel();
     if (getView() !== 'system') doToggleView();
+    markTutorialSystemViewed(getState());
   });
   el('tab-dyson').addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
@@ -2679,6 +2904,7 @@ export function initUi(ctx) {
   el('tab-logistics')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'logistics' ? null : 'logistics';
+    if (sidePanel === 'logistics') markTutorialLogisticsOpened(getState());
   });
   el('tab-diplomacy')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
@@ -3082,22 +3308,24 @@ export function initUi(ctx) {
     }
 
     const activeBattle = view === 'system' ? getBattleState(state, viewedSystemId) : null;
-    const combatPanel = el('combat-command-panel');
-    const showCombatCommand = !!activeBattle?.active;
-    combatPanel?.classList.toggle('hidden', !showCombatCommand);
-    if (showCombatCommand) {
-      const combatSnap = JSON.stringify({
-        elapsed: Math.floor((activeBattle.elapsedMs ?? 0) / 500),
-        units: activeBattle.units.map((unit) => [unit.id, Math.round(unit.hp), unit.damageState, unit.ammo, unit.fuel]),
-        orders: activeFleetOrders(activeBattle, 'player'),
+    const showCombatUi = !!combatUiActive?.()
+      || (view === 'system' && !!activeBattle?.active && activeBattle.mode === 'tactical');
+    el('hud')?.classList.toggle('hud--combat', showCombatUi && phase === 'playing');
+    const combatHud = el('combat-hud');
+    combatHud?.classList.toggle('hidden', !(showCombatUi && phase === 'playing'));
+    if (showCombatUi && phase === 'playing' && activeBattle) {
+      renderCombatHud(state, activeBattle, viewedSystem?.name, {
+        issueTacticalOrder,
+        setCombatDoctrine,
+        getCombatSelection,
+        doTogglePause,
+        doToggleView,
       });
-      if (combatSnap !== uiSnapshots.combatCommand) {
-        uiSnapshots.combatCommand = combatSnap;
-        renderCombatCommandPanel(el('combat-command-body'), state, activeBattle, issueTacticalOrder);
-      }
-    } else {
-      uiSnapshots.combatCommand = '';
     }
+
+    const combatPanel = el('combat-command-panel');
+    combatPanel?.classList.add('hidden');
+    uiSnapshots.combatCommand = '';
 
     el('pause-btn').querySelector('.btn-label').textContent = state.paused ? 'Resume' : 'Pause';
     el('pause-overlay').classList.toggle('hidden', !state.paused || phase !== 'playing');
@@ -3139,7 +3367,17 @@ export function initUi(ctx) {
       const targetName = targetId ? (systemById(state, targetId)?.name ?? targetId) : '—';
       el('superweapon-galaxy-body').innerHTML =
         `<p class="panel-note">Target: <strong>${targetName}</strong></p>`
-        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'} · CD ${Math.ceil(sw.cooldownMs / 1000)}s</p>`;
+        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'} · CD ${Math.ceil(sw.cooldownMs / 1000)}s`
+        + (sw.sovereignProtocol ? ' · Sovereign Protocol' : '')
+        + `</p>`
+        + (sw.fireSequence
+          ? `<p class="panel-note">Firing: <strong>${sw.fireSequence.type}</strong> · ${sw.fireSequence.phase}`
+            + ` · ${Math.max(0, Math.ceil((sw.fireSequence.totalMs - (state.time - sw.fireSequence.startedAt)) / 1000))}s</p>`
+          : `<p class="panel-note panel-note--muted">Create ${sw.costs?.create ?? 25} / Destroy ${sw.costs?.destroy ?? 30} / Jump ${sw.costs?.jump ?? 15} Solarii</p>`);
+      const busy = !!sw.fireSequence;
+      el('sw-create-btn') && (el('sw-create-btn').disabled = busy || !sw.online);
+      el('sw-destroy-btn') && (el('sw-destroy-btn').disabled = busy || !sw.online);
+      el('sw-jump-btn') && (el('sw-jump-btn').disabled = busy || !sw.online);
     } else {
       swGalaxyPanel?.classList.add('hidden');
     }

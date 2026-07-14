@@ -20,6 +20,7 @@ import { tickAiShips } from './ai-ships.js';
 import { tickDrones } from './drones.js';
 import { tickDiplomacy } from './diplomacy.js';
 import { tickSuperweapon } from './superweapon.js';
+import { tickFlagshipWing } from './flagship-wing.js';
 import { tickHeroFlagships } from './hero-flagships.js';
 import { tickCampaign } from './campaign.js';
 import { tryAdvanceTutorial } from './tutorial.js';
@@ -45,6 +46,7 @@ function tickOnce(state) {
   tickResearch(state);
   tickDiplomacy(state);
   tickSuperweapon(state);
+  tickFlagshipWing(state);
   dispatchEmpireQueue(state);
   const prodReady = tickProduction(state);
   const droneCompletions = tickDrones(state);

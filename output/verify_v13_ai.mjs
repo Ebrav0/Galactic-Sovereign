@@ -80,9 +80,9 @@ const primaryCreditsBefore = primary.credits;
 const secondaryCreditsBefore = secondary.credits;
 const primaryOutposts = aiOperationalOutpostCount(state, primary.id);
 const primaryIncome = applyAiFactionIncomeTick(state, primary, 1000);
-check('3.1 normal AI outposts pay exactly 40 credits/sec each',
-  approx(primaryIncome.credits, primaryOutposts * 40)
-    && approx(primary.credits - primaryCreditsBefore, primaryOutposts * 40),
+check('3.1 normal AI outposts pay OUTPOST_BASE_INCOME credits/sec each',
+  approx(primaryIncome.credits, primaryOutposts * 10)
+    && approx(primary.credits - primaryCreditsBefore, primaryOutposts * 10),
   `outposts=${primaryOutposts} paid=${primaryIncome.credits}`);
 check('3.2 one faction income does not mutate another wallet', secondary.credits === secondaryCreditsBefore);
 
@@ -92,7 +92,7 @@ const easyCount = aiOperationalOutpostCount(easyState, easyFaction.id);
 easyFaction.credits = 0;
 applyAiFactionIncomeTick(easyState, easyFaction, 1000);
 check('3.3 easy income multiplier applies without changing listed costs',
-  approx(easyFaction.credits, easyCount * 40 * 0.8));
+  approx(easyFaction.credits, easyCount * 10 * 0.8));
 
 for (const faction of factions) faction.credits = 100000;
 const personalityChoices = factions.map((faction) => selectAiTechNode(state, faction, 20)?.id);

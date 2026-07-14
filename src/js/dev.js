@@ -26,9 +26,11 @@ import { allocateStructureId } from './economy.js';
 import { forceShellProgress } from './dyson.js';
 import { hasIntel } from './intel.js';
 import { advance } from './simulation.js';
-import { setBattleStance, checkBattleTrigger } from './combat.js';
+import { setBattleStance, setCombatDoctrine, checkBattleTrigger } from './combat.js';
+import { COMBAT_DOCTRINES } from './combat-doctrine.js';
 import { spawnPlayerShip } from './fleets.js';
 import { spawnScout } from './scout.js';
+import { spawnAiShip } from './ai-ships.js';
 import { hullStats } from './hull.js';
 import {
   devSpawnEnemyFleetAtSystem,
@@ -39,6 +41,33 @@ import { ensureResearchState, researchStationCount } from './research.js';
 import { forceAiCapture } from './ai-faction.js';
 import { allTechNodes, applyTechEffect, isTechUnlocked, techNode } from './tech-web.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
+import {
+  ensureLogisticsState,
+  findExportDepot,
+  registerExportDepot,
+  normalizeCargo,
+  addCargo,
+  emptyCargo,
+  cargoTotal,
+} from './logistics.js';
+import {
+  BODY_STRUCTURE_DEFS,
+  buildBodyStructure,
+} from './body-structures.js';
+import {
+  STRUCTURE_DEFS,
+} from './strategic-structures.js';
+import { deployBuilderDrone } from './builder-drones.js';
+import { setCompletedDysonsForTest } from './milestones.js';
+import { spawnHeroFlagshipForTest } from './hero-flagships.js';
+import {
+  ensureSuperweapon,
+  hasSuperweaponCradle,
+  buildSuperweaponCradle,
+  superweaponCreate,
+  superweaponDestroy,
+  superweaponJump,
+} from './superweapon.js';
 
 export const DEV_CODES = {
   INVALID_SYSTEM: 'INVALID_SYSTEM',
@@ -47,7 +76,10 @@ export const DEV_CODES = {
   INVALID_HULL: 'INVALID_HULL',
   INVALID_COUNT: 'INVALID_COUNT',
   INVALID_STANCE: 'INVALID_STANCE',
+  INVALID_DOCTRINE: 'INVALID_DOCTRINE',
   INVALID_AMOUNT: 'INVALID_AMOUNT',
+  INVALID_PRESET: 'INVALID_PRESET',
+  INVALID_STRUCTURE: 'INVALID_STRUCTURE',
   CORE_FORBIDDEN: 'CORE_FORBIDDEN',
   DUPLICATE_STRUCTURE: 'DUPLICATE_STRUCTURE',
   UNSUPPORTED_PLANET_TYPE: 'UNSUPPORTED_PLANET_TYPE',
@@ -56,11 +88,50 @@ export const DEV_CODES = {
   LAUNCHER_CAP: 'LAUNCHER_CAP',
   NO_PIRATES_STATE: 'NO_PIRATES_STATE',
   NO_FLEET: 'NO_FLEET',
+  NO_FLAGSHIP: 'NO_FLAGSHIP',
   ALREADY_OWNED: 'ALREADY_OWNED',
   UNKNOWN_TECH: 'UNKNOWN_TECH',
   RESEARCH_CAP: 'RESEARCH_CAP',
   TRADE_DUPLICATE: 'TRADE_DUPLICATE',
+  ACTION_FAILED: 'ACTION_FAILED',
 };
+
+export const DEV_FLEET_PRESETS = Object.freeze({
+  scout_wing: Object.freeze([{ hull: 'scout', count: 5 }]),
+  battle_fleet: Object.freeze([
+    { hull: 'corvette', count: 4 },
+    { hull: 'frigate', count: 3 },
+    { hull: 'destroyer', count: 2 },
+    { hull: 'cruiser', count: 1 },
+  ]),
+  carrier_group: Object.freeze([
+    { hull: 'light_carrier', count: 1 },
+    { hull: 'frigate', count: 4 },
+    { hull: 'destroyer', count: 2 },
+  ]),
+  logistics_convoy: Object.freeze([
+    { hull: 'light_hauler', count: 2 },
+    { hull: 'bulk_freighter', count: 1 },
+    { hull: 'patrol_cutter', count: 2 },
+  ]),
+});
+
+export const DEV_ENEMY_PRESETS = Object.freeze({
+  small: PIRATE_SHIPS,
+  medium: Object.freeze([
+    { hull: 'corvette', count: 4 },
+    { hull: 'frigate', count: 2 },
+    { hull: 'destroyer', count: 1 },
+  ]),
+  large: Object.freeze([
+    { hull: 'corvette', count: 6 },
+    { hull: 'frigate', count: 4 },
+    { hull: 'destroyer', count: 2 },
+    { hull: 'cruiser', count: 1 },
+  ]),
+});
+
+const DEV_SPAWN_COUNT_MAX = 50;
 
 function ok(details) {
   return { ok: true, details };
@@ -116,7 +187,7 @@ export function devValidateHull(hull, { includeScout = true, allowedHulls = null
   return ok({ hull });
 }
 
-export function devValidateCount(n, { min = 1, max = 20 } = {}) {
+export function devValidateCount(n, { min = 1, max = DEV_SPAWN_COUNT_MAX } = {}) {
   const count = Number(n);
   if (!Number.isFinite(count) || !Number.isInteger(count)) {
     return err(DEV_CODES.INVALID_COUNT, 'Count must be an integer');
@@ -125,6 +196,14 @@ export function devValidateCount(n, { min = 1, max = 20 } = {}) {
     return err(DEV_CODES.INVALID_COUNT, `Count must be between ${min} and ${max}`);
   }
   return ok({ count });
+}
+
+export function devValidateDoctrine(doctrine) {
+  const id = String(doctrine ?? '');
+  if (!COMBAT_DOCTRINES.includes(id)) {
+    return err(DEV_CODES.INVALID_DOCTRINE, `Doctrine must be one of: ${COMBAT_DOCTRINES.join(', ')}`);
+  }
+  return ok({ doctrine: id });
 }
 
 export function devValidateStance(stance) {
@@ -203,6 +282,51 @@ export function devUnlockSolarii(state) {
   return ok({ solariiUnlocked: true });
 }
 
+function applyCargoToInventory(inventory, capacityHolder, grant) {
+  const next = addCargo(inventory, grant);
+  const total = cargoTotal(next);
+  if (total > (capacityHolder.capacity ?? 0)) {
+    capacityHolder.capacity = Math.ceil(total);
+  }
+  inventory.rawMaterials = next.rawMaterials;
+  inventory.fuel = next.fuel;
+  inventory.manufacturedGoods = next.manufacturedGoods;
+  return next;
+}
+
+/** Grant logistics cargo into the viewed system's export depot (creating one if needed). */
+export function devGrantCargo(state, systemId, cargo = {}) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+
+  const grant = normalizeCargo({
+    rawMaterials: cargo.rawMaterials ?? 0,
+    fuel: cargo.fuel ?? 0,
+    manufacturedGoods: cargo.manufacturedGoods ?? 0,
+  });
+  if (cargoTotal(grant) <= 0) {
+    return err(DEV_CODES.INVALID_AMOUNT, 'Cargo grant must include at least one resource');
+  }
+
+  ensureLogisticsState(state);
+  let depot = findExportDepot(state, systemId);
+  if (!depot) {
+    const reg = registerExportDepot(state, state.activeGalaxyId, systemId, {
+      inventory: emptyCargo(),
+      allowNonPlayer: true,
+      force: true,
+      source: 'dev',
+    });
+    if (!reg.ok) return err(DEV_CODES.ACTION_FAILED, reg.reason ?? 'Could not create export depot');
+    depot = reg.depot;
+  }
+
+  const before = normalizeCargo(depot.inventory);
+  const after = applyCargoToInventory(depot.inventory, depot, grant);
+  depot.operational = true;
+  return ok({ systemId, depotId: depot.id, before, after, granted: grant });
+}
+
 export function devRevealIntel(state, systemId) {
   const check = devValidateSystem(state, systemId);
   if (!check.ok) return check;
@@ -255,6 +379,13 @@ export function devSetBattleStance(state, stance) {
   if (!check.ok) return check;
   setBattleStance(state, stance);
   return ok({ stance: state.battleStance });
+}
+
+export function devSetCombatDoctrine(state, doctrine, systemId = null) {
+  const check = devValidateDoctrine(doctrine);
+  if (!check.ok) return check;
+  const result = setCombatDoctrine(state, check.details.doctrine, systemId);
+  return ok({ doctrine: result.doctrine, applied: result.applied });
 }
 
 export function devForceCapture(state, systemId) {
@@ -622,6 +753,261 @@ export function devSpawnEnemyFleet(state, systemId, composition = PIRATE_SHIPS) 
   return result;
 }
 
+export function devSpawnEnemyFleetPreset(state, systemId, size = 'small') {
+  const composition = DEV_ENEMY_PRESETS[size];
+  if (!composition) {
+    return err(DEV_CODES.INVALID_PRESET, `Unknown enemy preset: ${size}`);
+  }
+  return devSpawnEnemyFleet(state, systemId, composition);
+}
+
+export function devSpawnFleetPreset(state, systemId, presetId, anchorBodyId = null) {
+  const composition = DEV_FLEET_PRESETS[presetId];
+  if (!composition) {
+    return err(DEV_CODES.INVALID_PRESET, `Unknown fleet preset: ${presetId}`);
+  }
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+
+  const spawned = [];
+  for (const entry of composition) {
+    if (entry.hull === 'scout') {
+      const res = devSpawnScouts(state, systemId, entry.count);
+      if (!res.ok) return res;
+      spawned.push({ hull: 'scout', count: res.details.count, ids: res.details.scoutIds });
+    } else {
+      const res = devSpawnFriendlyShips(state, systemId, entry.hull, entry.count, anchorBodyId);
+      if (!res.ok) return res;
+      spawned.push({ hull: entry.hull, count: res.details.count, ids: res.details.shipIds });
+    }
+  }
+  return ok({ presetId, systemId, spawned });
+}
+
+export function devSpawnAiShips(state, systemId, hull, count, anchorBodyId = null, factionId = null) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+
+  const hullCheck = devValidateHull(hull, { includeScout: false });
+  if (!hullCheck.ok) return hullCheck;
+
+  const countCheck = devValidateCount(count);
+  if (!countCheck.ok) return countCheck;
+
+  if (anchorBodyId) {
+    const bodyCheck = devValidateBody(state, systemId, anchorBodyId);
+    if (!bodyCheck.ok) return bodyCheck;
+  }
+
+  const ids = [];
+  for (let i = 0; i < countCheck.details.count; i++) {
+    const ship = spawnAiShip(state, systemId, hull, anchorBodyId, factionId);
+    if (!ship) return err(DEV_CODES.INVALID_HULL, `Failed to spawn AI hull: ${hull}`);
+    ids.push(ship.id);
+  }
+  checkBattleTrigger(state, systemId);
+  return ok({ hull, count: ids.length, shipIds: ids, systemId, owner: 'ai' });
+}
+
+export function devSpawnHeroFlagship(state, systemId) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+  const result = spawnHeroFlagshipForTest(state, systemId);
+  if (!result.ok) return err(DEV_CODES.ACTION_FAILED, result.reason ?? 'Hero spawn failed');
+  checkBattleTrigger(state, systemId);
+  return ok({ heroId: result.heroId, systemId: result.systemId ?? systemId });
+}
+
+export function devHealFlagship(state) {
+  const flagship = state.flagship;
+  if (!flagship) return err(DEV_CODES.NO_FLAGSHIP, 'No player flagship');
+  const before = flagship.hp;
+  flagship.hp = flagship.maxHp ?? before;
+  if (flagship.wing?.ready != null && flagship.wing?.complement) {
+    // leave wing as-is; HP heal only
+  }
+  return ok({ before, after: flagship.hp, maxHp: flagship.maxHp });
+}
+
+export function devHealShipsInSystem(state, systemId) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+  let healed = 0;
+  for (const ship of state.playerShips ?? []) {
+    if (ship.systemId !== systemId || ship.transit) continue;
+    if (ship.hp < (ship.maxHp ?? ship.hp)) {
+      ship.hp = ship.maxHp ?? ship.hp;
+      healed++;
+    } else {
+      ship.hp = ship.maxHp ?? ship.hp;
+      healed++;
+    }
+  }
+  const flagship = state.flagship;
+  if (flagship && flagship.systemId === systemId && !flagship.transit && !flagship.wormholeTransit) {
+    flagship.hp = flagship.maxHp ?? flagship.hp;
+  }
+  for (const hero of state.heroFlagships ?? []) {
+    if (hero.systemId === systemId && !hero.transit) {
+      hero.hp = hero.maxHp ?? hero.hp;
+      healed++;
+    }
+  }
+  return ok({ systemId, healed });
+}
+
+export function devForceBuildBodyStructure(state, systemId, bodyId, type) {
+  if (!type || !BODY_STRUCTURE_DEFS[type]) {
+    return err(DEV_CODES.INVALID_STRUCTURE, `Unknown body structure: ${type}`);
+  }
+  const def = BODY_STRUCTURE_DEFS[type];
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+
+  if (!def.starNode) {
+    const bodyCheck = devValidateBody(state, systemId, bodyId);
+    if (!bodyCheck.ok) return bodyCheck;
+  }
+
+  // Ensure player ownership for force-build convenience
+  if (!isPlayerOwned(state, systemId) && !def.blackHoleOnly) {
+    systemById(state, systemId).owner = 'player';
+  }
+
+  const result = buildBodyStructure(state, systemId, def.starNode ? null : bodyId, type, {
+    remote: true,
+    ignoreCredits: true,
+    ignoreTech: true,
+    immediate: true,
+    alreadyPaid: true,
+  });
+  if (!result.ok) return err(DEV_CODES.ACTION_FAILED, result.reason ?? 'Body structure build failed');
+  return ok({
+    built: type,
+    structureId: result.structureId,
+    systemId,
+    bodyId: result.bodyId ?? null,
+  });
+}
+
+export function devForceBuildStrategicStructure(state, systemId, type, planetId = null) {
+  if (!type || !STRUCTURE_DEFS[type]) {
+    return err(DEV_CODES.INVALID_STRUCTURE, `Unknown strategic structure: ${type}`);
+  }
+  const def = STRUCTURE_DEFS[type];
+  const sysCheck = devValidateSystem(state, systemId, { forbidCore: true });
+  if (!sysCheck.ok) return sysCheck;
+
+  if (!isPlayerOwned(state, systemId)) {
+    systemById(state, systemId).owner = 'player';
+  }
+
+  if (def.perBody) {
+    const planetCheck = devValidatePlanet(state, systemId, planetId, { allowBarren: true, allowGas: false });
+    if (!planetCheck.ok) return planetCheck;
+    if (def.requiresOutpost && !hasOutpost(state, systemId, planetId)) {
+      const outpost = devForceBuildOutpost(state, systemId, planetId);
+      if (!outpost.ok) return outpost;
+    }
+  }
+
+  const system = systemById(state, systemId);
+  const existing = def.perBody
+    ? (system.structures ?? []).filter((s) => s.type === type && s.bodyId === planetId).length
+    : (system.structures ?? []).filter((s) => s.type === type).length;
+  if (existing >= def.cap) return ok({ skipped: true, type });
+
+  const id = allocateStructureId();
+  system.structures.push({
+    id,
+    type,
+    bodyId: def.perBody ? planetId : null,
+    builtAtTime: state.time,
+  });
+  return ok({ built: type, structureId: id, systemId, bodyId: def.perBody ? planetId : null });
+}
+
+export function devDeployBuilderDrone(state, systemId) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+  const result = deployBuilderDrone(state, systemId);
+  if (!result.ok) return err(DEV_CODES.ACTION_FAILED, result.reason ?? 'Builder drone deploy failed');
+  return ok(result);
+}
+
+export function devSetCompletedDysons(state, count) {
+  const n = Number(count);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+    return err(DEV_CODES.INVALID_COUNT, 'Completed Dyson count must be a non-negative integer');
+  }
+  const events = setCompletedDysonsForTest(state, n);
+  return ok({
+    count: n,
+    diplomacyUnlocked: state.milestones?.diplomacyUnlocked ?? false,
+    superweaponUnlocked: state.milestones?.superweaponUnlocked ?? false,
+    events,
+  });
+}
+
+export function devForceBuildSuperweaponCradle(state, systemId = null) {
+  const target = systemId ?? state.stronghold;
+  const sysCheck = devValidateSystem(state, target);
+  if (!sysCheck.ok) return sysCheck;
+
+  setCompletedDysonsForTest(state, Math.max(3, state.milestones?.completedDysonSystems?.length ?? 0));
+  ensureResearchState(state);
+  if (!isTechUnlocked(state, 'sw_cradle_unlock')) {
+    state.research.unlocked.push('sw_cradle_unlock');
+    applyTechEffect(state, 'sw_cradle_unlock');
+  }
+
+  if (hasSuperweaponCradle(state, target)) {
+    ensureSuperweapon(state);
+    state.superweapon.cradleSystemId = target;
+    state.superweapon.online = true;
+    return ok({ skipped: true, type: 'superweapon_cradle', systemId: target });
+  }
+
+  // Prefer real builder when possible; otherwise force-place
+  const attempt = buildSuperweaponCradle(state, target);
+  if (attempt.ok) return ok({ built: 'superweapon_cradle', systemId: target });
+
+  ensureSuperweapon(state);
+  const system = systemById(state, target);
+  system.structures.push({
+    id: allocateStructureId(),
+    type: 'superweapon_cradle',
+    bodyId: null,
+    builtAtTime: state.time,
+  });
+  state.superweapon.cradleSystemId = target;
+  state.superweapon.online = true;
+  return ok({ built: 'superweapon_cradle', systemId: target, forced: true, bypassReason: attempt.reason });
+}
+
+function mapGameResult(result, fallbackCode = DEV_CODES.ACTION_FAILED) {
+  if (result?.ok) return ok(result);
+  return err(result?.code ?? fallbackCode, result?.reason ?? 'Action failed');
+}
+
+export function devSuperweaponCreate(state, systemId) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+  return mapGameResult(superweaponCreate(state, systemId, { immediate: true }));
+}
+
+export function devSuperweaponDestroy(state, systemId) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+  return mapGameResult(superweaponDestroy(state, systemId, { immediate: true }));
+}
+
+export function devSuperweaponJump(state, systemId) {
+  const sysCheck = devValidateSystem(state, systemId);
+  if (!sysCheck.ok) return sysCheck;
+  return mapGameResult(superweaponJump(state, systemId, { immediate: true }));
+}
+
 export function devTeleportPirate(state, systemId, fleetIndex = 0) {
   ensurePiratesState(state);
   const check = devValidateSystem(state, systemId);
@@ -639,6 +1025,8 @@ export function devAction(state, action, params = {}) {
       return devGrantCredits(state, params.amount ?? 1000);
     case 'grantSolarii':
       return devGrantSolarii(state, params.amount ?? 100);
+    case 'grantCargo':
+      return devGrantCargo(state, params.systemId, params);
     case 'unlockSolarii':
       return devUnlockSolarii(state);
     case 'revealIntel':
@@ -651,6 +1039,8 @@ export function devAction(state, action, params = {}) {
       return devForceShellProgress(state, params.systemId, params.sails ?? SHELL_SAILS_REQUIRED);
     case 'setBattleStance':
       return devSetBattleStance(state, params.stance ?? 'balanced');
+    case 'setCombatDoctrine':
+      return devSetCombatDoctrine(state, params.doctrine ?? 'assault', params.systemId ?? null);
     case 'forceCapture':
       return devForceCapture(state, params.systemId);
     case 'forceBuildOutpost':
@@ -665,6 +1055,22 @@ export function devAction(state, action, params = {}) {
       return devForceBuildResearchStation(state, params.systemId);
     case 'forceBuildTradeStation':
       return devForceBuildTradeStation(state, params.systemId, params.planetId);
+    case 'forceBuildBodyStructure':
+      return devForceBuildBodyStructure(
+        state,
+        params.systemId,
+        params.bodyId ?? params.planetId,
+        params.type,
+      );
+    case 'forceBuildStrategicStructure':
+      return devForceBuildStrategicStructure(
+        state,
+        params.systemId,
+        params.type,
+        params.planetId ?? params.bodyId ?? null,
+      );
+    case 'deployBuilderDrone':
+      return devDeployBuilderDrone(state, params.systemId);
     case 'buildPlanetKit':
       return devBuildPlanetKit(state, params.systemId, params.planetId);
     case 'buildSystemKit':
@@ -693,10 +1099,43 @@ export function devAction(state, action, params = {}) {
       );
     case 'spawnScouts':
       return devSpawnScouts(state, params.systemId, params.count ?? 1);
+    case 'spawnFleetPreset':
+      return devSpawnFleetPreset(
+        state,
+        params.systemId,
+        params.presetId,
+        params.anchorBodyId ?? params.planetId ?? null,
+      );
+    case 'spawnAiShips':
+      return devSpawnAiShips(
+        state,
+        params.systemId,
+        params.hull,
+        params.count ?? 1,
+        params.anchorBodyId ?? params.planetId ?? null,
+        params.factionId ?? null,
+      );
+    case 'spawnHeroFlagship':
+      return devSpawnHeroFlagship(state, params.systemId);
     case 'spawnEnemyFleet':
+      if (params.size) return devSpawnEnemyFleetPreset(state, params.systemId, params.size);
       return devSpawnEnemyFleet(state, params.systemId, params.composition);
     case 'teleportPirate':
       return devTeleportPirate(state, params.systemId, params.fleetIndex ?? 0);
+    case 'healFlagship':
+      return devHealFlagship(state);
+    case 'healShipsInSystem':
+      return devHealShipsInSystem(state, params.systemId);
+    case 'setCompletedDysons':
+      return devSetCompletedDysons(state, params.count ?? 3);
+    case 'buildSuperweaponCradle':
+      return devForceBuildSuperweaponCradle(state, params.systemId ?? null);
+    case 'superweaponCreate':
+      return devSuperweaponCreate(state, params.systemId);
+    case 'superweaponDestroy':
+      return devSuperweaponDestroy(state, params.systemId);
+    case 'superweaponJump':
+      return devSuperweaponJump(state, params.systemId);
     default:
       return err(DEV_CODES.INVALID_SYSTEM, `Unknown dev action: ${action}`);
   }

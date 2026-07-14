@@ -138,6 +138,7 @@ function createDefaultTechEffects() {
     dysonShellSync: false,
     dysonShellBonus: false,
     dysonShield: false,
+    heroCombatAura: false,
     tradeHubTier2: false,
     galacticCouncil: false,
     flagshipMobileShipyard: false,
@@ -315,8 +316,14 @@ function applyLegacyEffect(effects, effect) {
     case 'unlock_diplomacy':
     case 'diplomacy_trade':
     case 'diplomacy_alliance':
+      break;
     case 'diplomacy_trade_bonus':
+      effects.treatyEffectMult *= 1.15;
+      effects.tradeIncomeMult *= 1.1;
+      break;
     case 'hero_combat_bonus':
+      effects.heroCombatAura = true;
+      effects.fleetDamageMult *= 1.05;
       break;
     default:
       return false;

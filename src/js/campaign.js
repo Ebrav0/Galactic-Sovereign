@@ -57,6 +57,8 @@ export function startTutorial(state) {
   state.campaign.tutorialStep = 0;
   state.campaign.tutorialTargetSystemId = null;
   state.campaign.tutorialCompletedAt = null;
+  state.campaign.tutorialSystemViewed = false;
+  state.campaign.tutorialLogisticsOpened = false;
   state.campaign.defeated = false;
   state.campaign.won = false;
   return { ok: true };

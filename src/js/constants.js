@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 14;
+export const SAVE_VERSION = 15;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -13,8 +13,9 @@ export const DEFAULT_SEED = 1;
 
 // --- Economy (GDD §6) ---
 export const OUTPOST_COST = 300;             // credits
-export const OUTPOST_BASE_INCOME = 2;        // credits per second, before moon bonus
-export const OUTPOST_PASSIVE_INCOME = 40;     // exact credits/second per operational player outpost
+export const OUTPOST_BASE_INCOME = 10;       // credits per second, before moon / tech / shell bonuses
+/** @deprecated Flat-40 model removed; kept as alias of base for legacy imports/AI. */
+export const OUTPOST_PASSIVE_INCOME = OUTPOST_BASE_INCOME;
 export const MOON_YIELD_BONUS = 0.5;         // +50% of base per moon on the same planet
 
 // --- Physical logistics (Unified Overhaul / save-v12) ---
@@ -102,8 +103,12 @@ export const HULL_STATS = {
   builder_ship: { hp: 200, dps: 0, captureForce: 1, cost: 380, buildMs: 42000, laneSpeed: 95, healRate: 0 },
   command_cruiser: { hp: 450, dps: 14, captureForce: 3, cost: 720, buildMs: 58000, laneSpeed: 95, healRate: 0 },
   hero_flagship: {
-    hp: 800, dps: 15, captureForce: 2,
+    hp: 1500, dps: 28, captureForce: 3,
     cost: 2000, buildMs: 45000, laneSpeed: 110, healRate: 0,
+  },
+  flagship: {
+    hp: 2000, dps: 42, captureForce: 2,
+    cost: 0, buildMs: 0, laneSpeed: 110, healRate: 0,
   },
   miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
 };
@@ -116,6 +121,31 @@ export const CARRIER_WING_SPECS = {
   fleet_carrier: { interceptor: 4, fighter: 3, heavy_fighter: 2 },
   super_carrier: { interceptor: 5, fighter: 4, heavy_fighter: 3, bomber: 3 },
 };
+
+/** Permanent escort wing attached to the player flagship. */
+export const FLAGSHIP_WING_SPEC = {
+  interceptor: 4,
+  fighter: 4,
+  heavy_fighter: 3,
+  bomber: 2,
+};
+
+export const FLAGSHIP_WING_PATROL_RADIUS = 130;  // home-offset envelope around flagship
+export const FLAGSHIP_WING_WANDER_RADIUS = 58;   // local jitter within each craft's pocket
+export const FLAGSHIP_WING_DRAW_SCALE = 1.55;    // escort sprite size vs FLAGSHIP_RADIUS
+export const FLAGSHIP_WING_CATCHUP_SPEED = 1;    // keep wing locked to flagship pose (no trail lag)
+export const FLAGSHIP_WING_REPLENISH_MS = 90000;
+
+/** Multi-battery hardpoint suite for the sovereign flagship. */
+export const FLAGSHIP_WEAPON_SUITE = [
+  { id: 'primary_lance', profile: 'beam_lance', hardpoint: 'prow', muzzle: { x: 1.55, y: 0 } },
+  { id: 'broadside_port', profile: 'kinetic', hardpoint: 'port', muzzle: { x: 0.1, y: -0.55 } },
+  { id: 'broadside_starboard', profile: 'kinetic', hardpoint: 'starboard', muzzle: { x: 0.1, y: 0.55 } },
+  { id: 'prow_torpedo', profile: 'torpedo', hardpoint: 'prow_bay', muzzle: { x: 1.2, y: 0.12 } },
+  { id: 'pd_grid_fore', profile: 'point_defense', hardpoint: 'fore_pd', muzzle: { x: 0.85, y: -0.32 } },
+  { id: 'pd_grid_aft', profile: 'point_defense', hardpoint: 'aft_pd', muzzle: { x: -0.55, y: 0.35 } },
+  { id: 'ion_array', profile: 'ion', hardpoint: 'dorsal', muzzle: { x: 0.35, y: 0 } },
+];
 
 export const WEAPON_PROFILES = {
   point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 2.8, antiCapital: 0.55, structure: 0.35 },
@@ -174,16 +204,62 @@ export const KEEP_OUT_NUDGE_STRENGTH = 320;  // kinematic ships + tactical nudge
 
 // --- Flagship combat ---
 export const FLAGSHIP_HP = 2000;
-export const FLAGSHIP_DPS = 25;
+export const FLAGSHIP_DPS = 42;
 
 // --- Tactical combat ---
 export const TACTICAL_WEAPON_RANGE = 280;
 export const TACTICAL_WEAPON_COOLDOWN_MS = 800;
-export const TACTICAL_SHIP_SPEED = 45;
+export const TACTICAL_SHIP_SPEED = 22;           // cruise for baseline escort (was 45)
+export const TACTICAL_SHIP_ACCEL = 55;           // thrust accel (world units / s²)
+export const TACTICAL_SHIP_DRAG = 1.15;          // exponential drag when not thrusting
+export const TACTICAL_TURN_RATE = 1.55;          // base turn rate rad/s
+export const TACTICAL_SEPARATION_RADIUS = 26;    // soft bubble for baseline escort
+export const TACTICAL_SEPARATION_STRENGTH = 90;  // repulsion accel at contact
+export const TACTICAL_TARGET_STICK_MS = 1200;    // sticky focus target duration
+export const TACTICAL_TARGET_LEASH_MULT = 2.4;   // drop sticky if beyond range * leash
+export const TACTICAL_FORMATION_PULL_MIN = 40;    // blend formation only beyond this distance
+export const TACTICAL_APPROACH_BAND = 0.92;      // thrust toward target when dist > range * band
 export const TACTICAL_BATTLE_RADIUS = 900;
 export const TACTICAL_LARGE_BATTLE_UNITS = 72;
 export const TACTICAL_SWARM_BATTLE_UNITS = 150;
 export const TACTICAL_SPATIAL_CELL = 360;
+
+/** Hull-class motion multipliers for tactical steering. */
+export const TACTICAL_MOTION_TIERS = Object.freeze({
+  wing: Object.freeze({ maxSpeed: 1.45, accel: 1.55, turnRate: 1.7, separation: 0.55 }),
+  escort: Object.freeze({ maxSpeed: 1.0, accel: 1.0, turnRate: 1.0, separation: 1.0 }),
+  line: Object.freeze({ maxSpeed: 0.82, accel: 0.75, turnRate: 0.7, separation: 1.25 }),
+  capital: Object.freeze({ maxSpeed: 0.68, accel: 0.55, turnRate: 0.5, separation: 1.7 }),
+  carrier: Object.freeze({ maxSpeed: 0.72, accel: 0.5, turnRate: 0.45, separation: 1.85 }),
+});
+
+export const TACTICAL_MOTION_HULL_TIER = Object.freeze({
+  fighter: 'wing',
+  interceptor: 'wing',
+  heavy_fighter: 'wing',
+  bomber: 'wing',
+  corvette: 'escort',
+  patrol_cutter: 'escort',
+  frigate: 'escort',
+  scout: 'escort',
+  destroyer: 'line',
+  cruiser: 'line',
+  healer: 'line',
+  sensor_ship: 'line',
+  builder_ship: 'line',
+  command_cruiser: 'line',
+  miner: 'line',
+  light_hauler: 'line',
+  bulk_freighter: 'line',
+  armored_convoy: 'line',
+  battleship: 'capital',
+  dreadnought: 'capital',
+  hero_flagship: 'capital',
+  flagship: 'capital',
+  light_carrier: 'carrier',
+  fleet_carrier: 'carrier',
+  super_carrier: 'carrier',
+});
 
 // --- Auto-resolve ---
 export const STANCE_MODIFIERS = { aggressive: 1.2, balanced: 1.0, defensive: 0.85 };
@@ -216,44 +292,44 @@ export const CAPTURE_BASE = 1;
 export const CAPTURE_PER_PLANET = 1;
 export const CAPTURE_PER_MOON = 0.5;
 export const CAPTURE_STRUCTURE_WEIGHT = {
-  outpost: 2,
-  mining_complex: 2,
-  refinery: 3,
-  storage_depot: 2,
-  fighter_factory: 4,
-  planetary_shield: 5,
-  ion_battery: 4,
-  shipyard: 4,
-  drydock: 4,
-  orbital_defense: 5,
-  sail_foundry: 6,
-  dyson_launcher: 3,
-  asteroid_harvester: 2,
-  power_grid: 3,
-  orbital_habitat: 3,
-  nanoforge: 4,
-  fleet_academy: 4,
-  missile_silo: 4,
-  interdiction_array: 5,
-  carrier_command: 5,
-  sensor_array: 3,
-  solar_collector: 4,
-  logistics_hub: 4,
-  galactic_exchange: 4,
-  salvage_yard: 3,
-  wormhole_observatory: 5,
-  quantum_archive: 4,
-  embassy_complex: 3,
-  trade_station: 3,
-  research_station: 4,
+  outpost: 1.5,
+  mining_complex: 1.5,
+  refinery: 2,
+  storage_depot: 1.5,
+  fighter_factory: 3,
+  planetary_shield: 4,
+  ion_battery: 3,
+  shipyard: 3,
+  drydock: 3,
+  orbital_defense: 4,
+  sail_foundry: 4,
+  dyson_launcher: 2,
+  asteroid_harvester: 1.5,
+  power_grid: 2,
+  orbital_habitat: 2,
+  nanoforge: 3,
+  fleet_academy: 3,
+  missile_silo: 3,
+  interdiction_array: 4,
+  carrier_command: 4,
+  sensor_array: 2,
+  solar_collector: 3,
+  logistics_hub: 3,
+  galactic_exchange: 3,
+  salvage_yard: 2,
+  wormhole_observatory: 4,
+  quantum_archive: 3,
+  embassy_complex: 2,
+  trade_station: 2,
+  research_station: 3,
   listening_post: 1,
   lane_relay: 1,
-  blockade_fort: 2,
-  forward_base: 2,
+  blockade_fort: 1.5,
+  forward_base: 1.5,
   supply_cache: 1,
-  command_post: 3,
+  command_post: 2,
 };
-export const CAPTURE_DYSON_SHELL_WEIGHT = 2;
+export const CAPTURE_DYSON_SHELL_WEIGHT = 1.5;
 export const CAPTURE_FLAGSHIP_FORCE = 2;
 export const CAPTURE_HOLD_MS = 20000;
 
@@ -337,14 +413,16 @@ export const LAUNCHER_COST = 250;
 export const LAUNCHERS_PER_BODY_MAX = 3;
 export const SHELL_SAILS_REQUIRED = 5000;
 export const SHELL_COUNT = 8;
-export const SAIL_CREDIT_COST = 3.0;
-export const FOUNDRY_SAIL_RATE = 6;                // sails per second at base
+export const SAIL_CREDIT_COST = 2.5;              // Master Plan §20 band 2.5–5
+export const FOUNDRY_SAIL_RATE = 5;                // sails per second at base (~12.5 cr/s burn)
 export const LAUNCHER_BATCH_SIZE = 4;
 export const LAUNCHER_LAUNCH_INTERVAL_MS = 1000;
 export const SAIL_SHUTTLE_CAPACITY = 500;          // sails delivered per shuttle arrival at launcher
 export const SOLARII_BASE_RATE = 0.08;             // per second at Shell #1, one system
 // Index = completedShells (0 = none, 1–8 = active tier).
 export const SOLARII_SHELL_MULTIPLIERS = [0, 1, 1.25, 1.5, 2, 2.5, 3.25, 4, 5];
+/** Passive Solarii upkeep per completed shell across player Dysons (Master Plan §20). */
+export const SOLARII_DRAIN_PER_SHELL = 0.012;
 // Index = completedShells; credit multiplier for outposts in that system.
 export const SHELL_BONUS_CREDIT_MULT = [1, 1, 1.1, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35];
 // Index = completedShells; foundry sail rate multiplier.
@@ -416,21 +494,21 @@ export const ION_BATTERY_POWER = 26;
 
 // --- Save-v13 building web + structure tiers ---
 export const V13_BUILDING_COSTS = Object.freeze({
-  power_grid: 600,
-  orbital_habitat: 850,
-  nanoforge: 900,
-  fleet_academy: 950,
-  missile_silo: 800,
-  interdiction_array: 1200,
-  carrier_command: 1100,
-  sensor_array: 650,
-  solar_collector: 1250,
-  logistics_hub: 900,
-  galactic_exchange: 1100,
-  salvage_yard: 750,
-  wormhole_observatory: 1600,
-  quantum_archive: 1000,
-  embassy_complex: 900,
+  power_grid: 550,
+  orbital_habitat: 750,
+  nanoforge: 800,
+  fleet_academy: 850,
+  missile_silo: 720,
+  interdiction_array: 950,
+  carrier_command: 900,
+  sensor_array: 600,
+  solar_collector: 1000,
+  logistics_hub: 800,
+  galactic_exchange: 950,
+  salvage_yard: 700,
+  wormhole_observatory: 1200,
+  quantum_archive: 900,
+  embassy_complex: 800,
 });
 
 export const V13_BUILDING_HP = Object.freeze({
@@ -526,11 +604,27 @@ export const SUPERWEAPON_DESTROY_SOLARII = 30;
 export const SUPERWEAPON_JUMP_SOLARII = 15;
 export const SUPERWEAPON_COOLDOWN_MS = 120000;
 export const SUPERWEAPON_JUMP_COOLDOWN_MS = 90000;
+/** Deferred Novacula fire sequence timings (create/destroy). */
+export const SUPERWEAPON_PHASE_MS = {
+  charge: 1200,
+  aim: 700,
+  fire: 1100,
+  impact: 400,
+  aftermath: 1100,
+};
+export const SUPERWEAPON_JUMP_PHASE_MS = {
+  charge: 600,
+  aim: 400,
+  fire: 700,
+  impact: 300,
+  aftermath: 500,
+};
+export const SUPERWEAPON_CRADLE_ORBIT_PAD = 280;
 export const HERO_FLAGSHIP_COST_CREDITS = 2000;
 export const HERO_FLAGSHIP_COST_SOLARII = 5;
-export const HERO_FLAGSHIP_HP = 800;
-export const HERO_FLAGSHIP_DPS = 15;
-export const HERO_FLAGSHIP_CAPTURE_FORCE = 2;
+export const HERO_FLAGSHIP_HP = 1500;
+export const HERO_FLAGSHIP_DPS = 28;
+export const HERO_FLAGSHIP_CAPTURE_FORCE = 3;
 export const HERO_FLAGSHIP_BUILD_MS = 45000;
 export const HERO_FLAGSHIP_LANE_SPEED = 110;
 export const DIPLOMACY_TRUCE_COST = 500;
@@ -539,12 +633,12 @@ export const DIPLOMACY_ALLIANCE_COST = 1500;
 export const DIPLOMACY_ALLIANCE_SOLARII = 3;
 export const DIPLOMACY_TRADE_INCOME_BONUS = 0.2;
 export const AI_PANIC_DURATION_MS = 120000;
-export const LISTENING_POST_COST = 600;
-export const LANE_RELAY_COST = 750;
-export const BLOCKADE_FORT_COST = 900;
-export const FORWARD_BASE_COST = 700;
-export const SUPPLY_CACHE_COST = 500;
-export const COMMAND_POST_COST = 850;
+export const LISTENING_POST_COST = 500;
+export const LANE_RELAY_COST = 650;
+export const BLOCKADE_FORT_COST = 800;
+export const FORWARD_BASE_COST = 600;
+export const SUPPLY_CACHE_COST = 450;
+export const COMMAND_POST_COST = 750;
 export const LANE_RELAY_SPEED_BONUS = 0.15;
 export const BLOCKADE_TRADE_PENALTY = 0.35;
 export const FORWARD_BASE_CAPTURE_BONUS = 1;

@@ -1,7 +1,14 @@
 // Economy: outpost/shipyard construction and credit income (GDD §6).
 // May mutate state.credits and system structures. Never touches DOM/canvas.
 
-import { OUTPOST_COST, OUTPOST_PASSIVE_INCOME, TICK_MS, STRUCTURE_BUILD_MS } from './constants.js';
+import {
+  OUTPOST_COST,
+  OUTPOST_BASE_INCOME,
+  MOON_YIELD_BONUS,
+  SHELL_BONUS_CREDIT_MULT,
+  TICK_MS,
+  STRUCTURE_BUILD_MS,
+} from './constants.js';
 import {
   systemById,
   findPlanet,
@@ -13,6 +20,7 @@ import {
 import { getSystems } from './galaxy-scope.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingJob, queueConstructionJob } from './drones.js';
+import { techEffects } from './tech-web.js';
 
 let nextStructureId = 1;
 
@@ -142,6 +150,7 @@ function persistentSystems(state) {
         factionId: overlay.factionId ?? null,
         structures: overlay.structures ?? [],
         dyson: overlay.dyson ?? null,
+        bodies: overlay.bodies ?? [],
       });
     }
   }
@@ -157,18 +166,47 @@ export function operationalOutpostCount(state) {
   return count;
 }
 
-// Flat passive Credits from every operational player outpost. Cargo, moons,
-// technology, buildings, and Dyson shells never modify this rate.
+/**
+ * Progressive credit income for one operational outpost:
+ * base × (1 + moons × MOON_YIELD_BONUS × moonYieldMult) × shellCreditBonus.
+ */
+export function outpostIncomePerSecond(state, system, structure, effects = null) {
+  if (!isOperationalOutpost(state, structure)) return 0;
+  const fx = effects ?? techEffects(state);
+  const planet = (system.bodies ?? []).find((body) => body.id === structure.bodyId)
+    ?? findPlanet(state, system.id, structure.bodyId);
+  const moons = planet?.moons?.length ?? 0;
+  const moonMult = 1 + moons * MOON_YIELD_BONUS * (fx.moonYieldMult ?? 1);
+  const shells = system.dyson?.completedShells ?? 0;
+  let shellMult = SHELL_BONUS_CREDIT_MULT[shells] ?? 1;
+  if (fx.dysonShellBonus) shellMult *= 1.05;
+  return OUTPOST_BASE_INCOME * moonMult * shellMult;
+}
+
+// Progressive Credits: moons, income tech, and Dyson shell credit bonuses apply.
+// Cargo → Trade Nexus remains a separate credit path in logistics.js.
 export function incomePerSecond(state) {
-  return operationalOutpostCount(state) * OUTPOST_PASSIVE_INCOME;
+  const effects = techEffects(state);
+  let total = 0;
+  for (const system of persistentSystems(state)) {
+    if (system.owner !== 'player') continue;
+    for (const structure of system.structures ?? []) {
+      total += outpostIncomePerSecond(state, system, structure, effects);
+    }
+  }
+  return total * effects.outpostIncomeMult * effects.creditIncomeMult;
 }
 
 /** Credit income from outposts in one system (for UI / tests). */
 export function incomePerSecondInSystem(state, systemId) {
   const system = systemById(state, systemId);
   if (!system || !isPlayerOwned(state, systemId)) return 0;
-  const count = system.structures.filter((structure) => isOperationalOutpost(state, structure)).length;
-  return count * OUTPOST_PASSIVE_INCOME;
+  const effects = techEffects(state);
+  let total = 0;
+  for (const structure of system.structures ?? []) {
+    total += outpostIncomePerSecond(state, system, structure, effects);
+  }
+  return total * effects.outpostIncomeMult * effects.creditIncomeMult;
 }
 
 export function applyIncomeTick(state) {

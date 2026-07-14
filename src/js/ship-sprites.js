@@ -22,10 +22,10 @@ const HULL_RENDER = {
   light_hauler: { scale: 1.05 },
   bulk_freighter: { scale: 1.2 },
   armored_convoy: { scale: 1.15 },
-  fighter: { scale: 0.55 },
-  interceptor: { scale: 0.5 },
-  heavy_fighter: { scale: 0.62 },
-  bomber: { scale: 0.65 },
+  fighter: { scale: 1.0 },
+  interceptor: { scale: 0.95 },
+  heavy_fighter: { scale: 1.1 },
+  bomber: { scale: 1.15 },
   healer: { scale: 0.95 },
   sensor_ship: { scale: 0.9 },
   builder_ship: { scale: 1.05 },
@@ -58,14 +58,73 @@ function hullColors(hull, side) {
   };
 }
 
+/** Sum facing shields (or flat shield) into { shield, maxShield }. */
+export function unitShieldTotals(unitOrShields) {
+  if (unitOrShields == null) return { shield: 0, maxShield: 0 };
+  const facings = unitOrShields.shieldFacings ?? unitOrShields.shields
+    ?? (typeof unitOrShields === 'object'
+      && ('front' in unitOrShields || 'aft' in unitOrShields)
+      ? unitOrShields
+      : null);
+  if (facings && typeof facings === 'object') {
+    let shield = 0;
+    let maxShield = 0;
+    for (const facing of Object.values(facings)) {
+      if (facing == null || typeof facing !== 'object') continue;
+      shield += Math.max(0, facing.value ?? facing.current ?? 0);
+      maxShield += Math.max(0, facing.max ?? facing.value ?? facing.current ?? 0);
+    }
+    return { shield, maxShield };
+  }
+  const shield = Math.max(0, unitOrShields.shield ?? 0);
+  const maxShield = Math.max(0, unitOrShields.maxShield ?? shield);
+  return { shield, maxShield };
+}
+
+/**
+ * Hull (bottom) + optional shield (top) bars above a ship.
+ * When alwaysShow is false, bars only appear if hull or shields are not full.
+ */
+function drawStatusBars(ctx, x, y, r, {
+  hp = 1,
+  maxHp = 1,
+  shield = 0,
+  maxShield = 0,
+  alwaysShow = false,
+} = {}) {
+  if (maxHp <= 0) return;
+  const showShield = maxShield > 0;
+  const hpPct = Math.max(0, Math.min(1, hp / maxHp));
+  const shieldPct = showShield ? Math.max(0, Math.min(1, shield / maxShield)) : 0;
+  if (!alwaysShow && hpPct >= 1 && (!showShield || shieldPct >= 1)) return;
+
+  const barW = Math.max(18, r * 3.2);
+  const barH = 4;
+  const gap = 2;
+  const stackH = showShield ? barH * 2 + gap : barH;
+  let barY = y - r - 8 - stackH;
+
+  const drawTrack = (pct, fill) => {
+    ctx.fillStyle = 'rgba(4, 8, 16, 0.82)';
+    ctx.fillRect(x - barW / 2, barY, barW, barH);
+    if (pct > 0) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(x - barW / 2, barY, Math.max(1.5, barW * pct), barH);
+    }
+    ctx.strokeStyle = 'rgba(220, 235, 255, 0.32)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - barW / 2 + 0.5, barY + 0.5, barW - 1, barH - 1);
+    barY += barH + gap;
+  };
+
+  if (showShield) {
+    drawTrack(shieldPct, THEME.accentCyan);
+  }
+  drawTrack(hpPct, hpPct > 0.35 ? THEME.accentGreen : THEME.danger);
+}
+
 function drawHpBar(ctx, x, y, r, hp, maxHp) {
-  if (maxHp <= 0 || hp >= maxHp) return;
-  const barW = r * 2.8;
-  const pct = hp / maxHp;
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(x - barW / 2, y - r - 10, barW, 4);
-  ctx.fillStyle = pct > 0.35 ? THEME.accentGreen : THEME.danger;
-  ctx.fillRect(x - barW / 2, y - r - 10, barW * pct, 4);
+  drawStatusBars(ctx, x, y, r, { hp, maxHp, alwaysShow: false });
 }
 
 /** Lengthwise metallic gradient: dark tail, lit nose. */
@@ -112,12 +171,14 @@ const ANIMATED_HULLS = new Set([
   'healer', 'sensor_ship', 'miner',
 ]);
 
-const HULL_CACHE_MAX = 48;
-/** @type {Map<string, { canvas: HTMLCanvasElement, half: number }>} */
+const HULL_CACHE_MAX = 64;
+/** @type {Map<string, { canvas: HTMLCanvasElement, half: number, r: number }>} */
 const hullBitmapCache = new Map();
 
 function cacheHullBitmap(hull, side, r) {
-  const rKey = Math.max(4, Math.round(r));
+  // Half-pixel buckets so small fighters can shrink/grow with zoom instead of
+  // flooring to a fixed 4px screen size across most of the zoom range.
+  const rKey = Math.max(1.5, Math.round(r * 2) / 2);
   const key = `${hull}:${side}:${rKey}`;
   const existing = hullBitmapCache.get(key);
   if (existing) {
@@ -127,7 +188,7 @@ function cacheHullBitmap(hull, side, r) {
   }
 
   const pad = rKey * 2.4;
-  const size = Math.ceil(rKey * 4 + pad * 2);
+  const size = Math.max(8, Math.ceil(rKey * 4 + pad * 2));
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -135,7 +196,7 @@ function cacheHullBitmap(hull, side, r) {
   c.translate(size / 2, size / 2);
   drawHullShape(c, hull, rKey, hullColors(hull, side), 0);
 
-  const entry = { canvas, half: size / 2 };
+  const entry = { canvas, half: size / 2, r: rKey };
   if (hullBitmapCache.size >= HULL_CACHE_MAX) {
     const oldest = hullBitmapCache.keys().next().value;
     hullBitmapCache.delete(oldest);
@@ -154,6 +215,7 @@ export function drawFlagshipModel(ctx, r, opts = {}) {
     time = performance.now(),
     side = 'player',
     hpFraction = 1,
+    hardpointFireAt = null,
   } = opts;
   const c = hullColors('flagship', side);
   const flicker = 0.8 + 0.2 * Math.sin(time / 42);
@@ -291,16 +353,31 @@ export function drawFlagshipModel(ctx, r, opts = {}) {
   ctx.stroke();
   ctx.restore();
 
-  // Visible point-defense and capital batteries.
-  for (const [x, y, scale] of [[0.95, 0.24, 1], [0.22, 0.4, 0.8], [-0.62, 0.36, 0.75], [0.68, -0.36, 0.85], [-0.5, -0.44, 0.7]]) {
+  // Visible point-defense and capital batteries — pulse when hardpoints fire.
+  const batterySlots = [
+    { x: 0.95, y: 0.24, scale: 1, ids: ['primary_lance', 'prow_torpedo'] },
+    { x: 0.22, y: 0.4, scale: 0.8, ids: ['broadside_starboard', 'pd_grid_fore'] },
+    { x: -0.62, y: 0.36, scale: 0.75, ids: ['pd_grid_aft', 'ion_array'] },
+    { x: 0.68, y: -0.36, scale: 0.85, ids: ['broadside_port'] },
+    { x: -0.5, y: -0.44, scale: 0.7, ids: ['ion_array'] },
+  ];
+  for (const bat of batterySlots) {
+    let pulse = 0.35;
+    if (hardpointFireAt) {
+      for (const id of bat.ids) {
+        const at = hardpointFireAt[id];
+        if (at != null) pulse = Math.max(pulse, Math.max(0, 1 - (time - at) / 280));
+      }
+    }
     ctx.fillStyle = '#050910';
     ctx.beginPath();
-    ctx.arc(x * r, y * r, r * 0.09 * scale, 0, Math.PI * 2);
+    ctx.arc(bat.x * r, bat.y * r, r * 0.09 * bat.scale, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(214, 226, 236, 0.4)';
+    glowDot(ctx, bat.x * r, bat.y * r, r * 0.055 * bat.scale, pulse > 0.5 ? '#9ef0ff' : c.glow, 0.35 + pulse * 0.65);
+    ctx.strokeStyle = hexToRgba('#e9f5ff', 0.35 + pulse * 0.45);
     ctx.beginPath();
-    ctx.moveTo((x - 0.01) * r, y * r);
-    ctx.lineTo((x + 0.2 * scale) * r, y * r);
+    ctx.moveTo((bat.x - 0.01) * r, bat.y * r);
+    ctx.lineTo((bat.x + 0.2 * bat.scale) * r, bat.y * r);
     ctx.stroke();
   }
 
@@ -977,7 +1054,10 @@ export function drawHullSprite(ctx, x, y, hull, baseR, opts = {}) {
     side = 'player',
     hp = 1,
     maxHp = 1,
+    shield = 0,
+    maxShield = 0,
     showHp = true,
+    alwaysShowBars = false,
   } = opts;
 
   const scale = hullRenderScale(hull);
@@ -992,11 +1072,18 @@ export function drawHullSprite(ctx, x, y, hull, baseR, opts = {}) {
     drawHullShape(ctx, hull, r, colors, time);
   } else {
     const cached = cacheHullBitmap(hull, side, r);
-    ctx.drawImage(cached.canvas, -cached.half, -cached.half);
+    // Scale bucket bitmap to the exact requested radius so zoom is continuous.
+    const s = cached.r > 0 ? r / cached.r : 1;
+    const half = cached.half * s;
+    ctx.drawImage(cached.canvas, -half, -half, cached.canvas.width * s, cached.canvas.height * s);
   }
   ctx.restore();
 
-  if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);
+  if (showHp) {
+    drawStatusBars(ctx, x, y, r, {
+      hp, maxHp, shield, maxShield, alwaysShow: alwaysShowBars,
+    });
+  }
 }
 
 /** Fast tactical marker for large battles. Avoids shadows, gradients, and cached bitmap lookups. */
@@ -1006,7 +1093,10 @@ export function drawHullSpriteLite(ctx, x, y, hull, baseR, opts = {}) {
     side = 'player',
     hp = 1,
     maxHp = 1,
+    shield = 0,
+    maxShield = 0,
     showHp = false,
+    alwaysShowBars = false,
     alpha = 1,
   } = opts;
   const scale = hullRenderScale(hull);
@@ -1052,18 +1142,23 @@ export function drawHullSpriteLite(ctx, x, y, hull, baseR, opts = {}) {
   }
 
   ctx.restore();
-  if (showHp) drawHpBar(ctx, x, y, r, hp, maxHp);
+  if (showHp) {
+    drawStatusBars(ctx, x, y, r, {
+      hp, maxHp, shield, maxShield, alwaysShow: alwaysShowBars,
+    });
+  }
 }
 
 /** Flagship sprite at a screen position/heading (system + galaxy views). */
-export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting, hp = 1, maxHp = 1) {
+export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting, hp = 1, maxHp = 1, opts = {}) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
   drawFlagshipModel(ctx, r, {
     thrusting,
-    time: performance.now(),
+    time: opts.time ?? performance.now(),
     hpFraction: maxHp > 0 ? Math.max(0, hp / maxHp) : 1,
+    hardpointFireAt: opts.hardpointFireAt ?? null,
   });
   ctx.restore();
 }
@@ -1076,7 +1171,7 @@ export function drawHeroFlagshipSprite(ctx, x, y, heading, r, hp = 1, maxHp = 1)
   ctx.rotate(heading);
   drawHeroFlagshipModel(ctx, r, colors, performance.now());
   ctx.restore();
-  drawHpBar(ctx, x, y, r, hp, maxHp);
+  drawStatusBars(ctx, x, y, r, { hp, maxHp, alwaysShow: false });
 }
 
 /** Whisper-ship shuttle sprite. */

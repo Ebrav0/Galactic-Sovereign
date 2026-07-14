@@ -8,7 +8,7 @@ import {
   DIPLOMACY_TRADE_INCOME_BONUS,
 } from './constants.js';
 import { refreshMilestones } from './milestones.js';
-import { isTechUnlocked } from './tech-web.js';
+import { isTechUnlocked, techEffects } from './tech-web.js';
 import { empireStructureEffectValue } from './body-structures.js';
 
 export const RELATION_WAR = 'war';
@@ -155,11 +155,12 @@ export function diplomaticTradeBonus(state) {
   if (isTechUnlocked(state, 'dip_embassy_network')) {
     bonus += DIPLOMACY_TRADE_INCOME_BONUS;
   }
-  const treatyEffectMultiplier = empireStructureEffectValue(state, 'treatyEffectMult', {
+  const structureTreatyMult = empireStructureEffectValue(state, 'treatyEffectMult', {
     base: 1,
     op: 'mult',
   });
-  return 1 + bonus * treatyEffectMultiplier;
+  const techTreatyMult = techEffects(state).treatyEffectMult ?? 1;
+  return 1 + bonus * structureTreatyMult * techTreatyMult;
 }
 
 export function triggerSuperweaponPanic(state) {

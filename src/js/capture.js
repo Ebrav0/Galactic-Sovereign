@@ -50,7 +50,7 @@ export function captureForceInSystem(state, systemId) {
   const f = state.flagship;
   if (f.systemId === systemId && !f.transit && !f.wormholeTransit
       && f.galaxyId === state.activeGalaxyId) {
-    force += CAPTURE_FLAGSHIP_FORCE;
+    force += CAPTURE_FLAGSHIP_FORCE * (techEffects(state).flagshipCommandMult ?? 1);
   }
   for (const hero of heroesInSystem(state, systemId)) {
     if (state.time >= (hero.buildCompleteAt ?? 0)) {

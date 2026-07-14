@@ -21,7 +21,7 @@ import {
   structureLevel,
   upgradeBodyStructure,
 } from '../src/js/body-structures.js';
-import { OUTPOST_PASSIVE_INCOME, SAVE_VERSION } from '../src/js/constants.js';
+import { OUTPOST_BASE_INCOME, SAVE_VERSION } from '../src/js/constants.js';
 import { outpostSurfaceSites } from '../src/js/surface-structures.js';
 import { SURFACE_BUILDING_VISUAL_TYPES } from '../src/js/surface-structures-render.js';
 import { starNodeStructureSites, structureSites } from '../src/js/structure-sites.js';
@@ -95,8 +95,8 @@ systems.ai_home.structures.push({
   id: 'outpost-ai', type: 'outpost', bodyId: 'p1', level: 1, hp: 200, maxHp: 200, factionId: 'f-economic',
 });
 
-check('1. save version is 13', SAVE_VERSION === 13, `SAVE_VERSION=${SAVE_VERSION}`);
-check('2. passive outpost constant is exactly 40', OUTPOST_PASSIVE_INCOME === 40);
+check('1. save version is current', SAVE_VERSION >= 13, `SAVE_VERSION=${SAVE_VERSION}`);
+check('2. outpost base income constant is progressive base (10)', OUTPOST_BASE_INCOME === 10);
 check('3. exactly 15 new structure IDs', NEW_BODY_STRUCTURE_TYPES.length === 15
   && new Set(NEW_BODY_STRUCTURE_TYPES).size === 15);
 check('4. all 15 definitions are registered', NEW_BODY_STRUCTURE_TYPES.every((type) => BODY_STRUCTURE_DEFS[type]));

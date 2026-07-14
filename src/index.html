@@ -118,8 +118,6 @@
       </div>
     </header>
 
-    <section id="tutorial-guide" class="tutorial-guide hidden" aria-live="polite" aria-label="Tutorial guidance"></section>
-
     <aside id="left-rail" class="hud-rail hud-rail--left">
       <div id="fleet-panel" class="panel hidden">
         <div class="panel__header">
@@ -316,7 +314,48 @@
       </div>
     </footer>
 
+    <div id="combat-hud" class="combat-hud hidden" aria-label="Combat interface">
+      <div class="combat-hud__top">
+        <div class="combat-hud__identity">
+          <span class="combat-hud__badge">Combat</span>
+          <span id="combat-hud-system" class="combat-hud__system">—</span>
+          <span id="combat-hud-elapsed" class="combat-hud__elapsed">0s</span>
+        </div>
+        <div class="combat-hud__counts">
+          <span id="combat-hud-friendly" class="combat-hud__count combat-hud__count--friendly">0</span>
+          <span class="combat-hud__vs">vs</span>
+          <span id="combat-hud-hostile" class="combat-hud__count combat-hud__count--hostile">0</span>
+        </div>
+        <div class="combat-hud__chrome">
+          <button id="combat-hud-pause" type="button" class="btn btn--ghost btn--xs">Pause</button>
+          <button id="combat-hud-galaxy" type="button" class="btn btn--ghost btn--xs">Galaxy (M)</button>
+        </div>
+      </div>
+      <div class="combat-hud__left">
+        <div class="combat-hud__section-title">Selection</div>
+        <div id="combat-hud-selection" class="combat-hud__selection">
+          <p class="combat-hud__empty">Click friendlies to select · Shift multi-select · click enemy to focus fire</p>
+        </div>
+      </div>
+      <div class="combat-hud__right">
+        <div class="combat-hud__section-title">Doctrine</div>
+        <div id="combat-hud-doctrine" class="combat-hud__doctrine"></div>
+        <div class="combat-hud__section-title">Orders</div>
+        <div class="combat-hud__actions">
+          <button id="combat-hud-hold" type="button" class="btn btn--ghost btn--xs">Hold</button>
+          <button id="combat-hud-rally" type="button" class="btn btn--ghost btn--xs">Rally</button>
+          <button id="combat-hud-retreat" type="button" class="btn btn--danger btn--xs">Retreat</button>
+        </div>
+        <div id="combat-hud-formation" class="combat-hud__formation">Formation: —</div>
+      </div>
+      <div class="combat-hud__bottom">
+        <div id="combat-hud-chips" class="combat-hud__chips"></div>
+        <div id="combat-hud-focus" class="combat-hud__focus">Focus: —</div>
+      </div>
+    </div>
+
     <div id="hud-overlays">
+      <div id="tutorial-coach" class="tutorial-coach hidden" aria-live="polite" aria-label="Tutorial tip"></div>
       <div id="title-screen" class="title-screen">
         <div class="title-screen__bar title-screen__bar--top" aria-hidden="true"></div>
         <div class="title-screen__center">
@@ -430,13 +469,20 @@
           <div id="dev-context" class="dev-context">—</div>
           <div id="dev-status" class="dev-status dev-status--muted">Ready</div>
 
-          <details class="dev-section" open>
+          <details class="dev-section">
             <summary class="dev-section__title">Cheats</summary>
             <div class="dev-section__body">
               <div class="dev-row">
                 <button id="dev-grant-1k" type="button" class="btn btn--ghost btn--sm">+1k cr</button>
                 <button id="dev-grant-10k" type="button" class="btn btn--ghost btn--sm">+10k cr</button>
+                <button id="dev-grant-100k" type="button" class="btn btn--ghost btn--sm">+100k cr</button>
                 <button id="dev-grant-solarii" type="button" class="btn btn--ghost btn--sm">+100 Solarii</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-grant-cargo" type="button" class="btn btn--ghost btn--sm">+100 Cargo All</button>
+                <button id="dev-grant-cargo-raw" type="button" class="btn btn--ghost btn--sm">+100 Raw</button>
+                <button id="dev-grant-cargo-fuel" type="button" class="btn btn--ghost btn--sm">+100 Fuel</button>
+                <button id="dev-grant-cargo-goods" type="button" class="btn btn--ghost btn--sm">+100 Goods</button>
               </div>
               <div class="dev-row">
                 <button id="dev-unlock-solarii" type="button" class="btn btn--ghost btn--sm">Unlock Solarii</button>
@@ -450,20 +496,95 @@
               <div class="dev-row">
                 <button id="dev-advance-60" type="button" class="btn btn--ghost btn--sm">+60s</button>
                 <button id="dev-advance-300" type="button" class="btn btn--ghost btn--sm">+300s</button>
-                <button id="dev-force-shell" type="button" class="btn btn--ghost btn--sm">Complete Shell</button>
-              </div>
-              <div class="dev-row">
-                <label class="dev-label" for="dev-stance-select">Stance</label>
-                <select id="dev-stance-select" class="dev-select">
-                  <option value="balanced">balanced</option>
-                  <option value="aggressive">aggressive</option>
-                  <option value="defensive">defensive</option>
-                </select>
               </div>
             </div>
           </details>
 
           <details class="dev-section" open>
+            <summary class="dev-section__title">Quick Spawn</summary>
+            <div class="dev-section__body">
+              <div class="dev-row dev-row--presets">
+                <button id="dev-preset-scout-wing" type="button" class="btn btn--ghost btn--sm" data-preset="scout_wing">Scout Wing</button>
+                <button id="dev-preset-battle-fleet" type="button" class="btn btn--primary btn--sm" data-preset="battle_fleet">Battle Fleet</button>
+                <button id="dev-preset-carrier-group" type="button" class="btn btn--ghost btn--sm" data-preset="carrier_group">Carrier Group</button>
+                <button id="dev-preset-logistics" type="button" class="btn btn--ghost btn--sm" data-preset="logistics_convoy">Logistics Convoy</button>
+              </div>
+              <div class="dev-row">
+                <label class="dev-label" for="dev-friendly-hull">Hull</label>
+                <select id="dev-friendly-hull" class="dev-select dev-select--wide"></select>
+                <label class="dev-label" for="dev-spawn-count">Count</label>
+                <input id="dev-spawn-count" type="number" class="dev-input" min="1" max="50" step="1" value="1" />
+              </div>
+              <div class="dev-row">
+                <button id="dev-spawn-friendly" type="button" class="btn btn--primary btn--sm">Spawn Friendly</button>
+                <button id="dev-spawn-ai" type="button" class="btn btn--ghost btn--sm">Spawn AI</button>
+                <button id="dev-spawn-scouts" type="button" class="btn btn--ghost btn--sm">Spawn Scouts</button>
+                <button id="dev-spawn-hero" type="button" class="btn btn--ghost btn--sm">Spawn Hero</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-spawn-enemy-small" type="button" class="btn btn--ghost btn--sm">Pirate Small</button>
+                <button id="dev-spawn-enemy-medium" type="button" class="btn btn--ghost btn--sm">Pirate Medium</button>
+                <button id="dev-spawn-enemy-large" type="button" class="btn btn--ghost btn--sm">Pirate Large</button>
+                <button id="dev-teleport-pirate" type="button" class="btn btn--ghost btn--sm">Teleport Pirate</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Buildings</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-build-outpost" type="button" class="btn btn--primary btn--sm">Outpost</button>
+                <button id="dev-build-shipyard" type="button" class="btn btn--primary btn--sm">Shipyard</button>
+                <button id="dev-build-foundry" type="button" class="btn btn--ghost btn--sm">Sail Foundry</button>
+                <button id="dev-build-launcher" type="button" class="btn btn--ghost btn--sm">Dyson Launcher</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-build-research" type="button" class="btn btn--ghost btn--sm">Research Station</button>
+                <button id="dev-build-trade" type="button" class="btn btn--ghost btn--sm">Trade Station</button>
+                <button id="dev-deploy-drone" type="button" class="btn btn--ghost btn--sm">Deploy Builder Drone</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-planet-kit" type="button" class="btn btn--ghost btn--sm">Planet Kit</button>
+                <button id="dev-system-kit" type="button" class="btn btn--ghost btn--sm">System Kit</button>
+                <button id="dev-empire-kit" type="button" class="btn btn--ghost btn--sm">Empire Kit</button>
+                <button id="dev-dyson-kit" type="button" class="btn btn--ghost btn--sm">Dyson Kit</button>
+              </div>
+              <div class="dev-row">
+                <label class="dev-label" for="dev-body-structure-select">Body structure</label>
+                <select id="dev-body-structure-select" class="dev-select dev-select--wide"></select>
+                <button id="dev-build-body-structure" type="button" class="btn btn--ghost btn--sm">Force Build</button>
+              </div>
+              <div class="dev-row">
+                <label class="dev-label" for="dev-strategic-structure-select">Strategic</label>
+                <select id="dev-strategic-structure-select" class="dev-select dev-select--wide"></select>
+                <button id="dev-build-strategic-structure" type="button" class="btn btn--ghost btn--sm">Force Build</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-instant-spawn" type="button" class="btn btn--ghost btn--sm">Instant Shipyard Spawn</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Dyson &amp; Superweapon</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-shell-plus-10" type="button" class="btn btn--ghost btn--sm">+10 Sails</button>
+                <button id="dev-force-shell" type="button" class="btn btn--primary btn--sm">Complete Shell</button>
+                <button id="dev-set-dysons-1" type="button" class="btn btn--ghost btn--sm">1 Completed Dyson</button>
+                <button id="dev-set-dysons-3" type="button" class="btn btn--ghost btn--sm">3 Completed Dysons</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-build-cradle" type="button" class="btn btn--ghost btn--sm">Build Cradle</button>
+                <button id="dev-sw-create" type="button" class="btn btn--ghost btn--sm">SW Create</button>
+                <button id="dev-sw-destroy" type="button" class="btn btn--ghost btn--sm">SW Destroy</button>
+                <button id="dev-sw-jump" type="button" class="btn btn--ghost btn--sm">SW Jump</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section">
             <summary class="dev-section__title">Empire &amp; Tech</summary>
             <div class="dev-section__body">
               <div class="dev-row">
@@ -478,47 +599,27 @@
             </div>
           </details>
 
-          <details class="dev-section" open>
-            <summary class="dev-section__title">Autobuild</summary>
+          <details class="dev-section">
+            <summary class="dev-section__title">Combat</summary>
             <div class="dev-section__body">
               <div class="dev-row">
-                <button id="dev-build-outpost" type="button" class="btn btn--primary btn--sm">Outpost</button>
-                <button id="dev-build-shipyard" type="button" class="btn btn--primary btn--sm">Shipyard</button>
-                <button id="dev-build-foundry" type="button" class="btn btn--ghost btn--sm">Sail Foundry</button>
-                <button id="dev-build-launcher" type="button" class="btn btn--ghost btn--sm">Dyson Launcher</button>
+                <label class="dev-label" for="dev-stance-select">Stance</label>
+                <select id="dev-stance-select" class="dev-select">
+                  <option value="balanced">balanced</option>
+                  <option value="aggressive">aggressive</option>
+                  <option value="defensive">defensive</option>
+                </select>
+                <label class="dev-label" for="dev-doctrine-select">Doctrine</label>
+                <select id="dev-doctrine-select" class="dev-select">
+                  <option value="assault">assault</option>
+                  <option value="screen">screen</option>
+                  <option value="carrier_strike">carrier_strike</option>
+                  <option value="hold_the_line">hold_the_line</option>
+                </select>
               </div>
               <div class="dev-row">
-                <button id="dev-build-research" type="button" class="btn btn--ghost btn--sm">Research Station</button>
-                <button id="dev-build-trade" type="button" class="btn btn--ghost btn--sm">Trade Station</button>
-              </div>
-              <div class="dev-row">
-                <button id="dev-planet-kit" type="button" class="btn btn--ghost btn--sm">Planet Kit</button>
-                <button id="dev-system-kit" type="button" class="btn btn--ghost btn--sm">System Kit</button>
-                <button id="dev-empire-kit" type="button" class="btn btn--ghost btn--sm">Empire Kit</button>
-                <button id="dev-dyson-kit" type="button" class="btn btn--ghost btn--sm">Dyson Kit</button>
-              </div>
-              <div class="dev-row">
-                <button id="dev-instant-spawn" type="button" class="btn btn--ghost btn--sm">Instant Shipyard Spawn</button>
-              </div>
-            </div>
-          </details>
-
-          <details class="dev-section" open>
-            <summary class="dev-section__title">Spawn Ships</summary>
-            <div class="dev-section__body">
-              <div class="dev-row">
-                <label class="dev-label" for="dev-friendly-hull">Hull</label>
-                <select id="dev-friendly-hull" class="dev-select dev-select--wide"></select>
-                <label class="dev-label" for="dev-spawn-count">Count</label>
-                <input id="dev-spawn-count" type="number" class="dev-input" min="1" max="20" step="1" value="1" />
-              </div>
-              <div class="dev-row">
-                <button id="dev-spawn-friendly" type="button" class="btn btn--primary btn--sm">Spawn Friendly</button>
-                <button id="dev-spawn-scouts" type="button" class="btn btn--ghost btn--sm">Spawn Scouts</button>
-              </div>
-              <div class="dev-row">
-                <button id="dev-spawn-enemy" type="button" class="btn btn--ghost btn--sm">Spawn Pirate Fleet</button>
-                <button id="dev-teleport-pirate" type="button" class="btn btn--ghost btn--sm">Teleport Pirate Here</button>
+                <button id="dev-heal-flagship" type="button" class="btn btn--ghost btn--sm">Heal Flagship</button>
+                <button id="dev-heal-ships" type="button" class="btn btn--ghost btn--sm">Heal Ships Here</button>
               </div>
             </div>
           </details>

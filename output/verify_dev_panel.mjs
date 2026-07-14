@@ -75,6 +75,55 @@ check('enemy ship count > 0',
 // --- Battle trigger ---
 check('battle active after spawns', s.battle?.active === true, JSON.stringify(s.battle));
 
+// --- Positive: fleet preset ---
+const shipsBeforePreset = s.playerShips?.length ?? 0;
+res = await devAction('spawnFleetPreset', { presetId: 'battle_fleet' });
+check('fleet preset ok', res.ok === true, res.reason);
+s = await text();
+check('fleet preset spawned ships', (s.playerShips?.length ?? 0) > shipsBeforePreset,
+  `before=${shipsBeforePreset} after=${s.playerShips?.length}`);
+
+// --- Positive: grant cargo ---
+res = await devAction('grantCargo', { rawMaterials: 50, fuel: 25, manufacturedGoods: 10 });
+check('grant cargo ok', res.ok === true, res.reason);
+check('grant cargo has depot', !!res.details?.depotId, JSON.stringify(res.details));
+
+// --- Positive: body + strategic structures ---
+res = await devAction('forceBuildBodyStructure', { type: 'mining_complex', bodyId: habitable.id, planetId: habitable.id });
+check('force body structure ok', res.ok === true, res.reason ?? JSON.stringify(res.details));
+s = await text();
+check('mining complex present', s.structures.some((st) => st.type === 'mining_complex' && st.bodyId === habitable.id));
+
+res = await devAction('forceBuildStrategicStructure', { type: 'supply_cache', planetId: habitable.id });
+check('force strategic structure ok', res.ok === true, res.reason ?? JSON.stringify(res.details));
+s = await text();
+check('supply cache present', s.structures.some((st) => st.type === 'supply_cache'));
+
+// --- Positive: milestones + cradle ---
+res = await devAction('setCompletedDysons', { count: 3 });
+check('setCompletedDysons ok', res.ok === true, res.reason);
+check('superweapon milestone unlocked', res.details?.superweaponUnlocked === true, JSON.stringify(res.details));
+
+res = await devAction('buildSuperweaponCradle', {});
+check('build cradle ok', res.ok === true, res.reason ?? JSON.stringify(res.details));
+
+// --- Positive: hero spawn ---
+res = await devAction('spawnHeroFlagship', {});
+check('spawn hero ok', res.ok === true, res.reason);
+
+// --- Positive: heal flagship ---
+await page.evaluate(() => {
+  const st = window.getGameState();
+  if (st.flagship) st.flagship.hp = Math.max(1, Math.floor((st.flagship.maxHp ?? 100) / 2));
+});
+res = await devAction('healFlagship', {});
+check('heal flagship ok', res.ok === true, res.reason);
+check('flagship full hp', res.details?.after === res.details?.maxHp, JSON.stringify(res.details));
+
+// --- Positive: higher spawn count ---
+res = await devAction('spawnFriendly', { hull: 'corvette', count: 25 });
+check('spawn count 25 ok', res.ok === true, res.reason);
+
 // --- Negative: invalid system ---
 res = await devAction('revealIntel', { systemId: 'nope' });
 check('invalid system rejected', res.ok === false && res.code === 'INVALID_SYSTEM', res.code);
@@ -86,6 +135,9 @@ check('invalid hull rejected', res.ok === false && res.code === 'INVALID_HULL', 
 // --- Negative: invalid count ---
 res = await devAction('spawnFriendly', { hull: 'corvette', count: 0 });
 check('count zero rejected', res.ok === false && res.code === 'INVALID_COUNT', res.code);
+
+res = await devAction('spawnFriendly', { hull: 'corvette', count: 51 });
+check('count 51 rejected', res.ok === false && res.code === 'INVALID_COUNT', res.code);
 
 // --- Negative: force capture on owned system ---
 res = await devAction('forceCapture', { systemId: s.strongholdSystem });
