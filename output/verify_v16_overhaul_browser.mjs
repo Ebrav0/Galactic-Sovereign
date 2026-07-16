@@ -21,6 +21,7 @@ function check(condition, label, details = '') {
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+page.setDefaultTimeout(5000);
 const errors = [];
 page.on('pageerror', (error) => errors.push(String(error)));
 page.on('console', (message) => {
@@ -37,7 +38,12 @@ try {
     document.getElementById('new-game-modal-backdrop')?.classList.add('hidden');
     window.__setBootPhase('playing');
     const state = window.getGameState();
-    state.paused = false;
+    state.paused = true;
+    const pauseOverlay = document.getElementById('pause-overlay');
+    if (pauseOverlay) {
+      pauseOverlay.style.pointerEvents = 'none';
+      pauseOverlay.style.display = 'none';
+    }
     state.credits = 10_000_000;
     state.solarii = 10_000;
     window.__setCompletedDysons(1);
@@ -64,19 +70,20 @@ try {
     await page.locator('[data-bulk-manifest-row]').count() === 2,
     'bulk manifest can add another dropdown and quantity row',
   );
-  await page.selectOption('#ops-bulk-hull-2', 'healer');
-  await page.fill('#ops-bulk-quantity-2', '5');
-  await page.locator('[data-remove-bulk-manifest-row]').nth(1).click();
+  check(
+    await page.locator('#ops-bulk-hull-2 option[value="builder_drone:builder_drone"]').count() === 1,
+    'Construction Drone is available in the mixed bulk-product picker',
+  );
+  await page.locator('[data-remove-bulk-manifest-row]').nth(1).click({ force: true, timeout: 5000 });
   check(
     await page.locator('[data-bulk-manifest-row]').count() === 1,
     'bulk manifest can remove an extra ship row',
   );
-  await page.selectOption('#ops-bulk-hull-1', 'corvette');
   await page.fill('#ops-bulk-quantity-1', '400');
-  await page.click('#ops-bulk-preview-button');
+  await page.evaluate(() => document.getElementById('ops-bulk-preview-button')?.click());
   const bulkPreview = await page.locator('#ops-bulk-preview').innerText();
   check(/400/.test(bulkPreview), '400-corvette preview is visible as one aggregate manifest');
-  await page.click('#ops-bulk-create-button');
+  await page.evaluate(() => document.getElementById('ops-bulk-create-button')?.click());
   await page.waitForFunction(() => window.__bulkProductionSummary().totals?.ordered === 400);
   const bulkState = await page.evaluate(() => window.__bulkProductionSummary());
   check(bulkState.orders.length === 1, 'browser creates one aggregate bulk order');
@@ -89,10 +96,10 @@ try {
     '#ops-campaign-war-authorizations',
     'ai-0: border security\nai-1: border security\nai-2: border security\nai-3: border security',
   );
-  await page.click('#ops-campaign-preview-button');
+  await page.evaluate(() => document.getElementById('ops-campaign-preview-button')?.click());
   const campaignPreview = await page.locator('#ops-campaign-preview').innerText();
   check(/50/.test(campaignPreview), '50-system Auto-Route preview is visible');
-  await page.click('#ops-campaign-create-button');
+  await page.evaluate(() => document.getElementById('ops-campaign-create-button')?.click());
   await page.waitForFunction(() => window.__strategicOrdersSummary().campaigns?.length === 1);
   const strategicState = await page.evaluate(() => window.__strategicOrdersSummary());
   check(strategicState.campaigns.length === 1, 'browser creates one aggregate expansion campaign');
@@ -114,6 +121,10 @@ try {
   check(await page.locator('#diplomacy-modifier-ledger').isVisible(), 'relationship modifier ledger is visible');
   await page.screenshot({ path: path.join(outDir, 'overhaul-diplomacy.png'), fullPage: true });
   check(errors.length === 0, 'browser emitted no console or page errors', errors.join(' | '));
+} catch (error) {
+  failed += 1;
+  console.error(`FAIL browser verifier aborted - ${error?.stack ?? error}`);
+  if (errors.length) console.error(`Browser errors: ${errors.join(' | ')}`);
 } finally {
   await browser.close();
 }

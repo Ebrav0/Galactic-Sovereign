@@ -2,7 +2,7 @@
 
 import { CELESTIAL_VISUAL_SCALE } from './constants.js';
 import { hashSeed } from './state.js';
-import { getStarVisualProfile, starGpuUniforms } from './star-types.js';
+import { getStarVisualProfile, stellarRenderParameters, starGpuUniforms } from './star-types.js';
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -60,6 +60,27 @@ function drawLensSpikes(ctx, x, y, r, color, count, rot) {
     ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
     ctx.stroke();
   }
+  ctx.restore();
+}
+
+function drawCinematicOptics(ctx, x, y, r, profile, time, compact = false) {
+  const chromatic = Math.max(0.5, profile.chromaticStrength ?? 1);
+  const rotation = (time * profile.rotationSpeed * 18) % (Math.PI * 2);
+  drawLensSpikes(ctx, x, y, r, profile.coronaColor, compact ? 4 : 6, rotation);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const haloR = r * (compact ? 1.28 : 1.34);
+  const haloAlpha = Math.min(0.24, 0.055 + chromatic * 0.05);
+  ctx.lineWidth = Math.max(0.65, r * (compact ? 0.035 : 0.018));
+  ctx.strokeStyle = `rgba(102, 202, 255, ${haloAlpha})`;
+  ctx.beginPath();
+  ctx.ellipse(x - r * 0.018 * chromatic, y, haloR, haloR * 0.98, rotation * 0.12, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(255, 114, 74, ${haloAlpha * 0.72})`;
+  ctx.beginPath();
+  ctx.ellipse(x + r * 0.018 * chromatic, y, haloR * 1.015, haloR, -rotation * 0.1, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -272,15 +293,14 @@ function drawStarCore(ctx, x, y, r, profile, color, intel) {
 
 function drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng) {
   drawStarBloom(ctx, x, y, r, profile, color, time, intel, true);
+  if (intel) drawCinematicOptics(ctx, x, y, r, profile, time, true);
   drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
   if (intel) drawCoronaArcs(ctx, x, y, r, profile.coronaColor, time, rng, 2, 5200);
 }
 
 function drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed) {
   drawStarBloom(ctx, x, y, r, profile, color, time, intel, false);
-  if (intel && hasFeature(profile, 'lensSpikes')) {
-    drawLensSpikes(ctx, x, y, r, profile.coronaColor, 8, (time * profile.rotationSpeed * 40) % (Math.PI * 2));
-  }
+  if (intel) drawCinematicOptics(ctx, x, y, r, profile, time, false);
   drawStarCore(ctx, x, y, r, profile, intel ? color : '#505868', intel);
   if (intel && hasFeature(profile, 'granulation')) {
     drawGranulation(ctx, x, y, r, seed, time, color, profile.rotationSpeed * 50);
@@ -303,11 +323,295 @@ function drawStarSystemFull(ctx, x, y, r, profile, color, time, intel, rng, seed
   }
 }
 
+function drawBinaryFallback(ctx, x, y, r, profile, star, time, intel, compact) {
+  const params = stellarRenderParameters(star, profile);
+  const phase = time * 0.001 * params.orbitSpeed + params.orbitPhase;
+  const sep = r * params.separation * (compact ? 0.74 : 1);
+  const dx = Math.cos(phase) * sep;
+  const dy = Math.sin(phase) * sep * params.axisCompression;
+  const r1 = r * (compact ? 0.72 : 0.67);
+  const r2 = r1 * params.companionScale;
+  drawStarBloom(ctx, x - dx * 0.62, y - dy * 0.62, r2, profile, params.companionColor, time, intel, compact);
+  drawStarCore(ctx, x - dx * 0.62, y - dy * 0.62, r2, profile, intel ? params.companionColor : '#505868', intel);
+  drawStarBloom(ctx, x + dx * 0.48, y + dy * 0.48, r1, profile, star.color ?? profile.color, time, intel, compact);
+  drawStarCore(ctx, x + dx * 0.48, y + dy * 0.48, r1, profile, intel ? (star.color ?? profile.color) : '#505868', intel);
+  if (!intel) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = hexToRgba(profile.coronaColor, 0.3);
+  ctx.shadowColor = profile.coronaColor;
+  ctx.shadowBlur = r * 0.35;
+  ctx.lineWidth = Math.max(1, r * 0.055);
+  ctx.beginPath();
+  ctx.moveTo(x - dx * 0.4, y - dy * 0.4);
+  ctx.lineTo(x + dx * 0.3, y + dy * 0.3);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSupergiantFallback(ctx, x, y, r, profile, star, time, intel, seed, compact) {
+  const rng = seededRng(seed);
+  const points = compact ? 28 : 54;
+  ctx.save();
+  const glow = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 4.2);
+  glow.addColorStop(0, hexToRgba(profile.coronaColor, intel ? 0.3 : 0.08));
+  glow.addColorStop(1, hexToRgba(profile.coronaColor, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 4.2, 0, Math.PI * 2);
+  ctx.fill();
+  const surface = ctx.createRadialGradient(x - r * 0.25, y - r * 0.2, r * 0.08, x, y, r * 1.1);
+  surface.addColorStop(0, intel ? '#fff2d6' : '#737987');
+  surface.addColorStop(0.46, intel ? (star.color ?? profile.color) : '#505868');
+  surface.addColorStop(1, intel ? profile.secondaryColor : '#303744');
+  ctx.fillStyle = surface;
+  ctx.beginPath();
+  for (let i = 0; i <= points; i++) {
+    const a = (i / points) * Math.PI * 2;
+    const wobble = 1 + Math.sin(a * 5 + time * 0.00008 + seed) * 0.035
+      + Math.sin(a * 11 - time * 0.00005) * 0.018;
+    const px = x + Math.cos(a) * r * wobble;
+    const py = y + Math.sin(a) * r * wobble;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  if (intel && !compact) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 18; i++) {
+      const a = rng() * Math.PI * 2 + time * (0.00001 + rng() * 0.00002);
+      const dist = r * (0.12 + rng() * 0.72);
+      ctx.fillStyle = hexToRgba(i % 3 ? profile.coronaColor : '#fff6de', 0.08 + rng() * 0.16);
+      ctx.beginPath();
+      ctx.ellipse(x + Math.cos(a) * dist, y + Math.sin(a) * dist,
+        r * (0.04 + rng() * 0.11), r * (0.025 + rng() * 0.07), a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawPulsarFallback(ctx, x, y, r, profile, time, intel, compact) {
+  const spin = time * 0.006;
+  ctx.save();
+  ctx.globalCompositeOperation = intel ? 'lighter' : 'source-over';
+  if (intel) {
+    const beamLen = r * (compact ? 3.2 : 6.8);
+    const dx = Math.cos(spin) * beamLen;
+    const dy = Math.sin(spin) * beamLen * 0.52;
+    const grad = ctx.createLinearGradient(x - dx, y - dy, x + dx, y + dy);
+    grad.addColorStop(0, hexToRgba(profile.coronaColor, 0));
+    grad.addColorStop(0.48, hexToRgba(profile.coronaColor, 0.62));
+    grad.addColorStop(0.5, 'rgba(245,252,255,0.95)');
+    grad.addColorStop(0.52, hexToRgba(profile.coronaColor, 0.62));
+    grad.addColorStop(1, hexToRgba(profile.coronaColor, 0));
+    ctx.strokeStyle = grad;
+    ctx.shadowColor = profile.coronaColor;
+    ctx.shadowBlur = r * 0.35;
+    ctx.lineWidth = Math.max(2, r * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(x - dx, y - dy);
+    ctx.lineTo(x + dx, y + dy);
+    ctx.stroke();
+    ctx.strokeStyle = hexToRgba(profile.secondaryColor, 0.75);
+    ctx.lineWidth = Math.max(1, r * 0.035);
+    for (const scale of [0.78, 1.18]) {
+      ctx.beginPath();
+      ctx.ellipse(x, y, r * scale, r * scale * 0.35, -spin * 0.16, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else {
+    ctx.strokeStyle = 'rgba(86, 94, 116, 0.62)';
+    ctx.lineWidth = Math.max(1, r * 0.045);
+    for (const scale of [0.78, 1.18]) {
+      ctx.beginPath();
+      ctx.ellipse(x, y, r * scale, r * scale * 0.35, -spin * 0.16, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  drawStarCore(ctx, x, y, r * 0.36, profile, intel ? profile.color : '#505868', intel);
+  ctx.restore();
+}
+
+function drawQuasarFallback(ctx, x, y, r, profile, time, intel, compact) {
+  ctx.save();
+  ctx.globalCompositeOperation = intel ? 'lighter' : 'source-over';
+  if (intel) {
+    const jetLen = r * (compact ? 3.3 : 7.5);
+    const jet = ctx.createLinearGradient(x, y - jetLen, x, y + jetLen);
+    jet.addColorStop(0, hexToRgba(profile.coronaColor, 0));
+    jet.addColorStop(0.46, hexToRgba(profile.coronaColor, 0.62));
+    jet.addColorStop(0.5, 'rgba(255,255,245,0.9)');
+    jet.addColorStop(0.54, hexToRgba(profile.coronaColor, 0.62));
+    jet.addColorStop(1, hexToRgba(profile.coronaColor, 0));
+    ctx.strokeStyle = jet;
+    ctx.shadowColor = profile.coronaColor;
+    ctx.shadowBlur = r * 0.4;
+    ctx.lineWidth = Math.max(3, r * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(x, y - jetLen);
+    ctx.lineTo(x, y + jetLen);
+    ctx.stroke();
+  }
+  const disk = ctx.createRadialGradient(x - r, y, r * 0.1, x, y, r * 3.4);
+  disk.addColorStop(0, 'rgba(255,250,224,0.95)');
+  disk.addColorStop(0.35, hexToRgba(profile.secondaryColor, intel ? 0.85 : 0.2));
+  disk.addColorStop(1, hexToRgba(profile.coronaColor, 0));
+  ctx.fillStyle = disk;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r * (compact ? 2.1 : 3.5), r * (compact ? 0.55 : 0.78),
+    Math.sin(time * 0.00015) * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#02030a';
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.58, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = intel ? '#fff3d0' : '#59606e';
+  ctx.lineWidth = Math.max(1.5, r * 0.055);
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.67, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCompactRemnantFallback(ctx, x, y, r, profile, time, intel, compact, magnetar = false) {
+  const spin = time * (magnetar ? 0.0042 : 0.0012);
+  ctx.save();
+  ctx.globalCompositeOperation = intel ? 'lighter' : 'source-over';
+  ctx.strokeStyle = intel ? hexToRgba(profile.coronaColor, 0.72) : 'rgba(86,94,116,0.62)';
+  ctx.shadowColor = profile.coronaColor;
+  ctx.shadowBlur = r * 0.38;
+  ctx.lineWidth = Math.max(1, r * 0.04);
+  for (let i = 0; i < (magnetar ? 5 : 2); i++) {
+    const scale = 0.78 + i * 0.24;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r * scale, r * scale * (0.28 + i * 0.035), spin * (i % 2 ? -1 : 1) + i * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (magnetar && intel) {
+    ctx.strokeStyle = 'rgba(255,238,255,0.82)';
+    for (let i = 0; i < 4; i++) {
+      const a = spin * 2.6 + i * Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(a) * r * 0.3, y + Math.sin(a) * r * 0.3);
+      ctx.quadraticCurveTo(x + Math.cos(a + 0.8) * r * 1.6, y + Math.sin(a + 0.8) * r * 1.6,
+        x + Math.cos(a + 1.4) * r * 2.5, y + Math.sin(a + 1.4) * r * 2.5);
+      ctx.stroke();
+    }
+  }
+  drawStarCore(ctx, x, y, r * 0.28, profile, intel ? profile.color : '#505868', intel);
+  ctx.restore();
+}
+
+function drawBlackHoleBinaryFallback(ctx, x, y, r, profile, star, time, intel, compact) {
+  drawQuasarFallback(ctx, x, y, r, profile, time, intel, compact);
+  const params = stellarRenderParameters(star, profile);
+  const phase = time * 0.001 * params.orbitSpeed + params.orbitPhase;
+  const sep = r * (compact ? 1.05 : 1.35);
+  const sx = x + Math.cos(phase) * sep;
+  const sy = y + Math.sin(phase) * sep * 0.48;
+  drawStarBloom(ctx, sx, sy, r * 0.46, profile, params.companionColor, time, intel, compact);
+  drawStarCore(ctx, sx, sy, r * 0.46, profile, intel ? params.companionColor : '#505868', intel);
+  if (intel) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = hexToRgba(profile.coronaColor, 0.62);
+    ctx.lineWidth = Math.max(1, r * 0.045);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo((sx + x) * 0.5, (sy + y) * 0.5 + r * 0.2, x, y);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawModernStellarFallback(ctx, x, y, r, profile, star, time, intel, seed, compact) {
+  const rng = seededRng(seed);
+  const kind = profile.rendererKind;
+  const coreScale = kind === 'compact' ? 0.58 : kind === 'brown_dwarf' ? 0.86 : kind === 'wolf_rayet' ? 0.68 : 1;
+  drawStarBloom(ctx, x, y, r, profile, star.color ?? profile.color, time, intel, compact);
+  if (intel) drawCinematicOptics(ctx, x, y, r, profile, time, compact);
+  drawStarCore(ctx, x, y, r * coreScale, profile, intel ? (star.color ?? profile.color) : '#505868', intel);
+  if (!intel) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.shadowColor = profile.coronaColor;
+  ctx.shadowBlur = Math.max(3, r * 0.18);
+  const rotation = time * (profile.rotationSpeed ?? 0.00002) * 35;
+
+  if (kind === 'wolf_rayet') {
+    drawLensSpikes(ctx, x, y, r, profile.coronaColor, compact ? 4 : 8, rotation);
+    ctx.strokeStyle = hexToRgba(profile.coronaColor, 0.42);
+    ctx.lineWidth = Math.max(1, r * 0.025);
+    for (let i = 0; i < (compact ? 4 : 10); i++) {
+      const a = rotation + i * 0.78;
+      ctx.beginPath();
+      ctx.arc(x, y, r * (1.1 + i * 0.2), a, a + 1.2);
+      ctx.stroke();
+    }
+  } else if (kind === 'brown_dwarf') {
+    ctx.strokeStyle = hexToRgba(profile.coronaColor, 0.34);
+    ctx.lineWidth = Math.max(1, r * 0.06);
+    for (let i = -4; i <= 4; i++) {
+      ctx.beginPath();
+      ctx.ellipse(x, y + i * r * 0.14, r * Math.sqrt(Math.max(0.05, 1 - i * i * 0.022)), r * 0.08, 0, Math.PI, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else if (kind === 'compact') {
+    drawLensSpikes(ctx, x, y, r, profile.coronaColor, compact ? 4 : 8, rotation);
+    ctx.strokeStyle = hexToRgba(profile.coronaColor, 0.28);
+    ctx.lineWidth = Math.max(0.75, r * 0.018);
+    for (let i = 0; i < (compact ? 3 : 7); i++) {
+      const a = rotation + i / 7 * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r * (1.15 + i * 0.16), a, a + 0.62);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = hexToRgba(profile.coronaColor, 0.68);
+    ctx.lineWidth = Math.max(1, r * 0.035);
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.84, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(x, y, r * 1.18, r * 0.46, rotation, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (kind === 'flare') {
+    drawFlareBurst(ctx, x, y, r, time, seed, profile.coronaColor);
+    drawProminences(ctx, x, y, r, rng, time, profile.secondaryColor, profile.rotationSpeed * 65);
+    drawLightning(ctx, x, y, r, time, seed, profile.coronaColor, profile.secondaryColor, 0.42);
+  } else {
+    drawGranulation(ctx, x, y, r, seed, time, star.color ?? profile.color, profile.rotationSpeed * 58);
+    drawCoronaArcs(ctx, x, y, r, profile.coronaColor, time, rng, compact ? 2 : 5, 3600);
+    if (!compact) drawProminences(ctx, x, y, r, rng, time, profile.secondaryColor, profile.rotationSpeed * 48);
+  }
+  ctx.restore();
+}
+
+function drawExoticFallback(ctx, opts, profile, seed) {
+  const { star, x, y, time, intel, mode = 'system' } = opts;
+  const r = opts.screenR * CELESTIAL_VISUAL_SCALE;
+  const compact = mode === 'galaxy';
+  if (profile.rendererKind === 'binary') drawBinaryFallback(ctx, x, y, r, profile, star, time, intel, compact);
+  else if (profile.rendererKind === 'supergiant' || profile.rendererKind === 'giant' || profile.rendererKind === 'hypergiant') drawSupergiantFallback(ctx, x, y, r, profile, star, time, intel, seed, compact);
+  else if (profile.rendererKind === 'pulsar') drawPulsarFallback(ctx, x, y, r, profile, time, intel, compact);
+  else if (profile.rendererKind === 'neutron') drawCompactRemnantFallback(ctx, x, y, r, profile, time, intel, compact, false);
+  else if (profile.rendererKind === 'magnetar') drawCompactRemnantFallback(ctx, x, y, r, profile, time, intel, compact, true);
+  else if (profile.rendererKind === 'black_hole_binary') drawBlackHoleBinaryFallback(ctx, x, y, r, profile, star, time, intel, compact);
+  else if (profile.rendererKind === 'quasar') drawQuasarFallback(ctx, x, y, r, profile, time, intel, compact);
+  else drawModernStellarFallback(ctx, x, y, r, profile, star, time, intel, seed, compact);
+}
+
 export function drawStarCanvas2D(ctx, { star, x, y, screenR, time, intel, state, systemId, mode = 'system' }) {
   const r = screenR * CELESTIAL_VISUAL_SCALE;
   const seed = resolveVisualSeed(state, systemId, 'star', star.visualSeed);
   const rng = seededRng(seed);
   const profile = getStarVisualProfile(star);
+  if (profile.rendererKind !== 'sphere') {
+    drawExoticFallback(ctx, { star, x, y, screenR, time, intel, state, systemId, mode }, profile, seed);
+    return;
+  }
   const color = intel ? (star.color ?? profile.color) : '#505868';
   if (mode === 'galaxy') {
     drawStarGalaxyCompact(ctx, x, y, r, profile, color, time, intel, rng);
@@ -316,7 +620,7 @@ export function drawStarCanvas2D(ctx, { star, x, y, screenR, time, intel, state,
   }
 }
 
-export function drawBlackHoleCanvas2D(ctx, x, y, r, time, large) {
+export function drawBlackHoleCanvas2D(ctx, x, y, r, time, large, visual = null) {
   const diskScale = large ? 2.6 : 1.9;
   const glow = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * (diskScale + 1.6));
   glow.addColorStop(0, 'rgba(150, 90, 255, 0.30)');
@@ -345,4 +649,84 @@ export function drawBlackHoleCanvas2D(ctx, x, y, r, time, large) {
   ctx.strokeStyle = 'rgba(180, 130, 255, 0.6)';
   ctx.lineWidth = Math.max(1, r * 0.06);
   ctx.stroke();
+
+  const phase = visual?.phase ?? 'dormant';
+  const progress = Math.max(0, Math.min(1, visual?.progress ?? 0));
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const anchored = phase === 'anchored';
+  const gateRotation = time * (anchored ? -0.00042 : 0.00016);
+  ctx.shadowColor = anchored ? '#76ddff' : '#9f6cff';
+  ctx.shadowBlur = r * 0.24;
+  ctx.lineWidth = Math.max(1, r * 0.026);
+  for (let i = 0; i < 5; i++) {
+    ctx.strokeStyle = anchored
+      ? `rgba(110, 220, 255, ${0.26 + i * 0.055})`
+      : `rgba(174, 104, 255, ${0.2 + i * 0.045})`;
+    ctx.setLineDash([r * (0.16 + i * 0.02), r * (0.1 + i * 0.018)]);
+    ctx.lineDashOffset = gateRotation * r * (i % 2 ? -1 : 1) * (2 + i);
+    ctx.beginPath();
+    ctx.ellipse(
+      x,
+      y,
+      r * (1.34 + i * 0.255),
+      r * (1.24 + i * 0.235),
+      gateRotation + i * 0.08,
+      0,
+      Math.PI * 2,
+    );
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (const side of [-1, 1]) {
+    const ex = x + side * r * 2.72;
+    const echo = ctx.createRadialGradient(ex, y, 0, ex, y, r * 0.5);
+    echo.addColorStop(0, anchored ? 'rgba(110,220,255,0.28)' : 'rgba(255,100,190,0.22)');
+    echo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = echo;
+    ctx.beginPath();
+    ctx.arc(ex, y, r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (phase === 'anchored') {
+    ctx.strokeStyle = 'rgba(110, 220, 255, 0.62)';
+    ctx.shadowColor = '#76ddff';
+    ctx.shadowBlur = r * 0.3;
+    for (let i = 0; i < 4; i++) {
+      ctx.lineWidth = Math.max(1, r * 0.028);
+      ctx.setLineDash([r * 0.2, r * 0.12]);
+      ctx.lineDashOffset = time * (i % 2 ? -0.0008 : 0.0008) * r;
+      ctx.beginPath();
+      ctx.arc(x, y, r * (1.45 + i * 0.28), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  } else if (phase === 'charging' || phase === 'opening') {
+    const energy = phase === 'opening' ? 1 : 0.25 + progress;
+    ctx.strokeStyle = `rgba(145, 210, 255, ${0.3 + energy * 0.45})`;
+    ctx.shadowColor = '#8fdcff';
+    ctx.shadowBlur = r * 0.28;
+    ctx.setLineDash([]);
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6 + time * 0.0003 * energy;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(a) * r * 4.2, y + Math.sin(a) * r * 4.2);
+      ctx.quadraticCurveTo(
+        x + Math.cos(a + 0.35) * r * 2.2,
+        y + Math.sin(a + 0.35) * r * 2.2,
+        x + Math.cos(a + 0.7) * r * 1.08,
+        y + Math.sin(a + 0.7) * r * 1.08,
+      );
+      ctx.stroke();
+    }
+  } else if (phase === 'collapse' || phase === 'arrival') {
+    const shockProgress = phase === 'arrival' ? progress : Math.max(0, (progress - 0.8) / 0.2);
+    ctx.strokeStyle = `rgba(210, 240, 255, ${0.85 * (1 - shockProgress)})`;
+    ctx.shadowColor = '#8fdcff';
+    ctx.shadowBlur = r * 0.5;
+    ctx.lineWidth = Math.max(2, r * (0.08 + shockProgress * 0.08));
+    ctx.beginPath();
+    ctx.arc(x, y, r * (1 + shockProgress * 4.4), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
 }

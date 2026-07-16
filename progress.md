@@ -1009,3 +1009,249 @@ Never delete prior entries.
 - Replaced the typed manifest textarea with repeatable ship rows: an unlocked-hull dropdown, a positive whole-number quantity input, and add/remove controls.
 - Kept mixed-fleet orders aggregate by merging duplicate dropdown selections before preview/creation.
 - Verification: operations UI 10/10, bulk production 37/37, v16 browser 16/16, production build pass, and screenshot inspection pass (`output/visuals/overhaul-operations.png`).
+
+---
+
+## Session 2026-07-14 — Command-first in-system combat overhaul
+
+**Task claimed:** Make tactical combat autonomous by default, repair fighter attacks and volley pacing, preserve optional advanced orders, and add command-first HUD/save/alert support.
+
+### Done
+- Added a pure combat-autonomy policy layer with doctrine intent, target, flagship positioning, fleet-priority, Advanced Tactics, and role-based withdrawal policies.
+- Added two-second flagship manual override plus a 500 ms return-to-auto blend and `AUTO` / `MANUAL` / `RETURNING TO AUTO` state reporting.
+- Fixed cooldown-normalized volley damage, interceptor fallback to the fleet strike, repeated launch/approach/attack/return/rearm sorties, carrier fallback, and orphaned-wing exhaustion behavior.
+- Repositioned opening battle lines onto the same side of the star to eliminate multi-minute stellar circumnavigation; the deterministic balanced fixture now resolves in 82.95 seconds.
+- Added launch/recovery FX cues, command-first HUD controls, fleet priority, wing status, a persistent non-pausing View Battle alert, save v17 migration/schema, hooks, and expanded text-render autonomy state.
+
+### Verification
+- `node output/verify_combat_autonomy_unit.mjs` — 8/8 pass.
+- `node output/verify_command_combat_pacing.mjs` — pass at 82.95 seconds.
+- `node output/verify_command_first_combat.mjs` — 19/19 pass; fighter damage at 4.15 seconds and zero console errors.
+- Combat orders 43/43, doctrine 9/9, save v17 5/5, combat UI 20/20, flagship wing 16/16, steering pure checks, and combat FX 14/14 pass.
+- `npm run build` — pass.
+- Inspected `output/visuals/command-first-battle-alert.png`; the alert is compact, readable, and does not obscure strategic play.
+
+---
+
+## Session 2026-07-15 — Operation presets and manufacturable construction drones
+
+**Task claimed:** Upgrade Auto-Route & Build presets into complete operation doctrines and make Construction Drones real shipyard products with campaign embark, construction, recovery, and replacement behavior.
+
+### Completed
+- Added the v2 doctrine catalog for all six built-in presets plus Generalist compatibility defaults and immutable doctrine snapshots on new campaigns.
+- Added a generic production-product contract while preserving legacy `{ hull, quantity }` bulk manifests and API callers.
+- Added the 120-credit, 18-second Construction Drone product, 96-unit owned-plus-queued cap, one-time two-drone technology grant, and manual mixed ship/drone bulk orders.
+- Replaced single-hull campaign requisitions with deterministic mixed role manifests that reuse eligible ships, warn and redistribute locked roles, enforce both force margins, and package groups at 40 ships or fewer.
+- Added dedicated target drone teams plus a reusable campaign reserve, local embark/disembark, parallel construction, re-embark for sequential targets, per-group drone losses, automatic replacements, and Hold/Return/cancellation handling.
+- Added compact Operations preview and active-card reporting for doctrine, manifest, substitutions, thresholds, drone lifecycle counts, production shortage, construction queue, and combined cost.
+- Added strategic/template schema v2 and save v18 migration, including legacy in-flight execution preservation and v1 Generalist conversion.
+- Extended `render_game_to_text` and browser-facing product/strategic hooks with the new product, doctrine, manifest, and assignment state.
+
+### Verification
+- `node output/verify_v18_operation_drones.mjs` — 11/11 pass, including the full stage → embark → travel → capture → parallel build → re-embark lifecycle and v17 migration.
+- `node output/verify_v18_operations_browser.mjs` — 10/10 pass across all six presets and one compact 50-target campaign; zero console/page errors.
+- Bulk production 37/37, strategic operations 21/21, Operations UI 10/10, fleet/shipyard 28/28, v16 integration 23/23, v18 save 5/5, diplomacy 39/39, and diplomacy runtime edges 27/27 pass.
+- Existing drone renderer/planner checks pass, including idle-drone stowing and the construction planner lifecycle.
+- Late-game overhaul performance passes 5/5 and the unlock-all performance guard passes 6/6 with zero console errors.
+- The supplied web-game Playwright client completed against `http://127.0.0.1:5173`; its text state reports save v18, strategic schema v2, six doctrine snapshots, and the expanded drone summary.
+- `npm run build` and `git diff --check` pass. Vite reports only its existing large-chunk advisory.
+- Inspected `output/visuals/v18-operation-presets.png` and `output/visuals/v18-operation-preview.png`; the Operations layout is readable and the 50-target preview remains aggregate rather than rendering target rows.
+
+---
+
+## Session 2026-07-15 — Detached fleets not firing in viewed battles
+
+**Task claimed:** Fix player ships, pirates, and enemy ships appearing in-system without exchanging fire.
+
+### Diagnosis
+- Battles without the player flagship started in the three-second offscreen resolver. Opening the system only moved the camera; it did not create tactical units, targets, weapon ticks, or combat FX, so operation fleets looked inert when watched.
+- Autonomous doctrine targeting used a hard focus-fire target. Ordinary ships could acquire a preferred capital outside weapon range while ignoring closer valid targets, extending the apparent no-fire period.
+
+### Completed
+- Added an offscreen-to-tactical promotion path and invoke it whenever an active battle is opened or starts in the currently viewed system.
+- Reused the normal tactical initializer so promoted battles receive formations, enemy orders, objectives, wings, shields, targeting, damage, and FX without resetting campaign or fleet state.
+- Autonomous doctrine ships now fire opportunistically at an in-range hostile while continuing to prefer their doctrine target; explicit player focus-fire remains strict.
+- Tuned opening line separation to 580–650 units, bringing detached-fleet first fire under ten seconds while keeping the balanced battle inside its intended 60–120 second duration.
+
+### Verification
+- `output/verify_command_first_combat.mjs` — 22/22 pass. New detached-fleet case starts in `auto`, promotes to `tactical`, then records player fire at 9.65 seconds and pirate return fire at 9.30 seconds with targets on both sides.
+- Balanced combat pacing passes at 66.25 seconds; combat orders 43/43, doctrine 9/9, steering 29/29, directed combat 25/25, and combat FX 14/14 pass.
+- `npm run build` and `git diff --check` pass; zero focused-browser console errors.
+- Inspected `output/visuals/detached-fleet-return-fire.png`; the live 3-vs-3 system view shows both formations, health bars, and an active aimed tracer without the pause overlay.
+- The supplied web-game Playwright client completed and returned valid save-v18 text state. Its generic SwiftShader screenshot remains visually distorted, so the focused combat screenshot is the visual source of truth.
+
+---
+
+## Session 2026-07-15 — Post-battle return flights, faster ships, and multi-mount combat
+
+**Task claimed:** Stop surviving ships from snapping back to their old orbit after in-system combat, make tactical ships faster, and give ordinary hulls more weapons.
+
+### Diagnosis
+- Tactical positions disappeared with the resolved battle object, leaving persistent ships with only their system and orbit anchor; the next render therefore placed them directly back at that orbit.
+- Ordinary tactical ships used one primary weapon timer even when their class should visually and mechanically support several batteries.
+
+### Completed
+- Persist the exact final tactical pose for every surviving player and pirate ship, then fly it along a fast curved recovery path to its currently assigned star or planet orbit over 1.4–5.2 seconds.
+- Blend heading out of the final combat orientation, follow moving planet anchors, block strategic travel while recovering, and clear the trajectory only on arrival.
+- Preserve in-progress recovery trajectories through save/load without a save-version bump.
+- Increased tactical speed, acceleration, and turn-rate tiers by roughly 20–30%, with escorts remaining faster than line and capital hulls.
+- Added independent standard weapon mounts: two on escorts, three on line ships, and four on capital/carrier hulls. Each mount has its own target, firing arc, cooldown, hardpoint, and FX event while total hull DPS remains distributed across the batteries.
+- Increased the combat-FX telemetry ring buffer to retain the denser multi-mount volleys without raising the per-frame FX draw limit.
+- Extended text state, selected-unit firing arcs, and browser hooks with standard mount and post-battle-return state.
+
+### Verification
+- `node output/verify_command_first_combat.mjs` — 26/26 pass, including exact no-snap continuity, visible mid-flight movement, heading recovery, save/load during flight, final orbit arrival, and multiple mounts firing from one ordinary ship.
+- Combat pacing passes at 76.8 seconds with 1,480 real mount events; combat FX 14/14, combat orders 43/43, steering 29/29, directed combat 25/25, v16 save 5/5, and fleet/shipyard integrity 28/28 pass.
+- `npm run build` and `git diff --check` pass. The supplied web-game client completed with valid save-v18 text state and no error artifact.
+- Inspected `output/visuals/post-battle-return-flight.png` and `output/visuals/detached-fleet-return-fire.png`; the focused frames show survivors crossing the system and ordinary ships exchanging multi-mount fire without a pause overlay.
+- The broad overhaul performance verifier passes its 150+ unit battle checks with a 6.8 ms p95 and no console errors. Its unrelated convoy-render comparison remained noisy at 15.8% versus a 15% threshold in an isolated SwiftShader rerun; none of the changed combat/recovery paths execute in that galaxy convoy fixture.
+
+---
+
+## Session 2026-07-15 — New-campaign cinematic intro overhaul
+
+**Task claimed:** Completely enhance the intro animation shown when starting a new campaign.
+
+### Completed
+- Rebuilt the opening as a staged fourteen-second cinematic: Sovereign-core awakening, flagship drive ignition, hyperspace breach, interstellar translation, and stronghold acquisition.
+- Added a hero flagship flyby, escort formation, layered drive plumes, perspective launch grid, portal shockwaves/tendrils/rings, impact shake, anamorphic flares, film texture, letterboxing, and a live-system arrival crossfade.
+- Added campaign-aware telemetry for mode, victory objective, rival difficulty, and the actual home-system name, ending on an `A NEW REIGN BEGINS` system title card.
+- Extended the fully resolved home-system establishing shot from a brief transition to a 4.7-second hold (8.5–13.2 seconds), followed by a short title fade; the portal exit timing remains unchanged.
+- Repaired the portal rush easing, added a gated 850 ms skip transition, and added a shorter reduced-motion sequence.
+- Exposed deterministic intro phase/timestamp state in `render_game_to_text` plus focused browser hooks without advancing campaign simulation.
+- Added `output/verify_campaign_intro.mjs` and rebuilt the direct-file standalone bundle.
+
+### Verification
+- `node output/verify_campaign_intro.mjs` — 21/21 pass against Vite: all seven cinematic timestamps, extended reveal hold, default/custom campaign context, full completion, gated skip, reduced motion, unpaused handoff, and zero console/page errors.
+- `INTRO_TARGET=file node output/verify_campaign_intro.mjs` — 21/21 pass against `src/index.html` opened directly from disk.
+- `npm run build` and `git diff --check` pass; Vite reports only the existing large-chunk advisory.
+- Visually inspected all seven timestamp captures under `output/visuals/campaign-intro/`, including flagship ignition, full-frame breach/translation, the initial Solara Prime reveal, and the new eleven-second hold frame.
+- The supplied web-game client completed with valid awakening-phase intro text state and a visually correct opening-frame capture; the focused Chrome verifier remains the full-timeline visual source of truth.
+
+---
+
+## Session 2026-07-15 — Cinematic stellar catalog and phased wormholes
+
+**Task claimed:** Add visually distinct binary stars, supergiants, pulsars, quasars, and a complete cinematic wormhole travel sequence without changing gameplay balance.
+
+### Completed
+- Added deterministic visual-only `stellarOverride` assignments: 6% binary, 2% red supergiant, 1% blue supergiant, 1% pulsar, plus at most one quasar in 35% of galaxies; Strongholds, cores, and Trade Nexuses are excluded.
+- Added five specialized WebGL silhouettes, per-class bloom/exposure metadata, bounded scissor rendering, quality-scaled shader work, and matching Canvas2D fallbacks.
+- Added discovered stellar class/description to System Intel and stellar renderer identity to `render_game_to_text`.
+- Added dormant, anchored, charging, opening, transit, collapse, and 1.4-second arrival wormhole visual states while leaving routing, timing, pause behavior, and controls unchanged.
+- Advanced saves to v19 with deterministic v18 migration and a save-v19 schema.
+
+### Verification
+- `output/verify_celestial_cinema.mjs`: 69/69 deterministic generation, v18 migration/v19 round-trip, UI/text, Canvas2D fallback, wormhole-phase, shader, console, screenshot, and performance checks. Same-environment median frame cost was 7.00 ms for the close-galaxy baseline and 7.30 ms for the representative exotic system.
+- `output/verify_phase4.mjs`: 39/39 wormhole routing, pause, completion, and save checks.
+- `output/verify_v16_overhaul_save.mjs`: 5/5; `output/verify_v18_operation_drones.mjs`: 11/11; `output/verify_v18_operations_browser.mjs`: 10/10; `output/verify_star_visuals.mjs`: 4/4.
+- Visually inspected the five exotic system views plus dormant, anchored, charging, transit, collapse, and arrival wormhole captures; the specialized silhouettes are distinct and unclipped behind the HUD.
+- The required web-game client reached `bootPhase: playing` with save v19 and valid stellar/wormhole text state. Its raw-canvas capture selected the transparent WebGL layer; the corresponding composited frame at `output/web-game-celestial-gameplay/shot-composited.png` was inspected and renders correctly.
+- Final `npm run build`, `git diff --check`, and syntax checks for every changed JavaScript module pass. The production build reports only the existing large-chunk advisory.
+
+---
+
+## Session 2026-07-15 — Make stellar overhaul visible in normal play
+
+**Task claimed:** The cinematic stellar changes were not visibly different from the ordinary opening game path.
+
+### Diagnosis and fixes
+- Confirmed the new-campaign Stronghold is correctly excluded from exotic assignment, so it always opened on the unchanged legacy yellow-sphere presentation; undiscovered exotic nodes were also flattened into identical fog circles.
+- Applied the catalog exposure/chromatic metadata to legacy sphere shaders and added visible anamorphic lens streaks, spectral halos, and camera-axis optical ghosts so the protected opening star now shows the upgrade immediately.
+- Added muted class-shaped anomaly signatures for undiscovered binary, supergiant, pulsar, and quasar nodes. They remain unlabeled until Intel is earned, preserving discovery while making the expanded catalog visible on the default Galaxy Map.
+- Enlarged the close-map Galactic Core/wormhole presentation and retained the phase-specific travel sequence.
+- Added a final avalanche mix to the deterministic visual hash. Real 4,000-node generation now follows the intended rarity bands instead of correlating against sequential system IDs.
+- Extended the focused verifier with a real-galaxy rarity-band assertion.
+
+### Verification
+- `output/verify_celestial_cinema.mjs`: 71/71, including an explicit-v19-null no-reroll check; final close-map medians were 4.90 ms baseline and 5.10 ms exotic.
+- `output/verify_phase4.mjs`: 39/39; `output/verify_v16_overhaul_save.mjs`: 5/5; `output/verify_star_visuals.mjs`: 4/4.
+- The required web-game client reached ordinary Stronghold gameplay with save v19, Yellow Dwarf sphere metadata, dormant wormhole state, no error artifact, and a visibly upgraded stellar capture at `output/web-game-celestial-visible/shot-0.png`.
+- Visually inspected the ordinary system and default galaxy-map paths at `output/visuals/celestial-cinema/normal-path-system-visible.png` and `normal-path-galaxy-visible.png`.
+- Final production build, syntax checks, and `git diff --check` pass; only the existing large-chunk advisory remains.
+
+---
+
+## Session 2026-07-15 — Replace legacy stars and resting wormholes
+
+**Task claimed:** Replace the legacy ordinary-star and resting-wormhole presentations with the new cinematic renderers.
+
+### Completed
+- Routed all ten ordinary stellar classes away from the legacy sphere path and through distinct cinematic shader families: convective dwarfs, hot white/blue stars, irregular giants, compact white dwarfs, and eruptive flare stars.
+- Added class-specific surface motion, silhouettes, coronae, winds, diffraction structures, magnetosphere rings, eruption plumes, bloom/exposure behavior, and matching Canvas2D fallbacks while retaining the five exotic renderers.
+- Replaced dormant and anchored wormhole pinpoints with persistent gateway geometry: a dark aperture, continuous photon rings, counter-rotating segmented rails, curved spokes, lens echoes, and distinct violet dormant versus cyan anchored motion.
+- Added a deterministic post-bloom resting-gateway layer so the replacement is visible on the first visit even before any anchored/transit state has initialized.
+- Kept all star mechanics, orbital layouts, Dyson rules, wormhole routes, costs, timing, pause behavior, controls, and camera behavior unchanged.
+
+### Verification
+- `node output/verify_celestial_cinema.mjs` — 72/72 pass across every ordinary and exotic stellar class, all seven wormhole states, shader compilation, Intel/text exposure, saves, deterministic rarity, screenshots, and performance. The first-visit dormant portal now records 513 chromatic center pixels; final close-map medians were 5.00 ms baseline and 4.00 ms exotic.
+- `node output/verify_phase4.mjs` — 39/39 wormhole routing/pause checks; `node output/verify_v16_overhaul_save.mjs` — 5/5 migration/round-trip checks; `node output/verify_star_visuals.mjs` — 4/4 legacy-star pixel checks.
+- The required web-game client reached ordinary gameplay with `saveVersion: 19`, `stellarRendererKind: convective`, and `wormholeVisualPhase: dormant`; `output/web-game-cinematic-replacement/shot-0.png` was visually inspected and shows the replacement Yellow Dwarf renderer.
+- Visually inspected the new ordinary-star catalog and the first-visit dormant gateway under `output/visuals/celestial-cinema/`.
+- `npm run build`, JavaScript syntax checks, and `git diff --check` pass; the production build reports only the existing large-chunk advisory.
+
+---
+
+## Session 2026-07-15 — Stable 16-class catalog, coordinate naming, and Reveal All repair
+
+**Task claimed:** Replace the mixed catalog with 16 stable classes, add persistent galaxy/system/body coordinate names, widen binary systems, apply light class properties, and repair Reveal All across ten galaxies.
+
+### Completed
+- Advanced saves to v20. Graph nodes now persist authoritative `stellarClass`, shuffled `catalogNumber`, formatted catalog IDs, aliases, and a monotonic `nextCatalogNumber`; v19 maps retired types without changing planets or system state.
+- Added the complete 16-class generation table, per-galaxy class floors, exact planet/environment biases, deterministic physical Intel, and completed-Dyson Solarii multipliers.
+- Added Brown Dwarf, Neutron Star, Magnetar, Wolf–Rayet, Hypergiant, and Black-Hole System WebGL/Canvas2D silhouettes; retained specialized cinematic renderers for the remaining ten classes.
+- Binary separation is now 1.45–1.75 stellar radii with seeded projected inclination. The reference sample has a visible gap for 77% of its orbit and a brief 11% edge-on eclipse interval.
+- Applied `G001-S042`, planet, moon, and Core naming throughout stored display names while retaining internal IDs and aliases; extended text rendering with catalog IDs, aliases, physical properties, renderer kind, and moon records.
+- Repaired Reveal All to populate each galaxy's Intel map, reveal all 4,010 nodes and ten wormholes without hydrating abstract galaxies, invalidate Intel caches, refresh the UI, and report exact counts.
+- Superweapon-created stars receive persistent S401+ numbers; deleted numbers are not reused.
+
+### Verification
+- `output/verify_stellar_catalog_v20.mjs`: 50/50 generation, distributions, hydration, Reveal All, created-star numbering, and Dyson multiplier checks.
+- `output/verify_celestial_cinema.mjs`: 100/100 across all 16 WebGL system renderers, compact galaxy silhouettes, all 16 Canvas2D fallbacks, v19 migration, binary phases, seven wormhole states, no shader/console errors, and render-cost guard. Final close-map medians were 5.40 ms baseline and 5.80 ms catalog.
+- `output/verify_phase4.mjs`: 39/39 save, hydration, unanchored/anchored routing, and pause checks; `output/verify_v16_overhaul_save.mjs`: 5/5; `output/verify_save_v12.mjs`: 11/11; `output/verify_v18_operation_drones.mjs`: 11/11.
+- Required web-game client exposes save v20, system/body/moon catalog IDs, aliases, physical properties, and dormant wormhole state with no error artifact.
+- Visually inspected representative WebGL classes, the all-class galaxy gallery, representative Canvas2D fallbacks, and the final client frame.
+- Final production build passes; Vite reports only the existing large-chunk advisory.
+
+---
+
+## Session 2026-07-15 — Galaxy-map wormhole monument
+
+**Task claimed:** Make the galaxy-view wormhole dramatically more cinematic and visually important.
+
+### Completed
+- Replaced the compact galaxy-map gateway treatment with a large phase-aware monument layered around the existing WebGL aperture.
+- Added a broad gravitational aura, bent-light caustic arcs, six counter-rotating segmented megastructure rails, inward-curving energy filaments, orbiting runic pylons, spiral sparks, an anamorphic flare, and a localized collapse shock ring.
+- Gave dormant, anchored, charging, opening, transit, and collapse states distinct energy levels and violet/pink versus cyan/violet color identities while preserving existing travel behavior.
+- Increased the close-map core silhouette and scaled detail by galaxy LOD to keep far views readable and close views cinematic.
+- Moved the galaxy, Core, and wormhole-phase labels beyond the outer pylon extent so they no longer cross the portal geometry.
+- Extended the celestial verifier with screenshots and large-structure pixel assertions for every galaxy-map wormhole phase; also made its repeated Intel sampling explicitly re-enter the system to prevent stale-panel flakes.
+
+### Verification
+- `node output/verify_celestial_cinema.mjs` — 112/112 pass. Galaxy gateway phases record 11,928–21,172 chromatic pixels and 11,130–18,946 bright outer-structure pixels, with no shader or browser-console errors.
+- Close-galaxy render medians remain inside the 20% guard: 4.70 ms baseline and 5.00 ms cinematic catalog.
+- `node output/verify_phase4.mjs` — 39/39 wormhole routing, anchoring, hydration, save, and pause checks.
+- The required web-game client produced valid save-v20 text state and a correct intro frame; the focused verifier supplied the actual galaxy-map phase captures.
+- Visually inspected dormant, anchored, transit, and collapse galaxy frames; the monument is clearly readable as the map's central landmark and its labels remain unobstructed.
+- `npm run build`, `node --check src/js/render.js`, and `git diff --check` pass. Vite reports only the existing large-chunk advisory.
+
+---
+
+## Session 2026-07-15 — Streamline galaxy-map wormhole
+
+**Task claimed:** The galaxy-view wormhole is too complex and causes lag.
+
+### Completed
+- Reduced the close-map gateway footprint by roughly one-third and tightened its aura from 3.3 to 2.1 local radii.
+- Replaced more than one hundred individually stroked rail segments with one to three dashed-ring strokes depending on LOD.
+- Removed the 26-particle spark swarm, reduced twelve-to-sixteen filaments to four batched active-phase filaments, and reduced eight-to-twelve independently transformed pylons to four anchors in one path.
+- Removed the full turbulent black-hole shader from galaxy view and replaced it with a compact radial aperture plus photon ring; the detailed shader remains available in System view.
+- Reduced close-view shadow blur and core rendering extent while keeping dormant purple, anchored cyan, active vortex, and collapse silhouettes distinct.
+- Updated the visual verifier to assert the cleaner compact gateway signature rather than the superseded monument-scale density.
+
+### Verification
+- `node output/verify_celestial_cinema.mjs` — 112/112 pass with all six galaxy-map wormhole phases, all stellar renderers/fallbacks, and no shader or browser-console errors.
+- Phase signatures now occupy 4,131–5,577 chromatic pixels instead of roughly 11,928–21,172, substantially reducing animated visual density while remaining clearly readable.
+- Close-galaxy median render cost is 4.80 ms against a 4.90 ms same-environment baseline and inside the 20% guard.
+- The required web-game client completed successfully and generated valid screenshot/text artifacts.
+- Visually inspected dormant, anchored, transit, and collapse frames; the gateway is smaller, cleaner, and its labels remain readable.

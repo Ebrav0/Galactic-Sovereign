@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import { BATTLE_FX_EVENT_CAP } from '../src/js/constants.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(path.join(here, '../package.json'));
@@ -209,7 +210,7 @@ for (const profile of required) {
     JSON.stringify(setup.fx?.byProfile ?? setup.seen ?? {}));
 }
 
-check('fx ring buffer under cap', (setup.fx?.total ?? 0) <= 128, String(setup.fx?.total));
+check('fx ring buffer under cap', (setup.fx?.total ?? 0) <= BATTLE_FX_EVENT_CAP, String(setup.fx?.total));
 check('no console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 
 const shotPath = path.join(OUT_DIR, 'sts-combat-fx.png');

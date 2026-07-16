@@ -37,7 +37,7 @@ import {
 } from './superweapon-render.js';
 import { fireSequenceStatus, hasSuperweaponCradle } from './superweapon.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
-import { typeSizeBonus } from './star-types.js';
+import { getStarVisualProfile, typeSizeBonus } from './star-types.js';
 import {
   createRng,
   systemById,
@@ -130,6 +130,7 @@ import {
   hexToRgba,
   drawQuadraticCurve,
 } from './theme.js';
+import { wormholeVisualState } from './wormholes.js';
 
 export const camera = { x: 0, y: 0, zoom: 1 };
 export const galaxyCamera = { x: 0, y: 0, zoom: 0.4 };
@@ -500,6 +501,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     intel,
     state,
     systemId,
+    wormholeVisual: system.star.kind === 'blackhole' ? wormholeVisualState(state) : null,
   });
 
   flushStars(ctx, 'core');
@@ -968,6 +970,317 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
   flushStars(ctx, 'outer');
   flushStars(ctx, 'bloom');
   drawCinematicSystemGrade(ctx, canvas, activeBattle, t);
+  if (system.star.kind === 'blackhole') {
+    drawRestingWormholeGateway(
+      ctx,
+      starScreen.x,
+      starScreen.y,
+      system.star.radius * z,
+      wormholeVisualState(state),
+      t,
+    );
+  }
+  if (intel) {
+    drawCinematicStarLens(
+      ctx,
+      starScreen.x,
+      starScreen.y,
+      system.star.radius * z,
+      getStarVisualProfile(system.star),
+      t,
+      canvas,
+    );
+  }
+}
+
+function drawRestingWormholeGateway(ctx, x, y, r, visual, time) {
+  const phase = visual?.phase ?? 'dormant';
+  if (phase !== 'dormant' && phase !== 'anchored') return;
+  const anchored = phase === 'anchored';
+  // Resting portals need a larger readable silhouette than the physical
+  // black-hole body.  Keeping this floor here also prevents a first-visit
+  // dormant gateway from looking like the legacy pinprick at normal zoom.
+  const baseR = Math.max(30, r * 1.22);
+  const spin = time * (anchored ? -0.00042 : 0.00018);
+  const pulse = 0.82 + 0.18 * Math.sin(time * 0.0021);
+  const primary = anchored ? '#76ddff' : '#a96cff';
+  const secondary = anchored ? '#a88cff' : '#ff6fbe';
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.shadowBlur = baseR * 0.58;
+  ctx.lineCap = 'round';
+
+  const aperture = ctx.createRadialGradient(x, y, baseR * 0.16, x, y, baseR * 1.15);
+  aperture.addColorStop(0, 'rgba(4, 5, 20, 0.96)');
+  aperture.addColorStop(0.58, anchored ? 'rgba(28, 28, 92, 0.72)' : 'rgba(40, 18, 86, 0.78)');
+  aperture.addColorStop(0.83, hexToRgba(primary, 0.48 * pulse));
+  aperture.addColorStop(1, hexToRgba(primary, 0));
+  ctx.fillStyle = aperture;
+  ctx.beginPath();
+  ctx.arc(x, y, baseR * 1.18, 0, Math.PI * 2);
+  ctx.fill();
+
+  // A continuous photon ring gives the gateway an unmistakable portal read;
+  // the segmented rails below supply the dormant/anchored machinery detail.
+  ctx.shadowColor = primary;
+  ctx.strokeStyle = hexToRgba(primary, (anchored ? 0.92 : 0.84) * pulse);
+  ctx.lineWidth = Math.max(2.2, baseR * 0.12);
+  ctx.beginPath();
+  ctx.ellipse(x, y, baseR * 0.92, baseR * 0.82, spin * 0.18, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.shadowColor = secondary;
+  ctx.strokeStyle = hexToRgba(secondary, (anchored ? 0.68 : 0.76) * pulse);
+  ctx.lineWidth = Math.max(1.25, baseR * 0.048);
+  ctx.beginPath();
+  ctx.ellipse(x, y, baseR * 1.08, baseR * 0.93, -spin * 0.24, 0, Math.PI * 2);
+  ctx.stroke();
+
+  for (let ring = 0; ring < 5; ring++) {
+    const rr = baseR * (1.15 + ring * 0.27);
+    const segments = anchored ? 12 + ring * 2 : 8 + ring;
+    const gap = anchored ? 0.42 : 0.58;
+    ctx.strokeStyle = hexToRgba(ring % 2 ? secondary : primary,
+      (anchored ? 0.78 : 0.68) * pulse * (1 - ring * 0.08));
+    ctx.shadowColor = ring % 2 ? secondary : primary;
+    ctx.lineWidth = Math.max(1.25, baseR * (0.068 - ring * 0.006));
+    for (let segment = 0; segment < segments; segment++) {
+      const step = Math.PI * 2 / segments;
+      const start = spin * (ring % 2 ? -1.35 : 1) + segment * step + ring * 0.19;
+      ctx.beginPath();
+      ctx.ellipse(x, y, rr, rr * (0.91 + ring * 0.01), spin * 0.12, start, start + step * gap);
+      ctx.stroke();
+    }
+  }
+
+  ctx.strokeStyle = hexToRgba(primary, anchored ? 0.8 : 0.64);
+  ctx.lineWidth = Math.max(1.1, baseR * 0.042);
+  const spokes = anchored ? 12 : 7;
+  for (let i = 0; i < spokes; i++) {
+    const a = spin * -1.8 + i / spokes * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(a) * baseR * 1.25, y + Math.sin(a) * baseR * 1.25);
+    ctx.quadraticCurveTo(
+      x + Math.cos(a + 0.22) * baseR * 1.62,
+      y + Math.sin(a + 0.22) * baseR * 1.62,
+      x + Math.cos(a + 0.38) * baseR * 2.12,
+      y + Math.sin(a + 0.38) * baseR * 2.12,
+    );
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawGalaxyWormholeMonument(ctx, x, y, coreR, visual, time, tier) {
+  const phase = visual?.phase ?? 'dormant';
+  const anchored = phase === 'anchored' || !!visual?.anchored;
+  const active = ['charging', 'opening', 'transit', 'collapse', 'arrival'].includes(phase);
+  const progress = Math.max(0, Math.min(1, visual?.progress ?? 0));
+  const baseR = tier === 'far'
+    ? Math.max(11, coreR * 1.55)
+    : tier === 'mid'
+      ? Math.max(27, coreR * 1.65)
+      : Math.max(44, coreR * 1.75);
+  const energy = (anchored ? 1.04 : 0.84) * (active ? 1.08 + 0.2 * Math.sin(progress * Math.PI) : 1);
+  const pulse = 0.88 + 0.12 * Math.sin(time * 0.002 + progress * Math.PI * 2);
+  const spin = time * (anchored ? -0.00036 : 0.00018) + progress * 2.1;
+  const primary = anchored ? '#69e8ff' : '#a56cff';
+  const secondary = anchored ? '#b394ff' : '#ff63c5';
+  const hot = anchored ? '#eaffff' : '#ffe8ff';
+
+  ctx.save();
+  ctx.lineCap = 'round';
+
+  // Galaxy view uses a compact radial aperture instead of the full system-view
+  // black-hole shader. This keeps the map landmark crisp and avoids evaluating
+  // the turbulent lensing shader over a large animated scissor region.
+  const apertureR = baseR * (active ? 0.62 : 0.56);
+  const aperture = ctx.createRadialGradient(x, y, apertureR * 0.08, x, y, apertureR);
+  aperture.addColorStop(0, 'rgba(1, 2, 10, 0.98)');
+  aperture.addColorStop(0.68, 'rgba(7, 5, 22, 0.98)');
+  aperture.addColorStop(0.88, hexToRgba(primary, 0.32 * energy));
+  aperture.addColorStop(1, hexToRgba(hot, 0.72 * energy * pulse));
+  ctx.fillStyle = aperture;
+  ctx.beginPath();
+  ctx.arc(x, y, apertureR, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = hexToRgba(hot, 0.72 * energy * pulse);
+  ctx.lineWidth = Math.max(1.2, baseR * 0.035);
+  ctx.beginPath();
+  ctx.arc(x, y, apertureR * 1.04, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // One compact aura separates the portal from the lane network without the
+  // large fill footprint of the original galaxy monument.
+  const aura = ctx.createRadialGradient(x, y, baseR * 0.2, x, y, baseR * 2.1);
+  aura.addColorStop(0, hexToRgba(primary, 0.14 * energy));
+  aura.addColorStop(0.45, hexToRgba(secondary, 0.065 * energy));
+  aura.addColorStop(1, hexToRgba(primary, 0));
+  ctx.fillStyle = aura;
+  ctx.beginPath();
+  ctx.arc(x, y, baseR * 2.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // A single paired lens arc keeps the gravitational read with one stroke.
+  if (tier !== 'far') {
+    ctx.shadowBlur = tier === 'close' ? baseR * 0.16 : 0;
+    ctx.shadowColor = primary;
+    ctx.strokeStyle = hexToRgba(primary, 0.22 * energy);
+    ctx.lineWidth = Math.max(1, baseR * 0.025);
+    ctx.beginPath();
+    ctx.ellipse(x, y, baseR * 1.4, baseR * 0.62, spin * 0.16, -2.55, -0.48);
+    ctx.ellipse(x, y, baseR * 1.4, baseR * 0.62, spin * 0.16 + Math.PI, -2.55, -0.48);
+    ctx.stroke();
+  }
+
+  // Dashed rings replace hundreds of individually stroked rail segments.
+  const ringCount = tier === 'far' ? 1 : tier === 'mid' ? 2 : 3;
+  for (let ring = 0; ring < ringCount; ring++) {
+    const rr = baseR * (1.02 + ring * 0.24);
+    const dash = baseR * (anchored ? 0.22 : 0.28);
+    ctx.setLineDash([dash, dash * (anchored ? 0.62 : 0.9)]);
+    ctx.lineDashOffset = spin * rr * (ring % 2 ? 1 : -1) + ring * baseR * 0.2;
+    ctx.strokeStyle = hexToRgba(ring % 2 ? secondary : primary,
+      (0.62 - ring * 0.12) * energy * pulse);
+    ctx.shadowColor = ring % 2 ? secondary : primary;
+    ctx.lineWidth = Math.max(1, baseR * (0.05 - ring * 0.008));
+    ctx.beginPath();
+    ctx.arc(x, y, rr, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Only an active close portal needs ingestion filaments. They share one
+  // path and one stroke instead of carrying independent glow state.
+  if (active && tier === 'close') {
+    const filaments = 4;
+    ctx.strokeStyle = hexToRgba(hot, 0.28 * energy * pulse);
+    ctx.lineWidth = Math.max(0.8, baseR * 0.014);
+    ctx.beginPath();
+    for (let i = 0; i < filaments; i++) {
+      const a = spin * 0.55 + i / filaments * Math.PI * 2;
+      const outer = baseR * 1.72;
+      ctx.moveTo(x + Math.cos(a) * outer, y + Math.sin(a) * outer);
+      ctx.bezierCurveTo(
+        x + Math.cos(a + 0.5) * baseR * 1.38,
+        y + Math.sin(a + 0.5) * baseR * 1.38,
+        x + Math.cos(a + 0.95) * baseR * 1.08,
+        y + Math.sin(a + 0.95) * baseR * 1.08,
+        x + Math.cos(a + 1.18) * baseR * 0.9,
+        y + Math.sin(a + 1.18) * baseR * 0.9,
+      );
+    }
+    ctx.stroke();
+  }
+
+  // Four close-view anchors are enough to imply an engineered gateway.
+  if (tier === 'close') {
+    const pylons = 4;
+    ctx.fillStyle = hexToRgba(secondary, 0.42 * energy);
+    ctx.strokeStyle = hexToRgba(hot, 0.58 * energy);
+    ctx.lineWidth = Math.max(0.8, baseR * 0.012);
+    ctx.beginPath();
+    for (let i = 0; i < pylons; i++) {
+      const a = -spin * 0.52 + i / pylons * Math.PI * 2;
+      const rr = baseR * 1.7;
+      const px = x + Math.cos(a) * rr;
+      const py = y + Math.sin(a) * rr;
+      const pr = baseR * 0.07;
+      const tx = -Math.sin(a) * pr;
+      const ty = Math.cos(a) * pr;
+      const rx = Math.cos(a) * pr * 1.4;
+      const ry = Math.sin(a) * pr * 1.4;
+      ctx.moveTo(px + rx, py + ry);
+      ctx.lineTo(px + tx, py + ty);
+      ctx.lineTo(px - rx, py - ry);
+      ctx.lineTo(px - tx, py - ty);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Active phases retain one restrained shock ring.
+  if (active) {
+    const shockProgress = phase === 'collapse' || phase === 'arrival' ? 1 - progress : progress;
+    const shockR = baseR * (1 + shockProgress * 1.4);
+    ctx.strokeStyle = hexToRgba(hot, (1 - shockProgress) * 0.48 * energy);
+    ctx.lineWidth = Math.max(1, baseR * 0.03 * (1 - shockProgress * 0.5));
+    ctx.beginPath();
+    ctx.arc(x, y, shockR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  if (tier === 'close') {
+    const streak = ctx.createLinearGradient(x - baseR * 2, y, x + baseR * 2, y);
+    streak.addColorStop(0, hexToRgba(primary, 0));
+    streak.addColorStop(0.5, hexToRgba(hot, 0.28 * energy * pulse));
+    streak.addColorStop(1, hexToRgba(secondary, 0));
+    ctx.strokeStyle = streak;
+    ctx.lineWidth = Math.max(1, baseR * 0.018);
+    ctx.beginPath();
+    ctx.moveTo(x - baseR * 2, y);
+    ctx.lineTo(x + baseR * 2, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+  return baseR * (tier === 'far' ? 1.25 : tier === 'mid' ? 1.55 : 1.9);
+}
+
+function drawCinematicStarLens(ctx, x, y, r, profile, time, canvas) {
+  if (!profile || !['convective', 'hot', 'giant', 'compact', 'flare'].includes(profile.rendererKind) || r < 12) return;
+  const chromatic = Math.max(0.55, profile.chromaticStrength ?? 1);
+  const maxLen = Math.min(canvas.width * 0.58, r * (4.8 + chromatic));
+  const pulse = 0.82 + 0.18 * Math.sin(time * 0.0011 + (profile.rotationSpeed ?? 0) * time * 12);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+
+  const streaks = [
+    { y: -1.4, color: 'rgba(72, 190, 255, 0)', hot: `rgba(92, 212, 255, ${0.2 * pulse})` },
+    { y: 0, color: 'rgba(255, 238, 188, 0)', hot: `rgba(255, 244, 204, ${0.4 * pulse})` },
+    { y: 1.6, color: 'rgba(255, 94, 54, 0)', hot: `rgba(255, 116, 70, ${0.17 * pulse})` },
+  ];
+  for (const streak of streaks) {
+    const gradient = ctx.createLinearGradient(x - maxLen, y, x + maxLen, y);
+    gradient.addColorStop(0, streak.color);
+    gradient.addColorStop(0.38, streak.color);
+    gradient.addColorStop(0.5, streak.hot);
+    gradient.addColorStop(0.62, streak.color);
+    gradient.addColorStop(1, streak.color);
+    ctx.strokeStyle = gradient;
+    ctx.lineWidth = Math.max(0.8, r * (streak.y === 0 ? 0.018 : 0.009));
+    ctx.shadowColor = profile.coronaColor;
+    ctx.shadowBlur = Math.max(4, r * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(x - maxLen, y + streak.y);
+    ctx.lineTo(x + maxLen, y + streak.y);
+    ctx.stroke();
+  }
+
+  const ghostVectorX = canvas.width * 0.5 - x;
+  const ghostVectorY = canvas.height * 0.5 - y;
+  const ghosts = [
+    { t: 0.32, size: 0.12, alpha: 0.13, color: '#67d8ff' },
+    { t: 0.58, size: 0.075, alpha: 0.1, color: '#ff9c5e' },
+    { t: 0.82, size: 0.16, alpha: 0.065, color: profile.coronaColor },
+  ];
+  for (const ghost of ghosts) {
+    const gx = x + ghostVectorX * ghost.t;
+    const gy = y + ghostVectorY * ghost.t;
+    const gr = Math.max(3, r * ghost.size * chromatic);
+    const glow = ctx.createRadialGradient(gx, gy, 0, gx, gy, gr);
+    glow.addColorStop(0, hexToRgba(ghost.color, ghost.alpha * pulse));
+    glow.addColorStop(0.36, hexToRgba(ghost.color, ghost.alpha * 0.4 * pulse));
+    glow.addColorStop(1, hexToRgba(ghost.color, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawCinematicSystemGrade(ctx, canvas, battle = null, time = 0) {
@@ -1075,9 +1388,11 @@ function drawBattleEnvelope(ctx, battle, canvas, z, time) {
 
 function drawWeaponArcIndicator(ctx, p, unit, radius, z) {
   const r = radius + Math.max(12, 18 * z);
-  const mounts = unit.hull === 'flagship' && Array.isArray(unit.weapons)
+  const mounts = Array.isArray(unit.weapons) && unit.weapons.length
     ? unit.weapons
-    : [{ profile: unit.weaponProfile ?? 'kinetic', hardpoint: null }];
+    : Array.isArray(unit.weaponMounts) && unit.weaponMounts.length
+      ? unit.weaponMounts
+      : [{ profile: unit.weaponProfile ?? 'kinetic', hardpoint: null }];
   for (const mount of mounts) {
     const arc = weaponArcRadians(mount.profile, mount.hardpoint);
     ctx.save();
@@ -1352,6 +1667,57 @@ function starNodeRadius(state, starId) {
   return 9 + (system ? system.bodies.length : 0) * 1.6 + bonus;
 }
 
+function drawStellarAnomalySignature(ctx, x, y, r, profile, time, intel) {
+  if (!profile || !['binary', 'supergiant', 'pulsar', 'quasar'].includes(profile.rendererKind)) return;
+  const size = Math.max(4.5, r * 1.18);
+  const pulse = 0.72 + 0.28 * Math.sin(time * 0.0018 + x * 0.013 + y * 0.007);
+  const color = intel ? profile.coronaColor : '#8e86c8';
+  const alpha = (intel ? 0.78 : 0.42) * pulse;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = hexToRgba(color, alpha);
+  ctx.fillStyle = hexToRgba(color, alpha * 0.42);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = Math.max(3, size * 0.5);
+  ctx.lineWidth = Math.max(0.8, size * 0.11);
+
+  if (profile.rendererKind === 'binary') {
+    ctx.beginPath();
+    ctx.arc(x - size * 0.38, y, size * 0.42, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.38, y, size * 0.32, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (profile.rendererKind === 'supergiant') {
+    ctx.beginPath();
+    for (let i = 0; i <= 18; i++) {
+      const a = i / 18 * Math.PI * 2;
+      const wobble = 1 + 0.12 * Math.sin(a * 5 + time * 0.0002);
+      const px = x + Math.cos(a) * size * wobble;
+      const py = y + Math.sin(a) * size * wobble;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  } else if (profile.rendererKind === 'pulsar') {
+    ctx.beginPath();
+    ctx.ellipse(x, y, size * 1.25, size * 0.42, time * 0.0004, 0, Math.PI * 2);
+    ctx.stroke();
+    const beam = size * 2.1;
+    const a = time * 0.003;
+    ctx.beginPath();
+    ctx.moveTo(x - Math.cos(a) * beam, y - Math.sin(a) * beam);
+    ctx.lineTo(x + Math.cos(a) * beam, y + Math.sin(a) * beam);
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.ellipse(x, y, size * 1.5, size * 0.46, -0.12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y - size * 2.1);
+    ctx.lineTo(x, y + size * 2.1);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 const BLACK_HOLE_NODE_RADIUS = 26;
 
 function laneKey(a, b) {
@@ -1472,11 +1838,9 @@ export function drawGalaxy(
   let visibleLanes = 0;
   const whId = wormholeIdForGalaxy(state.activeGalaxyId);
   const wh = state.wormholes?.[whId];
-  const whLabel = state.flagship.wormholeTransit
-    ? 'Wormhole — in transit'
-    : wh?.anchor
-      ? 'Wormhole — anchored'
-      : 'Wormhole — active';
+  const whVisual = wormholeVisualState(state);
+  const phaseLabel = whVisual.phase === 'transit' ? 'in transit' : whVisual.phase;
+  const whLabel = `Wormhole — ${phaseLabel}`;
 
   let routeLanes = null;
   if (transit) {
@@ -1643,6 +2007,7 @@ export function drawGalaxy(
   }
 
   const bhScreen = worldToScreen(galaxyCamera, galaxy.blackHole.x, galaxy.blackHole.y, canvas);
+  const galaxyCoreR = Math.max(tier === 'close' ? 23 : tier === 'mid' ? 14 : 8, BLACK_HOLE_NODE_RADIUS * z);
   if (tier === 'far') {
     const r = Math.max(3, BLACK_HOLE_NODE_RADIUS * z);
     ctx.save();
@@ -1658,20 +2023,6 @@ export function drawGalaxy(
     ctx.arc(bhScreen.x, bhScreen.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-  } else {
-    const wormholeTransit = state.flagship.wormholeTransit;
-    const wormholeProgress = wormholeTransit
-      ? Math.max(0, Math.min(1, (state.time - wormholeTransit.startTime) / Math.max(1, wormholeTransit.durationMs)))
-      : 0;
-    drawBlackHole(
-      ctx,
-      bhScreen.x,
-      bhScreen.y,
-      BLACK_HOLE_NODE_RADIUS * z,
-      state.time,
-      !!wh?.anchor || !!wormholeTransit,
-      wormholeTransit ? Math.sin(wormholeProgress * Math.PI) : 0,
-    );
   }
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
@@ -1717,10 +2068,19 @@ export function drawGalaxy(
   }
 
   flushStars(ctx, 'core');
-
-  labelText(ctx, getActiveGalaxy(state)?.name ?? 'Galaxy', bhScreen.x, bhScreen.y - (BLACK_HOLE_NODE_RADIUS + 52) * z, Math.max(9, 11 * z), THEME.accentCyan);
-  labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 44) * z, Math.max(10, 12 * z), THEME.textSecondary);
-  labelText(ctx, whLabel, bhScreen.x, bhScreen.y + (BLACK_HOLE_NODE_RADIUS + 58) * z, Math.max(8, 9.5 * z), 'rgba(176, 122, 219, 0.85)');
+  const wormholeMonumentR = drawGalaxyWormholeMonument(
+    ctx,
+    bhScreen.x,
+    bhScreen.y,
+    galaxyCoreR,
+    whVisual,
+    state.time,
+    tier,
+  );
+  const wormholeLabelColor = whVisual.anchored ? 'rgba(105, 232, 255, 0.94)' : 'rgba(191, 124, 255, 0.92)';
+  labelText(ctx, getActiveGalaxy(state)?.name ?? 'Galaxy', bhScreen.x, bhScreen.y - wormholeMonumentR - Math.max(15, 23 * z), Math.max(9, 11 * z), THEME.accentCyan);
+  labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + wormholeMonumentR + Math.max(11, 16 * z), Math.max(10, 12 * z), THEME.textSecondary);
+  labelText(ctx, whLabel, bhScreen.x, bhScreen.y + wormholeMonumentR + Math.max(24, 31 * z), Math.max(8, 9.5 * z), wormholeLabelColor);
   drawGalaxyReadout(ctx, state, galaxy, liveTraffic.length, pirateMarkers.length + pirateTransit.length, convoyTransit.length);
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
@@ -1752,6 +2112,16 @@ export function drawGalaxy(
       ctx.arc(s.x, s.y, nodeR, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    drawStellarAnomalySignature(
+      ctx,
+      s.x,
+      s.y,
+      nodeR,
+      getStarVisualProfile(system?.star),
+      state.time,
+      intel,
+    );
 
     if (state.stronghold === star.id) {
       drawGlowRing(ctx, s.x, s.y, nodeR + 6 * z, THEME.accentGold, Math.max(1, 2 * z), 0.9);

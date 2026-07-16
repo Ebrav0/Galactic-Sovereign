@@ -19,6 +19,8 @@ import {
   LANE_SPEED,
   LANE_MIN_LEG_MS,
   CELESTIAL_VISUAL_SCALE,
+  FLAGSHIP_MANUAL_OVERRIDE_MS,
+  FLAGSHIP_AUTOPILOT_BLEND_MS,
 } from './constants.js';
 import { findPath, nodeById } from './galaxy.js';
 import { systemById, findBody, bodyAngle, planetPosition, moonPosition } from './state.js';
@@ -27,6 +29,7 @@ import { effectiveLegDurationMs } from './strategic-structures.js';
 import { keepOutRepulsion } from './ship-motion.js';
 import { getStarVisualProfile } from './star-types.js';
 import { canRouteThroughSystem } from './diplomacy.js';
+import { flagshipAutopilotPlan } from './combat-autonomy.js';
 import {
   legDurationMs,
   transitStatus as transitStatusCore,
@@ -37,6 +40,8 @@ import {
 // Current thrust vector, set by input (or test hooks). Visual-only in the
 // sense of never being serialized; ticks read it as the pilot's live order.
 const input = { x: 0, y: 0 };
+let manualOverrideUntil = 0;
+let autopilotBlendUntil = 0;
 
 // Previous-tick pose for render-time extrapolation between 20 Hz physics steps.
 const prev = { x: 0, y: 0, heading: 0 };
@@ -99,13 +104,45 @@ export function getFlagshipDisplayPose(state, accumulatorMs) {
   };
 }
 
-export function setFlagshipInput(x, y) {
+export function setFlagshipInput(x, y, nowMs = 0) {
+  const wasActive = Math.hypot(input.x, input.y) > 1e-6;
   input.x = x;
   input.y = y;
+  const active = Math.hypot(input.x, input.y) > 1e-6;
+  if (active) {
+    manualOverrideUntil = Infinity;
+    autopilotBlendUntil = Infinity;
+  } else if (wasActive) {
+    manualOverrideUntil = Math.max(0, nowMs) + FLAGSHIP_MANUAL_OVERRIDE_MS;
+    autopilotBlendUntil = manualOverrideUntil + FLAGSHIP_AUTOPILOT_BLEND_MS;
+  }
 }
 
 export function getFlagshipInput() {
   return { x: input.x, y: input.y };
+}
+
+export function flagshipControlStatus(state) {
+  const f = state?.flagship;
+  const battle = f?.systemId ? state?.systemBattles?.[f.systemId] : null;
+  if (!battle?.active || battle.mode !== 'tactical' || state?.combatSettings?.flagshipAutopilot === false) {
+    return { mode: 'manual', overrideRemainingMs: 0, blend: 0, targetId: null };
+  }
+  const now = state.time ?? 0;
+  const held = Math.hypot(input.x, input.y) > 1e-6;
+  if (held || now < manualOverrideUntil) {
+    return {
+      mode: 'manual',
+      overrideRemainingMs: held ? FLAGSHIP_MANUAL_OVERRIDE_MS : Math.max(0, manualOverrideUntil - now),
+      blend: 0,
+      targetId: f.autopilotTargetId ?? null,
+    };
+  }
+  if (now < autopilotBlendUntil) {
+    const blend = 1 - Math.max(0, autopilotBlendUntil - now) / FLAGSHIP_AUTOPILOT_BLEND_MS;
+    return { mode: 'returning_to_auto', overrideRemainingMs: 0, blend, targetId: f.autopilotTargetId ?? null };
+  }
+  return { mode: 'auto', overrideRemainingMs: 0, blend: 1, targetId: f.autopilotTargetId ?? null };
 }
 
 export function isFlagshipOrbiting(state) {
@@ -416,7 +453,20 @@ export function tickFlagship(state) {
     return;
   }
 
-  const thrusting = Math.hypot(input.x, input.y) > 1e-6;
+  const control = flagshipControlStatus(state);
+  const autopilot = control.mode === 'manual' ? null : flagshipAutopilotPlan(state);
+  let driveX = input.x;
+  let driveY = input.y;
+  if (autopilot) {
+    const weight = control.mode === 'returning_to_auto' ? control.blend : 1;
+    driveX = autopilot.x * weight;
+    driveY = autopilot.y * weight;
+    f.autopilotTargetId = autopilot.targetId ?? null;
+    f.combatIntent = autopilot.intent;
+  } else if (control.mode === 'manual') {
+    f.combatIntent = 'manual_override';
+  }
+  const thrusting = Math.hypot(driveX, driveY) > 1e-6;
   if (f.orbit) {
     if (thrusting) {
       clearOrbit(f);
@@ -427,8 +477,8 @@ export function tickFlagship(state) {
   }
 
   const dt = TICK_MS / 1000;
-  let ax = input.x;
-  let ay = input.y;
+  let ax = driveX;
+  let ay = driveY;
   const mag = Math.hypot(ax, ay);
   if (mag > 1e-6) {
     if (mag > 1) {

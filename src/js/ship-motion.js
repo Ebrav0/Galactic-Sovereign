@@ -18,7 +18,7 @@ import {
 } from './constants.js';
 import { planetPosition, moonPosition, hashSeed } from './state.js';
 import { getStarVisualProfile } from './star-types.js';
-import { stationedShipPose } from './fleets.js';
+import { postBattleReturnPose, stationedShipPose } from './fleets.js';
 
 function motionSeed(key) {
   return (hashSeed(0x9a1b2c3d, key) % 10000) / 10000;
@@ -192,11 +192,12 @@ export function pirateStationPose(state, system, idx, total) {
 export function ambientPiratePose(state, system, ship, fleetId, idx, total, time = state.time, bodyCache = null) {
   const base = pirateStationPose(state, system, idx, total);
   const patrol = patrolOffset(time, `${fleetId}:${ship.id}`, 1.15);
-  const raw = {
+  const rawTarget = {
     x: base.x + patrol.cx,
     y: base.y + patrol.cy,
     heading: patrol.heading,
   };
+  const raw = postBattleReturnPose(ship, rawTarget, time);
   const safe = softKeepOut(state, system, raw.x, raw.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }

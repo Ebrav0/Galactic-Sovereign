@@ -13,6 +13,9 @@ uniform float u_radius;
 uniform float u_time;
 uniform float u_large; // 1.0 = system view
 uniform float u_warp;  // 0 = dormant, 1 = hyperspace exit
+uniform int u_phase; // 0 absent/legacy, 1 anchored, 2 charging, 3 opening, 4 transit,
+                     // 5 collapse, 6 arrival, 7 cinematic dormant
+uniform float u_phaseProgress;
 
 const vec3 VIOLET = vec3(0.59, 0.35, 1.0);
 const vec3 DEEP_VIOLET = vec3(0.32, 0.18, 0.66);
@@ -66,6 +69,10 @@ void main() {
   float angle = atan(delta.y, delta.x);
   float t = u_time * 0.001;
   float wt = t * (1.0 + u_warp * 32.0);
+  float phaseEnergy = u_phase == 1 ? 0.22
+    : u_phase == 2 ? mix(0.15, 0.7, u_phaseProgress)
+      : u_phase == 3 || u_phase == 4 ? 1.0
+        : u_phase == 5 || u_phase == 6 ? 1.0 - u_phaseProgress : 0.0;
 
   // Hyperspace exit — spiral tunnel distortion and breathing scale.
   if (u_warp > 0.01) {
@@ -146,6 +153,52 @@ void main() {
     alpha = max(alpha, ring + ring2);
   }
 
+  // ---------- persistent cinematic gateway chassis ----------
+  // Dormant and anchored cores now use the same portal language as transit,
+  // replacing the legacy plain black-hole silhouette at rest.
+  {
+    float anchored = u_phase == 1 ? 1.0 : 0.0;
+    float activePhase = u_phase >= 2 && u_phase <= 4 ? 1.0 : 0.0;
+    float gateEnergy = 0.86 + anchored * 0.24 + activePhase * 0.28;
+    float gateSpin = t * mix(0.16, -0.42, anchored) + u_phaseProgress * 2.4;
+    vec2 gateP = vec2(delta.x, delta.y * (1.08 + 0.08 * sin(gateSpin * 0.7)));
+    float gateD = length(gateP);
+    float gateA = atan(gateP.y, gateP.x);
+    for (int k = 0; k < 5; k++) {
+      float fk = float(k);
+      float ringR = u_radius * (1.34 + fk * 0.255 + 0.025 * sin(gateSpin * (1.2 + fk * 0.16) + fk));
+      float ringW = u_radius * (0.038 + fk * 0.005);
+      float ring = exp(-pow((gateD - ringR) / ringW, 2.0));
+      float teeth = smoothstep(0.18, 0.82,
+        0.5 + 0.5 * sin(gateA * (8.0 + fk * 2.0) + gateSpin * (1.0 + fk * 0.22) + fk * 1.7));
+      float rails = mix(0.28 + teeth * 0.5, 0.18 + teeth * 0.82, anchored);
+      vec3 gateCol = mix(mix(VIOLET, HOT_PINK, fk * 0.13), mix(CYAN, VIOLET, fk * 0.18), anchored);
+      col += gateCol * ring * rails * gateEnergy;
+      alpha = max(alpha, ring * rails * (0.48 + anchored * 0.25));
+    }
+
+    float spokeBand = smoothstep(u_radius * 2.55, u_radius * 1.86, gateD)
+      * smoothstep(u_radius * 1.28, u_radius * 1.5, gateD);
+    float spokes = pow(0.5 + 0.5 * sin(gateA * (anchored > 0.5 ? 12.0 : 7.0) - gateSpin * 2.0), 24.0);
+    col += mix(VIOLET, CYAN, anchored) * spokes * spokeBand * (0.28 + anchored * 0.38);
+    alpha = max(alpha, spokes * spokeBand * (0.28 + anchored * 0.28));
+
+    // Two opposing lens echoes make the aperture read as a constructed
+    // gateway instead of a circular accretion disc.
+    float echoX = abs(delta.x) / max(u_radius, 1.0);
+    float echoY = abs(delta.y) / max(u_radius, 1.0);
+    float echo = exp(-pow((echoX - 2.72) / 0.16, 2.0) - pow(echoY / 0.62, 2.0));
+    col += mix(HOT_PINK, CYAN, anchored) * echo * gateEnergy * 0.58;
+    alpha = max(alpha, echo * 0.42);
+
+    if (u_phase == 7) {
+      float irisRing = exp(-pow((dist - u_radius * 1.18) / (u_radius * 0.055), 2.0));
+      float irisFlow = 0.58 + 0.42 * sin(angle * 9.0 - t * 0.72 + normR * 5.0);
+      col += mix(VIOLET, HOT_PINK, irisFlow * 0.45) * irisRing * (0.85 + irisFlow * 0.5);
+      alpha = max(alpha, irisRing * 0.9);
+    }
+  }
+
   // ---------- polar jets (tilted off-axis during warp to avoid cardinal streaks) ----------
   {
     float jetPulse = 0.72 + 0.28 * sin((u_warp > 0.01 ? wt : t) * (1.7 + u_warp * 2.5));
@@ -218,6 +271,38 @@ void main() {
       col += bandCol * band * spinBand * u_warp * (0.35 + 0.12 * fk);
       alpha = max(alpha, band * spinBand * u_warp * 0.55);
     }
+  }
+
+  // ---------- event horizon + dormant wormhole iris ----------
+  // ---------- phase language: anchored geometry, charging filaments, arrival shock ----------
+  if (u_phase == 1) {
+    for (int k = 0; k < 4; k++) {
+      float fk = float(k);
+      float ringR = u_radius * (1.45 + fk * 0.28);
+      float ring = exp(-pow((dist - ringR) / (u_radius * 0.025), 2.0));
+      float segments = smoothstep(0.2, 0.75, 0.5 + 0.5 * sin(angle * (6.0 + fk * 2.0) + t * (0.32 - fk * 0.04)));
+      col += mix(VIOLET, CYAN, fk * 0.22) * ring * segments * (0.38 + fk * 0.06);
+      alpha = max(alpha, ring * segments * 0.55);
+    }
+  }
+  if (u_phase == 2 || u_phase == 3) {
+    for (int k = 0; k < 12; k++) {
+      float fk = float(k);
+      float fa = fk * 0.5235988 + t * (0.16 + phaseEnergy * 0.7);
+      float radial = abs(sin(angle - fa));
+      float filament = pow(1.0 - radial, 18.0)
+        * smoothstep(outerR, u_radius * 1.05, dist)
+        * (1.0 - smoothstep(u_radius * 0.96, u_radius * 1.08, dist));
+      col += mix(VIOLET, CYAN, phaseEnergy) * filament * phaseEnergy * 0.75;
+      alpha = max(alpha, filament * phaseEnergy * 0.55);
+    }
+  }
+  if (u_phase == 5 || u_phase == 6) {
+    float shockT = u_phase == 6 ? u_phaseProgress : max(0.0, (u_phaseProgress - 0.8) / 0.2);
+    float shockR = u_radius * mix(1.0, 5.4, shockT);
+    float shock = exp(-pow((dist - shockR) / (u_radius * (0.045 + shockT * 0.09)), 2.0));
+    col += mix(CYAN, vec3(1.0, 0.94, 0.82), 0.4) * shock * (1.0 - shockT) * 1.45;
+    alpha = max(alpha, shock * (1.0 - shockT));
   }
 
   // ---------- event horizon + dormant wormhole iris ----------

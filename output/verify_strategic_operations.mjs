@@ -163,8 +163,8 @@ const scalePreview = previewExpansionCampaign(state, scaleSpec, { hooks: scaleHo
 check('50-outpost preview selects exactly fifty valid systems', scalePreview.ok
   && scalePreview.requestedCount === 50 && scalePreview.targets.length === 50);
 check('unknown targets are explicitly marked for recon', scalePreview.targets.every((target) => target.requiresRecon));
-check('default strategic force and concurrency policies are applied', scalePreview.policy.captureForceMultiplier === 1.2
-  && scalePreview.policy.combatPowerMultiplier === 1.35 && scalePreview.policy.concurrency === 3
+check('Frontier doctrine force and default concurrency policies are applied', scalePreview.policy.captureForceMultiplier === 1.15
+  && scalePreview.policy.combatPowerMultiplier === 1.2 && scalePreview.policy.concurrency === 3
   && scalePreview.policy.retryLimit === 2 && scalePreview.policy.casualtyCap === 0.35);
 const scaleCreated = createExpansionCampaign(state, scalePreview);
 check('50-target campaign persists as one compact strategic order', scaleCreated.ok

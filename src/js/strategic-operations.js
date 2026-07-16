@@ -9,7 +9,9 @@ import {
   listConstructionTemplates,
   materializeConstructionTemplate,
   saveConstructionTemplate,
+  validateConstructionTemplate,
 } from './construction-templates.js';
+import { BUILDER_DRONE_STARTER_COUNT } from './constants.js';
 import { findPath, neighborsOf } from './galaxy.js';
 import { getGalaxyIntel, getGraph, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
@@ -22,7 +24,7 @@ export {
   saveConstructionTemplate,
 };
 
-export const STRATEGIC_ORDERS_VERSION = 1;
+export const STRATEGIC_ORDERS_VERSION = 2;
 export const STRATEGIC_TICK_INTERVAL_MS = 500;
 
 export const EXPANSION_TARGET_PHASES = Object.freeze([
@@ -124,6 +126,8 @@ function normalizeSavedTarget(target, index) {
   target.capture ??= null;
   target.construction ??= null;
   target.security ??= null;
+  target.droneTeam ??= { droneIds: [], required: 0, status: 'unassigned' };
+  target.executionVersion ??= STRATEGIC_ORDERS_VERSION;
   target.force ??= { capturePower: 0, combatPower: 0 };
   target.requirements ??= { captureForce: 0, combatPower: 0, hostileCombatPower: 0 };
   target.route ??= null;
@@ -139,6 +143,12 @@ export function ensureStrategicOrdersState(state) {
   orders.version = STRATEGIC_ORDERS_VERSION;
   orders.campaigns ??= [];
   orders.templates ??= [];
+  orders.templates = orders.templates.map((template) => {
+    const migrated = validateConstructionTemplate(template);
+    return migrated.ok
+      ? { ...template, ...migrated.template, preset: false }
+      : template;
+  });
   orders.routeRevision = Math.max(0, Math.floor(Number(orders.routeRevision) || 0));
   orders.diplomacyRevision = Math.max(0, Math.floor(Number(orders.diplomacyRevision) || 0));
   orders.threatRevision = Math.max(0, Math.floor(Number(orders.threatRevision) || 0));
@@ -156,6 +166,10 @@ export function ensureStrategicOrdersState(state) {
     campaign.status ??= 'paused';
     campaign.targets ??= [];
     campaign.policy = normalizePolicy(campaign.policy);
+    campaign.operationDoctrine = campaign.operationDoctrine
+      ?? campaign.templateSnapshot?.doctrine
+      ?? getConstructionTemplate(state, campaign.templateId)?.doctrine
+      ?? getConstructionTemplate(state, 'frontier')?.doctrine;
     campaign.blockers ??= [];
     campaign.metrics ??= {};
     campaign.metrics.spent = Number(campaign.metrics.spent) || 0;
@@ -163,6 +177,9 @@ export function ensureStrategicOrdersState(state) {
     campaign.metrics.committedPower = Number(campaign.metrics.committedPower) || 0;
     campaign.metrics.requisitionedPower = Number(campaign.metrics.requisitionedPower) || 0;
     campaign.linkedBulkOrderIds ??= [];
+    campaign.reserveDroneIds ??= [];
+    campaign.reserveDroneRequested ??= campaign.reserveDroneIds.length > 0;
+    campaign.reserveDroneOrderId ??= null;
     campaign.budget ??= { limit: null, reserve: 0, spent: campaign.metrics.spent };
     campaign.budget.limit = finiteOrNull(campaign.budget.limit);
     campaign.budget.reserve = Math.max(0, Number(campaign.budget.reserve) || 0);
@@ -382,8 +399,14 @@ export function previewExpansionCampaign(state, spec = {}, options = {}) {
     spec.sourceGalaxyId ?? galaxyId,
   );
   const mode = selectionMode(spec);
-  const policy = normalizePolicy({ ...spec.policy, concurrency: spec.concurrency ?? spec.policy?.concurrency });
   const template = getConstructionTemplate(state, spec.template ?? spec.templateId ?? 'frontier');
+  const doctrine = copy(template?.doctrine ?? {});
+  const policy = normalizePolicy({
+    captureForceMultiplier: doctrine.captureForceMultiplier,
+    combatPowerMultiplier: doctrine.combatPowerMultiplier,
+    ...spec.policy,
+    concurrency: spec.concurrency ?? spec.policy?.concurrency,
+  });
   const blockers = [];
   const warnings = [];
   if (!isTechUnlocked(state, 'eco_construction_drones')) {
@@ -487,6 +510,23 @@ export function previewExpansionCampaign(state, spec = {}, options = {}) {
       });
     }
     const requirements = previewRequirements(state, target, system, policy, hooks);
+    const operationPackage = hooks.previewOperationPackage?.(state, {
+      target,
+      system,
+      requirements,
+      doctrine,
+      source,
+      spec,
+      targetIndex: previews.length,
+      preview: true,
+    }) ?? {
+      manifest: [],
+      roleSubstitutions: [],
+      requiredDrones: doctrine.dronePayload ?? 2,
+      existingDrones: 0,
+      droneShortfall: doctrine.dronePayload ?? 2,
+      productionCost: 0,
+    };
     previews.push({
       id: `target-${previews.length + 1}`,
       orderIndex: previews.length,
@@ -511,6 +551,7 @@ export function previewExpansionCampaign(state, spec = {}, options = {}) {
         waiting: copy(buildPlan.waiting),
         skipped: copy(buildPlan.skipped),
       },
+      projectedOperation: copy(operationPackage),
     });
     previous = target;
   }
@@ -520,7 +561,54 @@ export function previewExpansionCampaign(state, spec = {}, options = {}) {
     : selected.length;
   const shortfall = Math.max(0, requestedCount - previews.length);
   if (shortfall) warnings.push({ code: 'target_shortfall', message: `${shortfall} requested targets could not be planned`, shortfall });
-  const totalCost = previews.reduce((sum, target) => sum + target.projectedBuild.totalCost, 0);
+  const concurrentPackages = [...previews]
+    .sort((a, b) => (
+      (b.projectedOperation?.productionCost ?? 0) - (a.projectedOperation?.productionCost ?? 0)
+        || a.systemId.localeCompare(b.systemId)
+    ))
+    .slice(0, Math.min(policy.concurrency, previews.length));
+  const aggregateManifest = new Map();
+  for (const target of concurrentPackages) {
+    for (const line of target.projectedOperation?.manifest ?? []) {
+      if (line.kind === 'builder_drone') continue;
+      const key = `${line.kind ?? 'hull'}:${line.productId ?? line.hull}`;
+      const aggregate = aggregateManifest.get(key) ?? { ...copy(line), quantity: 0 };
+      aggregate.quantity += Math.max(0, Number(line.quantity) || 0);
+      aggregateManifest.set(key, aggregate);
+    }
+  }
+  const concurrentTargetCount = Math.min(policy.concurrency, previews.length);
+  const requiredDrones = concurrentTargetCount * (doctrine.dronePayload ?? 2)
+    + (doctrine.campaignReserveDrones ?? 1);
+  const initializedDrones = (state.builderDrones ?? []).filter((drone) => (
+    drone.galaxyId === source.galaxyId
+      && drone.status === 'idle'
+      && drone.systemId === source.systemId
+      && !drone.strategicCampaignId
+  )).length;
+  const pendingStarterDrones = state.builderDroneStarterGranted !== true
+    && isTechUnlocked(state, 'eco_construction_drones')
+    ? BUILDER_DRONE_STARTER_COUNT
+    : 0;
+  const existingDrones = initializedDrones + pendingStarterDrones;
+  const droneShortfall = Math.max(0, requiredDrones - existingDrones);
+  if (droneShortfall > 0) {
+    const sample = previews.flatMap((target) => target.projectedOperation?.manifest ?? [])
+      .find((line) => line.kind === 'builder_drone');
+    aggregateManifest.set('builder_drone:builder_drone', {
+      kind: 'builder_drone',
+      productId: 'builder_drone',
+      hull: null,
+      quantity: droneShortfall,
+      unitCost: sample?.unitCost ?? 120,
+    });
+  }
+  const projectedManifest = [...aggregateManifest.values()];
+  const projectedProductionCost = projectedManifest.reduce((sum, line) => (
+    sum + (Number(line.unitCost) || 0) * line.quantity
+  ), 0);
+  const totalCost = previews.reduce((sum, target) => sum + target.projectedBuild.totalCost, 0)
+    + projectedProductionCost;
   const reserve = Math.max(0, Number(spec.reserve ?? spec.budget?.reserve) || 0);
   const limit = finiteOrNull(spec.budgetLimit ?? spec.budget?.limit);
   const spendableCredits = Math.max(0, (Number(state.credits) || 0) - reserve);
@@ -539,9 +627,18 @@ export function previewExpansionCampaign(state, spec = {}, options = {}) {
     selectedCount: previews.length,
     shortfall,
     policy,
+    doctrine,
     template: copy(template),
     warAuthorizations: authorizations,
     targets: previews,
+    projectedOperation: {
+      manifest: projectedManifest,
+      productionCost: projectedProductionCost,
+      concurrentPackageCount: concurrentPackages.length,
+      requiredDrones,
+      existingDrones,
+      droneShortfall,
+    },
     budget: {
       limit,
       reserve,
@@ -582,6 +679,7 @@ export function createExpansionCampaign(state, spec = {}, options = {}) {
     },
     templateId: preview.template.id,
     templateSnapshot: copy(preview.template),
+    operationDoctrine: copy(preview.doctrine),
     policy: normalizePolicy(preview.policy),
     warAuthorizations: copy(preview.warAuthorizations),
     budget: {
@@ -591,6 +689,9 @@ export function createExpansionCampaign(state, spec = {}, options = {}) {
       projected: preview.budget.totalProjectedCost,
     },
     linkedBulkOrderIds: [],
+    reserveDroneIds: [],
+    reserveDroneRequested: false,
+    reserveDroneOrderId: null,
     blockers: [],
     metrics: {
       spent: 0,
@@ -604,6 +705,7 @@ export function createExpansionCampaign(state, spec = {}, options = {}) {
       ...copy(target),
       id: `target-${index + 1}`,
       phase: 'planned',
+      executionVersion: STRATEGIC_ORDERS_VERSION,
       attempts: 0,
       blockers: [],
       events: [],
@@ -614,6 +716,11 @@ export function createExpansionCampaign(state, spec = {}, options = {}) {
       capture: null,
       construction: null,
       security: null,
+      droneTeam: {
+        droneIds: [],
+        required: preview.doctrine?.dronePayload ?? 2,
+        status: 'unassigned',
+      },
       force: { capturePower: 0, combatPower: 0 },
       startedAt: null,
       completedAt: null,
@@ -749,6 +856,11 @@ function currentAssessment(state, campaign, target, hooks) {
   const hostile = Math.max(0, Number(result.hostileCombatPower ?? target.requirements.hostileCombatPower) || 0);
   const availableCapture = Math.max(0, Number(result.availableCaptureForce ?? target.force?.capturePower) || 0);
   const availableCombat = Math.max(0, Number(result.availableCombatPower ?? target.force?.combatPower) || 0);
+  const requiredDrones = Math.max(0, Math.floor(Number(
+    result.requiredDrones ?? campaign.operationDoctrine?.dronePayload ?? target.droneTeam?.required ?? 0,
+  ) || 0));
+  const availableDrones = Math.max(0, Math.floor(Number(result.availableDrones) || 0));
+  const reportsDroneReadiness = result.availableDrones != null || result.droneReady != null;
   return {
     ok: result.ok !== false,
     reason: result.reason ?? null,
@@ -757,6 +869,12 @@ function currentAssessment(state, campaign, target, hooks) {
     hostileCombatPower: hostile,
     availableCaptureForce: availableCapture,
     availableCombatPower: availableCombat,
+    requiredDrones,
+    availableDrones,
+    droneReady: result.droneReady ?? (!reportsDroneReadiness || availableDrones >= requiredDrones),
+    roleReady: result.roleReady ?? true,
+    manifest: copy(result.manifest ?? []),
+    roleSubstitutions: copy(result.roleSubstitutions ?? []),
   };
 }
 
@@ -865,7 +983,9 @@ function advanceStaging(state, campaign, target, hooks, events) {
     return;
   }
   const ready = assessment.availableCaptureForce >= assessment.requiredCaptureForce
-    && assessment.availableCombatPower >= assessment.requiredCombatPower;
+    && assessment.availableCombatPower >= assessment.requiredCombatPower
+    && assessment.droneReady
+    && assessment.roleReady;
   if (ready) {
     clearBlocker(
       target,
@@ -919,6 +1039,8 @@ function advanceStaging(state, campaign, target, hooks, events) {
     capturePower: result.capturePower ?? 0,
     combatPower: result.combatPower ?? 0,
     bulkOrderIds: result.bulkOrderIds ?? (result.bulkOrderId ? [result.bulkOrderId] : []),
+    manifest: copy(result.manifest ?? []),
+    requiredDrones: result.requiredDrones ?? assessment.requiredDrones,
   };
   if (result.complete || result.status === 'complete') {
     recordRequisitionCompletion(campaign, target, result);
@@ -1291,6 +1413,10 @@ function targetSummary(target) {
     fleetIds: copy(target.dispatch?.fleetIds ?? []),
     requisitionId: target.requisition?.id ?? null,
     constructionId: target.construction?.id ?? null,
+    droneTeam: copy(target.droneTeam ?? { droneIds: [], required: 0, status: 'unassigned' }),
+    projectedOperation: copy(target.projectedOperation ?? null),
+    actualManifest: copy(target.requisition?.manifest ?? target.assessment?.manifest ?? []),
+    roleSubstitutions: copy(target.assessment?.roleSubstitutions ?? []),
     progressMs: target.capture?.progressMs ?? 0,
   };
 }
@@ -1311,16 +1437,25 @@ export function strategicOrdersSummary(state, options = {}) {
       name: template.name,
       preset: !!template.preset,
       stepCount: template.steps.length,
+      doctrine: copy(template.doctrine),
     })),
     campaigns: orders.campaigns.map((campaign) => {
       const phases = {};
       for (const target of campaign.targets) phases[target.phase] = (phases[target.phase] ?? 0) + 1;
+      const assignedFleetIds = [...new Set(campaign.targets.flatMap((target) => target.dispatch?.fleetIds ?? []))];
+      const assignedDroneIds = [...new Set(campaign.targets.flatMap((target) => target.droneTeam?.droneIds ?? []))];
+      const constructionQueue = campaign.targets.reduce((totals, target) => {
+        const planned = target.actualBuildPlan?.jobs?.length ?? target.projectedBuild?.jobCount ?? 0;
+        const completed = target.construction?.status === 'complete' ? planned : 0;
+        return { planned: totals.planned + planned, completed: totals.completed + completed };
+      }, { planned: 0, completed: 0 });
       return {
         id: campaign.id,
         name: campaign.name,
         status: campaign.status,
         pauseReason: campaign.pauseReason,
         templateId: campaign.templateId,
+        operationDoctrine: copy(campaign.operationDoctrine),
         source: copy(campaign.source),
         progress: {
           complete: phases.complete ?? 0,
@@ -1331,6 +1466,16 @@ export function strategicOrdersSummary(state, options = {}) {
         policy: copy(campaign.policy),
         blockers: copy(campaign.blockers),
         linkedBulkOrderIds: copy(campaign.linkedBulkOrderIds),
+        operationStatus: {
+          assignedFleetIds,
+          assignedDroneIds,
+          reserveDroneIds: copy(campaign.reserveDroneIds ?? []),
+          requiredDronePayload: campaign.operationDoctrine?.dronePayload ?? 0,
+          replacementPending: campaign.targets.some((target) => (
+            target.phase === 'staging' && (target.assessment?.droneReady === false || target.requisition)
+          )),
+          constructionQueue,
+        },
         metrics: copy(campaign.metrics),
         targets: includeTargets ? campaign.targets.map(targetSummary) : undefined,
       };

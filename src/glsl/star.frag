@@ -19,10 +19,13 @@ uniform float u_temperature;
 uniform float u_coronaIntensity;
 uniform float u_lensStrength;
 uniform float u_turbulence;
+uniform float u_exposure;
+uniform float u_chromatic;
 uniform float u_intel;
 uniform int u_mode; // 0=system, 1=galaxy
 uniform int u_features;
 uniform int u_pass; // 0=full, 1=core, 2=outer
+uniform float u_quality; // low=.25, medium=.55, high=1
 
 vec3 mod289v3(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec2 mod289v2(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -147,6 +150,7 @@ vec3 emberParticles(vec2 delta, float dist, float t, vec3 warmTint) {
   vec3 acc = vec3(0.0);
   for (int i = 0; i < 40; i++) {
     float fi = float(i);
+    if (fi >= mix(12.0, 40.0, u_quality)) break;
     float h1 = siteHash(fi + 50.0);
     float h2 = siteHash(fi + 90.0);
     float h3 = siteHash(fi + 130.0);
@@ -247,6 +251,7 @@ void main() {
   float anim = u_time * 0.0018;
   float spin = u_time * u_rotationSpeed * 28.0;
   float outerSpin = u_time * u_rotationSpeed * 42.0;
+  float angle = atan(delta.y, delta.x);
 
   if (u_mode == 1) {
     float glowR = u_radius * u_glowScale * 0.72;
@@ -258,12 +263,21 @@ void main() {
     vec3 coronaCol = mix(u_corona, u_secondary, 0.35);
     vec3 col = hot * disk + coronaCol * coronaFalloff * 0.38;
     float alpha = max(disk * 0.95, coronaFalloff * 0.42);
+    // Compact optical fingerprint: every catalog class is recognizable on a
+    // discovered galaxy node, not just in the full system close-up.
+    float ray = pow(abs(cos(angle * 2.0 + spin * 0.35)), 32.0)
+      + pow(abs(sin(angle * 2.0 - spin * 0.2)), 44.0) * 0.55;
+    float rayFalloff = (1.0 - smoothstep(u_radius * 0.35, glowR * 1.6, dist))
+      * smoothstep(u_radius * 0.72, u_radius * 0.98, dist);
+    vec3 spectral = mix(coronaCol, vec3(0.64, 0.82, 1.0), clamp(u_chromatic * 0.16, 0.0, 0.38));
+    col += spectral * ray * rayFalloff * (0.14 + u_chromatic * 0.08);
+    alpha = max(alpha, ray * rayFalloff * 0.32);
+    col *= u_exposure;
     if (alpha < 0.005) discard;
     fragColor = vec4(col, clamp(alpha, 0.0, 1.0));
     return;
   }
 
-  float angle = atan(delta.y, delta.x);
   mat2 rotMat = mat2(cos(spin), -sin(spin), sin(spin), cos(spin));
 
   float coronaR = u_radius * u_glowScale;
@@ -405,13 +419,36 @@ void main() {
     bloomOut += u_corona * spike * spikeFalloff * 0.55;
   }
 
+  // Cinematic camera optics shared by the legacy catalog. The class metadata
+  // controls exposure and spectral separation so even the protected home star
+  // receives a visible presentation upgrade without changing its mechanics.
+  {
+    float opticSpin = outerSpin * 0.035 + u_seed * 0.0007;
+    float crossRay = pow(abs(cos(angle * 2.0 + opticSpin)), 34.0);
+    float diagonalRay = pow(abs(sin(angle * 3.0 - opticSpin * 0.7)), 54.0) * 0.42;
+    float rayFalloff = (1.0 - smoothstep(u_radius * 0.62, coronaR * 1.72, dist))
+      * smoothstep(u_radius * 0.78, u_radius * 1.02, dist);
+    float spectralPhase = 0.5 + 0.5 * sin(angle * 2.0 + opticSpin);
+    vec3 spectralA = mix(u_corona, vec3(0.48, 0.78, 1.0), clamp(u_chromatic * 0.2, 0.0, 0.46));
+    vec3 spectralB = mix(u_secondary, vec3(1.0, 0.42, 0.22), clamp(u_chromatic * 0.14, 0.0, 0.34));
+    vec3 spectral = mix(spectralA, spectralB, spectralPhase);
+    float opticStrength = (0.32 + u_chromatic * 0.15) * (0.72 + u_temperature * 0.32);
+    bloomOut += spectral * (crossRay + diagonalRay) * rayFalloff * opticStrength;
+
+    float haloRadius = 1.3 + 0.055 * sin(anim * 0.7 + u_seed);
+    float spectralHalo = exp(-pow((normDist - haloRadius) / 0.026, 2.0));
+    spectralHalo *= 0.58 + 0.42 * sin(angle * 5.0 - opticSpin * 4.0);
+    bloomOut += mix(spectralA, spectralB, 0.36) * spectralHalo * (0.12 + u_chromatic * 0.045);
+  }
+
   float outerActivity = outerMask * length(bloomOut + flareCol);
-  vec3 outerCol = min(bloomOut + flareCol, vec3(3.0));
+  vec3 outerCol = min(bloomOut + flareCol, vec3(3.0)) * u_exposure;
   float outerAlpha = clamp(length(bloomOut + flareCol) * 0.65, 0.0, 1.0);
+  vec3 exposedStar = starCol * u_exposure;
 
   if (u_pass == 1) {
-    if (coreAlpha < 0.005 && length(starCol) < 0.005) discard;
-    fragColor = vec4(starCol, clamp(coreAlpha, 0.0, 1.0));
+    if (coreAlpha < 0.005 && length(exposedStar) < 0.005) discard;
+    fragColor = vec4(exposedStar, clamp(coreAlpha, 0.0, 1.0));
     return;
   }
 
@@ -421,7 +458,7 @@ void main() {
     return;
   }
 
-  vec3 finalCol = starCol + outerCol;
+  vec3 finalCol = exposedStar + outerCol;
   float alpha = max(coreAlpha, outerAlpha);
   if (alpha < 0.005 && length(finalCol) < 0.005) discard;
   fragColor = vec4(finalCol, clamp(alpha + coronaFalloff * 0.2, 0.0, 1.0));

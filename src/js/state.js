@@ -24,7 +24,22 @@ import {
   FLAGSHIP_HP,
 } from './constants.js';
 import { generateGalaxy, BLACK_HOLE_ID } from './galaxy.js';
-import { pickStarType, starFieldsFromType } from './star-types.js';
+import {
+  STAR_TYPES,
+  assignGalaxyStellarCatalog,
+  canonicalizeStellarClass,
+  pickLegacyStarType,
+  pickStarType,
+  starFieldsFromType,
+  STELLAR_GENERATION_PROFILES,
+} from './star-types.js';
+import {
+  applyBodyCatalogIdentity,
+  applyGraphCatalogIdentity,
+  applySystemCatalogIdentity,
+  catalogLabel,
+  starCatalogCode,
+} from './catalog-names.js';
 import {
   getGalaxyCount,
   galaxyDisplayName,
@@ -34,7 +49,7 @@ import {
   getGalaxyIntel,
 } from './galaxy-scope.js';
 import { createDefaultAbstract } from './abstract-galaxy.js';
-import { generateGalaxySystems, hydrateGalaxy } from './hydration.js';
+import { generateGalaxySystems, hydrateGalaxy, ensureHomeStrongholdNamed } from './hydration.js';
 import { createDefaultLogisticsState } from './logistics.js';
 
 export { BLACK_HOLE_ID };
@@ -56,6 +71,21 @@ function rangeInt(rng, [min, max]) {
 
 function range(rng, [min, max]) {
   return min + rng() * (max - min);
+}
+
+function weightedChoice(rng, values, weights) {
+  const roll = rng();
+  let acc = 0;
+  for (let i = 0; i < values.length; i++) {
+    acc += weights[i] ?? 0;
+    if (roll < acc) return values[i];
+  }
+  return values[values.length - 1];
+}
+
+function catalogEnvironment(rng, profile) {
+  return weightedChoice(rng, ['clear', 'nebula', 'ion_storm', 'debris_field'],
+    profile?.environmentWeights ?? [0.77, 0.10, 0.06, 0.07]);
 }
 
 export function hashSeed(baseSeed, key) {
@@ -136,18 +166,24 @@ export function generateStrongholdSystem(rng, star, { gameSeed, galaxyId, rename
   ];
   shuffleInPlace(typeSlots, rng);
 
-  const typeProfile = pickStarType(rng, { isHome: true, isDead: false });
+  const typeProfile = STAR_TYPES[star.stellarClass] ?? pickStarType(rng, { isHome: true, isDead: false });
   const starFields = starFieldsFromType(typeProfile, rng, { isHome: true });
+  const catalogId = starCatalogCode(galaxyId, star);
+  const alias = renameHome ? HOME_SYSTEM_NAME : (star.alias ?? star.name);
+  const bodies = buildPlanetBodies(rng, star, gameSeed, typeSlots);
+  applyBodyCatalogIdentity(bodies, catalogId);
 
   const system = {
     id: star.id,
-    name: renameHome ? HOME_SYSTEM_NAME : star.name,
+    name: catalogLabel(catalogId, alias),
+    alias,
+    catalogId,
     owner: 'player',
     star: {
       ...starFields,
       visualSeed: hashSeed(gameSeed, `${galaxyId}:${star.id}:star`),
     },
-    bodies: buildPlanetBodies(rng, star, gameSeed, typeSlots),
+    bodies,
     structures: [],
     dyson: createDefaultDyson(),
   };
@@ -190,14 +226,19 @@ function seedNeutralStructures(rng, system, { isHome }) {
   }
 }
 
-export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
+export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '', legacyCatalog = false }) {
+  const catalogClass = legacyCatalog ? null : star.stellarClass;
+  let typeProfile = catalogClass ? STAR_TYPES[catalogClass] : null;
+  const generation = typeProfile ? STELLAR_GENERATION_PROFILES[typeProfile.id] : null;
   let planetCount;
   if (isHome) {
     planetCount = rangeInt(rng, [2, 3]);
   } else if (star.kind === 'trade_nexus') {
     planetCount = rangeInt(rng, [2, 4]);
   } else {
-    planetCount = rng() < DEAD_STAR_CHANCE ? 0 : rangeInt(rng, OTHER_PLANET_COUNT_RANGE);
+    planetCount = rng() < (legacyCatalog ? DEAD_STAR_CHANCE : (generation?.planetlessChance ?? DEAD_STAR_CHANCE))
+      ? 0
+      : rangeInt(rng, legacyCatalog ? OTHER_PLANET_COUNT_RANGE : (generation?.planetCount ?? OTHER_PLANET_COUNT_RANGE));
   }
   const habitableIndex = isHome ? Math.floor(rng() * planetCount) : -1;
 
@@ -206,7 +247,9 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
     const isGuaranteedHabitable = i === habitableIndex;
     const type = isGuaranteedHabitable
       ? 'habitable'
-      : PLANET_TYPES[Math.floor(rng() * PLANET_TYPES.length)];
+      : legacyCatalog
+        ? PLANET_TYPES[Math.floor(rng() * PLANET_TYPES.length)]
+        : weightedChoice(rng, PLANET_TYPES, generation?.planetWeights ?? [1 / 3, 1 / 3, 1 / 3]);
 
     const moonCount = isGuaranteedHabitable
       ? rangeInt(rng, [1, 3])
@@ -242,7 +285,16 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
   }
 
   const isDead = planetCount === 0;
-  const typeProfile = pickStarType(rng, { isHome, isDead });
+  // Keep one selection roll in the stream so downstream neutral structures do
+  // not depend on whether a graph already carried a canonical class.
+  if (legacyCatalog) {
+    const baseline = pickLegacyStarType(rng, { isHome, isDead });
+    typeProfile = STAR_TYPES[star.stellarOverride] ?? baseline;
+  } else if (catalogClass) {
+    rng();
+  } else {
+    typeProfile = pickStarType(rng, { isHome, isDead });
+  }
   const starFields = star.kind === 'trade_nexus'
     ? {
       radius: 110,
@@ -257,6 +309,8 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
   const system = {
     id: star.id,
     name: star.name,
+    alias: star.alias ?? star.name,
+    catalogId: star.catalogId ?? starCatalogCode(galaxyId, star),
     owner: isHome ? 'player' : 'neutral',
     star: {
       ...starFields,
@@ -284,20 +338,46 @@ export function generateSystem(rng, star, { isHome, gameSeed, galaxyId = '' }) {
     });
   }
 
+  if (star.kind !== 'trade_nexus') {
+    if (legacyCatalog) {
+      const roll = rng();
+      system.environment = roll < 0.1 ? 'nebula' : roll < 0.16 ? 'ion_storm' : roll < 0.23 ? 'debris_field' : 'clear';
+    } else {
+      system.environment = catalogEnvironment(rng, generation);
+    }
+  }
+
+  applySystemCatalogIdentity(system, star, galaxyId);
+
   seedNeutralStructures(rng, system, { isHome });
   return system;
 }
 
-export function createBlackHoleSystem(blackHole) {
-  return {
+export function legacyGeneratedStellarClass(metaSeed, galaxyId, star, index) {
+  const base = hashSeed(hashSeed(metaSeed, `galaxy:${galaxyId}`), 'systems');
+  const rng = createRng((base + (index + 1) * 0x9e3779b9) >>> 0);
+  const generated = generateSystem(rng, { ...star }, {
+    isHome: false,
+    gameSeed: metaSeed,
+    galaxyId,
+    legacyCatalog: true,
+  });
+  return canonicalizeStellarClass(generated.star.type);
+}
+
+export function createBlackHoleSystem(blackHole, galaxyId = '') {
+  const system = {
     id: blackHole.id,
     name: blackHole.name,
+    alias: blackHole.alias ?? blackHole.name,
+    catalogId: blackHole.catalogId ?? starCatalogCode(galaxyId, blackHole),
     owner: 'neutral',
     star: { radius: 30, color: '#05060c', kind: 'blackhole' },
     bodies: [],
     structures: [],
     dyson: createDefaultDyson(),
   };
+  return applySystemCatalogIdentity(system, blackHole, galaxyId);
 }
 
 export function seedNeutralStructuresForGalaxy(state, galaxyId = state.activeGalaxyId) {
@@ -325,6 +405,8 @@ function buildGalaxyRecord(metaSeed, index) {
   const graph = generateGalaxy(graphRng);
   const strongholdStarId = graph.stars[Math.floor(pickRng() * graph.stars.length)].id;
   markTradeNexusStars(graph, strongholdStarId);
+  assignGalaxyStellarCatalog(graph, strongholdStarId, gSeed);
+  applyGraphCatalogIdentity(graph, galId);
 
   return {
     id: galId,
@@ -430,12 +512,20 @@ export function createNewGame(seed) {
     },
     scouts: [],
     builderDrones: [],
+    builderDroneStarterGranted: false,
     playerShips: [],
     battleGroups: [],
     pirates: { fleets: [], pendingRespawn: [] },
     systemBattles: {},
     battleStance: 'balanced',
     combatDoctrine: 'assault',
+    combatSettings: {
+      controlMode: 'command',
+      fleetPriority: 'auto',
+      flagshipAutopilot: true,
+      advancedTactics: false,
+      retreatPolicy: 'doctrine',
+    },
     solarii: 0,
     solariiUnlocked: false,
     empireQueue: [],
@@ -478,7 +568,7 @@ export function createNewGame(seed) {
       schedulerCursor: { emergency: 0, high: 0, normal: 0, low: 0 },
     },
     strategicOrders: {
-      version: 1,
+      version: 2,
       campaigns: [],
       templates: [],
       nextCampaignId: 1,
@@ -564,6 +654,7 @@ export function createNewGame(seed) {
   };
 
   hydrateGalaxy(state, homeGalaxyId);
+  ensureHomeStrongholdNamed(state);
   const intel = getGalaxyIntel(state, homeGalaxyId);
   intel[strongholdStarId] = { gatheredAt: 0 };
 

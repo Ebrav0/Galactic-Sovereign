@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 17",
+  "description": "Command-first tactical combat, flagship autopilot, doctrine withdrawal, and repeated fighter sorties.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 17 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": ["combatDoctrine", "combatSettings", "systemBattles", "flagship"],
+      "properties": {
+        "combatDoctrine": { "enum": ["assault", "screen", "carrier_strike", "hold_the_line"] },
+        "combatSettings": {
+          "type": "object",
+          "required": ["controlMode", "fleetPriority", "flagshipAutopilot", "advancedTactics", "retreatPolicy"],
+          "properties": {
+            "controlMode": { "const": "command" },
+            "fleetPriority": { "enum": ["auto", "fighter", "escort", "capital", "carrier"] },
+            "flagshipAutopilot": { "type": "boolean" },
+            "advancedTactics": { "type": "boolean" },
+            "retreatPolicy": { "const": "doctrine" }
+          }
+        },
+        "systemBattles": { "type": "object" },
+        "flagship": { "type": "object" }
+      }
+    }
+  }
+}

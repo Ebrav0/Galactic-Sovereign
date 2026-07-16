@@ -23,6 +23,10 @@ import {
   TACTICAL_SPATIAL_CELL,
   CARRIER_WING_HULLS,
   DESTROYER_AA_DAMAGE_SHARE,
+  FIGHTER_SORTIE_REARM_MS,
+  FIGHTER_SORTIE_RETURN_FUEL,
+  FIGHTER_SORTIE_AFTERBURNER_MULT,
+  COMBAT_DISENGAGE_MS,
 } from './constants.js';
 import {
   carrierWingLoadout,
@@ -39,12 +43,23 @@ import {
 } from './hull.js';
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
 import { aiShipFactionId, aiShipsInSystem } from './ai-ships.js';
-import { playerCombatShipsAtSystem, stationedShipPose, anchoredCombatShipsAtSystem } from './fleets.js';
+import {
+  anchoredCombatShipsAtSystem,
+  beginPostBattleReturn,
+  beginPostBattleReturnToPose,
+  playerCombatShipsAtSystem,
+  stationedShipPose,
+} from './fleets.js';
 import { heroInSystem, heroesInSystem } from './hero-flagships.js';
 import { shellRepairBonus } from './dyson.js';
 import { supplyCacheRepairMultiplier } from './strategic-structures.js';
 import { pruneBattleGroups } from './battle-groups.js';
-import { softKeepOut, nudgeUnitKeepOut, buildKeepOutBodyCache } from './ship-motion.js';
+import {
+  buildKeepOutBodyCache,
+  nudgeUnitKeepOut,
+  pirateStationPose,
+  softKeepOut,
+} from './ship-motion.js';
 import { getSystems } from './galaxy-scope.js';
 import { systemById } from './state.js';
 import {
@@ -77,18 +92,25 @@ import {
   selectPriorityTarget,
   validateLodConservation,
   weaponCanBear,
+  cooldownNormalizedVolleyDamage,
 } from './combat-orders.js';
 import {
   activeConvoys,
   convoyTransitStatus,
   interceptConvoy,
 } from './logistics.js';
-import { combatFxSummary, emitHealFx, emitShotFx, emitSparseLodFx } from './combat-fx.js';
+import { combatFxSummary, emitHealFx, emitShotFx, emitSparseLodFx, pushFxEvent } from './combat-fx.js';
 import {
   analyzeFleetMix,
   normalizeDoctrine,
   recommendFormation,
 } from './combat-doctrine.js';
+import {
+  autonomousTargetOrder,
+  combatIntentForUnit,
+  ensureCombatSettings,
+  shouldDoctrineDisengage,
+} from './combat-autonomy.js';
 import {
   ensureUnitMotion,
   steerUnit,
@@ -118,6 +140,58 @@ function techStateForUnit(state, unit) {
 
 function opposingSides(a, b) {
   return (a === 'enemy') !== (b === 'enemy');
+}
+
+function standardWeaponMountBlueprint(unit) {
+  if (!unit || unit.isWing || unit.isStructure || unit.isConvoy || unit.hull === 'flagship') return [];
+  const primary = unit.weaponProfile ?? defaultWeaponProfileForHull(unit.hull);
+  const tier = hullMotionProfile(unit.hull).tier;
+  if (tier === 'escort') {
+    return [
+      { id: 'primary_fore', profile: primary, hardpoint: 'prow', share: 0.58 },
+      { id: 'secondary_dorsal', profile: 'kinetic', hardpoint: 'dorsal', share: 0.42 },
+    ];
+  }
+  if (tier === 'line') {
+    return [
+      { id: 'primary_fore', profile: primary, hardpoint: 'prow', share: 0.50 },
+      { id: 'battery_dorsal_port', profile: 'kinetic', hardpoint: 'dorsal_port', share: 0.25 },
+      { id: 'battery_dorsal_starboard', profile: 'kinetic', hardpoint: 'dorsal_starboard', share: 0.25 },
+    ];
+  }
+  if (tier === 'capital') {
+    return [
+      { id: 'primary_fore', profile: primary, hardpoint: 'prow', share: 0.38 },
+      { id: 'battery_dorsal_port', profile: 'kinetic', hardpoint: 'dorsal_port', share: 0.26 },
+      { id: 'battery_dorsal_starboard', profile: 'kinetic', hardpoint: 'dorsal_starboard', share: 0.26 },
+      { id: 'pd_grid', profile: 'point_defense', hardpoint: 'dorsal', share: 0.10 },
+    ];
+  }
+  if (tier === 'carrier') {
+    return [
+      { id: 'battery_dorsal_port', profile: 'kinetic', hardpoint: 'dorsal_port', share: 0.32 },
+      { id: 'battery_dorsal_starboard', profile: 'kinetic', hardpoint: 'dorsal_starboard', share: 0.32 },
+      { id: 'pd_fore', profile: 'point_defense', hardpoint: 'fore_pd', share: 0.18 },
+      { id: 'pd_aft', profile: 'point_defense', hardpoint: 'aft_pd', share: 0.18 },
+    ];
+  }
+  return [{ id: 'primary', profile: primary, hardpoint: null, share: 1 }];
+}
+
+function ensureStandardWeaponMounts(unit) {
+  if (!unit || unit.isWing || unit.isStructure || unit.isConvoy || unit.hull === 'flagship') return [];
+  const primary = unit.weaponProfile ?? defaultWeaponProfileForHull(unit.hull);
+  if (!Array.isArray(unit.weaponMounts) || unit.weaponMounts.length === 0
+      || unit.weaponMountSourceProfile !== primary) {
+    unit.weaponMounts = standardWeaponMountBlueprint(unit).map((mount) => ({
+      ...mount,
+      cooldownMs: 0,
+      lastFiredAt: null,
+      targetId: null,
+    }));
+    unit.weaponMountSourceProfile = primary;
+  }
+  return unit.weaponMounts;
 }
 
 function ensureDestroyerAa(state, unit) {
@@ -415,7 +489,7 @@ function launchCarrierWings(state, battle, carrier, side, ordinal) {
     state.flagship.wing.launched = (state.flagship.wing.launched ?? 0) + loadout.length;
   }
 
-  return loadout.map((hull, i) => {
+  const launched = loadout.map((hull, i) => {
     const stats = hullStats(hull);
     const spread = (i / Math.max(1, loadout.length)) * Math.PI * 2 + ordinal * 0.41;
     const ring = 38 + (i % 3) * 13;
@@ -434,12 +508,34 @@ function launchCarrierWings(state, battle, carrier, side, ordinal) {
       launchOffsetMs: i * 70,
       ammo: hull === 'bomber' ? 4 : 8,
       fuel: 100,
+      maxAmmo: hull === 'bomber' ? 4 : 8,
+      maxFuel: 100,
+      sortiePhase: 'launch',
+      sortieNumber: 1,
+      sortieLaunchedAt: state.time,
+      rearmUntil: null,
+      recovered: false,
       weaponProfile: hull === 'bomber' ? 'torpedo' : (hull === 'interceptor' ? 'point_defense' : 'kinetic'),
     };
   });
+  for (const wing of launched) {
+    pushFxEvent(battle, {
+      kind: 'wing_launch',
+      profile: wing.weaponProfile,
+      side,
+      t: state.time,
+      attackerId: carrier.id,
+      targetId: wing.id,
+      ax: carrier.x,
+      ay: carrier.y,
+      tx: wing.x + Math.cos(wing.heading) * 44,
+      ty: wing.y + Math.sin(wing.heading) * 44,
+    });
+  }
+  return launched;
 }
 
-function seedBattleLinePositions(state, system, battle, side, facing, battleOrbit) {
+function seedBattleLinePositions(state, system, battle, side, facing, battleOrbit, center = null) {
   const sideUnits = (battle.units ?? []).filter((unit) => unit.side === side && unit.hp > 0);
   const line = battleLineMembers(sideUnits);
   if (!line.length) return;
@@ -452,12 +548,14 @@ function seedBattleLinePositions(state, system, battle, side, facing, battleOrbi
   // Stand on the side opposite the threat facing, looking toward it.
   const centerAngle = facing + Math.PI;
   const lineRadius = battleOrbit * 0.72;
-  const cx = Math.cos(centerAngle) * lineRadius;
-  const cy = Math.sin(centerAngle) * lineRadius;
+  const cx = center?.x ?? Math.cos(centerAngle) * lineRadius;
+  const cy = center?.y ?? Math.sin(centerAngle) * lineRadius;
 
   for (let ordinal = 0; ordinal < line.length; ordinal++) {
     const unit = line[ordinal];
-    const offset = formationOffset('line', ordinal, line.length, spacing);
+    const offset = unit.hull === 'flagship'
+      ? { x: 0, y: 0 }
+      : formationOffset('line', ordinal, line.length, spacing);
     const slotX = cx + offset.x * Math.cos(facing) - offset.y * Math.sin(facing);
     const slotY = cy + offset.x * Math.sin(facing) + offset.y * Math.cos(facing);
     const safe = softKeepOut(state, system, slotX, slotY);
@@ -540,10 +638,38 @@ function initTacticalUnits(state, systemId, battle) {
     battle.units.push(...launchCarrierWings(state, battle, unit, 'enemy', i));
   });
 
-  // Seed capital/line/carrier ships into an EaW battle line facing the enemy entry,
-  // so heavies do not start strewn around the station ring.
-  seedBattleLinePositions(state, system, battle, 'player', entryAngle, battleOrbit);
-  seedBattleLinePositions(state, system, battle, 'enemy', entryAngle + Math.PI, battleOrbit);
+  // Seed both lines on the same side of the star. Opposite-side placement made
+  // capitals spend several minutes circumnavigating the stellar keep-out zone
+  // before their first broadside.
+  const playerAnchorUnit = battle.units.find((unit) => unit.side === 'player' && unit.hull === 'flagship')
+    ?? battle.units.find((unit) => unit.side === 'player' && unit.hp > 0);
+  const playerAnchor = playerAnchorUnit
+    ? { x: playerAnchorUnit.x, y: playerAnchorUnit.y }
+    : { x: Math.cos(entryAngle) * battleOrbit, y: Math.sin(entryAngle) * battleOrbit };
+  const radialAngle = Math.atan2(playerAnchor.y, playerAnchor.x);
+  const engagementFacing = radialAngle + Math.PI / 2;
+  const lineSeparation = Math.max(580, Math.min(650, battleOrbit * 1.35));
+  const enemyAnchor = softKeepOut(
+    state,
+    system,
+    playerAnchor.x + Math.cos(engagementFacing) * lineSeparation,
+    playerAnchor.y + Math.sin(engagementFacing) * lineSeparation,
+  );
+  seedBattleLinePositions(state, system, battle, 'player', engagementFacing, battleOrbit, playerAnchor);
+  seedBattleLinePositions(state, system, battle, 'enemy', engagementFacing + Math.PI, battleOrbit, enemyAnchor);
+
+  // Carriers are positioned after launch entities are created; keep those
+  // craft attached to their actual deck instead of the pre-formation pose.
+  for (const wing of battle.units.filter((unit) => unit.isWing)) {
+    const carrier = battle.units.find((unit) => unit.id === wing.parentCarrierId);
+    if (!carrier) continue;
+    const ordinal = Number(String(wing.id).match(/(\d+)$/)?.[1] ?? 0);
+    const angle = carrier.heading + (ordinal / 7 - 0.5) * 0.9;
+    const radius = 34 + (ordinal % 3) * 9;
+    wing.x = carrier.x + Math.cos(angle) * radius;
+    wing.y = carrier.y + Math.sin(angle) * radius;
+    wing.heading = carrier.heading;
+  }
 
   for (const unit of battle.units) {
     const capital = ['flagship', 'hero_flagship', 'cruiser', 'battleship', 'dreadnought', 'command_cruiser']
@@ -552,6 +678,7 @@ function initTacticalUnits(state, systemId, battle) {
     normalizeShieldFacings(unit, shieldPerFacing);
     unit.damageState = unit.damageState ?? 'nominal';
     unit.weaponProfile = unit.weaponProfile ?? defaultWeaponProfileForHull(unit.hull);
+    ensureStandardWeaponMounts(unit);
     ensureDestroyerAa(state, unit);
     if (unit.isWing) {
       unit.ammo = unit.ammo ?? (unit.hull === 'bomber' ? 4 : 8);
@@ -565,7 +692,32 @@ function initTacticalUnits(state, systemId, battle) {
   }
 }
 
+function initializeTacticalBattle(state, systemId, battle) {
+  battle.mode = 'tactical';
+  delete battle.autoProgressMs;
+  initTacticalUnits(state, systemId, battle);
+  battle.initialUnits = JSON.parse(JSON.stringify(battle.units));
+  battle.objectives = battle.units
+    .filter((unit) => unit.isStructure || unit.isConvoy)
+    .map((unit) => ({ id: unit.id, type: unit.isConvoy ? 'convoy' : (unit.structureType ?? 'structure'), outcome: 'contested' }));
+  const enemyUnits = battle.units.filter((unit) => unit.side === 'enemy' && unit.hp > 0).map((unit) => unit.id);
+  if (enemyUnits.length) {
+    const targetClass = battle.units.some((unit) => unit.isConvoy && unit.side === 'player') ? 'convoy' : 'capital';
+    applyFleetOrder(battle, {
+      type: 'attack_class',
+      side: 'enemy',
+      subjectIds: enemyUnits,
+      targetClass,
+      priority: 1,
+    }, { time: state.time, units: battle.units, ownedUnitIds: enemyUnits });
+  }
+  const seeded = applyDoctrineFormation(state, battle, { force: true });
+  battle.openingFormationApplied = seeded.ok;
+  return battle;
+}
+
 function startBattle(state, systemId) {
+  const combatSettings = ensureCombatSettings(state);
   const tactical = tacticalAnchorInSystem(state, systemId);
   const battle = {
     id: `battle-${systemId}-${state.time}`,
@@ -586,33 +738,29 @@ function startBattle(state, systemId) {
     playerFormationOverride: false,
     openingFormationApplied: false,
     lastDoctrineRecommendation: null,
+    fleetPriority: combatSettings.fleetPriority,
+    advancedTactics: combatSettings.advancedTactics,
+    alertAcknowledged: false,
+    startEventEmitted: false,
   };
   battle.enemyFactionIds = [...new Set(collectEnemyShips(state, systemId)
     .map((unit) => unit.factionId)
     .filter((factionId) => factionId && isAtWar(state, factionId)))];
-  if (tactical) {
-    initTacticalUnits(state, systemId, battle);
-    battle.initialUnits = JSON.parse(JSON.stringify(battle.units));
-    battle.objectives = battle.units
-      .filter((unit) => unit.isStructure || unit.isConvoy)
-      .map((unit) => ({ id: unit.id, type: unit.isConvoy ? 'convoy' : (unit.structureType ?? 'structure'), outcome: 'contested' }));
-    const enemyUnits = battle.units.filter((unit) => unit.side === 'enemy' && unit.hp > 0).map((unit) => unit.id);
-    if (enemyUnits.length) {
-      const targetClass = battle.units.some((unit) => unit.isConvoy && unit.side === 'player') ? 'convoy' : 'capital';
-      applyFleetOrder(battle, {
-        type: 'attack_class',
-        side: 'enemy',
-        subjectIds: enemyUnits,
-        targetClass,
-        priority: 1,
-      }, { time: state.time, units: battle.units, ownedUnitIds: enemyUnits });
-    }
-    const seeded = applyDoctrineFormation(state, battle, { force: true });
-    battle.openingFormationApplied = seeded.ok;
-  }
+  if (tactical) initializeTacticalBattle(state, systemId, battle);
   else battle.autoProgressMs = 0;
   state.systemBattles[systemId] = battle;
   return battle;
+}
+
+// Detached fleets begin in the cheap offscreen resolver. Opening their system
+// upgrades the still-pending engagement to the full tactical simulator so the
+// player sees real target acquisition, weapon fire, damage, and return fire.
+export function promoteBattleToTactical(state, systemId) {
+  const battle = state.systemBattles?.[systemId];
+  if (!battle?.active) return { ok: false, reason: 'No active battle' };
+  if (battle.mode === 'tactical') return { ok: true, promoted: false, battle };
+  initializeTacticalBattle(state, systemId, battle);
+  return { ok: true, promoted: true, battle };
 }
 
 function applyCasualtiesToState(state, systemId, battle) {
@@ -630,13 +778,13 @@ function applyCasualtiesToState(state, systemId, battle) {
   }
 
   if (battle.mode === 'tactical' && battle.units) {
+    const system = systemById(state, systemId);
     for (const unit of battle.units) {
       if (unit.isConvoy) {
         if (unit.hp <= 0) interceptConvoy(state, unit.convoyId ?? unit.id, { destroyed: true });
         continue;
       }
       if (unit.isStructure) {
-        const system = systemById(state, systemId);
         const structure = system?.structures.find((s) => s.id === unit.id);
         if (structure) {
           structure.hp = Math.max(0, unit.hp);
@@ -650,10 +798,36 @@ function applyCasualtiesToState(state, systemId, battle) {
         if (aiShip) aiShip.hp = Math.max(0, unit.hp);
         continue;
       }
+      if (unit.side === 'enemy' && !unit.factionId && !unit.isWing) {
+        const pirateShip = fleets.flatMap((fleet) => fleet.ships).find((ship) => ship.id === unit.id);
+        if (pirateShip) pirateShip.hp = Math.max(0, unit.hp);
+        continue;
+      }
       if (unit.side !== 'player' || unit.hull === 'flagship') continue;
       if (unit.isWing) continue;
       const ship = state.playerShips.find((s) => s.id === unit.id);
       if (ship) ship.hp = Math.max(0, unit.hp);
+    }
+    if (system) {
+      const playerSurvivors = state.playerShips.filter((ship) => (
+        ship.galaxyId === state.activeGalaxyId && ship.systemId === systemId && !ship.transit && ship.hp > 0
+      ));
+      playerSurvivors.forEach((ship, index) => {
+        const finalPose = battle.units.find((unit) => unit.id === ship.id && unit.hp > 0);
+        if (finalPose) beginPostBattleReturn(state, system, ship, index, playerSurvivors.length, finalPose);
+      });
+
+      const pirateSurvivors = fleets.flatMap((fleet) => fleet.ships.filter((ship) => ship.hp > 0));
+      pirateSurvivors.forEach((ship, index) => {
+        const finalPose = battle.units.find((unit) => unit.id === ship.id && unit.hp > 0);
+        if (!finalPose) return;
+        beginPostBattleReturnToPose(
+          ship,
+          pirateStationPose(state, system, index, pirateSurvivors.length),
+          finalPose,
+          state.time,
+        );
+      });
     }
     const flagshipUnit = battle.units.find((u) => u.hull === 'flagship');
     if (flagshipUnit) {
@@ -930,7 +1104,7 @@ function liveTacticalContext(battle) {
   const live = [];
   const bySide = new Map();
   for (const unit of battle.units ?? []) {
-    if (unit.hp <= 0) continue;
+    if (unit.hp <= 0 || unit.escaped || unit.recovered) continue;
     live.push(unit);
     const bucket = bySide.get(unit.side) ?? [];
     bucket.push(unit);
@@ -997,12 +1171,21 @@ function nearestTarget(unit, live, spatialIndex, state) {
 }
 
 function activeOrderForUnit(battle, unit) {
-  const orders = activeFleetOrders(battle, unit.side).filter((order) => order.type !== 'formation').slice().reverse();
+  const orders = activeFleetOrders(battle, unit.side)
+    .filter((order) => order.type !== 'formation')
+    .filter((order) => unit.side !== 'player' || battle.advancedTactics === true || order.autonomous === true
+      || order.type === 'emergency_retreat')
+    .filter((order) => !(unit.side === 'player' && order.source === 'doctrine'
+      && order.type === 'attack_class'))
+    .slice().reverse();
   return orders.find((order) => order.subjectIds.length === 0 || order.subjectIds.includes(String(unit.id))) ?? null;
 }
 
 function formationOrderForUnit(battle, unit) {
-  const orders = activeFleetOrders(battle, unit.side).filter((order) => order.type === 'formation').slice().reverse();
+  const orders = activeFleetOrders(battle, unit.side)
+    .filter((order) => order.type === 'formation')
+    .filter((order) => unit.side !== 'player' || battle.advancedTactics === true || order.autonomous === true)
+    .slice().reverse();
   return orders.find((order) => order.subjectIds.length === 0 || order.subjectIds.includes(String(unit.id))) ?? null;
 }
 
@@ -1048,19 +1231,64 @@ function moveSlotForUnit(battle, unit, order, formation = 'line') {
 }
 
 function priorityTarget(unit, context, spatialIndex, state, battle, environment = { range: 1 }) {
-  const order = activeOrderForUnit(battle, unit);
   const friendlies = context.live.filter((candidate) => !opposingSides(unit.side, candidate.side));
   const hostiles = context.live.filter((candidate) => opposingSides(unit.side, candidate.side));
+  const order = activeOrderForUnit(battle, unit)
+    ?? autonomousTargetOrder(state, battle, unit, hostiles);
   const targetOrder = order?.type === 'focus_fire'
     && !hostiles.some((candidate) => String(candidate.id) === String(order.targetId))
     ? null
     : order;
-  return selectPriorityTarget(unit, hostiles, targetOrder, {
-    range: (weaponProfile(unit.weaponProfile ?? 'kinetic').range ?? TACTICAL_WEAPON_RANGE) * environment.range,
+  const range = (weaponProfile(unit.weaponProfile ?? 'kinetic').range ?? TACTICAL_WEAPON_RANGE) * environment.range;
+  const contextOptions = {
+    range,
     friendlyUnits: friendlies,
     nowMs: state.time,
     threatTierById: battle._threatTierBySide?.get(unit.side),
-  });
+  };
+  const preferred = selectPriorityTarget(unit, hostiles, targetOrder, contextOptions);
+  if (preferred && order?.autonomous === true
+      && Math.hypot(preferred.x - unit.x, preferred.y - unit.y) > range) {
+    const inRange = hostiles.filter((candidate) => (
+      Math.hypot(candidate.x - unit.x, candidate.y - unit.y) <= range
+    ));
+    return selectPriorityTarget(unit, inRange, null, contextOptions) ?? preferred;
+  }
+  return preferred;
+}
+
+function recoveryCarrierForWing(battle, unit) {
+  const liveCarrier = (candidate) => candidate?.hp > 0 && !candidate.escaped && !candidate.recovered
+    && candidate.side === unit.side
+    && (candidate.id === unit.parentCarrierId
+      || candidate.hull === 'flagship'
+      || ['light_carrier', 'fleet_carrier', 'super_carrier'].includes(candidate.hull));
+  const preferredId = unit.recoveryCarrierId ?? unit.parentCarrierId;
+  return (battle.units ?? []).find((candidate) => candidate.id === preferredId && liveCarrier(candidate))
+    ?? (battle.units ?? []).find(liveCarrier)
+    ?? null;
+}
+
+function beginDoctrineRetreat(state, battle) {
+  if (battle.autoRetreatIssued) return;
+  const subjectIds = (battle.units ?? [])
+    .filter((unit) => unit.side === 'player' && unit.hp > 0 && !unit.escaped)
+    .map((unit) => unit.id);
+  const flagship = battle.units?.find((unit) => unit.hull === 'flagship');
+  const hostiles = (battle.units ?? []).filter((unit) => unit.side !== 'player' && unit.hp > 0);
+  const center = sideCentroid(hostiles);
+  const dx = (flagship?.x ?? 0) - center.x;
+  const dy = (flagship?.y ?? 0) - center.y;
+  const mag = Math.hypot(dx, dy) || 1;
+  const result = applyFleetOrder(battle, {
+    type: 'emergency_retreat',
+    side: 'player',
+    subjectIds,
+    point: { x: (flagship?.x ?? 0) + dx / mag * 1500, y: (flagship?.y ?? 0) + dy / mag * 1500 },
+    autonomous: true,
+    source: 'doctrine',
+  }, { time: state.time, units: battle.units, ownedUnitIds: subjectIds });
+  if (result.ok) battle.autoRetreatIssued = true;
 }
 
 function buildThreatBoardForSide(battle, side, context, state, environment) {
@@ -1129,8 +1357,12 @@ function fireDestroyerAa({ state, battle, unit, context, environment, rangeMulti
 
   const techState = techStateForUnit(state, unit);
   const attacker = { ...unit, weaponProfile: 'point_defense' };
-  const damage = effectiveDamageAgainst(attacker, target, techState) * battery.damageShare
-    * environment.damage * damageMods.damage * (TICK_MS / 1000);
+  const damage = cooldownNormalizedVolleyDamage(
+    effectiveDamageAgainst(attacker, target, techState)
+      * environment.damage * damageMods.damage,
+    profile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS,
+    battery.damageShare,
+  );
   const hit = applyFacedDamage(target, damage, attacker);
   recordIncomingThreat(target, unit, state);
   emitShotFx(battle, { state, attacker: unit, target, hit, profile: 'point_defense' });
@@ -1228,24 +1460,13 @@ function applyDoctrineFormation(state, battle, { force = false } = {}) {
     side: 'player',
     formation: recommendation.formation,
     subjectIds,
+    autonomous: true,
+    source: 'doctrine',
   }, {
     time: state.time,
     units: battle.units,
     ownedUnitIds: subjectIds,
   });
-  if (recommendation.targetClass && !activePlayerFocusTargetId(battle)) {
-    applyFleetOrder(battle, {
-      type: 'attack_class',
-      side: 'player',
-      targetClass: recommendation.targetClass,
-      subjectIds,
-      priority: 0,
-    }, {
-      time: state.time,
-      units: battle.units,
-      ownedUnitIds: subjectIds,
-    });
-  }
   battle.lastDoctrineRecommendation = recommendation;
   if (formationResult.ok && force) battle.playerFormationOverride = false;
   return {
@@ -1313,6 +1534,10 @@ function pooledRepair(units, amount) {
     if (unit.hp <= 0 || unit.hp >= unit.maxHp) continue;
     unit.hp = Math.min(unit.maxHp, unit.hp + perUnit);
   }
+}
+
+export function pooledDpsTickDamage(dps, dtMs = TICK_MS) {
+  return Math.max(0, Number(dps) || 0) * Math.max(0, Number(dtMs) || 0) / 1000;
 }
 
 function formationDriftThrust(tier, approaching) {
@@ -1417,8 +1642,11 @@ function tickLargeTacticalBattle(state, systemId, battle, context, repairMult) {
   const friendlyPower = totalPower(friendlies, state);
   const enemyPower = totalPower(enemies, state);
   const dt = TICK_MS / 1000;
-  const friendlyDamage = friendlyPower.dps * environment.damage * dt;
-  const enemyDamage = Math.max(0, (enemyPower.dps * environment.damage - friendlyPower.heal * HEALER_AUTO_COEF) * dt);
+  const friendlyDamage = pooledDpsTickDamage(friendlyPower.dps, TICK_MS) * environment.damage;
+  const enemyDamage = Math.max(0, pooledDpsTickDamage(
+    enemyPower.dps * environment.damage - friendlyPower.heal * HEALER_AUTO_COEF,
+    TICK_MS,
+  ));
 
   markAttackers(friendlies);
   markAttackers(enemies);
@@ -1531,6 +1759,8 @@ function tickTacticalBattle(state, systemId, battle) {
     unit.cooldownMs = Math.max(0, (unit.cooldownMs ?? 0) - TICK_MS);
     const order = activeOrderForUnit(battle, unit);
     const formationOrder = formationOrderForUnit(battle, unit);
+    const unitHostiles = hostileBySide.get(unit.side) ?? [];
+    unit.intent = combatIntentForUnit(state, battle, unit, unitHostiles);
     if (order?.type !== 'move') {
       unit.moveAnchor = null;
       unit.moveAnchorOrderId = null;
@@ -1549,24 +1779,134 @@ function tickTacticalBattle(state, systemId, battle) {
       }
     }
 
+    if (shouldDoctrineDisengage(state, battle, unit)) {
+      if (unit.isWing) {
+        unit.returning = true;
+      } else if (unit.hull === 'flagship') {
+        beginDoctrineRetreat(state, battle);
+      } else if (!unit.disengaging) {
+        unit.disengaging = true;
+        unit.disengageStartedAt = state.time;
+      }
+    }
+
+    if (unit.disengaging && unit.hull !== 'flagship') {
+      const hostileCenter = sideCentroid(unitHostiles);
+      const dx = unit.x - hostileCenter.x;
+      const dy = unit.y - hostileCenter.y;
+      steerUnit(unit, Math.atan2(dy, dx), motionOptsForUnit(unit, {
+        dt,
+        thrust: 1,
+        speedMult: 1.35,
+      }));
+      unit.weaponTargetId = null;
+      unit.intent = 'disengage';
+      if (state.time - (unit.disengageStartedAt ?? state.time) >= COMBAT_DISENGAGE_MS) {
+        unit.escaped = true;
+        unit.disengaging = false;
+        unit.vx = 0;
+        unit.vy = 0;
+        unit.intent = 'disengaged';
+      }
+      nudgeUnitKeepOut(state, system, unit, bodyCache);
+      continue;
+    }
+
+    if (unit.isWing && unit.recovered) {
+      const carrier = recoveryCarrierForWing(battle, unit);
+      if (!carrier) {
+        unit.recovered = false;
+        unit.returning = true;
+        unit.sortiePhase = 'return';
+      } else if (state.time >= (unit.rearmUntil ?? Infinity)) {
+        const angle = ((unit.sortieNumber ?? 1) * 0.71 + String(unit.id).length) % (Math.PI * 2);
+        unit.x = carrier.x + Math.cos(angle) * 34;
+        unit.y = carrier.y + Math.sin(angle) * 34;
+        unit.vx = carrier.vx ?? 0;
+        unit.vy = carrier.vy ?? 0;
+        unit.ammo = unit.maxAmmo ?? (unit.hull === 'bomber' ? 4 : 8);
+        unit.fuel = unit.maxFuel ?? 100;
+        unit.cooldownMs = unit.launchOffsetMs ?? 0;
+        unit.recovered = false;
+        unit.returning = false;
+        unit.sortiePhase = 'launch';
+        unit.sortieNumber = (unit.sortieNumber ?? 1) + 1;
+        unit.sortieLaunchedAt = state.time;
+        unit.rearmUntil = null;
+        unit.intent = 'launch';
+        pushFxEvent(battle, {
+          kind: 'wing_launch',
+          profile: unit.weaponProfile,
+          side: unit.side,
+          t: state.time,
+          attackerId: carrier.id,
+          targetId: unit.id,
+          ax: carrier.x,
+          ay: carrier.y,
+          tx: unit.x + Math.cos(unit.heading ?? angle) * 44,
+          ty: unit.y + Math.sin(unit.heading ?? angle) * 44,
+        });
+      } else {
+        unit.intent = 'rearm';
+        continue;
+      }
+    }
+
     if (unit.isWing) {
       unit.fuel = Math.max(0, (unit.fuel ?? 100) - TICK_MS / 1000);
-      if (unit.fuel <= 0 || (unit.ammo ?? 0) <= 0) unit.returning = true;
+      if (unit.fuel <= FIGHTER_SORTIE_RETURN_FUEL || (unit.ammo ?? 0) <= 0) unit.returning = true;
       if (unit.returning) {
-        const carrier = battle.units.find((candidate) => candidate.id === unit.parentCarrierId && candidate.hp > 0);
+        unit.sortiePhase = 'return';
+        unit.intent = 'return';
+        const carrier = recoveryCarrierForWing(battle, unit);
         if (carrier) {
+          unit.recoveryCarrierId = carrier.id;
           const dx = carrier.x - unit.x;
           const dy = carrier.y - unit.y;
           const dist = Math.hypot(dx, dy) || 1;
           steerUnit(unit, Math.atan2(dy, dx), motionOptsForUnit(unit, {
             dt,
             thrust: 1,
-            speedMult: 1.35,
+            speedMult: FIGHTER_SORTIE_AFTERBURNER_MULT,
           }));
-          if (dist < 28) unit.recovered = true;
+          // Carrier recovery tractor envelope prevents fast strike craft from
+          // endlessly overshooting a tiny physical hangar hit radius.
+          if (dist < 100) {
+            unit.recovered = true;
+            unit.returning = false;
+            unit.sortiePhase = 'rearm';
+            unit.rearmUntil = state.time + FIGHTER_SORTIE_REARM_MS;
+            unit.vx = carrier.vx ?? 0;
+            unit.vy = carrier.vy ?? 0;
+            unit.weaponTargetId = null;
+            unit.intent = 'rearm';
+            pushFxEvent(battle, {
+              kind: 'wing_recover',
+              profile: unit.weaponProfile,
+              side: unit.side,
+              t: state.time,
+              attackerId: unit.id,
+              targetId: carrier.id,
+              ax: unit.x,
+              ay: unit.y,
+              tx: carrier.x,
+              ty: carrier.y,
+            });
+          }
+          nudgeUnitKeepOut(state, system, unit, bodyCache);
+          continue;
         }
-        nudgeUnitKeepOut(state, system, unit, bodyCache);
-        continue;
+        // A stranded wing keeps fighting while it still has consumables. Once
+        // dry, it exits the targeting pool as a surviving disengaged unit.
+        unit.orphaned = true;
+        unit.returning = false;
+        if ((unit.ammo ?? 0) <= 0 || (unit.fuel ?? 0) <= 0) {
+          unit.escaped = true;
+          unit.sortiePhase = 'disengaged';
+          unit.intent = 'disengaged';
+          unit.weaponTargetId = null;
+          continue;
+        }
       }
     }
 
@@ -1607,6 +1947,10 @@ function tickTacticalBattle(state, systemId, battle) {
         },
       );
       unit.weaponTargetId = target?.id ?? null;
+      if (unit.isWing && target) {
+        const targetDistance = Math.hypot(target.x - unit.x, target.y - unit.y);
+        unit.sortiePhase = targetDistance > range ? 'approach' : 'attack';
+      }
 
       const canSteer = unit.hull !== 'flagship' && !unit.isStructure && !unit.isConvoy;
       if (canSteer) {
@@ -1766,11 +2110,44 @@ function tickTacticalBattle(state, systemId, battle) {
           }
         }
 
+        if (normalizeDoctrine(unit.side === 'player'
+          ? (battle.doctrine ?? state.combatDoctrine)
+          : 'assault') === 'assault'
+          && target) {
+          const hostileCenter = sideCentroid(hostiles);
+          const assaultFacing = Math.atan2(hostileCenter.y - unit.y, hostileCenter.x - unit.x);
+          const centerDistance = Math.hypot(hostileCenter.x - unit.x, hostileCenter.y - unit.y);
+          if (centerDistance > range * 0.78) {
+            desiredFacing = assaultFacing;
+            const alignment = Math.max(0, Math.cos(shortestAngleDelta(unit.heading, assaultFacing)));
+            thrust = Math.max(thrust * 0.2, 0.95 * alignment);
+            const courseX = Math.cos(assaultFacing);
+            const courseY = Math.sin(assaultFacing);
+            const forwardVelocity = (unit.vx ?? 0) * courseX + (unit.vy ?? 0) * courseY;
+            const lateralDamping = Math.min(1, dt * 2.4);
+            unit.vx -= ((unit.vx ?? 0) - courseX * forwardVelocity) * lateralDamping;
+            unit.vy -= ((unit.vy ?? 0) - courseY * forwardVelocity) * lateralDamping;
+            if (alignment < 0.25) {
+              const brake = Math.exp(-2.2 * dt);
+              unit.vx *= brake;
+              unit.vy *= brake;
+            }
+          } else {
+            desiredFacing = faceTarget;
+            thrust = 0;
+          }
+        }
+
         steerUnit(unit, desiredFacing, motionOptsForUnit(unit, {
           dt,
           thrust,
           envSpeed: environment.speed,
           damageSpeed: damageMods.speed,
+          speedMult: unit.isWing
+            && dist > range * 1.6
+            && Math.abs(shortestAngleDelta(unit.heading, faceTarget)) < 0.55
+            ? FIGHTER_SORTIE_AFTERBURNER_MULT
+            : 1,
         }));
       }
 
@@ -1800,11 +2177,12 @@ function tickTacticalBattle(state, systemId, battle) {
           const slotDistance = Math.hypot(slotTarget.x - unit.x, slotTarget.y - unit.y) || 1;
           if (slotDistance > slotRange || !weaponCanBear(unit, slotTarget, slot.profile, slot.hardpoint)) continue;
           const share = 1 / Math.max(1, unit.weapons.length);
-          const damage = effectiveDamageAgainst(
+          const damage = cooldownNormalizedVolleyDamage(effectiveDamageAgainst(
             { ...unit, weaponProfile: slot.profile },
             slotTarget,
             unitTechState,
-          ) * environment.damage * damageMods.damage * (TICK_MS / 1000) * share * 3.2;
+          ), slotProfile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS, share)
+            * environment.damage * damageMods.damage;
           const hit = applyFacedDamage(slotTarget, damage, unit);
           recordIncomingThreat(slotTarget, unit, state);
           battle.events = battle.events ?? [];
@@ -1842,13 +2220,60 @@ function tickTacticalBattle(state, systemId, battle) {
       }
 
       if (!target) continue;
+      if (unit.isWing && state.time < (unit.sortieLaunchedAt ?? battle.startedAt) + (unit.launchOffsetMs ?? 0)) continue;
+      const standardMounts = ensureStandardWeaponMounts(unit);
+      if (standardMounts.length > 0) {
+        let nextCooldown = Number.POSITIVE_INFINITY;
+        for (const mount of standardMounts) {
+          mount.cooldownMs = Math.max(0, (mount.cooldownMs ?? 0) - TICK_MS);
+          const mountProfile = weaponProfile(mount.profile);
+          const mountRange = (mountProfile.range ?? TACTICAL_WEAPON_RANGE)
+            * environment.range * localRangeMultiplier;
+          const mountTarget = mount.profile === 'point_defense'
+            ? pointDefenseTarget(unit, context, state, mountRange, order)
+            : target;
+          mount.targetId = mountTarget?.id ?? null;
+          if (!mountTarget || mount.cooldownMs > 0) {
+            nextCooldown = Math.min(nextCooldown, mount.cooldownMs ?? 0);
+            continue;
+          }
+          const mountDistance = Math.hypot(mountTarget.x - unit.x, mountTarget.y - unit.y) || 1;
+          if (mountDistance > mountRange || !weaponCanBear(unit, mountTarget, mount.profile, mount.hardpoint)) {
+            nextCooldown = Math.min(nextCooldown, mount.cooldownMs ?? 0);
+            continue;
+          }
+          const mountAttacker = { ...unit, weaponProfile: mount.profile };
+          const damage = cooldownNormalizedVolleyDamage(
+            effectiveDamageAgainst(mountAttacker, mountTarget, unitTechState),
+            mountProfile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS,
+            mount.share ?? 1,
+          ) * environment.damage * damageMods.damage;
+          if (damage <= 0) continue;
+          const hit = applyFacedDamage(mountTarget, damage, mountAttacker);
+          recordIncomingThreat(mountTarget, unit, state);
+          emitShotFx(battle, {
+            state,
+            attacker: mountAttacker,
+            target: mountTarget,
+            hit,
+            profile: mount.profile,
+          });
+          mount.cooldownMs = mountProfile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS;
+          mount.lastFiredAt = state.time;
+          nextCooldown = Math.min(nextCooldown, mount.cooldownMs);
+        }
+        unit.cooldownMs = Number.isFinite(nextCooldown) ? nextCooldown : 0;
+        continue;
+      }
       const profileId = unit.weaponProfile ?? defaultWeaponProfileForHull(unit.hull);
       const distance = Math.hypot(target.x - unit.x, target.y - unit.y) || 1;
       if (distance > range || !weaponCanBear(unit, target, profileId)) continue;
 
       if (unit.cooldownMs <= 0 && effectiveDps(unit, unitTechState) > 0) {
-        const damage = effectiveDamageAgainst(unit, target, unitTechState) * environment.damage
-          * damageMods.damage * (TICK_MS / 1000);
+        const damage = cooldownNormalizedVolleyDamage(
+          effectiveDamageAgainst(unit, target, unitTechState),
+          profile.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS,
+        ) * environment.damage * damageMods.damage;
         const hit = applyFacedDamage(target, damage, unit);
         recordIncomingThreat(target, unit, state);
         battle.events = battle.events ?? [];
@@ -1970,12 +2395,22 @@ export function tickCombat(state) {
     let battle = state.systemBattles[systemId];
     if (!battle?.active) battle = startBattle(state, systemId);
 
+    if (!battle.startEventEmitted) {
+      events.push({
+        type: 'battle_started',
+        systemId,
+        battleId: battle.id,
+        mode: battle.mode,
+      });
+      battle.startEventEmitted = true;
+    }
+
     const hadResolve = !!battle.lastResolve;
     if (battle.mode === 'tactical') tickTacticalBattle(state, systemId, battle);
     else tickAutoBattle(state, systemId, battle);
 
     if (battle.lastResolve && !hadResolve) {
-      events.push({ systemId, ...battle.lastResolve });
+      events.push({ type: 'battle_resolved', systemId, ...battle.lastResolve });
     }
   }
   return events;
@@ -2014,6 +2449,22 @@ export function battleSummaryForSystem(state, systemId) {
     environment: combatEnvironmentModifiers(systemById(state, systemId)),
     lastResolve: battle.lastResolve,
     doctrine: battle.doctrine ?? state.combatDoctrine ?? null,
+    fleetPriority: battle.fleetPriority ?? state.combatSettings?.fleetPriority ?? 'auto',
+    advancedTactics: battle.advancedTactics ?? state.combatSettings?.advancedTactics ?? false,
+    autonomy: {
+      intentCounts: (battle.units ?? []).filter((unit) => unit.hp > 0).reduce((counts, unit) => {
+        const intent = unit.intent ?? 'hold';
+        counts[intent] = (counts[intent] ?? 0) + 1;
+        return counts;
+      }, {}),
+      disengaging: (battle.units ?? []).filter((unit) => unit.hp > 0 && unit.disengaging).length,
+      escaped: (battle.units ?? []).filter((unit) => unit.hp > 0 && unit.escaped).length,
+      wingPhases: (battle.units ?? []).filter((unit) => unit.hp > 0 && unit.isWing).reduce((counts, unit) => {
+        const phase = unit.sortiePhase ?? 'attack';
+        counts[phase] = (counts[phase] ?? 0) + 1;
+        return counts;
+      }, {}),
+    },
     formation: formationOrder?.formation ?? null,
     autoFormationApplied: !!battle.autoFormationApplied,
     playerFormationOverride: !!battle.playerFormationOverride,

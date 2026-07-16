@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 16;
+export const SAVE_VERSION = 20;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -190,7 +190,10 @@ export const FLEET_STATION_BODY_PAD = 95;     // orbit offset from shipyard plan
 export const SHIP_LANE_MIN_LEG_MS = 2000;
 
 // --- Flagship builder drones ---
-export const BUILDER_DRONE_CAPACITY = 2;
+export const BUILDER_DRONE_CAPACITY = 96;
+export const BUILDER_DRONE_STARTER_COUNT = 2;
+export const BUILDER_DRONE_PRODUCT_COST = 120;
+export const BUILDER_DRONE_PRODUCT_BUILD_MS = 18000;
 export const BUILDER_DRONE_DEPLOY_COST = 40;
 export const BUILDER_DRONE_LANE_SPEED = 150;
 export const BUILDER_DRONE_LANE_MIN_LEG_MS = 1500;
@@ -220,6 +223,9 @@ export const TACTICAL_WEAPON_RANGE = 280;
 export const TACTICAL_WEAPON_COOLDOWN_MS = 800;
 export const TACTICAL_SHIP_SPEED = 22;           // cruise for baseline escort (was 45)
 export const TACTICAL_SHIP_ACCEL = 55;           // thrust accel (world units / s²)
+export const POST_BATTLE_RETURN_SPEED = 235;      // fast recovery flight back to assigned orbit
+export const POST_BATTLE_RETURN_MIN_MS = 1400;
+export const POST_BATTLE_RETURN_MAX_MS = 5200;
 export const TACTICAL_SHIP_DRAG = 1.15;          // exponential drag when not thrusting
 export const TACTICAL_TURN_RATE = 1.55;          // base turn rate rad/s
 export const TACTICAL_SEPARATION_RADIUS = 26;    // soft bubble for baseline escort
@@ -249,27 +255,33 @@ export const TACTICAL_BATTLE_RADIUS = 900;
 export const TACTICAL_LARGE_BATTLE_UNITS = 72;
 export const TACTICAL_SWARM_BATTLE_UNITS = 150;
 export const TACTICAL_SPATIAL_CELL = 360;
+export const FIGHTER_SORTIE_REARM_MS = 4000;
+export const FIGHTER_SORTIE_RETURN_FUEL = 15;
+export const FIGHTER_SORTIE_AFTERBURNER_MULT = 3.2;
+export const COMBAT_DISENGAGE_MS = 2500;
+export const FLAGSHIP_MANUAL_OVERRIDE_MS = 2000;
+export const FLAGSHIP_AUTOPILOT_BLEND_MS = 500;
 
 /** Hull-class motion multipliers for tactical steering + EaW formation feel. */
 export const TACTICAL_MOTION_TIERS = Object.freeze({
   wing: Object.freeze({
-    maxSpeed: 2.35, accel: 2.15, turnRate: 2.35, separation: 0.38,
+    maxSpeed: 2.75, accel: 2.45, turnRate: 2.55, separation: 0.38,
     formationDiscipline: 0.05, chaseFreedom: 1.00, formationSpacingMult: 0.48,
   }),
   escort: Object.freeze({
-    maxSpeed: 1.05, accel: 1.05, turnRate: 1.05, separation: 1.00,
+    maxSpeed: 1.32, accel: 1.28, turnRate: 1.18, separation: 1.00,
     formationDiscipline: 0.18, chaseFreedom: 0.85, formationSpacingMult: 1.00,
   }),
   line: Object.freeze({
-    maxSpeed: 0.78, accel: 0.70, turnRate: 0.65, separation: 1.30,
+    maxSpeed: 0.98, accel: 0.88, turnRate: 0.76, separation: 1.30,
     formationDiscipline: 0.55, chaseFreedom: 0.45, formationSpacingMult: 1.30,
   }),
   capital: Object.freeze({
-    maxSpeed: 0.55, accel: 0.48, turnRate: 0.42, separation: 1.85,
+    maxSpeed: 0.72, accel: 0.62, turnRate: 0.50, separation: 1.85,
     formationDiscipline: 0.88, chaseFreedom: 0.20, formationSpacingMult: 1.85,
   }),
   carrier: Object.freeze({
-    maxSpeed: 0.58, accel: 0.45, turnRate: 0.40, separation: 2.00,
+    maxSpeed: 0.74, accel: 0.60, turnRate: 0.48, separation: 2.00,
     formationDiscipline: 0.90, chaseFreedom: 0.15, formationSpacingMult: 2.00,
   }),
 });
@@ -699,7 +711,7 @@ export const SELECTION_PULSE_MS = 1600;
 export const BATTLE_RENDER_LOD_UNITS = 64;
 export const BATTLE_RENDER_SWARM_UNITS = 140;
 export const BATTLE_TRACER_LIMIT = 96;
-export const BATTLE_FX_EVENT_CAP = 128;
+export const BATTLE_FX_EVENT_CAP = 384;
 export const BATTLE_FX_DRAW_LIMIT = 96;
 export const BATTLE_FX_SWARM_DRAW_LIMIT = 48;
 export const BATTLE_FX_HIT_FEEDBACK_MS = 120;

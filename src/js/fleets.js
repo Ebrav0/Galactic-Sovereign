@@ -1,6 +1,9 @@
 // Player combat fleet: production spawn + lane dispatch (Phase 2.3).
 
 import {
+  POST_BATTLE_RETURN_MAX_MS,
+  POST_BATTLE_RETURN_MIN_MS,
+  POST_BATTLE_RETURN_SPEED,
   SHIP_LANE_SPEED,
   SHIP_LANE_MIN_LEG_MS,
 } from './constants.js';
@@ -33,7 +36,7 @@ export function resetShipIds(state) {
   nextShipId = max + 1;
 }
 
-export function stationedShipPose(state, system, ship, idx, total, time = state.time) {
+export function stationedOrbitPose(state, system, ship, idx, total, time = state.time) {
   const starR = system.star?.radius ?? 200;
   const minOrbit = starR + FLEET_STATION_ORBIT_PAD;
 
@@ -57,6 +60,71 @@ export function stationedShipPose(state, system, ship, idx, total, time = state.
     y: Math.sin(angle) * minOrbit,
     heading: angle + Math.PI / 2,
   };
+}
+
+export function postBattleReturnPose(ship, target, time) {
+  const recovery = ship?.postBattleReturn;
+  if (!recovery || time >= recovery.completeAt) return target;
+  const duration = Math.max(1, recovery.completeAt - recovery.startedAt);
+  const t = Math.max(0, Math.min(1, (time - recovery.startedAt) / duration));
+  const eased = 1 - (1 - t) ** 3;
+  const fromX = Number(recovery.fromX) || 0;
+  const fromY = Number(recovery.fromY) || 0;
+  const dx = target.x - fromX;
+  const dy = target.y - fromY;
+  const distance = Math.hypot(dx, dy) || 1;
+  const bendSign = recovery.bendSign ?? 1;
+  const bend = Math.sin(Math.PI * t) * Math.min(90, distance * 0.14) * bendSign;
+  const x = fromX + dx * eased + (-dy / distance) * bend;
+  const y = fromY + dy * eased + (dx / distance) * bend;
+  const lookAheadT = Math.min(1, t + 0.025);
+  const lookAheadEase = 1 - (1 - lookAheadT) ** 3;
+  const lookAheadBend = Math.sin(Math.PI * lookAheadT) * Math.min(90, distance * 0.14) * bendSign;
+  const lookX = fromX + dx * lookAheadEase + (-dy / distance) * lookAheadBend;
+  const lookY = fromY + dy * lookAheadEase + (dx / distance) * lookAheadBend;
+  const pathHeading = Math.atan2(lookY - y, lookX - x);
+  const fromHeading = Number.isFinite(recovery.fromHeading) ? recovery.fromHeading : pathHeading;
+  let headingDelta = pathHeading - fromHeading;
+  while (headingDelta > Math.PI) headingDelta -= Math.PI * 2;
+  while (headingDelta < -Math.PI) headingDelta += Math.PI * 2;
+  const headingBlend = Math.min(1, t / 0.15);
+  return {
+    x,
+    y,
+    heading: fromHeading + headingDelta * headingBlend,
+    returning: true,
+    progress: t,
+  };
+}
+
+export function stationedShipPose(state, system, ship, idx, total, time = state.time) {
+  const target = stationedOrbitPose(state, system, ship, idx, total, time);
+  return postBattleReturnPose(ship, target, time);
+}
+
+export function beginPostBattleReturn(state, system, ship, idx, total, finalPose) {
+  if (!ship || ship.hp <= 0 || !finalPose) return null;
+  const target = stationedOrbitPose(state, system, ship, idx, total, state.time);
+  return beginPostBattleReturnToPose(ship, target, finalPose, state.time);
+}
+
+export function beginPostBattleReturnToPose(ship, target, finalPose, now) {
+  if (!ship || ship.hp <= 0 || !target || !finalPose) return null;
+  const distance = Math.hypot(target.x - finalPose.x, target.y - finalPose.y);
+  const durationMs = Math.max(
+    POST_BATTLE_RETURN_MIN_MS,
+    Math.min(POST_BATTLE_RETURN_MAX_MS, Math.round(distance / POST_BATTLE_RETURN_SPEED * 1000)),
+  );
+  ship.postBattleReturn = {
+    fromX: finalPose.x,
+    fromY: finalPose.y,
+    fromHeading: finalPose.heading ?? 0,
+    startedAt: now,
+    completeAt: now + durationMs,
+    bendSign: String(ship.id).length % 2 === 0 ? 1 : -1,
+    anchorBodyId: ship.anchorBodyId ?? null,
+  };
+  return ship.postBattleReturn;
 }
 
 export function spawnPlayerShip(state, systemId, hull, anchorBodyId = null) {
@@ -101,6 +169,9 @@ export function orderShipTravel(state, shipId, targetId) {
   if (!ship) return { ok: false, reason: 'No such ship' };
   if (ship.galaxyId !== state.activeGalaxyId) return { ok: false, reason: 'Ship not in active galaxy' };
   if (ship.transit) return { ok: false, reason: 'Ship is already in transit' };
+  if (ship.postBattleReturn && state.time < ship.postBattleReturn.completeAt) {
+    return { ok: false, reason: 'Ship is returning to its assigned orbit' };
+  }
   if (!ship.systemId) return { ok: false, reason: 'Ship has no location' };
   if (state.systemBattles?.[ship.systemId]?.active) {
     return { ok: false, reason: 'Ship is engaged in combat — issue an emergency retreat order' };
@@ -133,6 +204,9 @@ export function tickPlayerShips(state, onArrive) {
   const arrivals = [];
   const galaxy = getGraph(state);
   for (const ship of state.playerShips) {
+    if (ship.postBattleReturn && state.time >= ship.postBattleReturn.completeAt) {
+      ship.postBattleReturn = null;
+    }
     if (ship.galaxyId !== state.activeGalaxyId || !ship.transit) continue;
     const speed = shipLaneSpeed(ship.hull);
     const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, speed, SHIP_LANE_MIN_LEG_MS);

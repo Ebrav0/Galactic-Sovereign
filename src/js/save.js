@@ -9,8 +9,17 @@ import {
   hashSeed,
   createRng,
   markTradeNexusStars,
+  legacyGeneratedStellarClass,
 } from './state.js';
-import { backfillStarTypes } from './star-types.js';
+import {
+  applyStellarCatalog,
+  assignGalaxyCatalogNumbers,
+  assignGalaxyStellarCatalog,
+  assignGalaxyStellarOverrides,
+  backfillStarTypes,
+  canonicalizeStellarClass,
+} from './star-types.js';
+import { applyStateCatalogIdentities } from './catalog-names.js';
 import { spawnPirateFleets } from './pirates.js';
 import { generateGalaxy } from './galaxy.js';
 import { createDefaultAbstract } from './abstract-galaxy.js';
@@ -30,6 +39,7 @@ import { allTechNodes } from './tech-web.js';
 import { ensureBulkProductionState } from './bulk-production.js';
 import { ensureStrategicOrdersState } from './strategic-operations.js';
 import { ensureDiplomacy } from './diplomacy.js';
+import { ensureCombatSettings } from './combat-autonomy.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -98,6 +108,10 @@ function migrateSave(envelope) {
   if (e.saveVersion === 13) e = migrateV13toV14(e);
   if (e.saveVersion === 14) e = migrateV14toV15(e);
   if (e.saveVersion === 15) e = migrateV15toV16(e);
+  if (e.saveVersion === 16) e = migrateV16toV17(e);
+  if (e.saveVersion === 17) e = migrateV17toV18(e);
+  if (e.saveVersion === 18) e = migrateV18toV19(e);
+  if (e.saveVersion === 19) e = migrateV19toV20(e);
   return e;
 }
 
@@ -965,6 +979,163 @@ function migrateV15toV16(envelope) {
   };
 }
 
+export function initV17State(state) {
+  const settings = ensureCombatSettings(state);
+  if (state.flagship) {
+    state.flagship.autopilotTargetId ??= null;
+    state.flagship.combatIntent ??= null;
+  }
+  for (const battle of Object.values(state.systemBattles ?? {})) {
+    if (!battle || typeof battle !== 'object') continue;
+    battle.fleetPriority = battle.fleetPriority ?? settings.fleetPriority;
+    battle.advancedTactics = battle.advancedTactics ?? settings.advancedTactics;
+    battle.alertAcknowledged = battle.alertAcknowledged ?? !battle.active;
+    battle.startEventEmitted = battle.startEventEmitted ?? !battle.active;
+    battle.autoRetreatIssued = battle.autoRetreatIssued ?? false;
+    for (const unit of battle.units ?? []) {
+      unit.intent ??= 'hold';
+      unit.disengaging = unit.disengaging === true;
+      unit.escaped = unit.escaped === true;
+      if (!unit.isWing) continue;
+      unit.maxAmmo = Math.max(1, unit.maxAmmo ?? (unit.hull === 'bomber' ? 4 : 8));
+      unit.maxFuel = Math.max(1, unit.maxFuel ?? 100);
+      unit.sortiePhase = unit.sortiePhase
+        ?? (unit.recovered ? 'rearm' : (unit.returning ? 'return' : 'attack'));
+      unit.sortieNumber = Math.max(1, Math.floor(unit.sortieNumber ?? 1));
+      unit.sortieLaunchedAt = Number.isFinite(unit.sortieLaunchedAt)
+        ? unit.sortieLaunchedAt
+        : (battle.startedAt ?? state.time ?? 0);
+      unit.rearmUntil = Number.isFinite(unit.rearmUntil) ? unit.rearmUntil : null;
+      unit.recovered = unit.recovered === true;
+    }
+  }
+  return state;
+}
+
+// v16 -> v17 (command-first combat autonomy and repeated carrier sorties).
+function migrateV16toV17(envelope) {
+  const state = initV17State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 17,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+export function initV18State(state) {
+  state.builderDrones = Array.isArray(state.builderDrones) ? state.builderDrones : [];
+  state.builderConstructionOrders = Array.isArray(state.builderConstructionOrders)
+    ? state.builderConstructionOrders
+    : [];
+  if (state.builderDroneStarterGranted == null) {
+    state.builderDroneStarterGranted = state.builderDrones.length > 0;
+  }
+  for (const drone of state.builderDrones) {
+    drone.homeSystemId ??= drone.originSystemId ?? drone.systemId ?? state.stronghold ?? null;
+    drone.strategicCampaignId ??= null;
+    drone.strategicTargetId ??= null;
+    drone.assignedFleetId ??= null;
+    drone.returnHomeSystemId ??= null;
+  }
+  for (const order of state.builderConstructionOrders) {
+    order.strategicCampaignId ??= null;
+    order.strategicTargetId ??= null;
+  }
+  ensureBulkProductionState(state);
+  ensureStrategicOrdersState(state);
+  return state;
+}
+
+// v17 -> v18 (operation doctrines and manufacturable embarked construction drones).
+function migrateV17toV18(envelope) {
+  const state = envelope.state;
+  for (const campaign of state.strategicOrders?.campaigns ?? []) {
+    campaign.reserveDroneIds ??= [];
+    campaign.reserveDroneRequested ??= false;
+    for (const target of campaign.targets ?? []) {
+      target.executionVersion = ['traveling', 'fighting', 'capturing', 'constructing', 'securing']
+        .includes(target.phase) ? 1 : 2;
+    }
+  }
+  initV18State(state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 18,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+export function initV19State(state) {
+  const metaSeed = state.meta?.seed ?? 0;
+  for (const galaxy of Object.values(state.galaxies ?? {})) {
+    const galaxySeed = hashSeed(metaSeed, `galaxy:${galaxy.id}`);
+    assignGalaxyStellarOverrides(galaxy.graph, galaxy.strongholdStarId, galaxySeed);
+  }
+  applyStellarCatalog(state);
+  return state;
+}
+
+// v18 -> v19 (deterministic visual-only exotic stellar catalog).
+function migrateV18toV19(envelope) {
+  const state = initV19State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 19,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+export function initV20State(state, { migrateLegacyCatalog = false } = {}) {
+  const metaSeed = state.meta?.seed ?? 0;
+  for (const galaxy of Object.values(state.galaxies ?? {})) {
+    const galaxySeed = hashSeed(metaSeed, `galaxy:${galaxy.id}`);
+    assignGalaxyCatalogNumbers(galaxy.graph, galaxySeed);
+    const overlays = galaxy.abstract?.systemOverlays ?? {};
+    for (let index = 0; index < (galaxy.graph?.stars?.length ?? 0); index++) {
+      const node = galaxy.graph.stars[index];
+      if (node.kind === 'trade_nexus') {
+        delete node.stellarClass;
+        delete node.stellarOverride;
+        continue;
+      }
+      if (node.id === galaxy.strongholdStarId && galaxy.id === state.homeGalaxyId) {
+        node.stellarClass = 'yellow_dwarf';
+      } else if (!node.stellarClass || migrateLegacyCatalog) {
+        const storedType = galaxy.systems?.[node.id]?.star?.type
+          ?? overlays[node.id]?.star?.type
+          ?? node.stellarOverride;
+        node.stellarClass = storedType
+          ? canonicalizeStellarClass(storedType)
+          : legacyGeneratedStellarClass(metaSeed, galaxy.id, node, index);
+      } else {
+        node.stellarClass = canonicalizeStellarClass(node.stellarClass);
+      }
+    }
+    assignGalaxyStellarCatalog(galaxy.graph, galaxy.strongholdStarId, galaxySeed, { preserveExisting: true });
+  }
+  applyStellarCatalog(state);
+  applyStateCatalogIdentities(state);
+  return state;
+}
+
+// v19 -> v20 (canonical stellar classes and coordinate catalog names).
+function migrateV19toV20(envelope) {
+  const state = initV20State(envelope.state, { migrateLegacyCatalog: true });
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 20,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -987,6 +1158,10 @@ export function deserialize(envelopeJson) {
     envelope = migrateSave(envelope);
   }
   initV16State(envelope.state);
+  initV17State(envelope.state);
+  initV18State(envelope.state);
+  initV19State(envelope.state);
+  initV20State(envelope.state);
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;

@@ -440,7 +440,9 @@ export function motionOptsForUnit(unit, {
     thrust,
     maxSpeed: TACTICAL_SHIP_SPEED * profile.maxSpeedMult * speedScale,
     turnRate: TACTICAL_TURN_RATE * profile.turnRateMult,
-    accel: TACTICAL_SHIP_ACCEL * profile.accelMult * damageSpeed * Math.min(1.35, flagshipWingBoost),
+    accel: TACTICAL_SHIP_ACCEL * profile.accelMult * damageSpeed
+      * Math.min(1.35, flagshipWingBoost)
+      * (isWingUnit(unit) ? Math.min(2.6, Math.max(1, speedMult)) : 1),
     drag,
   };
 }

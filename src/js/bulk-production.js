@@ -8,11 +8,16 @@
 import { EMPIRE_QUEUE_MAX } from './constants.js';
 import {
   cancelQueueItem,
-  enqueueHull,
+  enqueueProduct,
   listPlayerShipyards,
 } from './empire-queue.js';
-import { hullQueueCost } from './hull.js';
-import { empireQueueHulls, isTechUnlocked } from './tech-web.js';
+import { isTechUnlocked } from './tech-web.js';
+import {
+  PRODUCTION_KIND_BUILDER_DRONE,
+  builderDroneOwnedAndQueuedCount,
+  normalizeProductionProduct,
+  productionProductDefinition,
+} from './production-products.js';
 
 const PRIORITY_RANK = Object.freeze({
   emergency: 3,
@@ -159,28 +164,31 @@ function normalizePackaging(value, rally, errors = null) {
 
 function normalizeManifest(value, errors) {
   if (!Array.isArray(value) || value.length === 0) {
-    errors.push({ code: 'empty_manifest', message: 'Add at least one hull to the manifest' });
+    errors.push({ code: 'empty_manifest', message: 'Add at least one production item to the manifest' });
     return [];
   }
 
   const merged = new Map();
   for (const entry of value) {
-    const hull = typeof entry?.hull === 'string' ? entry.hull.trim() : '';
+    const product = normalizeProductionProduct(entry);
     const quantity = Number(entry?.quantity);
-    if (!hull) {
-      errors.push({ code: 'invalid_hull', message: 'Every manifest line requires a hull' });
+    if (!product.productId) {
+      errors.push({ code: 'invalid_product', message: 'Every manifest line requires a production item' });
       continue;
     }
     if (!Number.isInteger(quantity) || quantity <= 0) {
       errors.push({
         code: 'invalid_quantity',
-        message: `${hull} quantity must be a positive integer`,
+        message: `${product.productId} quantity must be a positive integer`,
       });
       continue;
     }
-    merged.set(hull, (merged.get(hull) ?? 0) + quantity);
+    const key = `${product.kind}:${product.productId}`;
+    const existing = merged.get(key) ?? { ...product, quantity: 0 };
+    existing.quantity += quantity;
+    merged.set(key, existing);
   }
-  return [...merged.entries()].map(([hull, quantity]) => ({ hull, quantity }));
+  return [...merged.values()];
 }
 
 function activeQueueItems(state) {
@@ -217,10 +225,13 @@ function normalizeExistingOrder(order, orderIndex) {
   order.manifest = Array.isArray(order.manifest) ? order.manifest : [];
 
   order.manifest.forEach((line, lineIndex) => {
+    const product = normalizeProductionProduct(line);
     line.id = typeof line.id === 'string' && line.id
       ? line.id
       : `${order.id}-line-${lineIndex + 1}`;
-    line.hull = String(line.hull ?? '');
+    line.kind = product.kind;
+    line.productId = product.productId;
+    line.hull = product.hull;
     line.quantity = integerAtLeast(line.quantity, 0, 0);
     line.materialized = integerAtLeast(line.materialized, 0, 0);
     line.completed = integerAtLeast(line.completed, 0, 0);
@@ -271,6 +282,8 @@ export function ensureBulkProductionState(state) {
     order.tickets.push({
       queueItemId: item.id,
       lineId: item.bulkLineId,
+      kind: normalizeProductionProduct(item).kind,
+      productId: normalizeProductionProduct(item).productId,
       hull: item.hull,
       costPaid: nonNegative(item.costPaid),
       status: item.status,
@@ -345,13 +358,13 @@ export function previewBulkProductionOrder(state, input = {}) {
     });
   }
 
-  const unlockedHulls = new Set(empireQueueHulls(state));
   const costedManifest = manifest.map((line) => {
-    const unitCost = hullQueueCost(state, line.hull);
+    const definition = productionProductDefinition(state, line);
+    const unitCost = definition.cost;
     if (unitCost == null) {
-      errors.push({ code: 'unknown_hull', message: `Unknown hull: ${line.hull}` });
-    } else if (!unlockedHulls.has(line.hull)) {
-      errors.push({ code: 'locked_hull', message: `${line.hull} is not unlocked` });
+      errors.push({ code: 'unknown_product', message: `Unknown production item: ${line.productId}` });
+    } else if (!definition.unlocked) {
+      errors.push({ code: 'locked_product', message: `${definition.label} is not unlocked` });
     }
     return {
       ...line,
@@ -361,6 +374,18 @@ export function previewBulkProductionOrder(state, input = {}) {
   });
 
   const totalQuantity = costedManifest.reduce((total, line) => total + line.quantity, 0);
+  const droneQuantity = costedManifest
+    .filter((line) => line.kind === PRODUCTION_KIND_BUILDER_DRONE)
+    .reduce((total, line) => total + line.quantity, 0);
+  if (droneQuantity > 0) {
+    const droneCount = builderDroneOwnedAndQueuedCount(state);
+    if (droneCount.total + droneQuantity > droneCount.capacity) {
+      errors.push({
+        code: 'builder_drone_cap',
+        message: `Construction drone order exceeds the ${droneCount.capacity}-drone cap`,
+      });
+    }
+  }
   const totalCost = costedManifest.reduce(
     (total, line) => total + (line.lineCost ?? 0),
     0,
@@ -448,7 +473,12 @@ export function previewBulkProductionOrder(state, input = {}) {
       name: typeof input.name === 'string' && input.name.trim()
         ? input.name.trim()
         : 'Bulk Production Order',
-      manifest: costedManifest.map(({ hull, quantity }) => ({ hull, quantity })),
+      manifest: costedManifest.map(({ kind, productId, hull, quantity }) => ({
+        kind,
+        productId,
+        hull,
+        quantity,
+      })),
       priority,
       budgetCap,
       protectedReserve,
@@ -511,6 +541,8 @@ export function createBulkProductionOrder(state, input = {}) {
     tickets: [],
     manifest: config.manifest.map((line, index) => ({
       id: `${id}-line-${index + 1}`,
+      kind: line.kind,
+      productId: line.productId,
       hull: line.hull,
       quantity: line.quantity,
       materialized: 0,
@@ -623,14 +655,14 @@ function materializeOne(state, order, context) {
   const selected = nextLineWithDemand(order);
   if (!selected) return { ok: false, done: true };
   const { line, index } = selected;
-  const unlocked = empireQueueHulls(state);
-  if (!unlocked.includes(line.hull)) {
-    addBlocker(order, state, 'locked_hull', `${line.hull} is no longer unlocked`);
+  const definition = productionProductDefinition(state, line);
+  if (!definition.unlocked) {
+    addBlocker(order, state, 'locked_product', `${definition.label} is no longer unlocked`);
     return { ok: false };
   }
-  const cost = hullQueueCost(state, line.hull);
+  const cost = definition.cost;
   if (cost == null) {
-    addBlocker(order, state, 'unknown_hull', `Unknown hull: ${line.hull}`);
+    addBlocker(order, state, 'unknown_product', `Unknown production item: ${line.productId}`);
     return { ok: false };
   }
   if (order.budgetCap != null && order.spent + cost > order.budgetCap) {
@@ -654,7 +686,7 @@ function materializeOne(state, order, context) {
     return { ok: false };
   }
 
-  const result = enqueueHull(state, line.hull);
+  const result = enqueueProduct(state, line, { reservedByBulkOrder: order.id });
   if (!result.ok) {
     const reason = result.reason ?? 'Empire queue rejected the hull';
     const code = /queue full/i.test(reason)
@@ -674,6 +706,8 @@ function materializeOne(state, order, context) {
   order.tickets.push({
     queueItemId: item.id,
     lineId: line.id,
+    kind: line.kind,
+    productId: line.productId,
     hull: line.hull,
     costPaid: item.costPaid ?? cost,
     status: item.status,
@@ -698,6 +732,8 @@ function materializeOne(state, order, context) {
     orderId: order.id,
     lineId: line.id,
     queueItemId: item.id,
+    kind: line.kind,
+    productId: line.productId,
     hull: line.hull,
     cost: item.costPaid ?? cost,
     pinnedShipyardId: yard.shipyardId,
@@ -888,7 +924,7 @@ function completionSource(state, info) {
  * Convert one completed tagged queue ticket into aggregate progress plus a
  * pending delivery record. The caller remains responsible for actual routing.
  */
-export function recordBulkShipCompletion(state, queueItemOrCompletedInfo, ship = null) {
+export function recordBulkShipCompletion(state, queueItemOrCompletedInfo, ship = null, drone = null) {
   const { deliveries, meta } = ensureBulkProductionState(state);
   const resolved = completionSource(state, queueItemOrCompletedInfo);
   const { source, tagged, queueItemId, order, ticket } = resolved;
@@ -907,15 +943,21 @@ export function recordBulkShipCompletion(state, queueItemOrCompletedInfo, ship =
   line.completed = Math.min(line.quantity, line.completed + 1);
   order.updatedAt = stateTime(state);
   const metadata = cloneValue(tagged?.delivery ?? ticket?.delivery ?? deliveryMetadata(order));
+  const product = normalizeProductionProduct(source.productId || source.kind
+    ? source
+    : (tagged ?? ticket ?? line));
   const delivery = {
     id: `bulk-delivery-${meta.nextDeliveryId++}`,
     bulkOrderId: order.id,
     bulkLineId: line.id,
     queueItemId,
     linkedCampaignId: order.linkedCampaignId,
-    hull: ship?.hull ?? source.hull ?? tagged?.hull ?? ticket?.hull ?? line.hull,
+    kind: product.kind,
+    productId: product.productId,
+    hull: ship?.hull ?? product.hull,
     shipId: ship?.id ?? source.shipId ?? null,
     scoutId: source.scoutId ?? null,
+    droneId: drone?.id ?? source.droneId ?? null,
     rally: cloneValue(metadata.rally ?? order.rally),
     packaging: cloneValue(metadata.packaging ?? order.packaging),
     sequence: metadata.sequence ?? line.completed,
@@ -932,6 +974,11 @@ export function recordBulkShipCompletion(state, queueItemOrCompletedInfo, ship =
   if (ship && typeof ship === 'object') {
     ship.bulkOrderId = order.id;
     ship.bulkDeliveryId = delivery.id;
+  }
+  if (drone && typeof drone === 'object') {
+    drone.bulkOrderId = order.id;
+    drone.bulkDeliveryId = delivery.id;
+    drone.strategicCampaignId = order.linkedCampaignId ?? drone.strategicCampaignId ?? null;
   }
 
   const resolvedCount = order.manifest.reduce(
@@ -990,6 +1037,8 @@ function summarizeOrder(state, order) {
     const building = tickets.filter((ticket) => queueById.get(ticket.queueItemId)?.status === 'building').length;
     return {
       id: line.id,
+      kind: line.kind,
+      productId: line.productId,
       hull: line.hull,
       quantity: line.quantity,
       materialized: line.materialized,

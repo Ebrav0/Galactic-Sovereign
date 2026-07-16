@@ -1,6 +1,6 @@
 {
-  "saveVersion": 14,
-  "time": 7300,
+  "saveVersion": 17,
+  "time": 6850,
   "paused": false,
   "aiDifficulty": "normal",
   "credits": 250000,
@@ -44,10 +44,10 @@
     {
       "galaxyId": "gal-1",
       "name": "Spiral II",
-      "aiCredits": 1805.09,
-      "aiSolarii": 0.655,
-      "fleetPower": 33.68,
-      "dysonShellProgress": 0.13,
+      "aiCredits": 1803.78,
+      "aiSolarii": 0.638,
+      "fleetPower": 32.99,
+      "dysonShellProgress": 0.127,
       "ownedSystemCount": 6,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -56,10 +56,10 @@
     {
       "galaxyId": "gal-2",
       "name": "Spiral III",
-      "aiCredits": 1882.79,
-      "aiSolarii": 4.462,
-      "fleetPower": 26.72,
-      "dysonShellProgress": 0.173,
+      "aiCredits": 1881.33,
+      "aiSolarii": 4.444,
+      "fleetPower": 26.04,
+      "dysonShellProgress": 0.169,
       "ownedSystemCount": 10,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -68,10 +68,10 @@
     {
       "galaxyId": "gal-3",
       "name": "Spiral IV",
-      "aiCredits": 960.93,
-      "aiSolarii": 1.064,
-      "fleetPower": 28.59,
-      "dysonShellProgress": 0.144,
+      "aiCredits": 959.58,
+      "aiSolarii": 1.045,
+      "fleetPower": 27.92,
+      "dysonShellProgress": 0.14,
       "ownedSystemCount": 8,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -80,10 +80,10 @@
     {
       "galaxyId": "gal-4",
       "name": "Spiral V",
-      "aiCredits": 1581.51,
-      "aiSolarii": 5.159,
-      "fleetPower": 31.59,
-      "dysonShellProgress": 0.228,
+      "aiCredits": 1580.17,
+      "aiSolarii": 5.14,
+      "fleetPower": 30.88,
+      "dysonShellProgress": 0.225,
       "ownedSystemCount": 5,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -92,10 +92,10 @@
     {
       "galaxyId": "gal-5",
       "name": "Spiral VI",
-      "aiCredits": 557.08,
-      "aiSolarii": 3.653,
-      "fleetPower": 57.61,
-      "dysonShellProgress": 0.242,
+      "aiCredits": 555.66,
+      "aiSolarii": 3.634,
+      "fleetPower": 56.88,
+      "dysonShellProgress": 0.238,
       "ownedSystemCount": 12,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -104,10 +104,10 @@
     {
       "galaxyId": "gal-6",
       "name": "Spiral VII",
-      "aiCredits": 1918.01,
-      "aiSolarii": 2.473,
-      "fleetPower": 57.64,
-      "dysonShellProgress": 0.29,
+      "aiCredits": 1916.58,
+      "aiSolarii": 2.455,
+      "fleetPower": 56.94,
+      "dysonShellProgress": 0.286,
       "ownedSystemCount": 4,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -116,10 +116,10 @@
     {
       "galaxyId": "gal-7",
       "name": "Spiral VIII",
-      "aiCredits": 735.39,
-      "aiSolarii": 5.093,
-      "fleetPower": 50.85,
-      "dysonShellProgress": 0.207,
+      "aiCredits": 734.03,
+      "aiSolarii": 5.075,
+      "fleetPower": 50.1,
+      "dysonShellProgress": 0.203,
       "ownedSystemCount": 9,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -128,10 +128,10 @@
     {
       "galaxyId": "gal-8",
       "name": "Spiral IX",
-      "aiCredits": 1706.85,
-      "aiSolarii": 5.256,
-      "fleetPower": 49.78,
-      "dysonShellProgress": 0.352,
+      "aiCredits": 1705.47,
+      "aiSolarii": 5.238,
+      "fleetPower": 49.08,
+      "dysonShellProgress": 0.348,
       "ownedSystemCount": 4,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -140,10 +140,10 @@
     {
       "galaxyId": "gal-9",
       "name": "Spiral X",
-      "aiCredits": 971.8,
-      "aiSolarii": 2.446,
-      "fleetPower": 45.68,
-      "dysonShellProgress": 0.259,
+      "aiCredits": 970.47,
+      "aiSolarii": 2.428,
+      "fleetPower": 44.97,
+      "dysonShellProgress": 0.256,
       "ownedSystemCount": 11,
       "aiOwnedCount": 0,
       "aiFleetPower": 0,
@@ -169,11 +169,11 @@
     "hp": 2000,
     "maxHp": 2000,
     "systemId": "sys-142",
-    "x": 0,
-    "y": -732.6,
-    "vx": 0,
-    "vy": -12.98,
-    "heading": -1.571,
+    "x": 209.77,
+    "y": 368.34,
+    "vx": -3.51,
+    "vy": 131.17,
+    "heading": 1.598,
     "inTransit": false,
     "orbiting": false,
     "orbitTarget": null,
@@ -182,7 +182,60 @@
     "etaMs": null,
     "wormholeTransit": null,
     "atCore": false,
-    "canEnterWormhole": false
+    "canEnterWormhole": false,
+    "weapons": [
+      {
+        "id": "primary_lance",
+        "profile": "beam_lance",
+        "hardpoint": "prow",
+        "cooldownMs": 0
+      },
+      {
+        "id": "broadside_port",
+        "profile": "kinetic",
+        "hardpoint": "port",
+        "cooldownMs": 0
+      },
+      {
+        "id": "broadside_starboard",
+        "profile": "kinetic",
+        "hardpoint": "starboard",
+        "cooldownMs": 0
+      },
+      {
+        "id": "prow_torpedo",
+        "profile": "torpedo",
+        "hardpoint": "prow_bay",
+        "cooldownMs": 0
+      },
+      {
+        "id": "pd_grid_fore",
+        "profile": "point_defense",
+        "hardpoint": "fore_pd",
+        "cooldownMs": 0
+      },
+      {
+        "id": "pd_grid_aft",
+        "profile": "point_defense",
+        "hardpoint": "aft_pd",
+        "cooldownMs": 0
+      },
+      {
+        "id": "ion_array",
+        "profile": "ion",
+        "hardpoint": "dorsal",
+        "cooldownMs": 0
+      }
+    ],
+    "wing": {
+      "capacity": 13,
+      "ready": 1,
+      "losses": 12,
+      "launched": 13,
+      "rearmUntil": 90350,
+      "hangar": "deployed",
+      "poses": 1
+    }
   },
   "scouts": [],
   "scoutCount": 0,
@@ -244,56 +297,7 @@
     "count": 6,
     "active": 0,
     "idle": 6,
-    "inViewedSystem": [
-      {
-        "id": "drone-1",
-        "jobId": null,
-        "phase": "idle",
-        "x": -30.9,
-        "y": -767.5,
-        "heading": -1.019
-      },
-      {
-        "id": "drone-2",
-        "jobId": null,
-        "phase": "idle",
-        "x": -35.8,
-        "y": -750.5,
-        "heading": -1.121
-      },
-      {
-        "id": "drone-3",
-        "jobId": null,
-        "phase": "idle",
-        "x": -37.9,
-        "y": -736.4,
-        "heading": -1.179
-      },
-      {
-        "id": "drone-4",
-        "jobId": null,
-        "phase": "idle",
-        "x": -13.2,
-        "y": -689.4,
-        "heading": -2.548
-      },
-      {
-        "id": "drone-5",
-        "jobId": null,
-        "phase": "idle",
-        "x": -43.3,
-        "y": -733.3,
-        "heading": -1.619
-      },
-      {
-        "id": "drone-6",
-        "jobId": null,
-        "phase": "idle",
-        "x": -39.3,
-        "y": -719.9,
-        "heading": -1.599
-      }
-    ]
+    "inViewedSystem": []
   },
   "constructionJobs": [],
   "logistics": {
@@ -371,9 +375,9 @@
         "routePaused": false,
         "preferredNexusId": null,
         "inventory": {
-          "rawMaterials": 1.00625,
-          "fuel": 0.4025,
-          "manufacturedGoods": 0.60375
+          "rawMaterials": 0,
+          "fuel": 0,
+          "manufacturedGoods": 0
         }
       },
       {
@@ -395,9 +399,9 @@
         "routePaused": false,
         "preferredNexusId": null,
         "inventory": {
-          "rawMaterials": 1.00625,
-          "fuel": 0.4025,
-          "manufacturedGoods": 0.60375
+          "rawMaterials": 0,
+          "fuel": 0,
+          "manufacturedGoods": 0
         }
       },
       {
@@ -430,7 +434,7 @@
       "personality": "expansionist",
       "difficulty": "normal",
       "homeSystemId": "sys-355",
-      "credits": 543,
+      "credits": 538.5,
       "solarii": 0,
       "ownedSystemCount": 4,
       "ownedSystems": [
@@ -442,7 +446,7 @@
       "fleetCount": 0,
       "research": {
         "activeNodeId": "eco_surveyor",
-        "progress": 0.175,
+        "progress": 0.162,
         "unlockedCount": 1,
         "queue": []
       },
@@ -479,7 +483,7 @@
           "personality": "expansionist",
           "difficulty": "normal",
           "homeSystemId": "sys-355",
-          "credits": 543,
+          "credits": 538.5,
           "solarii": 0,
           "ownedSystemCount": 4,
           "ownedSystems": [
@@ -491,7 +495,7 @@
           "fleetCount": 0,
           "research": {
             "activeNodeId": "eco_surveyor",
-            "progress": 0.175,
+            "progress": 0.162,
             "unlockedCount": 1,
             "queue": []
           },
@@ -527,7 +531,7 @@
           "personality": "economic",
           "difficulty": "normal",
           "homeSystemId": "sys-397",
-          "credits": 623,
+          "credits": 618.5,
           "solarii": 0,
           "ownedSystemCount": 1,
           "ownedSystems": [
@@ -536,7 +540,7 @@
           "fleetCount": 0,
           "research": {
             "activeNodeId": "eco_surveyor",
-            "progress": 0.175,
+            "progress": 0.162,
             "unlockedCount": 1,
             "queue": []
           },
@@ -572,7 +576,7 @@
           "personality": "megastructure",
           "difficulty": "normal",
           "homeSystemId": "sys-317",
-          "credits": 573,
+          "credits": 568.5,
           "solarii": 0,
           "ownedSystemCount": 1,
           "ownedSystems": [
@@ -581,7 +585,7 @@
           "fleetCount": 0,
           "research": {
             "activeNodeId": "res_lab_1",
-            "progress": 0.14,
+            "progress": 0.13,
             "unlockedCount": 1,
             "queue": []
           },
@@ -617,7 +621,7 @@
           "personality": "wormhole",
           "difficulty": "normal",
           "homeSystemId": "sys-21",
-          "credits": 346,
+          "credits": 337,
           "solarii": 0,
           "ownedSystemCount": 1,
           "ownedSystems": [
@@ -626,7 +630,7 @@
           "fleetCount": 0,
           "research": {
             "activeNodeId": "wh_scout_range",
-            "progress": 0.14,
+            "progress": 0.13,
             "unlockedCount": 1,
             "queue": []
           },
@@ -1481,9 +1485,9 @@
     "playerHp": 13620,
     "enemyHp": 13800,
     "wingState": {
-      "launched": 0,
+      "launched": 13,
       "ready": 0,
-      "lost": 0
+      "lost": 13
     },
     "weaponSummary": {
       "antiFighter": 0,
@@ -1495,17 +1499,16 @@
       "total": 128,
       "active": 16,
       "byProfile": {
-        "point_defense": 109,
-        "torpedo": 14,
-        "kinetic": 4,
+        "point_defense": 107,
+        "torpedo": 12,
+        "kinetic": 8,
         "beam_lance": 1
       },
       "byKind": {
         "lod_pulse": 128
       },
       "activeByProfile": {
-        "point_defense": 13,
-        "torpedo": 3
+        "point_defense": 16
       },
       "profiles": [
         "beam_lance",
@@ -1522,6 +1525,16 @@
     },
     "lastResolve": null,
     "doctrine": "assault",
+    "fleetPriority": "auto",
+    "advancedTactics": false,
+    "autonomy": {
+      "intentCounts": {
+        "hold": 176
+      },
+      "disengaging": 0,
+      "escaped": 0,
+      "wingPhases": {}
+    },
     "formation": "wedge",
     "autoFormationApplied": true,
     "playerFormationOverride": false,
@@ -1649,13 +1662,16 @@
       "formation": null,
       "point": null,
       "radius": null,
+      "engagementRadius": null,
       "priority": 1,
+      "autonomous": false,
+      "source": null,
       "scope": "units:cin-pirate-0,cin-pirate-1,cin-pirate-10,cin-pirate-100,cin-pirate-101,cin-pirate-102,cin-pirate-103,cin-pirate-104,cin-pirate-11,cin-pirate-12,cin-pirate-13,cin-pirate-14,cin-pirate-15,cin-pirate-16,cin-pirate-17,cin-pirate-18,cin-pirate-19,cin-pirate-2,cin-pirate-20,cin-pirate-21,cin-pirate-22,cin-pirate-23,cin-pirate-24,cin-pirate-25,cin-pirate-26,cin-pirate-27,cin-pirate-28,cin-pirate-29,cin-pirate-3,cin-pirate-30,cin-pirate-31,cin-pirate-32,cin-pirate-33,cin-pirate-34,cin-pirate-35,cin-pirate-36,cin-pirate-37,cin-pirate-38,cin-pirate-39,cin-pirate-4,cin-pirate-40,cin-pirate-41,cin-pirate-42,cin-pirate-43,cin-pirate-44,cin-pirate-45,cin-pirate-46,cin-pirate-47,cin-pirate-48,cin-pirate-49,cin-pirate-5,cin-pirate-50,cin-pirate-51,cin-pirate-52,cin-pirate-53,cin-pirate-54,cin-pirate-55,cin-pirate-56,cin-pirate-57,cin-pirate-58,cin-pirate-59,cin-pirate-6,cin-pirate-60,cin-pirate-61,cin-pirate-62,cin-pirate-63,cin-pirate-64,cin-pirate-65,cin-pirate-66,cin-pirate-67,cin-pirate-68,cin-pirate-69,cin-pirate-7,cin-pirate-70,cin-pirate-71,cin-pirate-72,cin-pirate-73,cin-pirate-74,cin-pirate-75,cin-pirate-76,cin-pirate-77,cin-pirate-78,cin-pirate-79,cin-pirate-8,cin-pirate-80,cin-pirate-81,cin-pirate-82,cin-pirate-83,cin-pirate-84,cin-pirate-85,cin-pirate-86,cin-pirate-87,cin-pirate-88,cin-pirate-89,cin-pirate-9,cin-pirate-90,cin-pirate-91,cin-pirate-92,cin-pirate-93,cin-pirate-94,cin-pirate-95,cin-pirate-96,cin-pirate-97,cin-pirate-98,cin-pirate-99",
       "sequence": 1,
       "orderId": "order-enemy-1",
-      "issuedAt": 50
+      "issuedAt": 300
     },
-    "player|units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship|formation": {
+    "player|units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship,flagship-wing-0,flagship-wing-1,flagship-wing-10,flagship-wing-11,flagship-wing-12,flagship-wing-2,flagship-wing-3,flagship-wing-4,flagship-wing-5,flagship-wing-6,flagship-wing-7,flagship-wing-8,flagship-wing-9|formation": {
       "type": "formation",
       "side": "player",
       "groupId": null,
@@ -1731,7 +1747,20 @@
         "cin-corvette-7",
         "cin-corvette-8",
         "cin-corvette-9",
-        "flagship"
+        "flagship",
+        "flagship-wing-0",
+        "flagship-wing-1",
+        "flagship-wing-10",
+        "flagship-wing-11",
+        "flagship-wing-12",
+        "flagship-wing-2",
+        "flagship-wing-3",
+        "flagship-wing-4",
+        "flagship-wing-5",
+        "flagship-wing-6",
+        "flagship-wing-7",
+        "flagship-wing-8",
+        "flagship-wing-9"
       ],
       "targetId": null,
       "targetClass": null,
@@ -1740,112 +1769,46 @@
       "formation": "wedge",
       "point": null,
       "radius": null,
+      "engagementRadius": null,
       "priority": 0,
-      "scope": "units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship",
-      "sequence": 4,
-      "orderId": "order-player-4",
-      "issuedAt": 50
-    },
-    "player|units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship|directive": {
-      "type": "attack_class",
-      "side": "player",
-      "groupId": null,
-      "fleetId": null,
-      "subjectIds": [
-        "cin-corvette-0",
-        "cin-corvette-1",
-        "cin-corvette-10",
-        "cin-corvette-11",
-        "cin-corvette-12",
-        "cin-corvette-13",
-        "cin-corvette-14",
-        "cin-corvette-15",
-        "cin-corvette-16",
-        "cin-corvette-17",
-        "cin-corvette-18",
-        "cin-corvette-19",
-        "cin-corvette-2",
-        "cin-corvette-20",
-        "cin-corvette-21",
-        "cin-corvette-22",
-        "cin-corvette-23",
-        "cin-corvette-24",
-        "cin-corvette-25",
-        "cin-corvette-26",
-        "cin-corvette-27",
-        "cin-corvette-28",
-        "cin-corvette-29",
-        "cin-corvette-3",
-        "cin-corvette-30",
-        "cin-corvette-31",
-        "cin-corvette-32",
-        "cin-corvette-33",
-        "cin-corvette-34",
-        "cin-corvette-35",
-        "cin-corvette-36",
-        "cin-corvette-37",
-        "cin-corvette-38",
-        "cin-corvette-39",
-        "cin-corvette-4",
-        "cin-corvette-40",
-        "cin-corvette-41",
-        "cin-corvette-42",
-        "cin-corvette-43",
-        "cin-corvette-44",
-        "cin-corvette-45",
-        "cin-corvette-46",
-        "cin-corvette-47",
-        "cin-corvette-48",
-        "cin-corvette-49",
-        "cin-corvette-5",
-        "cin-corvette-50",
-        "cin-corvette-51",
-        "cin-corvette-52",
-        "cin-corvette-53",
-        "cin-corvette-54",
-        "cin-corvette-55",
-        "cin-corvette-56",
-        "cin-corvette-57",
-        "cin-corvette-58",
-        "cin-corvette-59",
-        "cin-corvette-6",
-        "cin-corvette-60",
-        "cin-corvette-61",
-        "cin-corvette-62",
-        "cin-corvette-63",
-        "cin-corvette-64",
-        "cin-corvette-65",
-        "cin-corvette-66",
-        "cin-corvette-67",
-        "cin-corvette-68",
-        "cin-corvette-69",
-        "cin-corvette-7",
-        "cin-corvette-8",
-        "cin-corvette-9",
-        "flagship"
-      ],
-      "targetId": null,
-      "targetClass": "escort",
-      "convoyId": null,
-      "destinationId": null,
-      "formation": null,
-      "point": null,
-      "radius": null,
-      "priority": 0,
-      "scope": "units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship",
-      "sequence": 5,
-      "orderId": "order-player-5",
-      "issuedAt": 50
+      "autonomous": true,
+      "source": "doctrine",
+      "scope": "units:cin-corvette-0,cin-corvette-1,cin-corvette-10,cin-corvette-11,cin-corvette-12,cin-corvette-13,cin-corvette-14,cin-corvette-15,cin-corvette-16,cin-corvette-17,cin-corvette-18,cin-corvette-19,cin-corvette-2,cin-corvette-20,cin-corvette-21,cin-corvette-22,cin-corvette-23,cin-corvette-24,cin-corvette-25,cin-corvette-26,cin-corvette-27,cin-corvette-28,cin-corvette-29,cin-corvette-3,cin-corvette-30,cin-corvette-31,cin-corvette-32,cin-corvette-33,cin-corvette-34,cin-corvette-35,cin-corvette-36,cin-corvette-37,cin-corvette-38,cin-corvette-39,cin-corvette-4,cin-corvette-40,cin-corvette-41,cin-corvette-42,cin-corvette-43,cin-corvette-44,cin-corvette-45,cin-corvette-46,cin-corvette-47,cin-corvette-48,cin-corvette-49,cin-corvette-5,cin-corvette-50,cin-corvette-51,cin-corvette-52,cin-corvette-53,cin-corvette-54,cin-corvette-55,cin-corvette-56,cin-corvette-57,cin-corvette-58,cin-corvette-59,cin-corvette-6,cin-corvette-60,cin-corvette-61,cin-corvette-62,cin-corvette-63,cin-corvette-64,cin-corvette-65,cin-corvette-66,cin-corvette-67,cin-corvette-68,cin-corvette-69,cin-corvette-7,cin-corvette-8,cin-corvette-9,flagship,flagship-wing-0,flagship-wing-1,flagship-wing-10,flagship-wing-11,flagship-wing-12,flagship-wing-2,flagship-wing-3,flagship-wing-4,flagship-wing-5,flagship-wing-6,flagship-wing-7,flagship-wing-8,flagship-wing-9",
+      "sequence": 3,
+      "orderId": "order-player-3",
+      "issuedAt": 600
     }
   },
   "combatUi": {
     "active": true,
+    "commandMode": null,
     "doctrine": "assault",
+    "fleetPriority": "auto",
+    "advancedTactics": false,
+    "flagshipControl": {
+      "mode": "auto",
+      "overrideRemainingMs": 0,
+      "blend": 1,
+      "targetId": "cin-pirate-42"
+    },
+    "autonomy": {
+      "intentCounts": {
+        "hold": 176
+      },
+      "disengaging": 0,
+      "escaped": 0,
+      "wingPhases": {}
+    },
     "selectionIds": [],
     "focusTargetId": null,
+    "activeDirective": null,
+    "threatBoard": null,
+    "selectedUnits": [],
+    "destroyerAaUnlocked": false,
     "formation": "wedge",
     "autoFormationApplied": true,
-    "playerFormationOverride": false
+    "playerFormationOverride": false,
+    "coordinateSystem": "World coordinates; heading 0 points east and increases clockwise on screen."
   },
   "battleReports": [],
   "hullStats": [
@@ -1872,6 +1835,7 @@
     "builder_ship",
     "command_cruiser",
     "hero_flagship",
+    "flagship",
     "miner"
   ],
   "galaxy": {
@@ -2078,43 +2042,396 @@
     "superweaponUnlocked": false
   },
   "diplomacy": {
+    "version": 2,
+    "schemaVersion": 2,
     "unlocked": false,
     "panic": false,
+    "panicUntil": 0,
     "factions": [
       {
         "id": "ai-0",
         "name": "Dominion of Helix",
         "personality": "expansionist",
-        "status": "war",
+        "status": "neutral",
         "treaties": [],
-        "lastChangedAt": 0
+        "lastChangedAt": 6850,
+        "baseMetrics": {
+          "opinion": 0,
+          "trust": 0,
+          "fear": 0,
+          "respect": 0
+        },
+        "metrics": {
+          "opinion": -5,
+          "trust": -5,
+          "fear": 0,
+          "respect": 5
+        },
+        "opinion": -5,
+        "trust": -5,
+        "fear": 0,
+        "respect": 5,
+        "contact": {
+          "factionId": "ai-0",
+          "stage": "unknown",
+          "firstContactAt": null,
+          "establishedAt": null
+        },
+        "relationship": {
+          "factionId": "ai-0",
+          "metrics": {
+            "opinion": -5,
+            "trust": -5,
+            "fear": 0,
+            "respect": 5
+          },
+          "rawTotals": {
+            "opinion": -5,
+            "trust": -5,
+            "fear": 0,
+            "respect": 5
+          },
+          "modifiers": [
+            {
+              "id": "base",
+              "source": "base",
+              "label": "Base relationship",
+              "opinion": 0,
+              "trust": 0,
+              "fear": 0,
+              "respect": 0
+            },
+            {
+              "id": "personality:expansionist",
+              "source": "personality",
+              "label": "expansionist outlook",
+              "opinion": -5,
+              "trust": -5,
+              "fear": 0,
+              "respect": 5
+            }
+          ]
+        },
+        "agreements": [],
+        "claims": [],
+        "war": null,
+        "sanctioned": false,
+        "pendingProposals": []
       },
       {
         "id": "ai-1",
         "name": "Veridian Compact",
         "personality": "economic",
-        "status": "war",
+        "status": "neutral",
         "treaties": [],
-        "lastChangedAt": 0
+        "lastChangedAt": 6850,
+        "baseMetrics": {
+          "opinion": 0,
+          "trust": 0,
+          "fear": 0,
+          "respect": 0
+        },
+        "metrics": {
+          "opinion": 5,
+          "trust": 5,
+          "fear": 0,
+          "respect": 0
+        },
+        "opinion": 5,
+        "trust": 5,
+        "fear": 0,
+        "respect": 0,
+        "contact": {
+          "factionId": "ai-1",
+          "stage": "unknown",
+          "firstContactAt": null,
+          "establishedAt": null
+        },
+        "relationship": {
+          "factionId": "ai-1",
+          "metrics": {
+            "opinion": 5,
+            "trust": 5,
+            "fear": 0,
+            "respect": 0
+          },
+          "rawTotals": {
+            "opinion": 5,
+            "trust": 5,
+            "fear": 0,
+            "respect": 0
+          },
+          "modifiers": [
+            {
+              "id": "base",
+              "source": "base",
+              "label": "Base relationship",
+              "opinion": 0,
+              "trust": 0,
+              "fear": 0,
+              "respect": 0
+            },
+            {
+              "id": "personality:economic",
+              "source": "personality",
+              "label": "economic outlook",
+              "opinion": 5,
+              "trust": 5,
+              "fear": 0,
+              "respect": 0
+            }
+          ]
+        },
+        "agreements": [],
+        "claims": [],
+        "war": null,
+        "sanctioned": false,
+        "pendingProposals": []
       },
       {
         "id": "ai-2",
         "name": "Solar Architects",
         "personality": "megastructure",
-        "status": "war",
+        "status": "neutral",
         "treaties": [],
-        "lastChangedAt": 0
+        "lastChangedAt": 6850,
+        "baseMetrics": {
+          "opinion": 0,
+          "trust": 0,
+          "fear": 0,
+          "respect": 0
+        },
+        "metrics": {
+          "opinion": 0,
+          "trust": 2,
+          "fear": 0,
+          "respect": 5
+        },
+        "opinion": 0,
+        "trust": 2,
+        "fear": 0,
+        "respect": 5,
+        "contact": {
+          "factionId": "ai-2",
+          "stage": "unknown",
+          "firstContactAt": null,
+          "establishedAt": null
+        },
+        "relationship": {
+          "factionId": "ai-2",
+          "metrics": {
+            "opinion": 0,
+            "trust": 2,
+            "fear": 0,
+            "respect": 5
+          },
+          "rawTotals": {
+            "opinion": 0,
+            "trust": 2,
+            "fear": 0,
+            "respect": 5
+          },
+          "modifiers": [
+            {
+              "id": "base",
+              "source": "base",
+              "label": "Base relationship",
+              "opinion": 0,
+              "trust": 0,
+              "fear": 0,
+              "respect": 0
+            },
+            {
+              "id": "personality:megastructure",
+              "source": "personality",
+              "label": "megastructure outlook",
+              "opinion": 0,
+              "trust": 2,
+              "fear": 0,
+              "respect": 5
+            }
+          ]
+        },
+        "agreements": [],
+        "claims": [],
+        "war": null,
+        "sanctioned": false,
+        "pendingProposals": []
       },
       {
         "id": "ai-3",
         "name": "Void Runners",
         "personality": "wormhole",
-        "status": "war",
+        "status": "neutral",
         "treaties": [],
-        "lastChangedAt": 0
+        "lastChangedAt": 6850,
+        "baseMetrics": {
+          "opinion": 0,
+          "trust": 0,
+          "fear": 0,
+          "respect": 0
+        },
+        "metrics": {
+          "opinion": 2,
+          "trust": -2,
+          "fear": 0,
+          "respect": 3
+        },
+        "opinion": 2,
+        "trust": -2,
+        "fear": 0,
+        "respect": 3,
+        "contact": {
+          "factionId": "ai-3",
+          "stage": "unknown",
+          "firstContactAt": null,
+          "establishedAt": null
+        },
+        "relationship": {
+          "factionId": "ai-3",
+          "metrics": {
+            "opinion": 2,
+            "trust": -2,
+            "fear": 0,
+            "respect": 3
+          },
+          "rawTotals": {
+            "opinion": 2,
+            "trust": -2,
+            "fear": 0,
+            "respect": 3
+          },
+          "modifiers": [
+            {
+              "id": "base",
+              "source": "base",
+              "label": "Base relationship",
+              "opinion": 0,
+              "trust": 0,
+              "fear": 0,
+              "respect": 0
+            },
+            {
+              "id": "personality:wormhole",
+              "source": "personality",
+              "label": "wormhole outlook",
+              "opinion": 2,
+              "trust": -2,
+              "fear": 0,
+              "respect": 3
+            }
+          ]
+        },
+        "agreements": [],
+        "claims": [],
+        "war": null,
+        "sanctioned": false,
+        "pendingProposals": []
       }
     ],
+    "contacts": {
+      "ai-0": {
+        "factionId": "ai-0",
+        "stage": "unknown",
+        "firstContactAt": null,
+        "establishedAt": null
+      },
+      "ai-1": {
+        "factionId": "ai-1",
+        "stage": "unknown",
+        "firstContactAt": null,
+        "establishedAt": null
+      },
+      "ai-2": {
+        "factionId": "ai-2",
+        "stage": "unknown",
+        "firstContactAt": null,
+        "establishedAt": null
+      },
+      "ai-3": {
+        "factionId": "ai-3",
+        "stage": "unknown",
+        "firstContactAt": null,
+        "establishedAt": null
+      }
+    },
+    "proposals": [],
+    "agreements": [],
+    "claims": [],
+    "wars": [],
+    "occupations": [],
+    "council": {
+      "resolutions": [],
+      "sanctions": [],
+      "activeResolutionId": null,
+      "lastSessionAt": 0
+    },
+    "history": [],
     "tradeBonus": 1
+  },
+  "bulkProduction": {
+    "orders": [],
+    "totals": {
+      "orders": 0,
+      "ordered": 0,
+      "materialized": 0,
+      "completed": 0,
+      "cancelled": 0,
+      "activeTickets": 0,
+      "remaining": 0,
+      "spent": 0,
+      "refunded": 0
+    },
+    "pendingDeliveries": [],
+    "deliveryCount": 0
+  },
+  "strategicOrders": {
+    "version": 1,
+    "counts": {
+      "active": 0,
+      "paused": 0,
+      "complete": 0,
+      "cancelled": 0
+    },
+    "templates": [
+      {
+        "id": "frontier",
+        "name": "Frontier",
+        "preset": true,
+        "stepCount": 3
+      },
+      {
+        "id": "industrial",
+        "name": "Industrial",
+        "preset": true,
+        "stepCount": 6
+      },
+      {
+        "id": "military",
+        "name": "Military",
+        "preset": true,
+        "stepCount": 6
+      },
+      {
+        "id": "research",
+        "name": "Research",
+        "preset": true,
+        "stepCount": 4
+      },
+      {
+        "id": "trade",
+        "name": "Trade",
+        "preset": true,
+        "stepCount": 4
+      },
+      {
+        "id": "dyson",
+        "name": "Dyson",
+        "preset": true,
+        "stepCount": 5
+      }
+    ],
+    "campaigns": []
   },
   "superweapon": {
     "online": false,
@@ -2123,7 +2440,14 @@
     "jumpCooldownMs": 0,
     "lastAction": null,
     "createCount": 0,
-    "panicUntil": 0
+    "panicUntil": 0,
+    "fireSequence": null,
+    "sovereignProtocol": false,
+    "costs": {
+      "create": 25,
+      "destroy": 30,
+      "jump": 15
+    }
   },
   "heroFlagships": [],
   "campaign": {

@@ -76,12 +76,12 @@ export function drawStarOverlays(ctx, opts) {
   ctx.restore();
 }
 
-export function drawBlackHole(ctx, x, y, r, time, large, warp = 0) {
+export function drawBlackHole(ctx, x, y, r, time, large, warp = 0, visual = null) {
   if (isStarRendererEnabled()) {
-    queueBlackHole({ x, y, screenR: r, time, large, warp });
+    queueBlackHole({ x, y, screenR: r, time, large, warp, visual });
     return;
   }
-  drawBlackHoleCanvas2D(ctx, x, y, r, time, large);
+  drawBlackHoleCanvas2D(ctx, x, y, r, time, large, visual);
 }
 
 export function drawStar(ctx, opts) {
@@ -91,8 +91,13 @@ export function drawStar(ctx, opts) {
     const progress = transit
       ? Math.max(0, Math.min(1, (opts.state.time - transit.startTime) / Math.max(1, transit.durationMs)))
       : 0;
-    const warp = transit ? Math.sin(progress * Math.PI) : 0;
-    drawBlackHole(ctx, opts.x, opts.y, opts.screenR, opts.time, opts.mode === 'system', warp);
+    const visual = opts.wormholeVisual;
+    const warp = visual?.phase === 'transit' ? 1
+      : visual?.phase === 'opening' ? 0.35 + visual.progress
+        : visual?.phase === 'charging' ? visual.progress * 0.35
+          : visual?.phase === 'collapse' || visual?.phase === 'arrival'
+            ? Math.max(0, 1 - visual.progress) : (transit ? Math.sin(progress * Math.PI) : 0);
+    drawBlackHole(ctx, opts.x, opts.y, opts.screenR, opts.time, opts.mode === 'system', warp, visual);
     return;
   }
   if (star.kind === 'trade_nexus') {

@@ -145,6 +145,7 @@ import {
   operationsPanelSnapshot,
   renderOperationsPanel,
 } from './operations-ui.js';
+import { stellarCatalogInfo } from './star-types.js';
 
 const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
   ...new Set([
@@ -187,6 +188,27 @@ function setProgressBar(containerId, fillId, pctId, progress, visible) {
   pct.textContent = `${pctVal}%`;
 }
 
+function formatStellarProperty(key, value) {
+  const labels = {
+    massSolar: 'Mass', totalMassSolar: 'Total mass', compactMassSolar: 'Compact mass',
+    companionMassSolar: 'Companion mass', temperatureK: 'Temperature',
+    componentTemperatureK: 'Component temperature', accretionTemperatureK: 'Disc temperature',
+    luminositySolar: 'Luminosity', radiusKm: 'Radius', spinPeriodMs: 'Spin period',
+    magneticFieldGauss: 'Magnetic field', lifetime: 'Lifetime', solariiMultiplier: 'Dyson output',
+  };
+  const suffix = key.includes('MassSolar') || key === 'massSolar' || key === 'totalMassSolar' ? ' M☉'
+    : key.includes('TemperatureK') || key === 'temperatureK' ? ' K'
+      : key === 'luminositySolar' ? ' L☉'
+        : key === 'radiusKm' ? ' km'
+          : key === 'spinPeriodMs' ? ' ms'
+            : key === 'magneticFieldGauss' ? ' gauss'
+              : key === 'solariiMultiplier' ? '×' : '';
+  const display = typeof value === 'number'
+    ? value.toLocaleString(undefined, { maximumFractionDigits: value < 10 ? 3 : 0 })
+    : value;
+  return `${labels[key] ?? key}: ${display}${suffix}`;
+}
+
 function renderIntelBody(container, sys, captureReq) {
   clearChildren(container);
   if (!sys) {
@@ -213,6 +235,24 @@ function renderIntelBody(container, sys, captureReq) {
   environment.className = 'panel-note panel-note--muted';
   environment.textContent = `Environment: ${(sys.environment ?? 'clear').replaceAll('_', ' ')}`;
   container.appendChild(environment);
+
+  const stellarInfo = stellarCatalogInfo(sys.star);
+  if (stellarInfo) {
+    const stellarClass = document.createElement('p');
+    stellarClass.className = 'panel-note panel-note--muted';
+    stellarClass.innerHTML = `<strong>Stellar class:</strong> ${stellarInfo.displayName}`;
+    container.appendChild(stellarClass);
+    const stellarDescription = document.createElement('p');
+    stellarDescription.className = 'panel-note panel-note--muted';
+    stellarDescription.textContent = stellarInfo.description;
+    container.appendChild(stellarDescription);
+    const physical = document.createElement('p');
+    physical.className = 'panel-note panel-note--muted';
+    physical.textContent = Object.entries(stellarInfo.properties ?? {})
+      .map(([key, value]) => formatStellarProperty(key, value))
+      .join(' · ');
+    container.appendChild(physical);
+  }
 
   const planetsTitle = document.createElement('div');
   planetsTitle.className = 'intel-section-title';
@@ -636,6 +676,9 @@ function renderCombatHud(state, battle, systemName, ctx) {
   const {
     issueTacticalOrder,
     setCombatDoctrine,
+    setCombatPriority,
+    setAdvancedTactics,
+    getFlagshipControlStatus,
     getCombatSelection,
     getCombatCommandMode,
     setCombatCommandMode,
@@ -655,6 +698,21 @@ function renderCombatHud(state, battle, systemName, ctx) {
   const doctrine = normalizeDoctrine(battle.doctrine ?? state.combatDoctrine);
   const commandMode = getCombatCommandMode?.() ?? null;
   const elapsed = Math.max(0, (state.time ?? 0) - (battle.startedAt ?? state.time ?? 0));
+  const fleetPriority = battle.fleetPriority ?? state.combatSettings?.fleetPriority ?? 'auto';
+  const advancedTactics = battle.advancedTactics ?? state.combatSettings?.advancedTactics ?? false;
+  const flagshipControl = getFlagshipControlStatus?.() ?? { mode: 'auto' };
+
+  el('combat-hud')?.classList.toggle('combat-hud--advanced', advancedTactics);
+  const controlEl = el('combat-hud-control');
+  if (controlEl) {
+    const controlLabels = {
+      auto: 'AUTO',
+      manual: 'MANUAL',
+      returning_to_auto: 'RETURNING TO AUTO',
+    };
+    controlEl.textContent = controlLabels[flagshipControl.mode] ?? 'AUTO';
+    controlEl.classList.toggle('combat-hud__control--manual', flagshipControl.mode !== 'auto');
+  }
 
   const systemEl = el('combat-hud-system');
   const elapsedEl = el('combat-hud-elapsed');
@@ -672,7 +730,9 @@ function renderCombatHud(state, battle, systemName, ctx) {
       ? `${commandMode === 'move' ? 'Move' : 'Attack'} armed · click a valid ${commandMode === 'move' ? 'location' : 'hostile'} · Esc cancels`
       : (focusUnit
         ? `Focus: ${focusUnit.hull?.replaceAll('_', ' ') ?? focusUnit.id}`
-        : 'Right-click: contextual order');
+        : (advancedTactics
+          ? 'Right-click: contextual order'
+          : `Autonomous command · ${fleetPriority.replaceAll('_', ' ')} priority`));
   }
 
   const selectionEl = el('combat-hud-selection');
@@ -746,9 +806,47 @@ function renderCombatHud(state, battle, systemName, ctx) {
     }
   }
 
+  const priorityEl = el('combat-hud-priority');
+  if (priorityEl) {
+    priorityEl.value = fleetPriority;
+    priorityEl.onchange = () => setCombatPriority?.(priorityEl.value);
+  }
+
+  const advancedBtn = el('combat-hud-advanced-toggle');
+  if (advancedBtn) {
+    advancedBtn.textContent = advancedTactics ? 'Advanced: On' : 'Advanced Tactics';
+    advancedBtn.classList.toggle('btn--active', advancedTactics);
+    advancedBtn.onclick = () => {
+      setAdvancedTactics?.(!advancedTactics);
+      if (advancedTactics) setCombatCommandMode?.(null);
+    };
+  }
+
+  const wingStatusEl = el('combat-hud-wing-status');
+  if (wingStatusEl) {
+    const wings = friendlies.filter((unit) => unit.isWing && !unit.escaped);
+    const counts = wings.reduce((summary, wing) => {
+      const phase = wing.recovered ? 'rearm' : (wing.sortiePhase ?? 'attack');
+      summary[phase] = (summary[phase] ?? 0) + 1;
+      return summary;
+    }, {});
+    const parts = [
+      counts.launch ? `Launch ${counts.launch}` : null,
+      counts.approach ? `Approach ${counts.approach}` : null,
+      counts.attack ? `Attack ${counts.attack}` : null,
+      counts.return ? `Return ${counts.return}` : null,
+      counts.rearm ? `Rearm ${counts.rearm}` : null,
+    ].filter(Boolean);
+    const sorties = wings.reduce((total, wing) => total + Math.max(1, wing.sortieNumber ?? 1), 0);
+    wingStatusEl.textContent = wings.length
+      ? `Wings ${wings.length} · Sorties ${sorties} · ${parts.join(' · ') || 'Standing by'}`
+      : 'No active wings';
+  }
+
   const subjectIds = selectedUnits.length
     ? selectedUnits.map((unit) => unit.id)
     : friendlies.map((unit) => unit.id);
+  const fleetSubjectIds = friendlies.map((unit) => unit.id);
   const moveBtn = el('combat-hud-move');
   const attackBtn = el('combat-hud-attack');
   const holdBtn = el('combat-hud-hold');
@@ -773,7 +871,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
     retreatBtn.onclick = () => issueTacticalOrder?.({
       type: 'emergency_retreat',
       point: { x: -1500, y: 0 },
-      subjectIds,
+      subjectIds: fleetSubjectIds,
     });
     retreatBtn.dataset.bound = '1';
   }
@@ -791,7 +889,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
     retreatBtn.onclick = () => issueTacticalOrder?.({
       type: 'emergency_retreat',
       point: { x: -1500, y: 0 },
-      subjectIds,
+      subjectIds: fleetSubjectIds,
     });
   }
 }
@@ -2377,6 +2475,9 @@ export function initUi(ctx) {
     validateSolRecommendation,
     issueTacticalOrder,
     setCombatDoctrine,
+    setCombatPriority,
+    setAdvancedTactics,
+    getFlagshipControlStatus,
     getCombatSelection,
     selectCombatUnit,
     clearCombatSelection,
@@ -3403,6 +3504,9 @@ export function initUi(ctx) {
       renderCombatHud(state, activeBattle, viewedSystem?.name, {
         issueTacticalOrder,
         setCombatDoctrine,
+        setCombatPriority,
+        setAdvancedTactics,
+        getFlagshipControlStatus,
         getCombatSelection,
         getCombatCommandMode,
         setCombatCommandMode,

@@ -64,11 +64,14 @@ const setup = await page.evaluate(() => {
     wanderCooldownMs: 999999,
     ships: [
       { id: 'directed-enemy-capital', hull: 'battleship', hp: 750, maxHp: 750 },
-      { id: 'directed-enemy-fighter', hull: 'fighter', hp: 30, maxHp: 30 },
+      // Durable enough to survive the faster command-first opening while the
+      // verifier exercises move-leash and independent AA behavior.
+      { id: 'directed-enemy-fighter', hull: 'fighter', hp: 3000, maxHp: 3000 },
     ],
   }];
   window.__forcePirateIntoSystem(systemId);
   window.advanceTime(100);
+  window.__setAdvancedTactics(true);
   const battle = window.__getBattleState(systemId);
   const destroyers = battle.units.filter((unit) => unit.side === 'player' && unit.hull === 'destroyer');
   const capital = battle.units.find((unit) => unit.id === 'directed-enemy-capital');
@@ -296,6 +299,11 @@ const aa = await page.evaluate(({ destroyerId, capitalId, fighterId }) => {
   fighter.y = 1608;
   fighter.vx = 0;
   fighter.vy = 0;
+  fighter.escaped = false;
+  fighter.returning = false;
+  fighter.orphaned = false;
+  fighter.ammo = 8;
+  fighter.fuel = 100;
   const vitality = (unit) => unit.hp + Object.values(unit.shieldFacings ?? {})
     .reduce((total, facing) => total + (facing?.value ?? 0), 0);
   const before = {

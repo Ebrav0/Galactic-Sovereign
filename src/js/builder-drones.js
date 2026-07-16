@@ -8,6 +8,7 @@ import {
   TRADE_STATION_COST,
   RESEARCH_STATION_COST,
   BUILDER_DRONE_CAPACITY,
+  BUILDER_DRONE_STARTER_COUNT,
   BUILDER_DRONE_DEPLOY_COST,
   BUILDER_DRONE_LANE_SPEED,
   BUILDER_DRONE_LANE_MIN_LEG_MS,
@@ -60,19 +61,24 @@ function activeGalaxyDrones(state) {
   return (state.builderDrones ?? []).filter((d) => d.galaxyId === state.activeGalaxyId);
 }
 
-function makeIdleDrone(state) {
+function makeIdleDrone(state, systemId = state.flagship?.systemId ?? state.stronghold, options = {}) {
   return {
     id: `bd-${nextBuilderDroneId++}`,
     galaxyId: state.activeGalaxyId,
     status: 'idle',
-    systemId: state.flagship?.systemId ?? state.stronghold,
+    systemId,
     targetSystemId: null,
     targetBodyId: null,
     buildType: null,
     transit: null,
     buildStartedAt: null,
     buildDurationMs: null,
-    originSystemId: state.flagship?.systemId ?? state.stronghold,
+    originSystemId: systemId,
+    homeSystemId: options.homeSystemId ?? systemId,
+    strategicCampaignId: options.strategicCampaignId ?? null,
+    strategicTargetId: options.strategicTargetId ?? null,
+    assignedFleetId: options.assignedFleetId ?? null,
+    returnHomeSystemId: null,
     returnTransit: null,
     costPaid: 0,
     lastError: null,
@@ -113,18 +119,35 @@ export function initBuilderDrones(state) {
     drone.costPaid = drone.costPaid ?? 0;
     drone.lastError = drone.lastError ?? null;
     drone.awaitingOrders = drone.awaitingOrders ?? false;
+    drone.homeSystemId = drone.homeSystemId ?? drone.originSystemId ?? drone.systemId ?? state.stronghold;
+    drone.strategicCampaignId = drone.strategicCampaignId ?? null;
+    drone.strategicTargetId = drone.strategicTargetId ?? null;
+    drone.assignedFleetId = drone.assignedFleetId ?? null;
+    drone.returnHomeSystemId = drone.returnHomeSystemId ?? null;
   }
 
   if (!droneTechUnlocked(state)) return state.builderDrones;
-  const current = activeGalaxyDrones(state).length;
-  for (let i = current; i < BUILDER_DRONE_CAPACITY; i++) {
-    state.builderDrones.push(makeIdleDrone(state));
+  if (state.builderDroneStarterGranted == null) {
+    state.builderDroneStarterGranted = state.builderDrones.length > 0;
+  }
+  if (!state.builderDroneStarterGranted) {
+    for (let i = 0; i < BUILDER_DRONE_STARTER_COUNT; i++) {
+      state.builderDrones.push(makeIdleDrone(state));
+    }
+    state.builderDroneStarterGranted = true;
   }
   return state.builderDrones;
 }
 
-function idleDroneAt(state, systemId) {
-  return activeGalaxyDrones(state).find((d) => d.status === 'idle' && d.systemId === systemId) ?? null;
+export function spawnBuilderDrone(state, systemId = state.flagship?.systemId ?? state.stronghold, options = {}) {
+  initBuilderDrones(state);
+  if (!droneTechUnlocked(state)) return { ok: false, reason: 'Research Construction Drones first' };
+  if ((state.builderDrones ?? []).length >= BUILDER_DRONE_CAPACITY) {
+    return { ok: false, reason: `Construction drone cap reached (${BUILDER_DRONE_CAPACITY})` };
+  }
+  const drone = makeIdleDrone(state, systemId, options);
+  state.builderDrones.push(drone);
+  return { ok: true, drone };
 }
 
 function deployableDrone(state, targetSystemId, droneId = null) {
@@ -431,10 +454,16 @@ export function getDroneConstructionCatalog(state, systemId, draftOrders = []) {
   return { ok: true, systemId, targets, draftResults: results };
 }
 
-export function confirmBuilderConstructionPlan(state, systemId, draftOrders = []) {
+export function confirmBuilderConstructionPlan(state, systemId, draftOrders = [], options = {}) {
   initBuilderDrones(state);
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
-  if (!idleDroneAt(state, systemId)) return { ok: false, reason: 'No idle builder drone stationed in this system' };
+  const eligibleDrone = activeGalaxyDrones(state).find((drone) => (
+    drone.status === 'idle'
+      && drone.systemId === systemId
+      && (!options.strategicCampaignId || drone.strategicCampaignId === options.strategicCampaignId)
+      && (!options.strategicTargetId || drone.strategicTargetId === options.strategicTargetId)
+  ));
+  if (!eligibleDrone) return { ok: false, reason: 'No eligible idle builder drone stationed in this system' };
   const { results } = validateDraft(state, systemId, draftOrders);
   if (results.length === 0) return { ok: false, reason: 'Add at least one construction job' };
   const invalid = results.find((result) => !result.ok);
@@ -462,6 +491,8 @@ export function confirmBuilderConstructionPlan(state, systemId, draftOrders = []
       startedAt: null,
       completedAt: null,
       lastError: null,
+      strategicCampaignId: options.strategicCampaignId ?? null,
+      strategicTargetId: options.strategicTargetId ?? null,
     };
   });
   state.builderConstructionOrders.push(...orders);
@@ -516,8 +547,13 @@ function assignBuilderConstructionOrders(state, systemId) {
       && orderDependenciesComplete(state, order),
   );
   while (idle.length && ready.length) {
-    const drone = idle.shift();
     const order = ready.shift();
+    const droneIndex = idle.findIndex((drone) => (
+      (!order.strategicCampaignId || drone.strategicCampaignId === order.strategicCampaignId)
+        && (!order.strategicTargetId || drone.strategicTargetId === order.strategicTargetId)
+    ));
+    if (droneIndex < 0) continue;
+    const [drone] = idle.splice(droneIndex, 1);
     order.status = 'active';
     order.assignedDroneId = drone.id;
     order.startedAt = state.time;
@@ -857,8 +893,11 @@ export function builderDroneSummary(state) {
   return {
     unlocked: droneTechUnlocked(state),
     capacity: droneTechUnlocked(state) ? BUILDER_DRONE_CAPACITY : 0,
-    idle: activeGalaxyDrones(state).filter((d) => d.status === 'idle').length,
-    active: activeGalaxyDrones(state).filter((d) => d.status !== 'idle').length,
+    idle: activeGalaxyDrones(state).filter((d) => d.status === 'idle' && !d.strategicCampaignId).length,
+    reserved: activeGalaxyDrones(state).filter((d) => !!d.strategicCampaignId && d.status !== 'embarked').length,
+    embarked: activeGalaxyDrones(state).filter((d) => d.status === 'embarked').length,
+    building: activeGalaxyDrones(state).filter((d) => d.status === 'building').length,
+    active: activeGalaxyDrones(state).filter((d) => !['idle', 'embarked'].includes(d.status)).length,
     drones: activeGalaxyDrones(state).map((drone) => ({
       id: drone.id,
       status: drone.status,
@@ -872,6 +911,11 @@ export function builderDroneSummary(state) {
         : null,
       lastError: drone.lastError ?? null,
       awaitingOrders: !!drone.awaitingOrders,
+      homeSystemId: drone.homeSystemId ?? null,
+      strategicCampaignId: drone.strategicCampaignId ?? null,
+      strategicTargetId: drone.strategicTargetId ?? null,
+      assignedFleetId: drone.assignedFleetId ?? null,
+      returnHomeSystemId: drone.returnHomeSystemId ?? null,
     })),
     orders: (state.builderConstructionOrders ?? []).map((order) => ({ ...order })),
   };

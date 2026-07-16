@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 20",
+  "description": "Canonical stellar classes, stable coordinate catalog names, and class-driven stellar properties.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 20 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": ["galaxies", "wormholes"],
+      "properties": {
+        "galaxies": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "graph": {
+                "type": "object",
+                "properties": {
+                  "stars": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["catalogNumber"],
+                      "properties": {
+                        "catalogNumber": { "type": "integer", "minimum": 1 },
+                        "catalogId": { "type": "string", "pattern": "^G[0-9]{3}-S[0-9]{3,}$" },
+                        "stellarClass": {
+                          "type": "string",
+                          "enum": [
+                            "yellow_dwarf", "orange_dwarf", "red_dwarf", "brown_dwarf",
+                            "red_giant", "white_dwarf", "neutron_star", "pulsar", "magnetar",
+                            "wolf_rayet", "red_supergiant", "blue_supergiant", "hypergiant",
+                            "black_hole_system", "binary", "quasar"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

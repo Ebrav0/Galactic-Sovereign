@@ -36,6 +36,11 @@ import {
   structureShipBuildTimeMultiplier,
 } from './body-structures.js';
 import { recordBulkShipCompletion } from './bulk-production.js';
+import { spawnBuilderDrone } from './builder-drones.js';
+import {
+  PRODUCTION_KIND_BUILDER_DRONE,
+  normalizeProductionProduct,
+} from './production-products.js';
 
 export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
@@ -173,11 +178,30 @@ export function tickProduction(state) {
           remaining.push(build);
           continue;
         }
-        const hull = build.hull;
+        const product = normalizeProductionProduct(build);
+        const hull = product.hull;
         const queueItem = build.queueItemId
           ? completeQueueItem(state, build.queueItemId)
           : null;
-        if (hull === 'scout') {
+        if (product.kind === PRODUCTION_KIND_BUILDER_DRONE) {
+          const spawned = spawnBuilderDrone(state, system.id, {
+            homeSystemId: system.id,
+            strategicCampaignId: queueItem?.linkedCampaignId ?? null,
+          });
+          const completion = {
+            systemId: system.id,
+            kind: product.kind,
+            productId: product.productId,
+            hull: null,
+            droneId: spawned.ok ? spawned.drone.id : null,
+            shipId: null,
+            scoutId: null,
+            queueItemId: queueItem?.id ?? build.queueItemId ?? null,
+            queueItem,
+          };
+          if (queueItem?.bulkOrderId) recordBulkShipCompletion(state, completion, null, spawned.drone ?? null);
+          completed.push(completion);
+        } else if (hull === 'scout') {
           const scout = spawnScout(state, system.id);
           const completion = {
             systemId: system.id,
@@ -252,7 +276,8 @@ export function activeCombatQueues(state) {
       })) continue;
       normalizeShipyardBuilds(s);
       s.builds.forEach((build, idx) => {
-        if (build.hull === 'scout') return;
+        const product = normalizeProductionProduct(build);
+        if (product.hull === 'scout' || product.kind === PRODUCTION_KIND_BUILDER_DRONE) return;
         queues.push({
           shipyardId: s.id,
           systemId: system.id,

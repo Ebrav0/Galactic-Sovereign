@@ -4,7 +4,6 @@ import {
   EMPIRE_QUEUE_MAX,
   SHIPYARD_COMBAT_HULLS,
 } from './constants.js';
-import { hullStats, hullQueueCost } from './hull.js';
 import { findPath, neighborsOf } from './galaxy.js';
 import { getGraph, getSystems } from './galaxy-scope.js';
 import {
@@ -12,13 +11,19 @@ import {
   isPlayerOwned,
   systemById,
 } from './state.js';
-import { shipyardSlots as techShipyardSlots, empireQueueHulls, techEffects } from './tech-web.js';
+import { shipyardSlots as techShipyardSlots, techEffects } from './tech-web.js';
 import {
   isOperationalStructure,
   shipyardBuildTimeMultiplier,
   shipyardExtraSlots,
   structureShipBuildTimeMultiplier,
 } from './body-structures.js';
+import {
+  PRODUCTION_KIND_BUILDER_DRONE,
+  builderDroneOwnedAndQueuedCount,
+  normalizeProductionProduct,
+  productionProductDefinition,
+} from './production-products.js';
 
 export function shipyardSlots(state) {
   return techShipyardSlots(state);
@@ -29,20 +34,14 @@ let nextQueueId = 1;
 export function resetQueueIds(state) {
   let max = 0;
   for (const item of state.empireQueue ?? []) {
+    const product = normalizeProductionProduct(item);
+    item.kind = product.kind;
+    item.productId = product.productId;
+    item.hull = product.hull;
     const n = parseInt(String(item.id).replace('eq-', ''), 10);
     if (Number.isFinite(n)) max = Math.max(max, n);
   }
   nextQueueId = max + 1;
-}
-
-function hullCost(state, hull) {
-  return hullQueueCost(state, hull);
-}
-
-function hullBuildMs(hull) {
-  const stats = hullStats(hull);
-  if (!stats) return null;
-  return stats.buildMs;
 }
 
 export function normalizeShipyardBuilds(structure) {
@@ -116,11 +115,12 @@ export function hopCountFromStronghold(state, targetSystemId) {
   return Infinity;
 }
 
-function canBuildHullAtShipyard(state, hull, shipyardId, systemId) {
-  if (!empireQueueHulls(state).includes(hull)) {
-    return { ok: false, reason: 'Hull not unlocked in empire queue' };
-  }
-  if (hull !== 'scout' && !SHIPYARD_COMBAT_HULLS.includes(hull)) {
+function canBuildProductAtShipyard(state, productInput, shipyardId, systemId) {
+  const product = normalizeProductionProduct(productInput);
+  const definition = productionProductDefinition(state, product);
+  if (!definition.unlocked) return { ok: false, reason: `${definition.label} is not unlocked` };
+  if (product.kind === 'hull' && product.productId !== 'scout'
+      && !SHIPYARD_COMBAT_HULLS.includes(product.productId)) {
     return { ok: false, reason: 'Hull not available at shipyard' };
   }
   const shipyard = findStructure(state, systemId, shipyardId);
@@ -139,15 +139,31 @@ function canBuildHullAtShipyard(state, hull, shipyardId, systemId) {
 }
 
 export function enqueueHull(state, hull) {
+  return enqueueProduct(state, { kind: 'hull', productId: hull });
+}
+
+export function enqueueProduct(state, productInput, options = {}) {
   if (listPlayerShipyards(state).length === 0) {
     return { ok: false, reason: 'No shipyard built yet' };
   }
-  if (!empireQueueHulls(state).includes(hull)) {
-    return { ok: false, reason: 'Hull not unlocked in empire queue' };
+  const product = normalizeProductionProduct(productInput);
+  const definition = productionProductDefinition(state, product);
+  if (!definition.unlocked) return { ok: false, reason: `${definition.label} is not unlocked` };
+  const cost = definition.cost;
+  const buildMs = definition.buildMs;
+  if (cost == null || buildMs == null) return { ok: false, reason: 'Unknown production item' };
+  if (product.kind === PRODUCTION_KIND_BUILDER_DRONE) {
+    const count = builderDroneOwnedAndQueuedCount(state);
+    const committed = options.reservedByBulkOrder
+      ? (state.builderDrones ?? []).length + (state.empireQueue ?? []).filter((item) => (
+        ['pending', 'building'].includes(item.status)
+          && normalizeProductionProduct(item).kind === PRODUCTION_KIND_BUILDER_DRONE
+      )).length
+      : count.total;
+    if (committed >= count.capacity) {
+      return { ok: false, reason: `Construction drone cap reached (${count.capacity})` };
+    }
   }
-  const cost = hullCost(state, hull);
-  const buildMs = hullBuildMs(hull);
-  if (cost == null || buildMs == null) return { ok: false, reason: 'Unknown hull type' };
 
   if (!state.empireQueue) state.empireQueue = [];
   const pending = state.empireQueue.filter((q) => q.status === 'pending' || q.status === 'building');
@@ -159,7 +175,9 @@ export function enqueueHull(state, hull) {
   state.credits -= cost;
   const item = {
     id: `eq-${nextQueueId++}`,
-    hull,
+    kind: product.kind,
+    productId: product.productId,
+    hull: product.hull,
     pinnedShipyardId: null,
     assignedShipyardId: null,
     assignedSystemId: null,
@@ -236,21 +254,27 @@ export function dispatchEmpireQueue(state) {
 
   const pending = state.empireQueue.filter((q) => q.status === 'pending');
   for (const item of pending) {
+    const product = normalizeProductionProduct(item);
+    item.kind = product.kind;
+    item.productId = product.productId;
+    item.hull = product.hull;
     const candidates = candidateShipyards(state, item);
     for (const yard of candidates) {
-      const check = canBuildHullAtShipyard(state, item.hull, yard.shipyardId, yard.systemId);
+      const check = canBuildProductAtShipyard(state, item, yard.shipyardId, yard.systemId);
       if (!check.ok) continue;
 
       const shipyard = findStructure(state, yard.systemId, yard.shipyardId);
       normalizeShipyardBuilds(shipyard);
       const buildMs = Math.max(1, Math.round(
-        hullBuildMs(item.hull)
+        productionProductDefinition(state, product).buildMs
           * shipyardBuildTimeMultiplier(shipyard)
           * structureShipBuildTimeMultiplier(state, yard.systemId)
           / Math.max(0.1, techEffects(state).shipBuildSpeedMult),
       ));
       shipyard.builds.push({
-        hull: item.hull,
+        kind: product.kind,
+        productId: product.productId,
+        hull: product.hull,
         startedAt: state.time,
         durationMs: buildMs,
         queueItemId: item.id,
@@ -276,6 +300,8 @@ export function completeQueueItem(state, queueItemId) {
 export function empireQueueSummary(state) {
   return (state.empireQueue ?? []).map((q) => ({
     id: q.id,
+    kind: normalizeProductionProduct(q).kind,
+    productId: normalizeProductionProduct(q).productId,
     hull: q.hull,
     status: q.status,
     pinnedShipyardId: q.pinnedShipyardId,

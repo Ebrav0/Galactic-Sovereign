@@ -6,7 +6,12 @@ import {
   STAR_GL_QUALITY,
   CELESTIAL_VISUAL_SCALE,
 } from '../constants.js';
-import { getStarVisualProfile, starGpuUniforms, starFeatureBits } from '../star-types.js';
+import {
+  getStarVisualProfile,
+  stellarRenderParameters,
+  starGpuUniforms,
+  starFeatureBits,
+} from '../star-types.js';
 import { resolveVisualSeed } from '../celestial-render-canvas2d.js';
 import {
   createGLContext,
@@ -25,6 +30,7 @@ import {
 
 import vertSrc from '../../glsl/fullscreen.vert?raw';
 import starFrag from '../../glsl/star.frag?raw';
+import stellarExoticFrag from '../../glsl/stellar-exotic.frag?raw';
 import blackholeFrag from '../../glsl/blackhole.frag?raw';
 import bloomThresholdFrag from '../../glsl/bloom-threshold.frag?raw';
 import bloomBlurFrag from '../../glsl/bloom-blur.frag?raw';
@@ -53,6 +59,7 @@ let queuedBlackHoles = [];
 let sceneRendered = false;
 
 const QUALITY_PASSES = { high: 7, medium: 4, low: 2 };
+const QUALITY_UNIFORM = { high: 1, medium: 0.55, low: 0.25 };
 
 function disableRenderer(reason) {
   console.warn('Star renderer disabled:', reason);
@@ -73,6 +80,7 @@ export function initStarRenderer(glCanvas) {
     quad = createFullscreenQuad(gl);
     programs = {
       star: createProgram(gl, vertSrc, starFrag),
+      exotic: createProgram(gl, vertSrc, stellarExoticFrag),
       blackhole: createProgram(gl, vertSrc, blackholeFrag),
       threshold: createProgram(gl, vertSrc, bloomThresholdFrag),
       blur: createProgram(gl, vertSrc, bloomBlurFrag),
@@ -169,6 +177,21 @@ function clearTransparent() {
   gl.clear(gl.COLOR_BUFFER_BIT);
 }
 
+function withEntityScissor(x, y, extent, draw) {
+  const left = Math.max(0, Math.floor(x - extent));
+  const right = Math.min(width, Math.ceil(x + extent));
+  const top = Math.max(0, Math.floor(y - extent));
+  const bottom = Math.min(height, Math.ceil(y + extent));
+  if (right <= left || bottom <= top) return;
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(left, height - bottom, right - left, bottom - top);
+  try {
+    draw();
+  } finally {
+    gl.disable(gl.SCISSOR_TEST);
+  }
+}
+
 function drawStarEntity(entry, pass = 0) {
   const { star, x, y, screenR, time, intel, state, systemId, mode = 'system' } = entry;
   const r = screenR * CELESTIAL_VISUAL_SCALE;
@@ -183,6 +206,55 @@ function drawStarEntity(entry, pass = 0) {
   const [cr, cg, cb] = hexToRgb(color);
   const [sr, sg, sb] = hexToRgb(profile.secondaryColor);
   const [cor, cog, cob] = hexToRgb(profile.coronaColor);
+
+  if (profile.rendererKind !== 'sphere') {
+    const params = stellarRenderParameters(star, profile);
+    const [xr, xg, xb] = hexToRgb(params.companionColor);
+    const kind = {
+      convective: 0,
+      binary: 1,
+      supergiant: 2,
+      pulsar: 3,
+      quasar: 4,
+      hot: 5,
+      compact: 6,
+      flare: 7,
+      giant: 8,
+      brown_dwarf: 9,
+      neutron: 10,
+      magnetar: 11,
+      wolf_rayet: 12,
+      hypergiant: 13,
+      black_hole_binary: 14,
+    }[profile.rendererKind] ?? 0;
+    const prog = programs.exotic;
+    gl.useProgram(prog);
+    setUniform2f(gl, prog, 'u_resolution', width, height);
+    setUniform2f(gl, prog, 'u_center', x, y);
+    setUniform1f(gl, prog, 'u_radius', r);
+    setUniform1f(gl, prog, 'u_time', time);
+    setUniform1f(gl, prog, 'u_seed', seed);
+    setUniform3f(gl, prog, 'u_color', cr, cg, cb);
+    setUniform3f(gl, prog, 'u_secondary', sr, sg, sb);
+    setUniform3f(gl, prog, 'u_corona', cor, cog, cob);
+    setUniform3f(gl, prog, 'u_companionColor', xr, xg, xb);
+    setUniform1f(gl, prog, 'u_separation', params.separation);
+    setUniform1f(gl, prog, 'u_companionScale', params.companionScale);
+    setUniform1f(gl, prog, 'u_axisCompression', params.axisCompression);
+    setUniform1f(gl, prog, 'u_orbitSpeed', params.orbitSpeed);
+    setUniform1f(gl, prog, 'u_orbitPhase', params.orbitPhase);
+    setUniform1f(gl, prog, 'u_exposure', gpu.exposure);
+    setUniform1f(gl, prog, 'u_chromatic', gpu.chromaticStrength);
+    setUniform1f(gl, prog, 'u_intel', intel ? 1.0 : 0.0);
+    setUniform1i(gl, prog, 'u_kind', kind);
+    setUniform1i(gl, prog, 'u_mode', mode === 'galaxy' ? 1 : 0);
+    setUniform1i(gl, prog, 'u_pass', pass);
+    setUniform1f(gl, prog, 'u_quality', QUALITY_UNIFORM[STAR_GL_QUALITY] ?? 0.55);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    withEntityScissor(x, y, r * params.visualExtent, () => drawFullscreenQuad(gl, quad, prog));
+    return;
+  }
 
   const prog = programs.star;
   gl.useProgram(prog);
@@ -201,18 +273,22 @@ function drawStarEntity(entry, pass = 0) {
   setUniform1f(gl, prog, 'u_coronaIntensity', gpu.coronaIntensity);
   setUniform1f(gl, prog, 'u_lensStrength', gpu.lensStrength);
   setUniform1f(gl, prog, 'u_turbulence', gpu.turbulence);
+  setUniform1f(gl, prog, 'u_exposure', gpu.exposure);
+  setUniform1f(gl, prog, 'u_chromatic', gpu.chromaticStrength);
   setUniform1f(gl, prog, 'u_intel', intel ? 1.0 : 0.0);
   setUniform1i(gl, prog, 'u_mode', mode === 'galaxy' ? 1 : 0);
   setUniform1i(gl, prog, 'u_features', starFeatureBits(profile));
   setUniform1i(gl, prog, 'u_pass', pass);
+  setUniform1f(gl, prog, 'u_quality', QUALITY_UNIFORM[STAR_GL_QUALITY] ?? 0.55);
 
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  drawFullscreenQuad(gl, quad, prog);
+  withEntityScissor(x, y, r * (profile.visualExtent ?? profile.glowScale ?? 3.5),
+    () => drawFullscreenQuad(gl, quad, prog));
 }
 
 function drawBlackHoleEntity(entry) {
-  const { x, y, screenR, time, large, warp = 0 } = entry;
+  const { x, y, screenR, time, large, warp = 0, visual = null } = entry;
   const prog = programs.blackhole;
   gl.useProgram(prog);
   setUniform2f(gl, prog, 'u_resolution', width, height);
@@ -221,9 +297,15 @@ function drawBlackHoleEntity(entry) {
   setUniform1f(gl, prog, 'u_time', time);
   setUniform1f(gl, prog, 'u_large', large ? 1.0 : 0.0);
   setUniform1f(gl, prog, 'u_warp', warp);
+  // Zero is reserved for callers without wormhole visual state. Cinematic
+  // dormant gets an explicit id so first-visit portals cannot fall back to the
+  // legacy/absent black-hole presentation.
+  const phaseIds = { dormant: 7, anchored: 1, charging: 2, opening: 3, transit: 4, collapse: 5, arrival: 6 };
+  setUniform1i(gl, prog, 'u_phase', phaseIds[visual?.phase] ?? 0);
+  setUniform1f(gl, prog, 'u_phaseProgress', visual?.progress ?? 0);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  drawFullscreenQuad(gl, quad, prog);
+  withEntityScissor(x, y, screenR * (large ? 8.5 : 5.8), () => drawFullscreenQuad(gl, quad, prog));
 }
 
 function renderSceneToFBO(pass = 0) {

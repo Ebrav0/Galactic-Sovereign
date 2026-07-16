@@ -20,10 +20,55 @@ import { techEffects } from './tech-web.js';
 import { empireStructureEffectValue } from './body-structures.js';
 
 let wormholeJumpCounter = 0;
+let wormholeArrivalFx = null;
+
+export const WORMHOLE_ARRIVAL_FX_MS = 1400;
+
+export function wormholePhaseForProgress(progress) {
+  const p = Math.max(0, Math.min(1, Number(progress) || 0));
+  if (p < 0.2) return 'charging';
+  if (p < 0.35) return 'opening';
+  if (p < 0.8) return 'transit';
+  return 'collapse';
+}
+
+export function triggerWormholeArrivalFx(state, arrival) {
+  if (!state || !arrival?.toGalaxyId) return null;
+  wormholeArrivalFx = {
+    galaxyId: arrival.toGalaxyId,
+    startedAt: state.time,
+    durationMs: WORMHOLE_ARRIVAL_FX_MS,
+  };
+  return { ...wormholeArrivalFx };
+}
+
+export function wormholeVisualState(state, galaxyId = state?.activeGalaxyId) {
+  const whId = galaxyId ? wormholeIdForGalaxy(galaxyId) : null;
+  const transit = state?.flagship?.wormholeTransit;
+  if (transit && transit.fromWh === whId) {
+    const status = wormholeTransitStatus(state);
+    return {
+      phase: status.phase,
+      progress: status.progress,
+      intensity: status.phase === 'charging' ? 0.25 + status.progress
+        : status.phase === 'collapse' ? Math.max(0.15, 1 - status.progress) : 1,
+      anchored: !!state.wormholes?.[whId]?.anchor,
+    };
+  }
+  if (wormholeArrivalFx?.galaxyId === galaxyId) {
+    const progress = Math.max(0, Math.min(1,
+      (state.time - wormholeArrivalFx.startedAt) / wormholeArrivalFx.durationMs));
+    if (progress < 1) return { phase: 'arrival', progress, intensity: 1 - progress, anchored: !!state.wormholes?.[whId]?.anchor };
+    wormholeArrivalFx = null;
+  }
+  const anchored = !!state?.wormholes?.[whId]?.anchor;
+  return { phase: anchored ? 'anchored' : 'dormant', progress: 0, intensity: anchored ? 0.45 : 0.2, anchored };
+}
 
 export function resetWormholeJumpCounter(n = 0, state = null) {
   wormholeJumpCounter = n;
   if (state) state.wormholeJumpCounter = n;
+  if (n === 0) wormholeArrivalFx = null;
 }
 
 export function canEnterWormhole(state) {
@@ -60,6 +105,7 @@ export function wormholeTransitStatus(state) {
     fromWh: wt.fromWh,
     toWh: wt.toWh,
     progress,
+    phase: wormholePhaseForProgress(progress),
     etaMs: Math.max(0, wt.durationMs - elapsed),
     complete: elapsed >= wt.durationMs,
   };

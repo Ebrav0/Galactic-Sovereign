@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Galactic Sovereign save file — version 18",
+  "description": "Operation doctrines, aggregate mixed production, and manufacturable embarked construction drones.",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 18 },
+    "checksum": { "type": "string", "pattern": "^[0-9a-f]{8}$" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": ["builderDrones", "builderDroneStarterGranted", "bulkProductionOrders", "strategicOrders"],
+      "properties": {
+        "builderDroneStarterGranted": { "type": "boolean" },
+        "builderDrones": {
+          "type": "array",
+          "maxItems": 96,
+          "items": {
+            "type": "object",
+            "required": ["id", "status", "homeSystemId", "strategicCampaignId", "strategicTargetId", "assignedFleetId"],
+            "properties": {
+              "id": { "type": "string" },
+              "status": { "enum": ["idle", "outbound", "building", "returning", "embarked"] },
+              "homeSystemId": { "type": ["string", "null"] },
+              "strategicCampaignId": { "type": ["string", "null"] },
+              "strategicTargetId": { "type": ["string", "null"] },
+              "assignedFleetId": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "bulkProductionOrders": { "type": "array" },
+        "strategicOrders": {
+          "type": "object",
+          "required": ["version", "campaigns", "templates"],
+          "properties": {
+            "version": { "const": 2 },
+            "campaigns": { "type": "array" },
+            "templates": { "type": "array" }
+          }
+        }
+      }
+    }
+  }
+}

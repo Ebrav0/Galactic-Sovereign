@@ -20,9 +20,13 @@ import {
   strategicOrdersSummary,
 } from './strategic-operations.js';
 import { strategicIntegrationHooks } from './strategic-integration.js';
-import { empireQueueHulls } from './tech-web.js';
+import { builderDroneSummary } from './builder-drones.js';
+import {
+  listProductionProducts,
+  normalizeProductionProduct,
+} from './production-products.js';
 
-const PANEL_VERSION = 1;
+const PANEL_VERSION = 2;
 const TERMINAL_BULK_STATUSES = new Set(['complete', 'cancelled']);
 const TERMINAL_CAMPAIGN_STATUSES = new Set(['complete', 'cancelled']);
 const PHASE_ORDER = [
@@ -63,6 +67,8 @@ function compactOrder(order) {
     protectedReserve: finite(order.protectedReserve),
     counts: copyCounts(order.counts),
     manifest: (order.manifest ?? []).map((line) => ({
+      kind: line.kind,
+      productId: line.productId,
       hull: line.hull,
       quantity: finite(line.quantity),
       completed: finite(line.completed),
@@ -99,6 +105,8 @@ function compactCampaign(campaign) {
     blockerCount: campaign.blockers?.length ?? 0,
     blocker: campaign.blockers?.[0]?.message ?? null,
     linkedBulkOrderCount: campaign.linkedBulkOrderIds?.length ?? 0,
+    operationDoctrine: campaign.operationDoctrine ? { ...campaign.operationDoctrine } : null,
+    operationStatus: campaign.operationStatus ? structuredClone(campaign.operationStatus) : null,
   };
 }
 
@@ -111,6 +119,7 @@ export function operationsPanelSnapshot(state) {
   const strategic = strategicOrdersSummary(state, { includeTargets: false });
   const orders = bulk.orders.map(compactOrder);
   const campaigns = strategic.campaigns.map(compactCampaign);
+  const drones = builderDroneSummary(state);
   return {
     version: PANEL_VERSION,
     credits: finite(state?.credits),
@@ -129,6 +138,14 @@ export function operationsPanelSnapshot(state) {
       ).length,
       campaigns,
     },
+    drones: {
+      capacity: drones.capacity,
+      available: drones.idle,
+      reserved: drones.reserved,
+      embarked: drones.embarked,
+      active: drones.active,
+      building: drones.building,
+    },
   };
 }
 
@@ -140,30 +157,36 @@ function normalizeHull(value) {
     .replace(/_+/g, '_');
 }
 
-function addManifestLine(merged, errors, rawHull, rawQuantity, label) {
-  const hull = normalizeHull(rawHull);
+function addManifestLine(merged, errors, rawProduct, rawQuantity, label) {
+  const product = normalizeProductionProduct(
+    typeof rawProduct === 'string' ? { hull: normalizeHull(rawProduct) } : rawProduct,
+  );
   const quantity = Number(rawQuantity);
-  if (!hull) {
-    errors.push(`${label}: hull name is missing`);
+  if (!product.productId) {
+    errors.push(`${label}: product is missing`);
     return;
   }
   if (!Number.isSafeInteger(quantity) || quantity <= 0) {
     errors.push(`${label}: quantity must be a positive whole number`);
     return;
   }
-  merged.set(hull, (merged.get(hull) ?? 0) + quantity);
+  const key = `${product.kind}:${product.productId}`;
+  const current = merged.get(key) ?? { ...product, quantity: 0 };
+  current.quantity += quantity;
+  merged.set(key, current);
 }
 
 function readBulkManifestRows(refs) {
   const errors = [];
   const merged = new Map();
   for (const [index, row] of refs.bulkManifestRows.querySelectorAll('[data-bulk-manifest-row]').entries()) {
-    const hull = row.querySelector('[data-bulk-hull]')?.value;
+    const rawValue = row.querySelector('[data-bulk-hull]')?.value ?? '';
+    const [kind, productId] = rawValue.split(':');
     const quantity = row.querySelector('[data-bulk-quantity]')?.value;
-    addManifestLine(merged, errors, hull, quantity, `Ship ${index + 1}`);
+    addManifestLine(merged, errors, { kind, productId }, quantity, `Unit ${index + 1}`);
   }
-  const manifest = [...merged].map(([hull, quantity]) => ({ hull, quantity }));
-  if (manifest.length === 0 && errors.length === 0) errors.push('Add at least one ship type');
+  const manifest = [...merged.values()];
+  if (manifest.length === 0 && errors.length === 0) errors.push('Add at least one product');
   return { ok: errors.length === 0, manifest, errors };
 }
 
@@ -181,7 +204,7 @@ export function parseBulkManifest(raw) {
         ? parsed
         : Object.entries(parsed).map(([hull, quantity]) => ({ hull, quantity }));
       for (const [index, line] of lines.entries()) {
-        addManifestLine(merged, errors, line?.hull, line?.quantity, `Line ${index + 1}`);
+        addManifestLine(merged, errors, line, line?.quantity, `Line ${index + 1}`);
       }
     } catch (error) {
       errors.push(`Manifest JSON is invalid: ${error.message}`);
@@ -204,7 +227,7 @@ export function parseBulkManifest(raw) {
     }
   }
 
-  const manifest = [...merged].map(([hull, quantity]) => ({ hull, quantity }));
+  const manifest = [...merged.values()];
   if (manifest.length === 0 && errors.length === 0) errors.push('Manifest is empty');
   return { ok: errors.length === 0, manifest, errors };
 }
@@ -332,20 +355,21 @@ function optionalNumber(input, label, errors) {
 }
 
 function updateBulkHullOptions(refs, state) {
-  const hulls = empireQueueHulls(state);
-  const signature = hulls.join('|');
+  const products = listProductionProducts(state);
+  const values = products.map((product) => `${product.kind}:${product.productId}`);
+  const signature = values.join('|');
   for (const select of refs.bulkManifestRows.querySelectorAll('[data-bulk-hull]')) {
     if (select.dataset.optionsSignature === signature) continue;
     const previous = select.value;
     clear(select);
-    for (const hull of hulls) {
-      const option = element('option', '', labelize(hull));
-      option.value = hull;
+    for (const product of products) {
+      const option = element('option', '', product.label);
+      option.value = `${product.kind}:${product.productId}`;
       select.appendChild(option);
     }
-    select.value = hulls.includes(previous)
+    select.value = values.includes(previous)
       ? previous
-      : (hulls.includes('corvette') ? 'corvette' : hulls[0] ?? '');
+      : (values.includes('hull:corvette') ? 'hull:corvette' : values[0] ?? '');
     select.dataset.optionsSignature = signature;
   }
 }
@@ -358,7 +382,7 @@ function syncBulkManifestRemoveButtons(refs) {
   }
 }
 
-function appendBulkManifestRow(refs, state, { hull = 'corvette', quantity = 1 } = {}) {
+function appendBulkManifestRow(refs, state, { hull = 'corvette', kind = 'hull', productId = hull, quantity = 1 } = {}) {
   refs.bulkManifestRowId = (refs.bulkManifestRowId ?? 0) + 1;
   const rowId = refs.bulkManifestRowId;
   const row = element('div', 'bulk-manifest-row');
@@ -366,7 +390,7 @@ function appendBulkManifestRow(refs, state, { hull = 'corvette', quantity = 1 } 
 
   const hullSelect = makeSelect(`ops-bulk-hull-${rowId}`, []);
   hullSelect.dataset.bulkHull = '';
-  hullSelect.setAttribute('aria-label', `Ship type ${rowId}`);
+  hullSelect.setAttribute('aria-label', `Production item ${rowId}`);
   const quantityInput = makeInput(`ops-bulk-quantity-${rowId}`, 'number', String(quantity));
   quantityInput.dataset.bulkQuantity = '';
   quantityInput.min = '1';
@@ -385,7 +409,8 @@ function appendBulkManifestRow(refs, state, { hull = 'corvette', quantity = 1 } 
   row.append(hullSelect, quantityInput, remove);
   refs.bulkManifestRows.appendChild(row);
   updateBulkHullOptions(refs, state);
-  if ([...hullSelect.options].some((option) => option.value === hull)) hullSelect.value = hull;
+  const value = `${kind}:${productId}`;
+  if ([...hullSelect.options].some((option) => option.value === value)) hullSelect.value = value;
   syncBulkManifestRemoveButtons(refs);
   return row;
 }
@@ -420,7 +445,7 @@ function renderBulkPreview(container, result, parserErrors = []) {
   }
   const metrics = element('div', 'command-metrics');
   for (const [label, value] of [
-    ['Ships', result.totalQuantity?.toLocaleString?.() ?? result.totalQuantity],
+    ['Units', result.totalQuantity?.toLocaleString?.() ?? result.totalQuantity],
     ['Projected', formatCredits(result.totalCost)],
     ['Tickets now', result.materializableNow],
     ['Shipyards', result.capacity?.operationalShipyards ?? 0],
@@ -460,6 +485,37 @@ function renderCampaignPreview(container, result, clientErrors = []) {
       metrics.appendChild(item);
     }
     container.appendChild(metrics);
+    const manifest = (result.projectedOperation?.manifest ?? []).map((line) => (
+      `${line.kind === 'builder_drone' ? 'Construction Drone' : labelize(line.productId ?? line.hull)} × ${line.quantity}`
+    )).join(' + ');
+    const captureThresholds = (result.targets ?? []).map((target) => target.requirements?.captureForce ?? 0);
+    const combatThresholds = (result.targets ?? []).map((target) => target.requirements?.combatPower ?? 0);
+    const range = (values) => values.length
+      ? `${Math.min(...values).toLocaleString()}–${Math.max(...values).toLocaleString()}`
+      : '0';
+    const buildList = (result.template?.steps ?? []).map((step) => labelize(step.structureType)).join(' → ');
+    const payload = finite(result.doctrine?.dronePayload, 0);
+    container.appendChild(element(
+      'p',
+      'panel-note panel-note--muted',
+      `Doctrine: ${labelize(result.doctrine?.id ?? result.template?.id ?? 'generalist')} · `
+        + `capture ${result.doctrine?.captureForceMultiplier ?? result.policy?.captureForceMultiplier}× (${range(captureThresholds)}) · `
+        + `combat ${result.doctrine?.combatPowerMultiplier ?? result.policy?.combatPowerMultiplier}× (${range(combatThresholds)}) · `
+        + `${payload} drones per target + ${result.doctrine?.campaignReserveDrones ?? 1} reserve`,
+    ));
+    container.appendChild(element(
+      'p',
+      'panel-note panel-note--muted',
+      `Production shortage for ${result.projectedOperation?.concurrentPackageCount ?? 0} coordinated packages: `
+        + (manifest || 'None — existing assets satisfy the package'),
+    ));
+    container.appendChild(element('p', 'panel-note panel-note--muted', `Post-capture build: ${buildList || 'No construction jobs'}`));
+    const substitutions = [...new Set((result.targets ?? []).flatMap((target) => (
+      (target.projectedOperation?.roleSubstitutions ?? []).map((entry) => `${labelize(entry.role)} → ${labelize(entry.fallbackRole)}`)
+    )))];
+    if (substitutions.length) {
+      container.appendChild(element('p', 'panel-note command-status--blocked', `Role substitutions: ${substitutions.join(', ')}`));
+    }
   }
   appendMessages(container, blockers, 'panel-note command-status--blocked');
   appendMessages(
@@ -583,7 +639,7 @@ function renderOrderCard(instance, order) {
   );
   card.appendChild(title);
   const manifest = order.manifest
-    .map((line) => `${labelize(line.hull)} × ${line.quantity.toLocaleString()}`)
+    .map((line) => `${line.kind === 'builder_drone' ? 'Construction Drone' : labelize(line.productId ?? line.hull)} × ${line.quantity.toLocaleString()}`)
     .join(' + ');
   card.appendChild(element('p', 'panel-note panel-note--muted', manifest || 'Empty manifest'));
   const metrics = element('div', 'command-metrics');
@@ -674,6 +730,23 @@ function renderCampaignCard(instance, campaign) {
     'panel-note panel-note--muted',
     phaseSummary(campaign.progress.phases) || 'No targets have advanced yet',
   ));
+  const operation = campaign.operationStatus;
+  if (operation) {
+    const doctrineName = labelize(campaign.operationDoctrine?.id ?? campaign.templateId ?? 'generalist');
+    card.appendChild(element(
+      'p',
+      'panel-note panel-note--muted',
+      `${doctrineName} doctrine · ${operation.assignedFleetIds?.length ?? 0} fleets · `
+        + `${operation.assignedDroneIds?.length ?? 0}/${operation.requiredDronePayload ?? 0} embarked/assigned drones · `
+        + `${operation.reserveDroneIds?.length ?? 0} reserve`,
+    ));
+    card.appendChild(element(
+      'p',
+      operation.replacementPending ? 'panel-note command-status--blocked' : 'panel-note panel-note--muted',
+      `${operation.replacementPending ? 'Replacement requisition pending · ' : ''}`
+        + `Construction ${operation.constructionQueue?.completed ?? 0}/${operation.constructionQueue?.planned ?? 0}`,
+    ));
+  }
   if (campaign.blocker) card.appendChild(element('p', 'panel-note command-status--blocked', campaign.blocker));
   else if (campaign.pauseReason) card.appendChild(element('p', 'panel-note panel-note--muted', campaign.pauseReason));
 
@@ -720,12 +793,15 @@ function renderCampaignCard(instance, campaign) {
 
 function updateTemplateOptions(select, templates) {
   const previous = select.value;
-  const signature = JSON.stringify(templates.map((template) => [template.id, template.name]));
+  const signature = JSON.stringify(templates.map((template) => [template.id, template.name, template.doctrine]));
   if (select.dataset.optionsSignature === signature) return;
   clear(select);
   for (const template of templates) {
     const option = element('option', '', `${template.name}${template.preset ? ' · preset' : ''}`);
     option.value = template.id;
+    option.title = `${template.doctrine?.captureForceMultiplier ?? 1.2}× capture · `
+      + `${template.doctrine?.combatPowerMultiplier ?? 1.35}× combat · `
+      + `${template.doctrine?.dronePayload ?? 2} drones`;
     select.appendChild(option);
   }
   select.value = templates.some((template) => template.id === previous)
@@ -742,6 +818,11 @@ function refreshDynamic(instance) {
   refs.metricBulkRemaining.textContent = (snapshot.bulk.totals.remaining ?? 0).toLocaleString();
   refs.metricDeliveries.textContent = snapshot.bulk.pendingDeliveryCount.toLocaleString();
   refs.metricCampaigns.textContent = snapshot.strategic.activeCampaignCount.toLocaleString();
+  refs.metricDronesAvailable.textContent = snapshot.drones.available.toLocaleString();
+  refs.metricDronesReserved.textContent = snapshot.drones.reserved.toLocaleString();
+  refs.metricDronesEmbarked.textContent = snapshot.drones.embarked.toLocaleString();
+  refs.metricDronesActive.textContent = snapshot.drones.active.toLocaleString();
+  refs.metricDronesBuilding.textContent = snapshot.drones.building.toLocaleString();
   updateBulkHullOptions(refs, instance.state);
   updateTemplateOptions(refs.campaignTemplate, snapshot.strategic.templates);
 
@@ -783,11 +864,21 @@ function buildPanel(container, state, options) {
   const remainingMetric = metric('Ships remaining', 'ops-metric-bulk-remaining');
   const deliveryMetric = metric('Pending delivery', 'ops-metric-deliveries');
   const campaignMetric = metric('Active campaigns', 'ops-metric-campaigns-active');
+  const dronesAvailableMetric = metric('Drones available', 'ops-metric-drones-available');
+  const dronesReservedMetric = metric('Reserved', 'ops-metric-drones-reserved');
+  const dronesEmbarkedMetric = metric('Embarked', 'ops-metric-drones-embarked');
+  const dronesActiveMetric = metric('Active', 'ops-metric-drones-active');
+  const dronesBuildingMetric = metric('Building', 'ops-metric-drones-building');
   metrics.append(
     creditsMetric.wrapper,
     remainingMetric.wrapper,
     deliveryMetric.wrapper,
     campaignMetric.wrapper,
+    dronesAvailableMetric.wrapper,
+    dronesReservedMetric.wrapper,
+    dronesEmbarkedMetric.wrapper,
+    dronesActiveMetric.wrapper,
+    dronesBuildingMetric.wrapper,
   );
   header.append(heading, metrics);
   const grid = element('div', 'command-screen__grid');
@@ -804,6 +895,11 @@ function buildPanel(container, state, options) {
       metricBulkRemaining: remainingMetric.value,
       metricDeliveries: deliveryMetric.value,
       metricCampaigns: campaignMetric.value,
+      metricDronesAvailable: dronesAvailableMetric.value,
+      metricDronesReserved: dronesReservedMetric.value,
+      metricDronesEmbarked: dronesEmbarkedMetric.value,
+      metricDronesActive: dronesActiveMetric.value,
+      metricDronesBuilding: dronesBuildingMetric.value,
     },
     snapshot: null,
     refresh: () => refreshDynamic(instance),
@@ -823,9 +919,9 @@ function buildPanel(container, state, options) {
   refs.bulkManifestRows.dataset.testid = refs.bulkManifestRows.id;
   refs.bulkManifestRowId = 0;
   const manifestBuilder = element('fieldset', 'bulk-manifest-builder');
-  manifestBuilder.appendChild(element('legend', '', 'Ships to produce'));
+  manifestBuilder.appendChild(element('legend', '', 'Ships and drones to produce'));
   manifestBuilder.appendChild(refs.bulkManifestRows);
-  const addManifestRow = makeButton('ops-bulk-add-ship', 'Add ship type');
+  const addManifestRow = makeButton('ops-bulk-add-ship', 'Add product');
   addManifestRow.addEventListener('click', () => appendBulkManifestRow(refs, instance.state));
   manifestBuilder.appendChild(addManifestRow);
   appendBulkManifestRow(refs, state, { hull: 'corvette', quantity: 400 });
@@ -985,7 +1081,7 @@ function buildPanel(container, state, options) {
     makeField('Targeting', refs.campaignMode),
     refs.campaignTargetsField,
     refs.campaignCountField,
-    makeField('Construction template', refs.campaignTemplate),
+    makeField('Operation preset', refs.campaignTemplate),
     makeField('Concurrent systems', refs.campaignConcurrency),
     makeField('Budget limit', refs.campaignBudget),
     makeField('Protected reserve', refs.campaignReserve),

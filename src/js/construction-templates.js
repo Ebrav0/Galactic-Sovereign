@@ -14,7 +14,21 @@ import { STRUCTURE_DEFS } from './strategic-structures.js';
 import { systemById } from './state.js';
 import { isTechUnlocked } from './tech-web.js';
 
-export const CONSTRUCTION_TEMPLATE_VERSION = 1;
+export const CONSTRUCTION_TEMPLATE_VERSION = 2;
+
+export const GENERALIST_OPERATION_DOCTRINE = deepFreeze({
+  captureForceMultiplier: 1.2,
+  combatPowerMultiplier: 1.35,
+  dronePayload: 2,
+  campaignReserveDrones: 1,
+  roleMix: { escort: 0.6, line: 0.25, support: 0.15 },
+  preferredHulls: {
+    escort: ['frigate', 'patrol_cutter', 'corvette'],
+    line: ['dreadnought', 'battleship', 'cruiser', 'destroyer'],
+    support: ['command_cruiser', 'healer', 'sensor_ship', 'builder_ship'],
+  },
+  roleMinimums: { escort: 1, line: 1, support: 1 },
+});
 
 export const TEMPLATE_SELECTORS = Object.freeze([
   'best_habitable_planet',
@@ -57,6 +71,65 @@ function deepFreeze(value) {
   return value;
 }
 
+const OPERATION_ROLE_HULLS = Object.freeze({
+  escort: ['frigate', 'patrol_cutter', 'corvette'],
+  line: ['dreadnought', 'battleship', 'cruiser', 'destroyer'],
+  carrier: ['super_carrier', 'fleet_carrier', 'light_carrier'],
+  sensor: ['sensor_ship'],
+  tender: ['builder_ship'],
+  armored_convoy: ['armored_convoy'],
+  command: ['command_cruiser'],
+  healer: ['healer'],
+  command_healer: ['command_cruiser', 'healer'],
+  support: ['command_cruiser', 'healer', 'sensor_ship', 'builder_ship'],
+});
+
+function boundedMultiplier(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(1, Math.min(5, number)) : fallback;
+}
+
+export function normalizeOperationDoctrine(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const rawMix = source.roleMix && typeof source.roleMix === 'object'
+    ? source.roleMix
+    : GENERALIST_OPERATION_DOCTRINE.roleMix;
+  const roleMix = {};
+  let total = 0;
+  for (const [role, weight] of Object.entries(rawMix)) {
+    if (!OPERATION_ROLE_HULLS[role]) continue;
+    const numeric = Math.max(0, Number(weight) || 0);
+    if (numeric <= 0) continue;
+    roleMix[role] = numeric;
+    total += numeric;
+  }
+  if (total <= 0) return JSON.parse(JSON.stringify(GENERALIST_OPERATION_DOCTRINE));
+  for (const role of Object.keys(roleMix)) roleMix[role] = roleMix[role] / total;
+  const roleMinimums = {};
+  for (const [role, count] of Object.entries(
+    source.roleMinimums ?? GENERALIST_OPERATION_DOCTRINE.roleMinimums,
+  )) {
+    if (!OPERATION_ROLE_HULLS[role]) continue;
+    roleMinimums[role] = Math.max(0, Math.min(40, Math.floor(Number(count) || 0)));
+  }
+  const preferredHulls = {};
+  for (const role of Object.keys(roleMix)) {
+    const candidates = Array.isArray(source.preferredHulls?.[role])
+      ? source.preferredHulls[role]
+      : OPERATION_ROLE_HULLS[role];
+    preferredHulls[role] = [...new Set(candidates.filter((hull) => typeof hull === 'string' && hull))];
+  }
+  return {
+    captureForceMultiplier: boundedMultiplier(source.captureForceMultiplier, 1.2),
+    combatPowerMultiplier: boundedMultiplier(source.combatPowerMultiplier, 1.35),
+    dronePayload: Math.max(1, Math.min(16, Math.floor(Number(source.dronePayload) || 2))),
+    campaignReserveDrones: Math.max(0, Math.min(8, Math.floor(Number(source.campaignReserveDrones) || 1))),
+    roleMix,
+    preferredHulls,
+    roleMinimums,
+  };
+}
+
 function step(id, structureType, selector, options = {}) {
   return { id, structureType, selector, required: false, onUnavailable: 'skip', ...options };
 }
@@ -64,6 +137,11 @@ function step(id, structureType, selector, options = {}) {
 const PRESETS = [
   {
     id: 'frontier', name: 'Frontier', description: 'Claim, observe, and supply a frontier system.',
+    doctrine: {
+      captureForceMultiplier: 1.15, combatPowerMultiplier: 1.2, dronePayload: 2,
+      roleMix: { escort: 0.6, line: 0.2, sensor: 0.1, tender: 0.1 },
+      roleMinimums: { escort: 1, line: 1, sensor: 1, tender: 1 },
+    },
     steps: [
       step('foundation', 'outpost', 'best_habitable_planet', {
         required: true,
@@ -76,6 +154,11 @@ const PRESETS = [
   },
   {
     id: 'industrial', name: 'Industrial', description: 'Build a resource-processing and export center.',
+    doctrine: {
+      captureForceMultiplier: 1.2, combatPowerMultiplier: 1.25, dronePayload: 4,
+      roleMix: { escort: 0.35, line: 0.25, armored_convoy: 0.2, tender: 0.2 },
+      roleMinimums: { escort: 1, line: 1, armored_convoy: 1, tender: 1 },
+    },
     steps: [
       step('foundation', 'outpost', 'best_habitable_planet', { required: true, onUnavailable: 'wait' }),
       step('power', 'power_grid', 'best_resource_world'),
@@ -87,6 +170,11 @@ const PRESETS = [
   },
   {
     id: 'military', name: 'Military', description: 'Fortify a captured system and establish production.',
+    doctrine: {
+      captureForceMultiplier: 1.35, combatPowerMultiplier: 1.55, dronePayload: 3,
+      roleMix: { escort: 0.25, line: 0.45, carrier: 0.15, command_healer: 0.15 },
+      roleMinimums: { escort: 1, line: 1, carrier: 1, command_healer: 1 },
+    },
     steps: [
       step('foundation', 'outpost', 'best_habitable_planet', { required: true, onUnavailable: 'wait' }),
       step('shipyard', 'shipyard', 'best_habitable_planet'),
@@ -98,6 +186,11 @@ const PRESETS = [
   },
   {
     id: 'research', name: 'Research', description: 'Develop a sensor and research enclave.',
+    doctrine: {
+      captureForceMultiplier: 1.15, combatPowerMultiplier: 1.25, dronePayload: 2,
+      roleMix: { escort: 0.4, line: 0.2, sensor: 0.25, healer: 0.15 },
+      roleMinimums: { escort: 1, line: 1, sensor: 1, healer: 1 },
+    },
     steps: [
       step('foundation', 'outpost', 'best_habitable_planet', { required: true, onUnavailable: 'wait' }),
       step('station', 'research_station', 'system_node'),
@@ -107,6 +200,11 @@ const PRESETS = [
   },
   {
     id: 'trade', name: 'Trade', description: 'Create an export and logistics hub.',
+    doctrine: {
+      captureForceMultiplier: 1.2, combatPowerMultiplier: 1.25, dronePayload: 3,
+      roleMix: { escort: 0.4, line: 0.2, armored_convoy: 0.25, command: 0.15 },
+      roleMinimums: { escort: 1, line: 1, armored_convoy: 1, command: 1 },
+    },
     steps: [
       step('foundation', 'outpost', 'best_habitable_planet', { required: true, onUnavailable: 'wait' }),
       step('export', 'export_depot', 'best_habitable_planet'),
@@ -116,6 +214,11 @@ const PRESETS = [
   },
   {
     id: 'dyson', name: 'Dyson', description: 'Establish the industry for a new Dyson project.',
+    doctrine: {
+      captureForceMultiplier: 1.3, combatPowerMultiplier: 1.45, dronePayload: 5,
+      roleMix: { escort: 0.25, line: 0.35, carrier: 0.15, command: 0.15, tender: 0.1 },
+      roleMinimums: { escort: 1, line: 1, carrier: 1, command: 1, tender: 1 },
+    },
     steps: [
       step('foundation', 'outpost', 'best_habitable_planet', { required: true, onUnavailable: 'wait' }),
       step('foundry', 'sail_foundry', 'best_habitable_planet'),
@@ -124,7 +227,12 @@ const PRESETS = [
       step('nanoforge', 'nanoforge', 'best_surface_body'),
     ],
   },
-].map((template) => ({ ...template, version: CONSTRUCTION_TEMPLATE_VERSION, preset: true }));
+].map((template) => ({
+  ...template,
+  doctrine: normalizeOperationDoctrine(template.doctrine),
+  version: CONSTRUCTION_TEMPLATE_VERSION,
+  preset: true,
+}));
 
 export const PRESET_CONSTRUCTION_TEMPLATES = deepFreeze(
   Object.fromEntries(PRESETS.map((template) => [template.id, template])),
@@ -207,6 +315,7 @@ export function validateConstructionTemplate(template, options = {}) {
     description: String(template.description ?? '').trim(),
     version: CONSTRUCTION_TEMPLATE_VERSION,
     preset: !!template.preset,
+    doctrine: normalizeOperationDoctrine(template.doctrine),
     steps: Array.isArray(template.steps) ? template.steps.map(normalizeStep) : [],
   };
   if (!normalized.name) errors.push('Template name is required');

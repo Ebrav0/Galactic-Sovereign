@@ -92,6 +92,11 @@ function baseShotEvent(state, attacker, target, hit, profileId) {
 /** Emit aimed shot FX (+ kill bloom when destroyed). */
 export function emitShotFx(battle, { state, attacker, target, hit, profile } = {}) {
   if (!battle || !state || !attacker || !target) return null;
+  battle.shotsFired = (battle.shotsFired ?? 0) + 1;
+  battle.shotsFiredBySide = battle.shotsFiredBySide ?? {};
+  battle.shotsFiredBySide[attacker.side ?? 'player'] = (battle.shotsFiredBySide[attacker.side ?? 'player'] ?? 0) + 1;
+  battle.shotsFiredByActor = battle.shotsFiredByActor ?? {};
+  battle.shotsFiredByActor[attacker.id] = (battle.shotsFiredByActor[attacker.id] ?? 0) + 1;
   const event = pushFxEvent(battle, baseShotEvent(state, attacker, target, hit, profile));
   if (hit?.damageState === 'destroyed') {
     pushFxEvent(battle, {
@@ -197,6 +202,7 @@ function effectiveDpsHint(unit) {
 
 export function fxDurationMs(event) {
   if (!event) return 160;
+  if (event.kind === 'wing_launch' || event.kind === 'wing_recover') return 760;
   if (event.kind === 'kill') return BATTLE_FX_KILL_MS;
   if (event.kind === 'lod_pulse') return BATTLE_FX_DURATIONS.lod_pulse;
   if (event.profile === 'beam_lance') {
@@ -480,6 +486,31 @@ function drawLodPulse(ctx, start, end, life, color, zoom) {
   ctx.stroke();
 }
 
+function drawWingTransferCue(ctx, start, end, age, duration, life, color, zoom, recovering) {
+  const u = clamp01(age / Math.max(1, duration));
+  const head = recovering ? end : {
+    x: start.x + (end.x - start.x) * u,
+    y: start.y + (end.y - start.y) * u,
+  };
+  const tail = recovering ? start : {
+    x: start.x + (head.x - start.x) * 0.45,
+    y: start.y + (head.y - start.y) * 0.45,
+  };
+  ctx.strokeStyle = withAlpha(color, 0.82 * life);
+  ctx.lineWidth = Math.max(1.2, 2.1 * zoom);
+  ctx.beginPath();
+  ctx.moveTo(tail.x, tail.y);
+  ctx.lineTo(head.x, head.y);
+  ctx.stroke();
+  const ringAt = recovering ? end : start;
+  ctx.strokeStyle = withAlpha(color, 0.72 * life);
+  ctx.lineWidth = Math.max(1, 1.4 * zoom);
+  ctx.beginPath();
+  ctx.arc(ringAt.x, ringAt.y, Math.max(5, (7 + u * 8) * zoom), 0, Math.PI * 2);
+  ctx.stroke();
+  drawMuzzleSpark(ctx, head.x, head.y, color, life, zoom);
+}
+
 /**
  * Draw active StS combat FX for a battle.
  * @param {object} opts
@@ -532,6 +563,22 @@ export function drawCombatFx({
 
     if (ev.kind === 'kill') {
       drawKillBloom(ctx, end.x, end.y, age, zoom);
+      drawn++;
+      continue;
+    }
+
+    if (ev.kind === 'wing_launch' || ev.kind === 'wing_recover') {
+      drawWingTransferCue(
+        ctx,
+        start,
+        end,
+        age,
+        duration,
+        life,
+        color,
+        zoom,
+        ev.kind === 'wing_recover',
+      );
       drawn++;
       continue;
     }

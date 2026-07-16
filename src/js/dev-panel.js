@@ -139,6 +139,8 @@ export function initDevPanel(ctx) {
           `Built: ${d.built?.length ?? 0}, Skipped: ${d.skipped?.length ?? 0}, Errors: ${d.errors?.length ?? 0}`,
           'ok',
         );
+      } else if (action === 'revealAllIntel' && d) {
+        toast(`Revealed ${d.systems} systems across ${d.galaxies} galaxies and ${d.wormholes} wormholes`, 'ok');
       } else {
         toast(`${action} — OK`, 'ok');
       }
@@ -359,7 +361,7 @@ export function initDevPanel(ctx) {
     setBtn('dev-grant-cargo-fuel', sysOk);
     setBtn('dev-grant-cargo-goods', sysOk);
     setBtn('dev-reveal-intel', sysOk);
-    setBtn('dev-reveal-all-intel', sysOk);
+    setBtn('dev-reveal-all-intel', !!state?.galaxies);
     setBtn('dev-force-capture', sysNotCore && !alreadyOwned);
     setBtn('dev-force-ai-capture', sysNotCore && !aiOwned && systemId !== state.stronghold);
     setBtn('dev-complete-research', !!research.activeNodeId);

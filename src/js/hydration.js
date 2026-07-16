@@ -12,6 +12,7 @@ import {
   seedNeutralStructures,
 } from './state.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
+import { applySystemCatalogIdentity, catalogLabel } from './catalog-names.js';
 import {
   getGalaxy,
   getHomeGalaxy,
@@ -48,7 +49,7 @@ export function generateGalaxySystems(state, galaxyId) {
       });
     }
   }
-  systems[gal.graph.blackHole.id] = createBlackHoleSystem(gal.graph.blackHole);
+  systems[gal.graph.blackHole.id] = createBlackHoleSystem(gal.graph.blackHole, galaxyId);
   return systems;
 }
 
@@ -152,10 +153,15 @@ export function ensureHomeStrongholdNamed(state) {
   const sid = getStrongholdStarId(state);
   const sys = home.systems[sid];
   if (sys) {
-    sys.name = HOME_SYSTEM_NAME;
+    sys.alias = HOME_SYSTEM_NAME;
+    sys.name = catalogLabel(sys.catalogId, HOME_SYSTEM_NAME);
     sys.owner = 'player';
     const star = home.graph.stars.find((s) => s.id === sid);
-    if (star) star.name = HOME_SYSTEM_NAME;
+    if (star) {
+      star.alias = HOME_SYSTEM_NAME;
+      star.name = catalogLabel(star.catalogId, HOME_SYSTEM_NAME);
+      applySystemCatalogIdentity(sys, star, home.id, HOME_SYSTEM_NAME);
+    }
   }
 }
 

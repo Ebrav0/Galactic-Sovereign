@@ -315,12 +315,22 @@
       </div>
     </footer>
 
+    <div id="battle-alert" class="battle-alert hidden" role="status" aria-live="polite">
+      <div>
+        <span class="battle-alert__eyebrow">Battle in progress</span>
+        <strong id="battle-alert-system" class="battle-alert__system">Unknown system</strong>
+        <span id="battle-alert-detail" class="battle-alert__detail">Strategic simulation continues</span>
+      </div>
+      <button id="battle-alert-view" type="button" class="btn btn--primary btn--sm">View Battle</button>
+    </div>
+
     <div id="combat-hud" class="combat-hud hidden" aria-label="Combat interface">
       <div class="combat-hud__top">
         <div class="combat-hud__identity">
           <span class="combat-hud__badge">Combat</span>
           <span id="combat-hud-system" class="combat-hud__system">—</span>
           <span id="combat-hud-elapsed" class="combat-hud__elapsed">0s</span>
+          <span id="combat-hud-control" class="combat-hud__control">AUTO</span>
         </div>
         <div class="combat-hud__counts">
           <span id="combat-hud-friendly" class="combat-hud__count combat-hud__count--friendly">0</span>
@@ -332,7 +342,7 @@
           <button id="combat-hud-galaxy" type="button" class="btn btn--ghost btn--xs">Galaxy (M)</button>
         </div>
       </div>
-      <div class="combat-hud__left">
+      <div class="combat-hud__left combat-hud__advanced">
         <div class="combat-hud__section-title">Selection</div>
         <div id="combat-hud-selection" class="combat-hud__selection">
           <p class="combat-hud__empty">Click friendlies to select · Shift multi-select · click enemy to focus fire</p>
@@ -341,14 +351,26 @@
       <div class="combat-hud__right">
         <div class="combat-hud__section-title">Doctrine</div>
         <div id="combat-hud-doctrine" class="combat-hud__doctrine"></div>
-        <div class="combat-hud__section-title">Orders</div>
-        <div class="combat-hud__actions">
+        <label class="combat-hud__priority-label" for="combat-hud-priority">Fleet priority</label>
+        <select id="combat-hud-priority" class="command-input combat-hud__priority">
+          <option value="auto">Auto</option>
+          <option value="fighter">Fighters</option>
+          <option value="escort">Escorts</option>
+          <option value="capital">Capitals</option>
+          <option value="carrier">Carriers</option>
+        </select>
+        <div id="combat-hud-wing-status" class="combat-hud__wing-status">Wings standing by</div>
+        <div class="combat-hud__actions combat-hud__command-actions">
+          <button id="combat-hud-advanced-toggle" type="button" class="btn btn--ghost btn--xs">Advanced Tactics</button>
+          <button id="combat-hud-retreat" type="button" class="btn btn--danger btn--xs">Retreat</button>
+        </div>
+        <div class="combat-hud__section-title combat-hud__advanced">Manual orders</div>
+        <div class="combat-hud__actions combat-hud__advanced">
           <button id="combat-hud-move" type="button" class="btn btn--ghost btn--xs">Move</button>
           <button id="combat-hud-attack" type="button" class="btn btn--ghost btn--xs">Attack</button>
           <button id="combat-hud-hold" type="button" class="btn btn--ghost btn--xs">Hold</button>
-          <button id="combat-hud-retreat" type="button" class="btn btn--danger btn--xs">Retreat</button>
         </div>
-        <div id="combat-hud-formation" class="combat-hud__formation">Formation: —</div>
+        <div id="combat-hud-formation" class="combat-hud__formation combat-hud__advanced">Formation: —</div>
       </div>
       <div class="combat-hud__bottom">
         <div id="combat-hud-chips" class="combat-hud__chips"></div>

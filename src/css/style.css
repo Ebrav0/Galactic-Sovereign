@@ -198,6 +198,68 @@ html, body {
   color: rgba(170, 196, 220, 0.8);
 }
 
+.combat-hud__control {
+  padding: 3px 7px;
+  border: 1px solid rgba(111, 214, 255, 0.38);
+  background: rgba(111, 214, 255, 0.10);
+  color: rgba(162, 235, 255, 0.95);
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+}
+
+.combat-hud__control--manual {
+  border-color: rgba(255, 186, 92, 0.62);
+  background: rgba(255, 186, 92, 0.12);
+  color: rgba(255, 211, 148, 1);
+}
+
+#hud > .battle-alert {
+  position: absolute;
+  z-index: 58;
+  top: 74px;
+  right: 18px;
+  width: min(360px, calc(100vw - 36px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 151, 89, 0.72);
+  border-left: 3px solid rgba(255, 111, 72, 0.95);
+  background: rgba(15, 12, 19, 0.94);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.46), inset 0 0 26px rgba(255, 91, 52, 0.05);
+  backdrop-filter: blur(10px);
+  pointer-events: auto;
+}
+
+.battle-alert.hidden { display: none; }
+
+.battle-alert > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.battle-alert__eyebrow {
+  color: rgba(255, 151, 89, 0.9);
+  font: 700 9px/1.2 var(--font-display);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.battle-alert__system {
+  overflow: hidden;
+  color: rgba(255, 239, 225, 0.98);
+  font: 600 14px/1.2 var(--font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.battle-alert__detail {
+  color: rgba(210, 191, 184, 0.72);
+  font: 11px/1.25 var(--font-mono);
+}
+
 .combat-hud__counts {
   display: flex;
   align-items: center;
@@ -276,6 +338,35 @@ html, body {
   border-color: rgba(111, 214, 255, 0.7);
   color: rgba(210, 240, 255, 1);
   background: rgba(111, 214, 255, 0.12);
+}
+
+.combat-hud__priority-label {
+  display: block;
+  margin: 0 0 5px;
+  color: rgba(111, 214, 255, 0.75);
+  font: 600 10px/1 var(--font-display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.combat-hud__priority {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.combat-hud__wing-status {
+  margin-bottom: 10px;
+  color: rgba(170, 196, 220, 0.85);
+  font: 11px/1.35 var(--font-mono);
+}
+
+.combat-hud__command-actions {
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(111, 214, 255, 0.10);
+}
+
+.combat-hud:not(.combat-hud--advanced) .combat-hud__advanced {
+  display: none;
 }
 
 .combat-hud__actions {

@@ -9,6 +9,7 @@ import {
   HULL_STATS,
   TACTICAL_MOVE_ENGAGEMENT_RADIUS,
   TACTICAL_RECENT_THREAT_MS,
+  TACTICAL_WEAPON_COOLDOWN_MS,
   WEAPON_ARC_RADIANS,
   WEAPON_PROFILES,
 } from './constants.js';
@@ -130,6 +131,8 @@ export function normalizeFleetOrder(order = {}, context = {}) {
       ? (String(order.type ?? '') === 'move' ? TACTICAL_MOVE_ENGAGEMENT_RADIUS : null)
       : round6(nonNegative(order.engagementRadius)),
     priority: order.priority == null ? 0 : Math.trunc(finiteNumber(order.priority)),
+    autonomous: order.autonomous === true,
+    source: order.source == null ? null : String(order.source),
   };
   return normalized;
 }
@@ -407,6 +410,13 @@ export function weaponCanBear(unit, target, profileId = null, hardpoint = null) 
   return delta <= arc / 2 + 1e-9;
 }
 
+/** Convert a sustained DPS value into one cooldown-timed tactical volley. */
+export function cooldownNormalizedVolleyDamage(dps, cooldownMs, share = 1) {
+  const sustained = nonNegative(dps);
+  const cooldownSeconds = Math.max(1, nonNegative(cooldownMs, TACTICAL_WEAPON_COOLDOWN_MS)) / 1000;
+  return round6(sustained * cooldownSeconds * Math.max(0, finiteNumber(share, 1)));
+}
+
 /**
  * Higher scores are better. Every input is state-derived and the final score is
  * rounded, so equal snapshots rank identically across individual and LOD paths.
@@ -422,7 +432,8 @@ export function scoreTargetPriority(attacker, target, order = null, context = {}
   const range = Math.max(1, finiteNumber(context.range, finiteNumber(profile.range, 280)));
   const hp = nonNegative(target.hp);
   const explicitlyDesignated = order?.targetId != null && String(order.targetId) === String(target.id);
-  if (!explicitlyDesignated && (attacker.weaponProfile ?? '') === 'point_defense' && cls !== 'fighter') return -Infinity;
+  if (!explicitlyDesignated && (attacker.weaponProfile ?? '') === 'point_defense'
+      && !attacker.isWing && cls !== 'fighter') return -Infinity;
   if (order?.type === 'emergency_retreat') return -Infinity;
   if (order?.type === 'move' && order.point) {
     const leash = nonNegative(order.engagementRadius, TACTICAL_MOVE_ENGAGEMENT_RADIUS);

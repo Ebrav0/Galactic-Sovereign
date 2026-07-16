@@ -34,6 +34,8 @@ import {
   triggerSuperweaponPanic,
 } from './diplomacy.js';
 import { orderBattleGroupTravel, battleGroupsForGalaxy } from './battle-groups.js';
+import { assignGalaxyStellarCatalog } from './star-types.js';
+import { applyGraphCatalogIdentity } from './catalog-names.js';
 
 let nextCreatedStarIndex = 0;
 
@@ -330,6 +332,9 @@ function commitCreate(state, anchorSystemId) {
 
   graph.stars.push(newStar);
   graph.lanes.push([anchorSystemId, newId]);
+  const galaxySeed = hashSeed(state.meta.seed, `galaxy:${state.activeGalaxyId}`);
+  assignGalaxyStellarCatalog(graph, gal.strongholdStarId, galaxySeed, { preserveExisting: true });
+  applyGraphCatalogIdentity(graph, state.activeGalaxyId);
 
   const sysRng = createRng(hashSeed(state.meta.seed, `sw-sys:${newId}`));
   gal.systems[newId] = generateSystem(sysRng, newStar, {

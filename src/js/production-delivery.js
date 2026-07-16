@@ -16,6 +16,7 @@ import {
 } from './bulk-production.js';
 import { findPlayerShip, orderShipTravel } from './fleets.js';
 import { findScout, orderScoutTravel } from './scout.js';
+import { deployBuilderDrone } from './builder-drones.js';
 
 function transitDestination(entity) {
   return entity?.transit?.path?.[entity.transit.path.length - 1] ?? entity?.systemId ?? null;
@@ -84,9 +85,22 @@ function rallyTarget(state, delivery, ship, assignedFleetId) {
   return null;
 }
 
-function routeDeliveryEntity(state, delivery, ship, scout, targetSystemId) {
-  const entity = ship ?? scout;
+function routeDeliveryEntity(state, delivery, ship, scout, drone, targetSystemId) {
+  const entity = ship ?? scout ?? drone;
   if (!entity) return { ok: false, reason: 'Completed unit no longer exists' };
+  if (drone) {
+    if (!targetSystemId || (!drone.transit && drone.systemId === targetSystemId)) {
+      return { ok: true, arrived: true, systemId: drone.systemId ?? targetSystemId ?? null };
+    }
+    if (drone.status === 'outbound' && drone.targetSystemId === targetSystemId) {
+      return { ok: true, inTransit: true, systemId: targetSystemId };
+    }
+    if (drone.status !== 'idle') return { ok: false, reason: `Drone is ${drone.status}` };
+    const result = deployBuilderDrone(state, targetSystemId, drone.id);
+    return result.ok
+      ? { ok: true, inTransit: true, systemId: targetSystemId }
+      : { ok: false, reason: result.reason ?? 'Unable to deploy completed drone' };
+  }
   if (!targetSystemId) return { ok: true, arrived: true, systemId: entity.systemId ?? null };
 
   const currentTarget = transitDestination(entity);
@@ -114,6 +128,9 @@ export function tickBulkDeliveries(state) {
   for (const delivery of listPendingBulkDeliveries(state)) {
     const ship = delivery.shipId ? findPlayerShip(state, delivery.shipId) : null;
     const scout = delivery.scoutId ? findScout(state, delivery.scoutId) : null;
+    const drone = delivery.droneId
+      ? (state.builderDrones ?? []).find((entry) => entry.id === delivery.droneId) ?? null
+      : null;
 
     const previousFleetId = delivery.assignedFleetId ?? null;
     const assignment = assignDeliveryFleet(state, delivery, ship);
@@ -125,9 +142,33 @@ export function tickBulkDeliveries(state) {
       continue;
     }
 
-    const fleetId = assignment.fleetId ?? previousFleetId;
-    const targetSystemId = rallyTarget(state, delivery, ship, fleetId);
-    const routed = routeDeliveryEntity(state, delivery, ship, scout, targetSystemId);
+    let fleetId = assignment.fleetId ?? previousFleetId;
+    if (drone && !fleetId) {
+      if (delivery.packaging?.mode === 'reinforce') {
+        const candidate = delivery.packaging.fleetId ?? delivery.rally?.fleetId ?? null;
+        if (candidate && findBattleGroup(state, candidate)) fleetId = candidate;
+      } else if (['single_fleet', 'new_fleets'].includes(delivery.packaging?.mode)) {
+        fleetId = existingDeliveryFleet(state, delivery);
+      }
+    }
+    if (drone && fleetId) {
+      drone.status = 'embarked';
+      drone.systemId = null;
+      drone.transit = null;
+      drone.targetSystemId = null;
+      drone.assignedFleetId = fleetId;
+      setBulkDeliveryStatus(state, delivery.id, 'delivered', { assignedFleetId: fleetId });
+      events.push({
+        type: 'bulk_delivery_complete',
+        deliveryId: delivery.id,
+        droneId: drone.id,
+        fleetId,
+        systemId: null,
+      });
+      continue;
+    }
+    const targetSystemId = rallyTarget(state, delivery, ship ?? drone, fleetId);
+    const routed = routeDeliveryEntity(state, delivery, ship, scout, drone, targetSystemId);
     if (!routed.ok) {
       if (delivery.status !== 'blocked' || delivery.blockedReason !== routed.reason) {
         setBulkDeliveryStatus(state, delivery.id, 'blocked', {
@@ -140,7 +181,8 @@ export function tickBulkDeliveries(state) {
     }
 
     const arrived = routed.arrived
-      || (!ship?.transit && !scout?.transit && (ship?.systemId ?? scout?.systemId) === targetSystemId);
+      || (!ship?.transit && !scout?.transit && !drone?.transit
+        && (ship?.systemId ?? scout?.systemId ?? drone?.systemId) === targetSystemId);
     const nextStatus = arrived ? 'delivered' : 'in_transit';
     if (delivery.status !== nextStatus || previousFleetId !== fleetId) {
       setBulkDeliveryStatus(state, delivery.id, nextStatus, {
@@ -152,6 +194,7 @@ export function tickBulkDeliveries(state) {
         deliveryId: delivery.id,
         shipId: delivery.shipId,
         scoutId: delivery.scoutId,
+        droneId: delivery.droneId,
         fleetId,
         systemId: routed.systemId ?? targetSystemId ?? null,
       });
@@ -159,4 +202,3 @@ export function tickBulkDeliveries(state) {
   }
   return events;
 }
-

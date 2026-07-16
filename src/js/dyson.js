@@ -42,6 +42,7 @@ import { allocateStructureId } from './economy.js';
 import { getSystems } from './galaxy-scope.js';
 import { sailShuttleLauncherArrivals } from './sail-shuttles.js';
 import { flagshipInSystem } from './flagship-presence.js';
+import { stellarSolariiMultiplier } from './star-types.js';
 import {
   hasPendingJob,
   queueConstructionJob,
@@ -266,6 +267,7 @@ export function solariiPerSecond(state) {
     const mult = SOLARII_SHELL_MULTIPLIERS[shells] ?? 0;
     let rate = SOLARII_BASE_RATE * mult
       * persistentSolariiMultiplier(state, system, galaxyId, active)
+      * stellarSolariiMultiplier(system.star)
       * effects.solariiIncomeMult
       * effects.dysonOutputMult;
     if (effects.dysonShellBonus) rate *= 1.08;
@@ -298,6 +300,7 @@ export function solariiPerSecondInSystem(state, systemId) {
   let rate = SOLARII_BASE_RATE
     * (SOLARII_SHELL_MULTIPLIERS[shells] ?? 0)
     * structureSolariiIncomeMultiplier(state, systemId)
+    * stellarSolariiMultiplier(system.star)
     * effects.solariiIncomeMult
     * effects.dysonOutputMult;
   if (effects.dysonShellBonus) rate *= 1.08;

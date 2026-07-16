@@ -9,7 +9,7 @@ import {
   RESEARCH_STATION_CAP,
 } from './constants.js';
 import { BLACK_HOLE_ID } from './galaxy.js';
-import { getSystems } from './galaxy-scope.js';
+import { getSystems, getGalaxyIntel } from './galaxy-scope.js';
 import {
   systemById,
   findPlanet,
@@ -24,7 +24,7 @@ import {
 } from './state.js';
 import { allocateStructureId } from './economy.js';
 import { forceShellProgress } from './dyson.js';
-import { hasIntel } from './intel.js';
+import { hasIntel, invalidateIntelCache } from './intel.js';
 import { advance } from './simulation.js';
 import { setBattleStance, setCombatDoctrine, checkBattleTrigger } from './combat.js';
 import { COMBAT_DOCTRINES } from './combat-doctrine.js';
@@ -331,18 +331,35 @@ export function devRevealIntel(state, systemId) {
   const check = devValidateSystem(state, systemId);
   if (!check.ok) return check;
   if (!hasIntel(state, systemId)) {
-    state.intel[systemId] = { gatheredAt: state.time };
+    getGalaxyIntel(state)[systemId] = { gatheredAt: state.time };
+    invalidateIntelCache(state);
   }
   return ok({ systemId, hasIntel: true });
 }
 
 export function devRevealAllIntel(state) {
-  let count = 0;
-  for (const systemId of Object.keys(getSystems(state))) {
-    const res = devRevealIntel(state, systemId);
-    if (res.ok) count++;
+  let systems = 0;
+  let galaxies = 0;
+  let wormholes = 0;
+  for (const [galaxyId, galaxy] of Object.entries(state.galaxies ?? {})) {
+    galaxy.intel ??= {};
+    const nodes = [...(galaxy.graph?.stars ?? [])];
+    if (galaxy.graph?.blackHole) nodes.push(galaxy.graph.blackHole);
+    for (const node of nodes) {
+      galaxy.intel[node.id] = galaxy.intel[node.id] ?? { gatheredAt: state.time, source: 'dev-reveal-all' };
+      systems++;
+    }
+    galaxy.discovered = true;
+    if (galaxy.abstract) galaxy.abstract.intel = { ...galaxy.intel };
+    galaxies++;
+    const wormhole = state.wormholes?.[`wh-${galaxyId}`];
+    if (wormhole) {
+      wormhole.discovered = true;
+      wormholes++;
+    }
   }
-  return ok({ systems: count });
+  invalidateIntelCache(state);
+  return ok({ systems, galaxies, wormholes });
 }
 
 export function devAdvanceTime(state, ms) {

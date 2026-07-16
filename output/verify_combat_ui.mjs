@@ -113,6 +113,7 @@ check('H6 combat-command-panel hidden', hudDom.commandPanelHidden);
 await page.screenshot({ path: path.join(OUT_DIR, 'combat-ui-idle.png'), fullPage: true });
 
 const selection = await page.evaluate(() => {
+  window.__setAdvancedTactics(true);
   const battle = window.__getBattleState();
   const friendlies = (battle?.units ?? []).filter((u) => u.side === 'player' && u.hp > 0);
   const ids = friendlies.slice(0, 2).map((u) => u.id);
