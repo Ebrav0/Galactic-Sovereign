@@ -1,6 +1,6 @@
 node_modules/
 dist/
 release/
-output/web-game/
+output/
 .DS_Store
 *.log
