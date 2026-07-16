@@ -326,6 +326,7 @@ let selectedBuilderDroneId = null;
 let galaxyTargetStarId = null;
 let followedConvoyId = null;
 let combatSelectionIds = [];
+let combatMarquee = null;
 let combatCommandMode = null;
 
 const COMBAT_SELECTION_CAP = 24;
@@ -386,6 +387,41 @@ function doSetCombatSelection(ids = []) {
     .slice(0, COMBAT_SELECTION_CAP);
   pruneCombatSelection();
   return combatSelectionIds;
+}
+
+function doSelectCombatUnitsInWorldRect(minX, minY, maxX, maxY, { additive = false } = {}) {
+  const battle = getBattleState(state, viewedSystemId);
+  if (!battle?.active || battle.mode !== 'tactical') return combatSelectionIds;
+  const left = Math.min(minX, maxX);
+  const right = Math.max(minX, maxX);
+  const top = Math.min(minY, maxY);
+  const bottom = Math.max(minY, maxY);
+  const hits = (battle.units ?? [])
+    .filter((unit) => unit.side === 'player' && unit.hp > 0
+      && unit.x >= left && unit.x <= right && unit.y >= top && unit.y <= bottom)
+    .map((unit) => String(unit.id));
+  if (!hits.length) {
+    if (!additive) doClearCombatSelection();
+    return combatSelectionIds;
+  }
+  if (additive) {
+    const merged = [...new Set([...combatSelectionIds, ...hits])];
+    if (merged.length > COMBAT_SELECTION_CAP) toast('Selection capped at 24 ships', 'error');
+    return doSetCombatSelection(merged);
+  }
+  return doSetCombatSelection(hits);
+}
+
+function doSetCombatMarquee(rect = null) {
+  combatMarquee = rect && Number.isFinite(rect.x0) && Number.isFinite(rect.y0)
+    ? {
+      x0: rect.x0,
+      y0: rect.y0,
+      x1: Number.isFinite(rect.x1) ? rect.x1 : rect.x0,
+      y1: Number.isFinite(rect.y1) ? rect.y1 : rect.y0,
+    }
+    : null;
+  return combatMarquee;
 }
 
 function doCombatFocus(targetId) {
@@ -465,6 +501,7 @@ function combatOverlayForRender() {
     selectionIds: [...combatSelectionIds],
     focusTargetId: summary?.focusTargetId ?? null,
     commandMode: combatCommandMode,
+    marquee: combatMarquee,
   };
 }
 
@@ -957,7 +994,7 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
     return { ok: false, reason: 'No controllable tactical battle is active' };
   }
   if (battle.advancedTactics !== true && order?.type !== 'emergency_retreat') {
-    return { ok: false, reason: 'Enable Advanced Tactics to issue individual orders' };
+    return { ok: false, reason: 'Enable Command Assist to issue individual orders' };
   }
   const allPlayerUnits = battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0);
   const liveIds = new Set(allPlayerUnits.map((unit) => String(unit.id)));
@@ -1173,6 +1210,8 @@ attachInput(canvas, {
   onCombatContextCommand: doCombatContextCommand,
   onCombatCancelCommand: () => doSetCombatCommandMode(null),
   onCombatClearSelection: doClearCombatSelection,
+  onCombatMarqueeSelect: doSelectCombatUnitsInWorldRect,
+  onCombatMarquee: doSetCombatMarquee,
   combatUiActive,
   onCloseSidePanel: closeSidePanel,
   onTogglePause: doTogglePause,

@@ -260,8 +260,13 @@ export function weaponDamageMultiplier(attacker, target, state = null) {
   const profile = weaponProfile(profileId);
   const cls = targetClass(target);
   let mult = 1;
-  if (cls === 'fighter') mult *= profile.antiFighter ?? 1;
-  else if (cls === 'capital') mult *= profile.antiCapital ?? 1;
+  if (cls === 'fighter') {
+    mult *= profile.antiFighter ?? 1;
+    // PD / interceptors melt bombers harder than other strike craft.
+    if (target?.hull === 'bomber' && profile.antiBomber != null) {
+      mult *= profile.antiBomber;
+    }
+  } else if (cls === 'capital') mult *= profile.antiCapital ?? 1;
   else if (cls === 'structure') mult *= profile.structure ?? 1;
 
   if (state) {

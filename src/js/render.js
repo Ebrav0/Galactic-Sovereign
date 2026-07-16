@@ -109,7 +109,7 @@ import {
   unitShieldTotals,
 } from './ship-sprites.js';
 import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
-import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache } from './ship-motion.js';
+import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache, starKeepOutOuterRadius } from './ship-motion.js';
 import { builderDroneTransitPositions, builderDroneBuildPose } from './builder-drones.js';
 import { drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
 import { activeFleetOrders, weaponArcRadians, weaponMountBearing } from './combat-orders.js';
@@ -1351,24 +1351,55 @@ function drawHitFeedbackOverlay(ctx, x, y, baseR, unit, feedback, z) {
   }
 }
 
+function drawCombatMarquee(ctx, marquee, canvas, z) {
+  if (!marquee) return;
+  const a = worldToScreen(camera, marquee.x0, marquee.y0, canvas);
+  const b = worldToScreen(camera, marquee.x1, marquee.y1, canvas);
+  const left = Math.min(a.x, b.x);
+  const top = Math.min(a.y, b.y);
+  const width = Math.abs(b.x - a.x);
+  const height = Math.abs(b.y - a.y);
+  if (width < 2 && height < 2) return;
+  ctx.save();
+  ctx.fillStyle = 'rgba(111, 214, 255, 0.08)';
+  ctx.strokeStyle = 'rgba(111, 214, 255, 0.85)';
+  ctx.lineWidth = Math.max(1, 1.25 * z);
+  ctx.setLineDash([Math.max(4, 6 * z), Math.max(3, 4 * z)]);
+  ctx.fillRect(left, top, width, height);
+  ctx.strokeRect(left, top, width, height);
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function drawBattleEnvelope(ctx, battle, canvas, z, time) {
-  if (!battle?.units?.length) return;
-  let x = 0;
-  let y = 0;
-  let n = 0;
-  for (const unit of battle.units) {
-    if (unit.hp <= 0) continue;
-    x += unit.x;
-    y += unit.y;
-    n++;
+  const engagement = battle?.engagement;
+  let centerWorld;
+  let radiusWorld;
+  if (engagement?.center && Number.isFinite(engagement.radius)) {
+    centerWorld = engagement.center;
+    radiusWorld = engagement.radius;
+  } else {
+    if (!battle?.units?.length) return;
+    let x = 0;
+    let y = 0;
+    let n = 0;
+    for (const unit of battle.units) {
+      if (unit.hp <= 0) continue;
+      x += unit.x;
+      y += unit.y;
+      n++;
+    }
+    if (!n) return;
+    centerWorld = { x: x / n, y: y / n };
+    radiusWorld = Math.max(190, Math.min(720, Math.sqrt(n) * 64));
   }
-  if (!n) return;
-  const center = worldToScreen(camera, x / n, y / n, canvas);
-  const radius = Math.max(190, Math.min(720, Math.sqrt(n) * 64)) * z;
+
+  const center = worldToScreen(camera, centerWorld.x, centerWorld.y, canvas);
+  const radius = radiusWorld * z;
   const pulse = 0.45 + 0.28 * Math.sin(time / 640);
 
   ctx.save();
-  ctx.strokeStyle = `rgba(255, 111, 125, ${0.2 + pulse * 0.2})`;
+  ctx.strokeStyle = `rgba(255, 111, 125, ${0.22 + pulse * 0.2})`;
   ctx.lineWidth = Math.max(1, 1.5 * z);
   ctx.setLineDash([Math.max(7, 12 * z), Math.max(5, 8 * z)]);
   ctx.beginPath();
@@ -1383,6 +1414,79 @@ function drawBattleEnvelope(ctx, battle, canvas, z, time) {
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius * 1.35, 0, Math.PI * 2);
   ctx.fill();
+
+  // Battle front: dashed segment between fleet anchors, perpendicular to engagement facing.
+  if (engagement?.playerAnchor && engagement?.enemyAnchor) {
+    const a = worldToScreen(camera, engagement.playerAnchor.x, engagement.playerAnchor.y, canvas);
+    const b = worldToScreen(camera, engagement.enemyAnchor.x, engagement.enemyAnchor.y, canvas);
+    const midX = (a.x + b.x) * 0.5;
+    const midY = (a.y + b.y) * 0.5;
+    const facing = engagement.facing ?? Math.atan2(
+      engagement.enemyAnchor.y - engagement.playerAnchor.y,
+      engagement.enemyAnchor.x - engagement.playerAnchor.x,
+    );
+    const half = Math.max(40, Math.min(radius * 0.55, 220 * z));
+    const px = -Math.sin(facing);
+    const py = Math.cos(facing);
+    ctx.strokeStyle = `rgba(255, 196, 120, ${0.45 + pulse * 0.25})`;
+    ctx.lineWidth = Math.max(1.2, 2 * z);
+    ctx.setLineDash([Math.max(6, 10 * z), Math.max(4, 6 * z)]);
+    ctx.beginPath();
+    ctx.moveTo(midX - px * half, midY - py * half);
+    ctx.lineTo(midX + px * half, midY + py * half);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Light tick marks toward each fleet.
+    ctx.strokeStyle = 'rgba(111, 214, 255, 0.35)';
+    ctx.beginPath();
+    ctx.moveTo(midX, midY);
+    ctx.lineTo(a.x, a.y);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255, 120, 110, 0.35)';
+    ctx.beginPath();
+    ctx.moveTo(midX, midY);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCombatKeepOutTint(ctx, system, canvas, z, time) {
+  if (!system) return;
+  const bodyCache = buildKeepOutBodyCache(system, time);
+  ctx.save();
+  // Soft star keep-out corona.
+  const starOuter = starKeepOutOuterRadius(system);
+  const starScreen = worldToScreen(camera, 0, 0, canvas);
+  const starR = starOuter * z;
+  const starGlow = ctx.createRadialGradient(starScreen.x, starScreen.y, starR * 0.55, starScreen.x, starScreen.y, starR);
+  starGlow.addColorStop(0, 'rgba(255, 180, 90, 0)');
+  starGlow.addColorStop(0.72, 'rgba(255, 140, 70, 0.04)');
+  starGlow.addColorStop(1, 'rgba(255, 120, 60, 0.11)');
+  ctx.fillStyle = starGlow;
+  ctx.beginPath();
+  ctx.arc(starScreen.x, starScreen.y, starR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 160, 90, 0.18)';
+  ctx.lineWidth = Math.max(1, z);
+  ctx.setLineDash([Math.max(5, 8 * z), Math.max(4, 6 * z)]);
+  ctx.beginPath();
+  ctx.arc(starScreen.x, starScreen.y, starR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  for (const body of bodyCache) {
+    const p = worldToScreen(camera, body.x, body.y, canvas);
+    if (!screenInView(p, canvas, body.keep * z + 40)) continue;
+    const r = body.keep * z;
+    ctx.strokeStyle = 'rgba(140, 190, 255, 0.14)';
+    ctx.lineWidth = Math.max(1, 0.9 * z);
+    ctx.setLineDash([Math.max(3, 5 * z), Math.max(3, 5 * z)]);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   ctx.restore();
 }
 
@@ -1493,6 +1597,19 @@ function drawCombatLayer(
   const focusTargetId = combatOverlay?.focusTargetId
     ?? battle?.uiFocusTargetId
     ?? null;
+  const arcSubjectIds = new Set(selectionIds);
+  if (battle?.active) {
+    for (const order of activeFleetOrders(battle, 'player')) {
+      if (order.type !== 'focus_fire' || order.autonomous) continue;
+      if (!order.subjectIds?.length) {
+        for (const unit of battle.units ?? []) {
+          if (unit.side === 'player' && unit.hp > 0) arcSubjectIds.add(String(unit.id));
+        }
+      } else {
+        for (const id of order.subjectIds) arcSubjectIds.add(String(id));
+      }
+    }
+  }
 
   if (battle?.active && battle.units?.length) {
     const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
@@ -1505,8 +1622,10 @@ function drawCombatLayer(
       headingById.set(unit.id, pose.heading);
     }
     const feedback = hitFeedbackByTarget(battle, time);
+    drawCombatKeepOutTint(ctx, system, canvas, z, time);
     drawBattleEnvelope(ctx, battle, canvas, z, time);
     drawCombatMoveOrders(ctx, battle, selectionIds, canvas, z, poseById);
+    drawCombatMarquee(ctx, combatOverlay?.marquee, canvas, z);
     drawCombatFx({
       ctx,
       battle,
@@ -1550,6 +1669,8 @@ function drawCombatLayer(
         ctx.arc(p.x, p.y, shipR + 8 * z, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
+      }
+      if (selected || arcSubjectIds.has(String(unit.id))) {
         drawWeaponArcIndicator(ctx, p, { ...unit, heading: pose.heading }, shipR, z);
       }
       if (isFocus) {

@@ -19,6 +19,11 @@ import {
 import { planetPosition, moonPosition, hashSeed } from './state.js';
 import { getStarVisualProfile } from './star-types.js';
 import { postBattleReturnPose, stationedShipPose } from './fleets.js';
+import {
+  fleetFollowCohort,
+  fleetFollowHome,
+  fleetFollowOffset,
+} from './battle-groups.js';
 
 function motionSeed(key) {
   return (hashSeed(0x9a1b2c3d, key) % 10000) / 10000;
@@ -165,17 +170,60 @@ export function softKeepOut(state, system, x, y, passes = 10, time = state.time,
   return { x: px, y: py };
 }
 
-export function ambientShipPose(state, system, ship, idx, total, time = state.time, bodyCache = null) {
+/**
+ * World pose for a stationed player ship: follow flagship/hero when co-located,
+ * otherwise classic star/planet station orbit.
+ */
+export function playerShipWorldPose(
+  state,
+  system,
+  ship,
+  idx,
+  total,
+  time = state.time,
+  bodyCache = null,
+  { patrolScale = 1 } = {},
+) {
+  const systemId = system?.id ?? ship?.systemId;
+  const home = fleetFollowHome(state, ship, systemId);
+  if (home) {
+    const cohort = fleetFollowCohort(state, home.homeId, systemId);
+    const followIdx = Math.max(0, cohort.findIndex((entry) => String(entry.id) === String(ship.id)));
+    const cohortTotal = Math.max(1, cohort.length || total || 1);
+    const offset = fleetFollowOffset(
+      followIdx >= 0 ? followIdx : idx,
+      cohortTotal,
+      home.heading,
+    );
+    const patrol = patrolScale > 0 ? patrolOffset(time, ship.id, 0.32 * patrolScale) : { cx: 0, cy: 0 };
+    const rawTarget = {
+      x: home.x + offset.x + (patrol.cx ?? 0),
+      y: home.y + offset.y + (patrol.cy ?? 0),
+      heading: home.heading,
+    };
+    const base = postBattleReturnPose(ship, rawTarget, time);
+    const safe = softKeepOut(state, system, base.x, base.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
+    return {
+      x: safe.x,
+      y: safe.y,
+      heading: Number.isFinite(base.heading) ? base.heading : home.heading,
+      following: home.kind,
+    };
+  }
+
   const base = stationedShipPose(state, system, ship, idx, total, time);
-  const patrol = patrolOffset(time, ship.id, 1);
+  const patrol = patrolScale > 0 ? patrolOffset(time, ship.id, patrolScale) : { cx: 0, cy: 0, heading: base.heading };
   const raw = {
-    x: base.x + patrol.cx,
-    y: base.y + patrol.cy,
-    heading: patrol.heading,
+    x: base.x + (patrol.cx ?? 0),
+    y: base.y + (patrol.cy ?? 0),
+    heading: patrol.heading ?? base.heading,
   };
   const safe = softKeepOut(state, system, raw.x, raw.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
-  // Keep analytical patrol heading — second keep-out look-ahead was doubling work and jittering.
   return { x: safe.x, y: safe.y, heading: raw.heading };
+}
+
+export function ambientShipPose(state, system, ship, idx, total, time = state.time, bodyCache = null) {
+  return playerShipWorldPose(state, system, ship, idx, total, time, bodyCache, { patrolScale: 1 });
 }
 
 export function pirateStationPose(state, system, idx, total) {

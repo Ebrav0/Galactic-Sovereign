@@ -18,7 +18,7 @@ export const DEFAULT_COMBAT_SETTINGS = Object.freeze({
   controlMode: 'command',
   fleetPriority: 'auto',
   flagshipAutopilot: true,
-  advancedTactics: false,
+  advancedTactics: true,
   retreatPolicy: 'doctrine',
 });
 
@@ -66,7 +66,7 @@ export function normalizeCombatSettings(value = {}) {
     controlMode: value?.controlMode === 'command' ? 'command' : DEFAULT_COMBAT_SETTINGS.controlMode,
     fleetPriority: priority,
     flagshipAutopilot: value?.flagshipAutopilot !== false,
-    advancedTactics: value?.advancedTactics === true,
+    advancedTactics: value?.advancedTactics !== false,
     retreatPolicy: value?.retreatPolicy === 'doctrine' ? 'doctrine' : DEFAULT_COMBAT_SETTINGS.retreatPolicy,
   };
 }
@@ -134,7 +134,14 @@ export function autonomousTargetClass(state, battle, unit, hostiles = []) {
     return settings.fleetPriority;
   }
 
-  // Interceptors screen hostile strike craft first, then join the main strike.
+  // Bombers dive capitals, then carriers — especially under carrier_strike.
+  if (unit?.hull === 'bomber') {
+    if (hasTargetClass(hostiles, 'capital')) return 'capital';
+    if (hasTargetClass(hostiles, 'carrier')) return 'carrier';
+    if (doctrine === 'carrier_strike' && hasTargetClass(hostiles, 'carrier')) return 'carrier';
+  }
+
+  // Interceptors screen hostile strike craft first (bombers preferred in order pick).
   if (unit?.hull === 'interceptor' && hasTargetClass(hostiles, 'fighter')) return 'fighter';
 
   const preferred = doctrinePolicy(doctrine).defaultTargetClass;
@@ -149,10 +156,25 @@ export function autonomousTargetClass(state, battle, unit, hostiles = []) {
 export function autonomousTargetOrder(state, battle, unit, hostiles = []) {
   if (explicitDirectiveForUnit(battle, unit)) return null;
   const targetClass = autonomousTargetClass(state, battle, unit, hostiles);
-  const fleetTarget = hostiles
+  let candidates = hostiles
     .filter((target) => target?.hp > 0 && !target.escaped && !target.recovered
-      && (!targetClass || classifyCombatTarget(target) === targetClass))
-    .sort((a, b) => String(a.id).localeCompare(String(b.id)))[0] ?? null;
+      && (!targetClass || classifyCombatTarget(target) === targetClass));
+  if (unit?.hull === 'interceptor') {
+    candidates = candidates.slice().sort((a, b) => {
+      const aBomber = a.hull === 'bomber' ? 0 : 1;
+      const bBomber = b.hull === 'bomber' ? 0 : 1;
+      return aBomber - bBomber || String(a.id).localeCompare(String(b.id));
+    });
+  } else if (unit?.hull === 'bomber' && normalizeDoctrine(battle?.doctrine ?? state?.combatDoctrine) === 'carrier_strike') {
+    candidates = candidates.slice().sort((a, b) => {
+      const rank = (t) => (classifyCombatTarget(t) === 'capital' ? 0
+        : classifyCombatTarget(t) === 'carrier' ? 1 : 2);
+      return rank(a) - rank(b) || String(a.id).localeCompare(String(b.id));
+    });
+  } else {
+    candidates = candidates.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  }
+  const fleetTarget = candidates[0] ?? null;
   return fleetTarget ? {
     type: 'focus_fire',
     side: unit.side,
@@ -198,7 +220,16 @@ function unitIntent(state, battle, unit, hostiles) {
   if (combatRole(unit) === 'carrier' || (unit.hull === 'flagship' && doctrine === 'carrier_strike')) {
     return 'maintain_range';
   }
-  if (doctrine === 'screen' && ['escort', 'line'].includes(combatRole(unit))) return 'screen';
+  const role = combatRole(unit);
+  if (['escort', 'line'].includes(role)) {
+    const hasWard = (battle?.units ?? []).some((candidate) => (
+      candidate.side === unit.side
+      && candidate.hp > 0
+      && candidate.id !== unit.id
+      && ['capital', 'carrier'].includes(combatRole(candidate))
+    ));
+    if (doctrine === 'screen' || hasWard) return 'screen';
+  }
   if (doctrine === 'hold_the_line') return 'hold';
   return hostiles.length ? 'engage' : 'hold';
 }

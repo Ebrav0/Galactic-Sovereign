@@ -523,7 +523,7 @@ export function createNewGame(seed) {
       controlMode: 'command',
       fleetPriority: 'auto',
       flagshipAutopilot: true,
-      advancedTactics: false,
+      advancedTactics: true,
       retreatPolicy: 'doctrine',
     },
     solarii: 0,

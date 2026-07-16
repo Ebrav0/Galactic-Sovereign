@@ -157,9 +157,9 @@ export const FLAGSHIP_WEAPON_SUITE = [
 ];
 
 export const WEAPON_PROFILES = {
-  point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 2.8, antiCapital: 0.55, structure: 0.35 },
+  point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 3.2, antiCapital: 0.45, antiBomber: 1.35, structure: 0.35 },
   kinetic: { label: 'Kinetic Batteries', range: 280, cooldownMs: 760, antiFighter: 0.85, antiCapital: 1.0, structure: 0.9 },
-  torpedo: { label: 'Torpedo Bays', range: 340, cooldownMs: 1100, antiFighter: 0.25, antiCapital: 1.65, structure: 1.7 },
+  torpedo: { label: 'Torpedo Bays', range: 340, cooldownMs: 1100, antiFighter: 0.25, antiCapital: 2.1, structure: 1.7 },
   beam_lance: { label: 'Beam Lance', range: 360, cooldownMs: 980, antiFighter: 0.7, antiCapital: 1.35, structure: 1.15 },
   ion: { label: 'Ion Disruptor', range: 300, cooldownMs: 900, antiFighter: 1.25, antiCapital: 1.45, structure: 0.75, disrupt: 0.28 },
   repair: { label: 'Repair Drones', range: 230, cooldownMs: 600, antiFighter: 0, antiCapital: 0, structure: 0 },
@@ -250,7 +250,7 @@ export const TACTICAL_APPROACH_BAND = 0.92;      // thrust toward target when di
 export const TACTICAL_BATTLE_LINE_DISCIPLINE_MIN = 0.5; // auto soft battle-line if discipline >= this
 export const TACTICAL_FORMATION_BASE_SPACING = 34;
 export const TACTICAL_CAPITAL_SLOT_HOLD_DIST = 18; // below → station-keeping thrust
-export const TACTICAL_CAPITAL_LINE_ADVANCE = 0.45; // base thrust when creeping into slot
+export const TACTICAL_CAPITAL_LINE_ADVANCE = 0.32; // base thrust when creeping into slot
 export const TACTICAL_BATTLE_RADIUS = 900;
 export const TACTICAL_LARGE_BATTLE_UNITS = 72;
 export const TACTICAL_SWARM_BATTLE_UNITS = 150;
@@ -269,20 +269,20 @@ export const TACTICAL_MOTION_TIERS = Object.freeze({
     formationDiscipline: 0.05, chaseFreedom: 1.00, formationSpacingMult: 0.48,
   }),
   escort: Object.freeze({
-    maxSpeed: 1.32, accel: 1.28, turnRate: 1.18, separation: 1.00,
-    formationDiscipline: 0.18, chaseFreedom: 0.85, formationSpacingMult: 1.00,
+    maxSpeed: 1.38, accel: 1.35, turnRate: 1.28, separation: 1.00,
+    formationDiscipline: 0.14, chaseFreedom: 0.95, formationSpacingMult: 1.00,
   }),
   line: Object.freeze({
     maxSpeed: 0.98, accel: 0.88, turnRate: 0.76, separation: 1.30,
     formationDiscipline: 0.55, chaseFreedom: 0.45, formationSpacingMult: 1.30,
   }),
   capital: Object.freeze({
-    maxSpeed: 0.72, accel: 0.62, turnRate: 0.50, separation: 1.85,
-    formationDiscipline: 0.88, chaseFreedom: 0.20, formationSpacingMult: 1.85,
+    maxSpeed: 0.56, accel: 0.48, turnRate: 0.36, separation: 1.95,
+    formationDiscipline: 0.95, chaseFreedom: 0.08, formationSpacingMult: 1.95,
   }),
   carrier: Object.freeze({
-    maxSpeed: 0.74, accel: 0.60, turnRate: 0.48, separation: 2.00,
-    formationDiscipline: 0.90, chaseFreedom: 0.15, formationSpacingMult: 2.00,
+    maxSpeed: 0.58, accel: 0.46, turnRate: 0.34, separation: 2.10,
+    formationDiscipline: 0.96, chaseFreedom: 0.08, formationSpacingMult: 2.10,
   }),
 });
 
@@ -714,8 +714,10 @@ export const BATTLE_TRACER_LIMIT = 96;
 export const BATTLE_FX_EVENT_CAP = 384;
 export const BATTLE_FX_DRAW_LIMIT = 96;
 export const BATTLE_FX_SWARM_DRAW_LIMIT = 48;
-export const BATTLE_FX_HIT_FEEDBACK_MS = 120;
-export const BATTLE_FX_KILL_MS = 250;
+export const BATTLE_FX_HIT_FEEDBACK_MS = 160;
+export const BATTLE_FX_KILL_MS = 320;
+export const BATTLE_FX_ROLE_KILL_MS = 480;
+export const BATTLE_FX_JUMP_IN_MS = 900;
 export const BATTLE_FX_DURATIONS = {
   kinetic: 160,
   point_defense: 120,
@@ -723,8 +725,9 @@ export const BATTLE_FX_DURATIONS = {
   beam_lance: 220,
   ion: 200,
   repair: 280,
-  kill: 250,
+  kill: 320,
   lod_pulse: 140,
+  jump_in: 900,
 };
 export const STAR_BLOOM_SCALE = 1.0;           // bloom FBO resolution fraction (full res avoids blocky upscale)
 export const STAR_BLOOM_THRESHOLD = 0.38;      // luminance threshold for HDR bloom

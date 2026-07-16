@@ -8,11 +8,9 @@ import {
   TACTICAL_SHIP_DRAG,
   TACTICAL_TURN_RATE,
   TACTICAL_SEPARATION_RADIUS,
-  TACTICAL_SEPARATION_STRENGTH,
   TACTICAL_TARGET_STICK_MS,
   TACTICAL_MOTION_TIERS,
   TACTICAL_MOTION_HULL_TIER,
-  TACTICAL_SPATIAL_CELL,
   TACTICAL_FORMATION_BASE_SPACING,
   TACTICAL_APPROACH_BAND,
   TACTICAL_CAPITAL_SLOT_HOLD_DIST,
@@ -297,96 +295,13 @@ export function separationRadiusForUnit(unit) {
   return TACTICAL_SEPARATION_RADIUS * profile.separationMult;
 }
 
-function spatialKey(x, y) {
-  return `${Math.floor(x / TACTICAL_SPATIAL_CELL)},${Math.floor(y / TACTICAL_SPATIAL_CELL)}`;
-}
-
-function neighborsForSeparation(unit, liveUnits, spatialIndex) {
-  if (!spatialIndex) return liveUnits;
-  const cx = Math.floor(unit.x / TACTICAL_SPATIAL_CELL);
-  const cy = Math.floor(unit.y / TACTICAL_SPATIAL_CELL);
-  const out = [];
-  for (let gx = cx - 1; gx <= cx + 1; gx++) {
-    for (let gy = cy - 1; gy <= cy + 1; gy++) {
-      const cell = spatialIndex.get(`${gx},${gy}`);
-      if (cell) out.push(...cell);
-    }
-  }
-  return out;
-}
-
 /**
- * Soft ship–ship separation. Structures act as static obstacles.
- * Flagship combat units (skipIds) are not pushed but still repel others.
+ * Soft ship–ship separation (disabled).
+ * Call sites remain for a possible future toggle; celestial keep-outs still apply
+ * via softKeepOut / nudgeUnitKeepOut.
  */
-export function applyShipSeparation(liveUnits, opts = {}) {
-  const dt = Math.max(0, opts.dt ?? 0);
-  if (dt <= 0 || !liveUnits?.length) return;
-  const strength = opts.strength ?? TACTICAL_SEPARATION_STRENGTH;
-  const skipIds = opts.skipIds instanceof Set ? opts.skipIds : new Set(opts.skipIds ?? []);
-  const getRadius = opts.getRadius ?? separationRadiusForUnit;
-  const spatialIndex = opts.spatialIndex ?? null;
-  const useIndex = spatialIndex || liveUnits.length >= 40;
-
-  let index = spatialIndex;
-  if (useIndex && !index) {
-    index = new Map();
-    for (const unit of liveUnits) {
-      if (!unit || unit.hp <= 0) continue;
-      const key = spatialKey(unit.x, unit.y);
-      const list = index.get(key) ?? [];
-      list.push(unit);
-      index.set(key, list);
-    }
-  }
-
-  for (const unit of liveUnits) {
-    if (!unit || unit.hp <= 0) continue;
-    if (unit.isStructure || unit.isConvoy) continue;
-    if (skipIds.has(unit.id)) continue;
-    ensureUnitMotion(unit);
-
-    const ri = getRadius(unit);
-    let ax = 0;
-    let ay = 0;
-    const neighbors = useIndex ? neighborsForSeparation(unit, liveUnits, index) : liveUnits;
-    for (const other of neighbors) {
-      if (!other || other === unit || other.hp <= 0) continue;
-      const rj = getRadius(other);
-      const R = ri + rj;
-      if (R <= 0) continue;
-      let dx = unit.x - other.x;
-      let dy = unit.y - other.y;
-      let dist = Math.hypot(dx, dy);
-      if (dist >= R) continue;
-      if (dist < 1e-4) {
-        dx = 1;
-        dy = 0;
-        dist = 1e-4;
-      }
-      const overlap = 1 - dist / R;
-      const push = overlap * overlap * strength;
-      ax += (dx / dist) * push;
-      ay += (dy / dist) * push;
-    }
-
-    if (ax === 0 && ay === 0) continue;
-    const dvx = ax * dt;
-    const dvy = ay * dt;
-    unit.vx += dvx;
-    unit.vy += dvy;
-
-    const profile = hullMotionProfile(unit.hull);
-    const maxSpeed = (opts.maxSpeedFor?.(unit) ?? (TACTICAL_SHIP_SPEED * profile.maxSpeedMult));
-    const speed = Math.hypot(unit.vx, unit.vy);
-    if (speed > maxSpeed * 1.15 && speed > 1e-8) {
-      const scale = (maxSpeed * 1.15) / speed;
-      unit.vx *= scale;
-      unit.vy *= scale;
-    }
-    unit.x += dvx;
-    unit.y += dvy;
-  }
+export function applyShipSeparation(_liveUnits, _opts = {}) {
+  // Intentionally no-op: remove ship-to-ship contact barriers.
 }
 
 /**

@@ -41,6 +41,98 @@ export function findBattleGroup(state, groupId) {
   return ensureBattleGroups(state).find((g) => g.id === groupId) ?? null;
 }
 
+/** Battle group that currently lists this ship, or null. */
+export function battleGroupForShip(state, shipId) {
+  const id = String(shipId ?? '');
+  if (!id) return null;
+  for (const group of ensureBattleGroups(state)) {
+    if ((group.shipIds ?? []).some((entry) => String(entry) === id)) return group;
+  }
+  return null;
+}
+
+/**
+ * In-system follow home for a player ship.
+ * Hero-anchored fleets stick to their hero; everyone else co-located with the
+ * player flagship forms on the flagship. Returns null → use station orbit.
+ */
+export function fleetFollowHome(state, ship, systemId = ship?.systemId) {
+  if (!ship || ship.hp <= 0 || ship.transit) return null;
+  const sid = systemId ?? ship.systemId;
+  if (!sid) return null;
+  const galaxyId = ship.galaxyId ?? state.activeGalaxyId;
+
+  const group = battleGroupForShip(state, ship.id);
+  if (group?.anchorHeroId) {
+    const hero = findHeroFlagship(state, group.anchorHeroId);
+    if (
+      hero
+      && hero.hp > 0
+      && !hero.transit
+      && hero.systemId === sid
+      && hero.galaxyId === galaxyId
+    ) {
+      return {
+        x: Number(hero.x) || 80,
+        y: Number(hero.y) || -100,
+        heading: Number.isFinite(hero.heading) ? hero.heading : 0,
+        kind: 'hero',
+        homeId: String(hero.id),
+      };
+    }
+    return null;
+  }
+
+  const flagship = state.flagship;
+  if (
+    flagship
+    && !flagship.transit
+    && !flagship.wormholeTransit
+    && flagship.systemId === sid
+    && flagship.galaxyId === galaxyId
+  ) {
+    return {
+      x: Number(flagship.x) || 0,
+      y: Number(flagship.y) || 0,
+      heading: Number.isFinite(flagship.heading) ? flagship.heading : 0,
+      kind: 'flagship',
+      homeId: 'flagship',
+    };
+  }
+  return null;
+}
+
+/** Stable formation offset behind a follow home (world delta). */
+export function fleetFollowOffset(idx, total, heading = 0) {
+  const n = Math.max(1, total);
+  const i = Math.max(0, Math.min(n - 1, idx | 0));
+  const cols = Math.min(5, n);
+  const row = Math.floor(i / cols);
+  const col = i % cols;
+  const rowWidth = Math.min(cols, n - row * cols);
+  const localX = -(85 + row * 58);
+  const localY = (col - (rowWidth - 1) / 2) * 44;
+  const c = Math.cos(heading);
+  const s = Math.sin(heading);
+  return {
+    x: localX * c - localY * s,
+    y: localX * s + localY * c,
+  };
+}
+
+/** Ships sharing the same follow home in a system (sorted for stable slots). */
+export function fleetFollowCohort(state, homeId, systemId) {
+  if (!homeId || !systemId) return [];
+  return (state.playerShips ?? [])
+    .filter((ship) => (
+      ship.hp > 0
+      && !ship.transit
+      && ship.systemId === systemId
+      && fleetFollowHome(state, ship, systemId)?.homeId === homeId
+    ))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
 export function nextFleetOrdinal(state, galaxyId = state.activeGalaxyId) {
   const groups = ensureBattleGroups(state).filter((g) => g.galaxyId === galaxyId);
   if (groups.length === 0) return 1;

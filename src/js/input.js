@@ -39,6 +39,8 @@ export function attachInput(canvas, ctx) {
     onCombatContextCommand,
     onCombatCancelCommand,
     onCombatClearSelection,
+    onCombatMarqueeSelect,
+    onCombatMarquee,
     combatUiActive,
     onTogglePause,
     onToggleView,
@@ -72,6 +74,9 @@ export function attachInput(canvas, ctx) {
     onFlagshipInput(Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y)));
   }
 
+  let spaceHeld = false;
+  let spaceUsedForPan = false;
+
   window.addEventListener('keydown', (e) => {
     if (e.target instanceof HTMLInputElement) return;
     if (THRUST_KEYS[e.code]) {
@@ -84,7 +89,10 @@ export function attachInput(canvas, ctx) {
     }
     if (e.code === 'Space') {
       e.preventDefault();
-      onTogglePause();
+      if (!e.repeat) {
+        spaceHeld = true;
+        spaceUsedForPan = false;
+      }
     } else if (e.code === 'Escape') {
       if (getCombatCommandMode?.()) {
         e.preventDefault();
@@ -106,6 +114,12 @@ export function attachInput(canvas, ctx) {
 
   window.addEventListener('keyup', (e) => {
     if (THRUST_KEYS[e.code] && held.delete(e.code)) emitThrust();
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (spaceHeld && !spaceUsedForPan) onTogglePause();
+      spaceHeld = false;
+      spaceUsedForPan = false;
+    }
   });
 
   window.addEventListener('blur', () => {
@@ -115,15 +129,21 @@ export function attachInput(canvas, ctx) {
     }
     shiftHeld = false;
     tabHeld = false;
+    spaceHeld = false;
+    spaceUsedForPan = false;
   });
 
   let pointerDown = false;
   let dragging = false;
+  let dragMode = null; // 'pan' | 'marquee' | null
   let lastX = 0;
   let lastY = 0;
+  let downX = 0;
+  let downY = 0;
   let pendingStarClick = null;
   let shiftHeld = false;
   let tabHeld = false;
+  let marqueeAdditive = false;
 
   window.addEventListener('keydown', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = true;
@@ -137,27 +157,85 @@ export function attachInput(canvas, ctx) {
     if (e.code === 'Tab') tabHeld = false;
   });
 
+  function beginPan() {
+    dragMode = 'pan';
+    dragging = true;
+    canvas.classList.add('panning');
+    canvas.classList.remove('combat-marquee');
+    onCombatMarquee?.(null);
+  }
+
+  function applyPan(dx, dy) {
+    const cam = activeCamera();
+    cam.x -= dx / cam.zoom;
+    cam.y -= dy / cam.zoom;
+    if (getView() === 'system') follow.enabled = false;
+    if (spaceHeld) spaceUsedForPan = true;
+  }
+
+  function beginMarquee(additive) {
+    dragMode = 'marquee';
+    dragging = true;
+    marqueeAdditive = additive;
+    canvas.classList.add('combat-marquee');
+    canvas.classList.remove('panning');
+    const w0 = screenToWorld(camera, downX, downY, canvas);
+    onCombatMarquee?.({ x0: w0.x, y0: w0.y, x1: w0.x, y1: w0.y });
+  }
+
+  function updateMarquee(clientX, clientY) {
+    const w0 = screenToWorld(camera, downX, downY, canvas);
+    const w1 = screenToWorld(camera, clientX, clientY, canvas);
+    onCombatMarquee?.({ x0: w0.x, y0: w0.y, x1: w1.x, y1: w1.y });
+  }
+
   canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 1) {
+      e.preventDefault();
+      pointerDown = true;
+      dragging = false;
+      dragMode = null;
+      downX = lastX = e.clientX;
+      downY = lastY = e.clientY;
+      beginPan();
+      return;
+    }
     if (e.button !== 0) return;
     pointerDown = true;
     dragging = false;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    dragMode = null;
+    downX = lastX = e.clientX;
+    downY = lastY = e.clientY;
     shiftHeld = e.shiftKey;
     tabHeld = e.getModifierState?.('Tab') || tabHeld;
+
+    // Combat: Space+LMB starts pan immediately.
+    if (combatUiActive?.() && spaceHeld) {
+      beginPan();
+    }
   });
 
   window.addEventListener('mousemove', (e) => {
     if (pointerDown) {
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
-      if (dragging || Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
-        dragging = true;
-        const cam = activeCamera();
-        cam.x -= dx / cam.zoom;
-        cam.y -= dy / cam.zoom;
-        if (getView() === 'system') follow.enabled = false;
-        canvas.classList.add('panning');
+      const totalDx = e.clientX - downX;
+      const totalDy = e.clientY - downY;
+      const pastThreshold = Math.abs(totalDx) > DRAG_THRESHOLD_PX || Math.abs(totalDy) > DRAG_THRESHOLD_PX;
+
+      if (dragMode === 'pan') {
+        applyPan(dx, dy);
+      } else if (dragMode === 'marquee') {
+        updateMarquee(e.clientX, e.clientY);
+      } else if (pastThreshold) {
+        const inCombat = combatUiActive?.();
+        if (inCombat && !spaceHeld) {
+          beginMarquee(!!(e.shiftKey || shiftHeld));
+          updateMarquee(e.clientX, e.clientY);
+        } else {
+          beginPan();
+          applyPan(dx, dy);
+        }
       }
       lastX = e.clientX;
       lastY = e.clientY;
@@ -177,9 +255,26 @@ export function attachInput(canvas, ctx) {
 
   window.addEventListener('mouseup', (e) => {
     if (!pointerDown) return;
+    const wasDragging = dragging;
+    const mode = dragMode;
     pointerDown = false;
+    dragging = false;
+    dragMode = null;
     canvas.classList.remove('panning');
-    if (dragging) return;
+    canvas.classList.remove('combat-marquee');
+
+    if (mode === 'marquee') {
+      const w0 = screenToWorld(camera, downX, downY, canvas);
+      const w1 = screenToWorld(camera, e.clientX, e.clientY, canvas);
+      onCombatMarqueeSelect?.(w0.x, w0.y, w1.x, w1.y, { additive: marqueeAdditive });
+      onCombatMarquee?.(null);
+      return;
+    }
+
+    if (wasDragging) {
+      onCombatMarquee?.(null);
+      return;
+    }
 
     const w = screenToWorld(activeCamera(), e.clientX, e.clientY, canvas);
 
@@ -257,6 +352,10 @@ export function attachInput(canvas, ctx) {
         onStarTravel(starId);
       }, DOUBLE_CLICK_MS),
     };
+  });
+
+  canvas.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
   });
 
   canvas.addEventListener('contextmenu', (e) => {

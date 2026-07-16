@@ -7,6 +7,8 @@ import {
   BATTLE_FX_EVENT_CAP,
   BATTLE_FX_HIT_FEEDBACK_MS,
   BATTLE_FX_KILL_MS,
+  BATTLE_FX_ROLE_KILL_MS,
+  BATTLE_FX_JUMP_IN_MS,
   BATTLE_FX_SWARM_DRAW_LIMIT,
   BATTLE_RENDER_LOD_UNITS,
   BATTLE_RENDER_SWARM_UNITS,
@@ -99,6 +101,11 @@ export function emitShotFx(battle, { state, attacker, target, hit, profile } = {
   battle.shotsFiredByActor[attacker.id] = (battle.shotsFiredByActor[attacker.id] ?? 0) + 1;
   const event = pushFxEvent(battle, baseShotEvent(state, attacker, target, hit, profile));
   if (hit?.damageState === 'destroyed') {
+    const roleKill = target.hull === 'bomber' || target.isCapital
+      || ['cruiser', 'battleship', 'dreadnought', 'light_carrier', 'fleet_carrier', 'super_carrier',
+        'hero_flagship', 'flagship', 'command_cruiser'].includes(target.hull)
+      ? (target.hull === 'bomber' ? 'bomber' : 'capital')
+      : null;
     pushFxEvent(battle, {
       kind: 'kill',
       t: state.time,
@@ -114,6 +121,7 @@ export function emitShotFx(battle, { state, attacker, target, hit, profile } = {
       shieldAbsorbed: hit.shieldAbsorbed ?? 0,
       hullDamage: hit.hullDamage ?? 0,
       destroyed: true,
+      roleKill,
     });
   }
   return event;
@@ -202,8 +210,14 @@ function effectiveDpsHint(unit) {
 
 export function fxDurationMs(event) {
   if (!event) return 160;
-  if (event.kind === 'wing_launch' || event.kind === 'wing_recover') return 760;
-  if (event.kind === 'kill') return BATTLE_FX_KILL_MS;
+  if (event.kind === 'wing_launch' || event.kind === 'wing_recover') {
+    return event.stream ? 1100 : 760;
+  }
+  if (event.kind === 'jump_in') return BATTLE_FX_JUMP_IN_MS;
+  if (event.kind === 'kill') {
+    if (event.roleKill === 'capital' || event.roleKill === 'bomber') return BATTLE_FX_ROLE_KILL_MS;
+    return BATTLE_FX_KILL_MS;
+  }
   if (event.kind === 'lod_pulse') return BATTLE_FX_DURATIONS.lod_pulse;
   if (event.profile === 'beam_lance') {
     const hold = Math.min(BATTLE_FX_DURATIONS.beam_lance, (event.cooldownMs ?? TACTICAL_WEAPON_COOLDOWN_MS) * 0.35);
@@ -222,7 +236,8 @@ export function activeFxEvents(battle, time) {
 export function hitFeedbackByTarget(battle, time) {
   const map = new Map();
   for (const ev of activeFxEvents(battle, time)) {
-    if (!ev.targetId || ev.kind === 'lod_pulse') continue;
+    if (!ev.targetId || ev.kind === 'lod_pulse' || ev.kind === 'jump_in'
+      || ev.kind === 'wing_launch' || ev.kind === 'wing_recover') continue;
     if (time - ev.t > BATTLE_FX_HIT_FEEDBACK_MS && ev.kind !== 'kill') continue;
     const prev = map.get(ev.targetId);
     if (!prev || ev.t >= prev.t) {
@@ -304,10 +319,11 @@ function drawShieldArc(ctx, x, y, facing, heading, alpha, zoom) {
   ctx.stroke();
 }
 
-function drawKillBloom(ctx, x, y, age, zoom) {
-  const life = clamp01(1 - age / BATTLE_FX_KILL_MS);
+function drawKillBloom(ctx, x, y, age, zoom, durationMs = BATTLE_FX_KILL_MS) {
+  const life = clamp01(1 - age / Math.max(1, durationMs));
   if (life <= 0) return;
-  const r = Math.max(10, 28 * zoom) * (0.55 + (1 - life) * 0.9);
+  const roleScale = durationMs > BATTLE_FX_KILL_MS ? 1.25 : 1;
+  const r = Math.max(10, 28 * zoom) * (0.55 + (1 - life) * 0.9) * roleScale;
   const g = ctx.createRadialGradient(x, y, 0, x, y, r);
   g.addColorStop(0, withAlpha(THEME.battle.killBloom, 0.55 * life));
   g.addColorStop(0.45, withAlpha(THEME.battle.hullSpark, 0.28 * life));
@@ -486,22 +502,71 @@ function drawLodPulse(ctx, start, end, life, color, zoom) {
   ctx.stroke();
 }
 
+function drawJumpInCue(ctx, start, end, age, duration, life, color, zoom) {
+  const u = clamp01(age / Math.max(1, duration));
+  const x = start.x + (end.x - start.x) * u;
+  const y = start.y + (end.y - start.y) * u;
+  ctx.save();
+  ctx.strokeStyle = withAlpha(color, 0.55 * life);
+  ctx.lineWidth = Math.max(1.2, 2.2 * zoom);
+  ctx.setLineDash([Math.max(4, 6 * zoom), Math.max(3, 4 * zoom)]);
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  const r = Math.max(8, (18 + (1 - u) * 22) * zoom);
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, withAlpha(color, 0.55 * life));
+  g.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = withAlpha(color, 0.85 * life);
+  ctx.lineWidth = Math.max(1, 1.5 * zoom);
+  ctx.beginPath();
+  ctx.arc(end.x, end.y, Math.max(6, 10 * zoom) * (0.6 + u * 0.5), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawWingTransferCue(ctx, start, end, age, duration, life, color, zoom, recovering) {
   const u = clamp01(age / Math.max(1, duration));
-  const head = recovering ? end : {
-    x: start.x + (end.x - start.x) * u,
-    y: start.y + (end.y - start.y) * u,
-  };
-  const tail = recovering ? start : {
-    x: start.x + (head.x - start.x) * 0.45,
-    y: start.y + (head.y - start.y) * 0.45,
-  };
-  ctx.strokeStyle = withAlpha(color, 0.82 * life);
-  ctx.lineWidth = Math.max(1.2, 2.1 * zoom);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const segments = 5;
+  ctx.save();
+  ctx.lineCap = 'round';
+  // Continuous dashed sortie stream along the hangar→slot path.
+  ctx.setLineDash([Math.max(3, 5 * zoom), Math.max(2, 4 * zoom)]);
+  ctx.strokeStyle = withAlpha(color, 0.35 * life);
+  ctx.lineWidth = Math.max(1, 1.4 * zoom);
   ctx.beginPath();
-  ctx.moveTo(tail.x, tail.y);
-  ctx.lineTo(head.x, head.y);
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
   ctx.stroke();
+  ctx.setLineDash([]);
+
+  for (let i = 0; i < segments; i++) {
+    const segU = clamp01(u * 1.15 - i * 0.12);
+    if (segU <= 0) continue;
+    const x0 = start.x + dx * Math.max(0, segU - 0.14);
+    const y0 = start.y + dy * Math.max(0, segU - 0.14);
+    const x1 = start.x + dx * segU;
+    const y1 = start.y + dy * segU;
+    ctx.strokeStyle = withAlpha(color, (0.55 + (1 - i / segments) * 0.35) * life);
+    ctx.lineWidth = Math.max(1.2, (2.4 - i * 0.25) * zoom);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+
+  const head = recovering ? end : {
+    x: start.x + dx * u,
+    y: start.y + dy * u,
+  };
   const ringAt = recovering ? end : start;
   ctx.strokeStyle = withAlpha(color, 0.72 * life);
   ctx.lineWidth = Math.max(1, 1.4 * zoom);
@@ -509,6 +574,7 @@ function drawWingTransferCue(ctx, start, end, age, duration, life, color, zoom, 
   ctx.arc(ringAt.x, ringAt.y, Math.max(5, (7 + u * 8) * zoom), 0, Math.PI * 2);
   ctx.stroke();
   drawMuzzleSpark(ctx, head.x, head.y, color, life, zoom);
+  ctx.restore();
 }
 
 /**
@@ -562,7 +628,13 @@ export function drawCombatFx({
     const seed = hashId(ev.attackerId ?? ev.targetId);
 
     if (ev.kind === 'kill') {
-      drawKillBloom(ctx, end.x, end.y, age, zoom);
+      drawKillBloom(ctx, end.x, end.y, age, zoom, duration);
+      drawn++;
+      continue;
+    }
+
+    if (ev.kind === 'jump_in') {
+      drawJumpInCue(ctx, start, end, age, duration, life, color, zoom);
       drawn++;
       continue;
     }
@@ -585,7 +657,7 @@ export function drawCombatFx({
 
     if (mode === 'swarm' || ev.kind === 'lod_pulse') {
       drawLodPulse(ctx, start, end, life, color, zoom);
-      if (ev.destroyed) drawKillBloom(ctx, end.x, end.y, age, zoom);
+      if (ev.destroyed) drawKillBloom(ctx, end.x, end.y, age, zoom, duration);
       drawn++;
       continue;
     }

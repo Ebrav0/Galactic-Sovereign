@@ -56,7 +56,7 @@ check('v16 combat state migrates to command-first autonomy', () => {
   }));
   assert.equal(loaded.ok, true);
   assert.equal(loaded.state.combatSettings.controlMode, 'command');
-  assert.equal(loaded.state.combatSettings.advancedTactics, false);
+  assert.equal(loaded.state.combatSettings.advancedTactics, true);
   assert.equal(loaded.state.combatSettings.flagshipAutopilot, true);
   assert.equal(loaded.state.systemBattles['sys-test'].fleetPriority, 'auto');
   assert.equal(loaded.state.systemBattles['sys-test'].alertAcknowledged, false);

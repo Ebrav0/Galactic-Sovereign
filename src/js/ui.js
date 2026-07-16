@@ -814,7 +814,10 @@ function renderCombatHud(state, battle, systemName, ctx) {
 
   const advancedBtn = el('combat-hud-advanced-toggle');
   if (advancedBtn) {
-    advancedBtn.textContent = advancedTactics ? 'Advanced: On' : 'Advanced Tactics';
+    advancedBtn.textContent = advancedTactics ? 'Command Assist: On' : 'Command Assist: Off';
+    advancedBtn.title = advancedTactics
+      ? 'RTS orders enabled · turn off for pure doctrine autonomy'
+      : 'Doctrine autonomy only · turn on for select / move / focus fire';
     advancedBtn.classList.toggle('btn--active', advancedTactics);
     advancedBtn.onclick = () => {
       setAdvancedTactics?.(!advancedTactics);

@@ -45,6 +45,7 @@ html, body {
 
 #game-canvas.hover-body { cursor: pointer; }
 #game-canvas.panning { cursor: grabbing; }
+#game-canvas.combat-marquee { cursor: crosshair; }
 
 /* ===================== HUD SHELL ===================== */
 
