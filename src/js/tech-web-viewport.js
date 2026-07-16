@@ -123,9 +123,12 @@ export function attachTechWebViewport(container, svg, opts = {}) {
   viewport.addEventListener('pointerup', (e) => {
     if (!dragging && pendingNodeId) {
       const g = svg.querySelector(`.tech-web-node[data-node-id="${pendingNodeId}"]`);
+      opts.onSelectNode?.(pendingNodeId);
       if (g?.classList.contains('tech-web-node--available') && opts.onResearch) {
         opts.onResearch(pendingNodeId);
       }
+    } else if (!dragging && !pendingNodeId) {
+      opts.onSelectNode?.(null);
     }
     pointerDown = false;
     dragging = false;

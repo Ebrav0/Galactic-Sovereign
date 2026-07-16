@@ -11,6 +11,7 @@ import {
   STRUCTURE_BUILD_MS,
   TICK_MS,
 } from './constants.js';
+import { tutorialDurationMs } from './tutorial-access.js';
 import {
   systemById,
   findStructure,
@@ -325,7 +326,11 @@ export function queueConstructionJob(state, opts) {
     return { ok: false, reason: `Need ${creditCost} credits` };
   }
 
-  const workRequiredMs = durationMs ?? STRUCTURE_BUILD_MS[structureType] ?? 20000;
+  const workRequiredMs = tutorialDurationMs(
+    state,
+    durationMs ?? STRUCTURE_BUILD_MS[structureType] ?? 20000,
+    'construction',
+  );
   const structureId = allocateStructureId();
   const jobId = `job-${nextJobId++}`;
 

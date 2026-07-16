@@ -2,17 +2,23 @@
 
 import {
   TECH_NODES,
+  TECH_SPINE_IDS,
+  TECH_ID_MIGRATION,
   V13_TECH_COST_CURVE,
   V13_TECH_NODE_IDS,
   v13TechCostsForTier,
+  isSpineTech,
 } from './tech-nodes.js';
 import { refreshMilestones } from './milestones.js';
 
 export {
   TECH_NODES,
+  TECH_SPINE_IDS,
+  TECH_ID_MIGRATION,
   V13_TECH_COST_CURVE,
   V13_TECH_NODE_IDS,
   v13TechCostsForTier,
+  isSpineTech,
 };
 
 const TECH_CLUSTERS = Object.freeze([
@@ -148,6 +154,11 @@ function createDefaultTechEffects() {
     genesisMatrix: false,
     gateArray: false,
     sovereignProtocol: false,
+    sectorCapitals: false,
+    novaculaOnline: false,
+    hullRefits: {},
+    flagshipUpgrades: {},
+    swPartBlueprints: {},
     outpostIncomeMult: 1,
     creditIncomeMult: 1,
     tradeIncomeMult: 1,
@@ -205,6 +216,11 @@ function createDefaultTechEffects() {
     treatyCostMult: 1,
     treatyEffectMult: 1,
     alliedDefenseMult: 1,
+    flagshipHullStage: 0,
+    flagshipHpMult: 1,
+    flagshipDpsMult: 1,
+    flagshipSpeedMult: 1,
+    fleetHpMult: 1,
     flagshipCommandMult: 1,
     flagshipBuildSpeedMult: 1,
     flagshipJumpChargeMult: 1,
@@ -330,6 +346,32 @@ function applyLegacyEffect(effects, effect) {
       effects.heroCombatAura = true;
       effects.fleetDamageMult *= 1.05;
       break;
+    case 'industrial_output_15': effects.industrialOutputMult *= 1.15; break;
+    case 'fleet_damage_10': effects.fleetDamageMult *= 1.1; break;
+    case 'sector_capitals': effects.sectorCapitals = true; break;
+    case 'flagship_arsenal':
+      effects.weaponRangeMult *= 1.1;
+      break;
+    case 'flagship_wing_bay':
+      effects.carrierWingCapacityMult *= 1.1;
+      break;
+    case 'flagship_plate':
+      effects.defensePowerMult *= 1.05;
+      break;
+    case 'flagship_hull_frame':
+    case 'flagship_hull_drives':
+    case 'flagship_hull_arsenal':
+    case 'flagship_hull_command':
+    case 'flagship_hull_sovereign':
+      // Typed effects on Hull Forge nodes own the real multipliers.
+      break;
+    case 'cradle_power_core':
+    case 'superweapon_precision':
+    case 'sovereign_protocol':
+    case 'galactic_council':
+    case 'anchor_network':
+    case 'flagship_command_15':
+      break;
     default:
       return false;
   }
@@ -370,6 +412,30 @@ function applyEffectDescriptor(effects, descriptor) {
           descriptor.level,
         );
       }
+      break;
+    case 'hull-refit':
+      if (descriptor.hull && descriptor.refitId) {
+        effects.hullRefits[descriptor.hull] = {
+          id: descriptor.refitId,
+          label: descriptor.label ?? descriptor.refitId,
+        };
+      }
+      break;
+    case 'flagship-upgrade':
+      if (descriptor.upgradeId) {
+        effects.flagshipUpgrades[descriptor.upgradeId] = {
+          id: descriptor.upgradeId,
+          label: descriptor.label ?? descriptor.upgradeId,
+        };
+      }
+      break;
+    case 'flagship-hull-stage':
+      if (Number.isFinite(descriptor.stage)) {
+        effects.flagshipHullStage = Math.max(effects.flagshipHullStage, descriptor.stage);
+      }
+      break;
+    case 'sw-part-blueprint':
+      if (descriptor.partId) effects.swPartBlueprints[descriptor.partId] = true;
       break;
     default:
       break;
@@ -430,6 +496,25 @@ function descriptorShapeError(descriptor, defaults) {
       }
       if (!Number.isInteger(descriptor.level) || descriptor.level < 1 || descriptor.level > 3) {
         return 'structure-level-cap level must be 1, 2, or 3';
+      }
+      return null;
+    case 'hull-refit':
+      if (typeof descriptor.hull !== 'string' || !descriptor.hull) return 'hull-refit requires hull';
+      if (typeof descriptor.refitId !== 'string' || !descriptor.refitId) return 'hull-refit requires refitId';
+      return null;
+    case 'flagship-upgrade':
+      if (typeof descriptor.upgradeId !== 'string' || !descriptor.upgradeId) {
+        return 'flagship-upgrade requires upgradeId';
+      }
+      return null;
+    case 'flagship-hull-stage':
+      if (!Number.isInteger(descriptor.stage) || descriptor.stage < 1 || descriptor.stage > 5) {
+        return 'flagship-hull-stage must be an integer from 1 to 5';
+      }
+      return null;
+    case 'sw-part-blueprint':
+      if (typeof descriptor.partId !== 'string' || !descriptor.partId) {
+        return 'sw-part-blueprint requires partId';
       }
       return null;
     default:

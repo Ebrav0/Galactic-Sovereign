@@ -48,6 +48,7 @@ import {
   getGraph,
   getGalaxyIntel,
 } from './galaxy-scope.js';
+import { createTutorialCampaignState } from './tutorial-access.js';
 import { createDefaultAbstract } from './abstract-galaxy.js';
 import { generateGalaxySystems, hydrateGalaxy, ensureHomeStrongholdNamed } from './hydration.js';
 import { createDefaultLogisticsState } from './logistics.js';
@@ -594,6 +595,7 @@ export function createNewGame(seed) {
       missionProgress: {},
       tutorialTargetSystemId: null,
       tutorialCompletedAt: null,
+      tutorial: createTutorialCampaignState(),
     },
     diplomacy: {
       version: 2,

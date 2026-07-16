@@ -6,6 +6,11 @@
 //   others    — distinct silhouettes per combat role
 
 import { THEME, hexToRgba } from './theme.js';
+import {
+  flagshipDecorativeBatteries,
+  flagshipHardpointAnchors,
+  flagshipHullMorph,
+} from './flagship-morph.js';
 
 const HULL_RENDER = {
   scout: { scale: 0.75 },
@@ -175,11 +180,14 @@ const HULL_CACHE_MAX = 64;
 /** @type {Map<string, { canvas: HTMLCanvasElement, half: number, r: number }>} */
 const hullBitmapCache = new Map();
 
-function cacheHullBitmap(hull, side, r) {
+function cacheHullBitmap(hull, side, r, drawOpts = {}) {
   // Half-pixel buckets so small fighters can shrink/grow with zoom instead of
   // flooring to a fixed 4px screen size across most of the zoom range.
   const rKey = Math.max(1.5, Math.round(r * 2) / 2);
-  const key = `${hull}:${side}:${rKey}`;
+  const refitKey = drawOpts.refitId || 'stock';
+  const stageKey = drawOpts.hullStage ? String(drawOpts.hullStage) : '0';
+  const markKey = drawOpts.empireMark ? '1' : '0';
+  const key = `${hull}:${side}:${rKey}:${refitKey}:${stageKey}:${markKey}`;
   const existing = hullBitmapCache.get(key);
   if (existing) {
     hullBitmapCache.delete(key);
@@ -194,7 +202,7 @@ function cacheHullBitmap(hull, side, r) {
   canvas.height = size;
   const c = canvas.getContext('2d');
   c.translate(size / 2, size / 2);
-  drawHullShape(c, hull, rKey, hullColors(hull, side), 0);
+  drawHullShape(c, hull, rKey, hullColors(hull, side), 0, drawOpts);
 
   const entry = { canvas, half: size / 2, r: rKey };
   if (hullBitmapCache.size >= HULL_CACHE_MAX) {
@@ -206,8 +214,15 @@ function cacheHullBitmap(hull, side, r) {
 }
 
 // ============================= FLAGSHIP =============================
-// Grounded sovereign command ship: armored asymmetric naval hull, recessed
-// drives, sensor mast, visible batteries, and restrained navigation lighting.
+// Hull Forge morphs the sovereign flagship from a compact armored cruiser into
+// an Enterprise × Star Destroyer hybrid: longer detailed nose, aft command
+// tower, and at most four nacelles (outers clamped to the inners). Footprint
+// stays the same — morph via silhouette and detail, not draw-radius scale.
+
+/** Kept for callers; Hull Forge morphs silhouette without changing draw radius. */
+export function flagshipVisualScale(_hullStage = 0) {
+  return 1;
+}
 
 export function drawFlagshipModel(ctx, r, opts = {}) {
   const {
@@ -216,151 +231,350 @@ export function drawFlagshipModel(ctx, r, opts = {}) {
     side = 'player',
     hpFraction = 1,
     hardpointFireAt = null,
+    hullStage = 0,
   } = opts;
+  const stage = Math.max(0, Math.min(5, Math.round(Number(hullStage) || 0)));
   const c = hullColors('flagship', side);
   const flicker = 0.8 + 0.2 * Math.sin(time / 42);
 
-  // Four recessed drives. Short, dense exhaust sells mass better than long
-  // cartoon flames; hard thrust adds a compressed ion wake.
-  for (const y of [-0.48, -0.16, 0.16, 0.48]) {
-    engineFlame(ctx, -r * 1.78, r * y, r * (thrusting ? 1.65 : 0.45), r * 0.17, c.engine, flicker);
-  }
+  // Same overall footprint — morph via longer nose + denser detail, not scale.
+  const { len, wid, noseLen, noseWid, tipX, aftX, beamY } = flagshipHullMorph(stage);
+  const driveBoost = [1, 1.05, 1.2, 1.35, 1.5, 1.7][stage];
+  const flameW = [0.17, 0.17, 0.18, 0.19, 0.2, 0.22][stage];
+  const hybrid = stage >= 4; // Destroyer wedge + Enterprise nacelles/tower
 
-  // Twin outboard engine stalks: swept structural pylons carry long nacelles
-  // clear of the armored hull, echoing classic Enterprise proportions without
-  // turning the flagship back into a clean, optimistic exploration vessel.
-  for (const sideSign of [-1, 1]) {
-    const nacelleY = sideSign * r * 1.42;
+  // --- AFT DRIVE GLOW (Star Destroyer rear bank — still four cores) ---
+  const coreDrives = [-0.55, -0.2, 0.2, 0.55].map((y) => y * beamY);
+  for (const y of coreDrives) {
     engineFlame(
       ctx,
-      -r * 1.84,
+      aftX * r + r * 0.06,
+      r * y,
+      r * (thrusting ? 1.7 : 0.48) * driveBoost,
+      r * flameW,
+      c.engine,
+      flicker,
+    );
+  }
+
+  // --- NACELLES: inner pair on hull pylons; outer pair strut off the inners ---
+  const innerY = 1.42 * wid;
+  const outerY = 1.88 * wid;
+  const innerLen = stage >= 5 ? 1.28 : stage >= 2 ? 1.14 : 1;
+  const innerThick = stage >= 5 ? 1.22 : stage >= 3 ? 1.12 : stage >= 2 ? 1.06 : 1;
+  const outerLen = stage >= 5 ? 1.12 : stage >= 4 ? 1.02 : 0.92;
+  const outerThick = stage >= 5 ? 1.08 : stage >= 4 ? 0.98 : 0.86;
+
+  const drawNacelleBody = (nacelleY, nLen, nThick, capGlow) => {
+    const nacFore = -r * 0.15;
+    const nacAft = -r * 1.95 * nLen * len;
+
+    engineFlame(
+      ctx,
+      nacAft - r * 0.05,
       nacelleY,
-      r * (thrusting ? 1.9 : 0.55),
-      r * 0.19,
+      r * (thrusting ? 2.05 : 0.55) * driveBoost * (0.9 + 0.1 * nLen),
+      r * 0.2 * nThick * (flameW / 0.17),
       c.engine,
       flicker,
     );
 
-    // Broad, load-bearing pylon rather than a fragile line.
-    const pylon = ctx.createLinearGradient(-r * 1.35, nacelleY, -r * 0.28, sideSign * r * 0.45);
-    pylon.addColorStop(0, '#121d2a');
+    const nacGrad = ctx.createLinearGradient(nacAft, nacelleY, nacFore, nacelleY);
+    nacGrad.addColorStop(0, '#050a12');
+    nacGrad.addColorStop(0.4, '#162637');
+    nacGrad.addColorStop(0.75, c.hull);
+    nacGrad.addColorStop(1, '#2a3f52');
+    ctx.fillStyle = nacGrad;
+    const nt = r * 0.17 * nThick;
+    ctx.beginPath();
+    ctx.moveTo(nacAft, nacelleY - nt);
+    ctx.lineTo(nacFore - r * 0.15, nacelleY - nt * 1.05);
+    ctx.quadraticCurveTo(nacFore + r * 0.12, nacelleY - nt * 0.35, nacFore + r * 0.18, nacelleY);
+    ctx.quadraticCurveTo(nacFore + r * 0.12, nacelleY + nt * 0.35, nacFore - r * 0.15, nacelleY + nt * 1.05);
+    ctx.lineTo(nacAft, nacelleY + nt);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(c.glow, stage >= 2 ? 0.55 : 0.4);
+    ctx.lineWidth = Math.max(0.75, r * 0.05 * nThick);
+    ctx.stroke();
+
+    const capR = r * 0.14 * nThick;
+    const capX = nacFore + r * 0.05;
+    const cap = ctx.createRadialGradient(capX, nacelleY, 0, capX, nacelleY, capR);
+    cap.addColorStop(0, stage >= 2 ? '#ff9a4a' : hexToRgba(c.engine, 0.9));
+    cap.addColorStop(0.55, stage >= 2 ? '#ff5a2a' : c.engine);
+    cap.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = cap;
+    ctx.beginPath();
+    ctx.arc(capX, nacelleY, capR, 0, Math.PI * 2);
+    ctx.fill();
+    if (capGlow) glowDot(ctx, capX, nacelleY, capR * 0.45, '#ffb070', 0.85);
+
+    ctx.strokeStyle = hexToRgba(c.glow, 0.85);
+    ctx.lineWidth = Math.max(0.8, r * 0.09 * nThick);
+    ctx.beginPath();
+    ctx.moveTo(nacAft + r * 0.25, nacelleY);
+    ctx.lineTo(nacFore - r * 0.2, nacelleY);
+    ctx.stroke();
+
+    return { nacFore, nacAft, nt };
+  };
+
+  for (const sideSign of [-1, 1]) {
+    const iY = sideSign * r * innerY;
+    const iAft = -r * 1.95 * innerLen * len;
+    const iFore = -r * 0.15;
+
+    // Hull → inner nacelle pylon.
+    const pylon = ctx.createLinearGradient(-r * 0.9 * len, iY * 0.35, iAft * 0.4, iY);
+    pylon.addColorStop(0, c.dark);
     pylon.addColorStop(0.55, c.hull);
-    pylon.addColorStop(1, c.dark);
+    pylon.addColorStop(1, '#0a121c');
     ctx.fillStyle = pylon;
     ctx.beginPath();
-    ctx.moveTo(-r * 0.3, sideSign * r * 0.42);
-    ctx.lineTo(-r * 0.66, sideSign * r * 0.62);
-    ctx.lineTo(-r * 1.38, sideSign * r * 1.28);
-    ctx.lineTo(-r * 1.14, sideSign * r * 1.52);
-    ctx.lineTo(-r * 0.45, sideSign * r * 0.68);
+    ctx.moveTo(-r * 0.35 * len, sideSign * r * 0.55 * beamY);
+    ctx.lineTo(-r * 0.85 * len, sideSign * r * 0.7 * beamY);
+    ctx.lineTo(iAft * 0.55, iY * 0.92);
+    ctx.lineTo(iAft * 0.35, iY * 1.08);
+    ctx.lineTo(-r * 0.55 * len, sideSign * r * 0.82 * beamY);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = 'rgba(161, 191, 214, 0.46)';
-    ctx.lineWidth = Math.max(0.7, r * 0.052);
+    ctx.strokeStyle = 'rgba(170, 198, 220, 0.4)';
+    ctx.lineWidth = Math.max(0.7, r * 0.05);
     ctx.stroke();
 
-    // Armored nacelle pod with a recessed luminous channel and hot exhaust cap.
-    const nacelle = ctx.createLinearGradient(-r * 1.9, nacelleY, -r * 0.28, nacelleY);
-    nacelle.addColorStop(0, '#050a12');
-    nacelle.addColorStop(0.36, '#172638');
-    nacelle.addColorStop(0.72, c.hull);
-    nacelle.addColorStop(1, '#2e4355');
-    ctx.fillStyle = nacelle;
-    ctx.beginPath();
-    ctx.moveTo(-r * 1.88, nacelleY - r * 0.16);
-    ctx.lineTo(-r * 0.58, nacelleY - r * 0.2);
-    ctx.quadraticCurveTo(-r * 0.3, nacelleY - r * 0.13, -r * 0.22, nacelleY);
-    ctx.quadraticCurveTo(-r * 0.3, nacelleY + r * 0.13, -r * 0.58, nacelleY + r * 0.2);
-    ctx.lineTo(-r * 1.88, nacelleY + r * 0.16);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(184, 211, 230, 0.62)';
-    ctx.lineWidth = Math.max(0.75, r * 0.055);
-    ctx.stroke();
+    drawNacelleBody(iY, innerLen, innerThick, stage >= 2);
 
-    ctx.strokeStyle = hexToRgba(c.glow, 0.72);
-    ctx.lineWidth = Math.max(0.8, r * 0.075);
-    ctx.beginPath();
-    ctx.moveTo(-r * 1.58, nacelleY);
-    ctx.lineTo(-r * 0.52, nacelleY);
-    ctx.stroke();
-    glowDot(ctx, -r * 1.73, nacelleY, r * 0.095, c.engine, 0.9);
-    glowDot(ctx, -r * 0.36, nacelleY, r * 0.065, c.glow, 0.72);
+    // Outer pods clamp onto the inner nacelles (no second hull pylon).
+    if (stage >= 2) {
+      const oY = sideSign * r * outerY;
+      const oAft = -r * 1.95 * outerLen * len;
+      const oFore = -r * 0.15;
+      const midX = (iAft + iFore) * 0.5;
+      const strut = ctx.createLinearGradient(midX, iY, midX, oY);
+      strut.addColorStop(0, c.hull);
+      strut.addColorStop(0.5, '#1a2a3a');
+      strut.addColorStop(1, c.dark);
+      ctx.fillStyle = strut;
+      ctx.beginPath();
+      // Twin clamps: fore + aft bands from inner body out to outer pod.
+      ctx.moveTo(iFore - r * 0.05, iY + sideSign * r * 0.12 * innerThick);
+      ctx.lineTo(oFore - r * 0.08, oY - sideSign * r * 0.08 * outerThick);
+      ctx.lineTo(oFore + r * 0.12, oY - sideSign * r * 0.1 * outerThick);
+      ctx.lineTo(iFore + r * 0.18, iY + sideSign * r * 0.14 * innerThick);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(iAft + r * 0.35, iY + sideSign * r * 0.12 * innerThick);
+      ctx.lineTo(oAft + r * 0.4, oY - sideSign * r * 0.08 * outerThick);
+      ctx.lineTo(oAft + r * 0.7, oY - sideSign * r * 0.1 * outerThick);
+      ctx.lineTo(iAft + r * 0.65, iY + sideSign * r * 0.14 * innerThick);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = hexToRgba(c.glow, 0.35);
+      ctx.lineWidth = Math.max(0.55, r * 0.035);
+      ctx.beginPath();
+      ctx.moveTo(midX, iY + sideSign * r * 0.1 * innerThick);
+      ctx.lineTo(midX - r * 0.05, oY - sideSign * r * 0.06 * outerThick);
+      ctx.stroke();
+
+      drawNacelleBody(oY, outerLen, outerThick, true);
+    }
   }
 
-  // Main asymmetrical armored silhouette.
-  const hull = ctx.createLinearGradient(-r * 1.8, -r, r * 2.35, r * 0.65);
-  hull.addColorStop(0, '#070c14');
-  hull.addColorStop(0.42, c.dark);
-  hull.addColorStop(0.72, c.hull);
-  hull.addColorStop(1, '#27384a');
-  ctx.fillStyle = hull;
+  // --- STAR DESTROYER WEDGE HULL ---
+  const hullGrad = ctx.createLinearGradient(aftX * r, 0, tipX * r, 0);
+  hullGrad.addColorStop(0, '#060b14');
+  hullGrad.addColorStop(0.35, c.dark);
+  hullGrad.addColorStop(0.7, c.hull);
+  hullGrad.addColorStop(1, stage >= 5 ? '#3d5368' : '#27384a');
+  ctx.fillStyle = hullGrad;
   ctx.beginPath();
-  ctx.moveTo(r * 2.38, -r * 0.06);
-  ctx.lineTo(r * 1.2, r * 0.48);
-  ctx.lineTo(r * 0.18, r * 0.78);
-  ctx.lineTo(-r * 1.42, r * 0.72);
-  ctx.lineTo(-r * 1.82, r * 0.42);
-  ctx.lineTo(-r * 1.72, -r * 0.6);
-  ctx.lineTo(-r * 0.42, -r * 0.84);
-  ctx.lineTo(r * 1.16, -r * 0.54);
+  // Needle prow stretches forward; beam stays near Mk 0 so the ship reads longer, not larger.
+  ctx.moveTo(r * tipX, 0);
+  ctx.lineTo(r * (tipX - 0.55 * noseLen), r * 0.12 * noseWid);
+  ctx.lineTo(r * 1.55 * noseLen, r * 0.28 * noseWid);
+  ctx.lineTo(r * 0.55 * noseLen, r * 0.68 * noseWid);
+  ctx.lineTo(-r * 0.35 * len, r * beamY);
+  ctx.lineTo(r * aftX, r * beamY * 0.92);
+  ctx.lineTo(r * aftX, -r * beamY * 0.92);
+  ctx.lineTo(-r * 0.35 * len, -r * beamY);
+  ctx.lineTo(r * 0.55 * noseLen, -r * 0.68 * noseWid);
+  ctx.lineTo(r * 1.55 * noseLen, -r * 0.28 * noseWid);
+  ctx.lineTo(r * (tipX - 0.55 * noseLen), -r * 0.12 * noseWid);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(178, 205, 224, 0.62)';
-  ctx.lineWidth = Math.max(0.8, r * 0.065);
+  ctx.strokeStyle = stage >= 5 ? hexToRgba('#c8d8e8', 0.55) : 'rgba(178, 205, 224, 0.62)';
+  ctx.lineWidth = Math.max(0.85, r * (stage >= 4 ? 0.09 : 0.065));
   ctx.stroke();
 
-  // Layered armor plates and recessed launch trench.
-  const plates = [
-    [[1.86, -0.05], [0.72, 0.32], [-0.28, 0.44], [0.12, 0.06]],
-    [[1.32, -0.18], [0.08, -0.1], [-0.92, -0.5], [0.34, -0.58]],
-    [[-0.18, 0.54], [-1.5, 0.54], [-1.18, 0.2], [0.42, 0.14]],
-  ];
-  for (let i = 0; i < plates.length; i++) {
-    const plate = plates[i];
-    ctx.fillStyle = i === 1 ? 'rgba(7, 12, 21, 0.82)' : 'rgba(72, 91, 110, 0.34)';
+  // Cooler nose: armored ridge + vent notches along the needle.
+  if (stage >= 1) {
+    ctx.fillStyle = 'rgba(8, 14, 22, 0.75)';
     ctx.beginPath();
-    plate.forEach(([x, y], index) => {
-      if (index === 0) ctx.moveTo(x * r, y * r); else ctx.lineTo(x * r, y * r);
-    });
+    ctx.moveTo(r * tipX * 0.98, 0);
+    ctx.lineTo(r * 1.7 * noseLen, r * 0.07 * noseWid);
+    ctx.lineTo(r * 0.85 * noseLen, r * 0.05 * noseWid);
+    ctx.lineTo(r * 0.85 * noseLen, -r * 0.05 * noseWid);
+    ctx.lineTo(r * 1.7 * noseLen, -r * 0.07 * noseWid);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = 'rgba(148, 176, 198, 0.2)';
-    ctx.lineWidth = Math.max(0.45, r * 0.03);
+    ctx.strokeStyle = hexToRgba(c.glow, stage >= 3 ? 0.55 : 0.3);
+    ctx.lineWidth = Math.max(0.55, r * 0.035);
+    ctx.stroke();
+    for (let i = 0; i < 2 + stage; i++) {
+      const nx = r * (tipX - 0.35 - i * 0.28 * noseLen);
+      if (nx < r * 0.9 * noseLen) break;
+      ctx.fillStyle = 'rgba(4, 8, 14, 0.85)';
+      ctx.fillRect(nx - r * 0.06, -r * 0.04 * noseWid, r * 0.1, r * 0.08 * noseWid);
+      if (stage >= 3) glowDot(ctx, nx, 0, r * 0.025, '#9ef0ff', 0.35 + 0.15 * (i % 2));
+    }
+  }
+
+  // Enterprise saucer mass on the forward wedge — elongates with the nose, not the beam.
+  if (stage >= 1) {
+    const sx = r * (0.85 + 0.22 * (noseLen - 1)) * Math.min(noseLen, 1.85);
+    const sy = 0;
+    const srx = r * (0.55 + 0.28 * (noseLen - 1));
+    const sry = r * (0.36 + 0.12 * (noseWid - 1)) * noseWid;
+    const saucer = ctx.createRadialGradient(sx - srx * 0.15, sy, 0, sx, sy, srx);
+    saucer.addColorStop(0, stage >= 5 ? '#4a6075' : '#354858');
+    saucer.addColorStop(0.55, c.hull);
+    saucer.addColorStop(1, 'rgba(10, 16, 24, 0)');
+    ctx.fillStyle = saucer;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, srx, sry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(c.glow, stage >= 3 ? 0.45 : 0.28);
+    ctx.lineWidth = Math.max(0.6, r * 0.04);
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, srx * 0.92, sry * 0.88, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    if (stage >= 2) {
+      ctx.fillStyle = '#101a28';
+      ctx.beginPath();
+      ctx.ellipse(sx - srx * 0.08, sy - sry * 0.15, srx * 0.2, sry * 0.26, 0, 0, Math.PI * 2);
+      ctx.fill();
+      glowDot(ctx, sx - srx * 0.08, sy - sry * 0.15, r * 0.045, c.glow, 0.65);
+    }
+  }
+
+  // Terraced Destroyer decks — denser toward the aft.
+  const terraceCount = [0, 1, 2, 3, 4, 5][stage];
+  for (let i = 0; i < terraceCount; i++) {
+    const t = (i + 1) / (terraceCount + 1);
+    const x0 = r * (tipX * (1 - t * 0.72) - 0.2 * len);
+    const half = r * (0.18 * noseWid + t * beamY * 0.85);
+    const h = r * (0.04 + 0.035 * i);
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(8, 14, 22, 0.55)' : 'rgba(70, 90, 110, 0.28)';
+    ctx.beginPath();
+    ctx.moveTo(x0 + r * 0.35 * noseLen, -half);
+    ctx.lineTo(x0 - r * 0.15 * len, -half - h);
+    ctx.lineTo(x0 - r * 0.55 * len, -half * 0.7);
+    ctx.lineTo(x0 - r * 0.55 * len, half * 0.7);
+    ctx.lineTo(x0 - r * 0.15 * len, half + h);
+    ctx.lineTo(x0 + r * 0.35 * noseLen, half);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150, 175, 198, 0.18)';
+    ctx.lineWidth = Math.max(0.4, r * 0.025);
     ctx.stroke();
   }
 
-  // Armored command island, offset from the centerline.
-  ctx.fillStyle = '#111b28';
-  ctx.beginPath();
-  ctx.moveTo(r * 0.64, -r * 0.42);
-  ctx.lineTo(r * 0.12, -r * 0.66);
-  ctx.lineTo(-r * 0.48, -r * 0.54);
-  ctx.lineTo(-r * 0.22, -r * 0.26);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(170, 198, 218, 0.44)';
-  ctx.stroke();
+  // Lateral weapon trenches (Destroyer side notches).
+  if (stage >= 3) {
+    for (const sideSign of [-1, 1]) {
+      ctx.fillStyle = 'rgba(4, 8, 14, 0.88)';
+      ctx.beginPath();
+      ctx.moveTo(r * 1.4 * noseLen, sideSign * r * 0.38 * noseWid);
+      ctx.lineTo(-r * 0.9 * len, sideSign * r * 0.78 * beamY);
+      ctx.lineTo(-r * 0.9 * len, sideSign * r * 0.58 * beamY);
+      ctx.lineTo(r * 1.4 * noseLen, sideSign * r * 0.22 * noseWid);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = hexToRgba(c.glow, 0.35);
+      ctx.lineWidth = Math.max(0.5, r * 0.03);
+      ctx.stroke();
+    }
+  }
 
-  // Sensor mast and rotating phased array.
-  ctx.save();
-  ctx.translate(r * 0.02, -r * 0.58);
-  ctx.rotate(time / 1800);
-  ctx.strokeStyle = hexToRgba(c.glow, 0.72);
-  ctx.lineWidth = Math.max(0.6, r * 0.045);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, r * 0.28, r * 0.08, 0, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
+  // Panel greeble seams for capital scale.
+  if (stage >= 2) {
+    ctx.strokeStyle = 'rgba(140, 165, 188, 0.22)';
+    ctx.lineWidth = Math.max(0.4, r * 0.022);
+    ctx.beginPath();
+    for (let i = 0; i < 4 + stage; i++) {
+      const t = (i + 1) / (5 + stage);
+      const x = r * (tipX - (tipX - aftX) * t);
+      const half = r * (0.12 * noseWid + t * beamY);
+      ctx.moveTo(x, -half * 0.85);
+      ctx.lineTo(x, half * 0.85);
+    }
+    ctx.moveTo(r * 1.8 * noseLen, 0);
+    ctx.lineTo(r * aftX + r * 0.2, 0);
+    ctx.stroke();
+  }
 
-  // Visible point-defense and capital batteries — pulse when hardpoints fire.
+  // Aft command tower (Destroyer bridge + Enterprise island) — detail, not bulk.
+  const towerX = -r * (0.55 + 0.08 * (stage >= 5 ? 1 : 0)) * len;
+  const towerW = r * ([0.55, 0.58, 0.62, 0.7, 0.82, 0.92][stage]) * wid;
+  const towerH = r * ([0.28, 0.3, 0.34, 0.4, 0.5, 0.58][stage]) * wid;
+  if (stage >= 1) {
+    ctx.fillStyle = stage >= 4 ? '#0a1420' : '#111b28';
+    ctx.beginPath();
+    ctx.moveTo(towerX + towerW * 0.55, -towerH * 0.15);
+    ctx.lineTo(towerX + towerW * 0.15, -towerH);
+    ctx.lineTo(towerX - towerW * 0.55, -towerH * 0.85);
+    ctx.lineTo(towerX - towerW * 0.35, -towerH * 0.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = stage >= 4 ? hexToRgba(c.glow, 0.75) : 'rgba(170, 198, 218, 0.45)';
+    ctx.lineWidth = Math.max(0.7, r * 0.05);
+    ctx.stroke();
+  }
+  if (hybrid) {
+    // Wide Destroyer bridge shelf.
+    ctx.fillStyle = '#152233';
+    ctx.fillRect(towerX - towerW * 0.75, -towerH * 1.15, towerW * 1.5, towerH * 0.28);
+    ctx.strokeStyle = hexToRgba('#9ef0ff', 0.5);
+    ctx.strokeRect(towerX - towerW * 0.75, -towerH * 1.15, towerW * 1.5, towerH * 0.28);
+    // Sensor bulbs on bridge corners.
+    glowDot(ctx, towerX - towerW * 0.55, -towerH * 1.02, r * 0.06, c.glow, 0.7);
+    glowDot(ctx, towerX + towerW * 0.55, -towerH * 1.02, r * 0.06, c.glow, 0.7);
+  }
+
+  // Rotating sensor arrays atop the tower.
+  const mastY = -towerH * (stage >= 4 ? 1.35 : 1.05);
+  const drawArray = (ox, oy, rx, ry, spin) => {
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.rotate(time / 1800 + spin);
+    ctx.strokeStyle = hexToRgba(c.glow, stage >= 4 ? 0.95 : 0.7);
+    ctx.lineWidth = Math.max(0.6, r * 0.05);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+  drawArray(towerX, mastY, r * (stage >= 4 ? 0.38 : 0.26) * wid, r * 0.1, 0);
+  if (stage >= 4) drawArray(towerX, mastY, r * 0.22 * wid, r * 0.055, Math.PI / 5);
+  if (stage >= 5) {
+    drawArray(towerX - r * 0.45 * len, mastY + r * 0.06, r * 0.24 * wid, r * 0.07, 1.1);
+    glowDot(ctx, towerX, mastY, r * 0.07, '#9ef0ff', 0.75 + 0.2 * Math.sin(time / 180));
+  }
+
+  // --- WEAPONS anchored on the hull silhouette (suite mounts + late trench accents) ---
   const batterySlots = [
-    { x: 0.95, y: 0.24, scale: 1, ids: ['primary_lance', 'prow_torpedo'] },
-    { x: 0.22, y: 0.4, scale: 0.8, ids: ['broadside_starboard', 'pd_grid_fore'] },
-    { x: -0.62, y: 0.36, scale: 0.75, ids: ['pd_grid_aft', 'ion_array'] },
-    { x: 0.68, y: -0.36, scale: 0.85, ids: ['broadside_port'] },
-    { x: -0.5, y: -0.44, scale: 0.7, ids: ['ion_array'] },
+    ...flagshipHardpointAnchors(stage).map((a) => ({
+      x: a.x,
+      y: a.y,
+      scale: a.scale,
+      aim: a.aim ?? 0.55,
+      ids: [a.id],
+    })),
+    ...flagshipDecorativeBatteries(stage),
   ];
+
   for (const bat of batterySlots) {
     let pulse = 0.35;
     if (hardpointFireAt) {
@@ -369,45 +583,131 @@ export function drawFlagshipModel(ctx, r, opts = {}) {
         if (at != null) pulse = Math.max(pulse, Math.max(0, 1 - (time - at) / 280));
       }
     }
+    const br = r * 0.075 * bat.scale;
+    const bx = bat.x * r;
+    const by = bat.y * r;
+    // Turret base plate seated on the hull.
     ctx.fillStyle = '#050910';
     ctx.beginPath();
-    ctx.arc(bat.x * r, bat.y * r, r * 0.09 * bat.scale, 0, Math.PI * 2);
+    ctx.ellipse(bx, by, br * 1.15, br * 0.85, 0, 0, Math.PI * 2);
     ctx.fill();
-    glowDot(ctx, bat.x * r, bat.y * r, r * 0.055 * bat.scale, pulse > 0.5 ? '#9ef0ff' : c.glow, 0.35 + pulse * 0.65);
+    ctx.strokeStyle = hexToRgba(c.hull, 0.85);
+    ctx.lineWidth = Math.max(0.5, r * 0.025);
+    ctx.stroke();
+    glowDot(
+      ctx,
+      bx,
+      by,
+      r * 0.045 * bat.scale,
+      pulse > 0.5 ? '#9ef0ff' : c.glow,
+      0.35 + pulse * 0.65,
+    );
+    const aim = bat.aim ?? 0.55;
     ctx.strokeStyle = hexToRgba('#e9f5ff', 0.35 + pulse * 0.45);
+    ctx.lineWidth = Math.max(0.55, r * 0.028);
     ctx.beginPath();
-    ctx.moveTo((bat.x - 0.01) * r, bat.y * r);
-    ctx.lineTo((bat.x + 0.2 * bat.scale) * r, bat.y * r);
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + r * 0.18 * bat.scale * aim, by + Math.sign(by || 0) * r * 0.04 * (1 - aim));
     ctx.stroke();
   }
 
-  // Restrained deck windows and navigation lights.
-  ctx.strokeStyle = hexToRgba(c.glow, 0.38);
+  // Spinal prow lance riding the elongated tip.
+  if (stage >= 3) {
+    const lanceTip = tipX + (stage >= 5 ? 0.28 : stage >= 4 ? 0.16 : 0.08);
+    const lanceRoot = 1.7 * noseLen;
+    const lanceThick = (stage >= 5 ? 0.26 : stage >= 4 ? 0.18 : 0.12) * noseWid;
+    ctx.fillStyle = 'rgba(10, 18, 28, 0.95)';
+    ctx.beginPath();
+    ctx.moveTo(r * lanceTip, 0);
+    ctx.lineTo(r * lanceRoot, r * lanceThick);
+    ctx.lineTo(r * (lanceRoot - 0.25 * noseLen), 0);
+    ctx.lineTo(r * lanceRoot, -r * lanceThick * 0.9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba('#9ef0ff', stage >= 5 ? 0.9 : 0.55);
+    ctx.lineWidth = Math.max(0.9, r * (stage >= 5 ? 0.08 : 0.045));
+    ctx.stroke();
+    glowDot(ctx, r * (lanceTip - 0.08), 0, r * (stage >= 5 ? 0.1 : 0.06), '#9ef0ff', 0.92);
+  }
+
+  // Mk V sovereign markings + hangar trench.
+  if (stage >= 5) {
+    ctx.fillStyle = 'rgba(3, 7, 12, 0.92)';
+    ctx.fillRect(-r * 0.75 * len, -r * 0.14 * wid, r * 1.35 * len, r * 0.28 * wid);
+    ctx.strokeStyle = hexToRgba('#9ef0ff', 0.4);
+    ctx.strokeRect(-r * 0.75 * len, -r * 0.14 * wid, r * 1.35 * len, r * 0.28 * wid);
+
+    ctx.strokeStyle = hexToRgba('#ffe08a', 0.65);
+    ctx.lineWidth = Math.max(1.1, r * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.7 * noseLen, -r * 0.08 * noseWid);
+    ctx.lineTo(towerX + r * 0.2, -towerH * 0.4);
+    ctx.stroke();
+    for (let i = 0; i < 5; i++) {
+      const t = i / 4;
+      glowDot(
+        ctx,
+        r * (1.7 * noseLen * (1 - t) + (towerX / r) * t),
+        -r * (0.08 * noseWid + t * 0.25 * wid),
+        r * 0.05,
+        i % 2 ? '#ffe08a' : '#9ef0ff',
+        0.55 + 0.35 * Math.sin(time / 150 + i),
+      );
+    }
+
+    ctx.fillStyle = hexToRgba('#ffe08a', 0.72);
+    ctx.beginPath();
+    ctx.moveTo(r * tipX * 0.96, 0);
+    ctx.lineTo(r * (tipX - 0.55), r * 0.16 * noseWid);
+    ctx.lineTo(r * (tipX - 0.4), 0);
+    ctx.lineTo(r * (tipX - 0.55), -r * 0.16 * noseWid);
+    ctx.closePath();
+    ctx.fill();
+    glowDot(ctx, r * (tipX - 0.22), 0, r * 0.1 * noseWid, '#ffe08a', 0.88);
+  } else if (stage >= 4) {
+    ctx.strokeStyle = hexToRgba('#ffe08a', 0.32);
+    ctx.lineWidth = Math.max(0.6, r * 0.04);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.6 * noseLen, r * 0.12 * noseWid);
+    ctx.lineTo(-r * 0.9 * len, r * 0.55 * beamY);
+    ctx.stroke();
+  }
+
+  // Deck windows / nav lights.
+  ctx.strokeStyle = hexToRgba(c.glow, stage >= 4 ? 0.48 : 0.35);
   ctx.lineWidth = Math.max(0.45, r * 0.028);
   ctx.beginPath();
-  ctx.moveTo(r * 1.52, r * 0.08);
-  ctx.lineTo(-r * 1.28, r * 0.52);
-  ctx.moveTo(r * 1.08, -r * 0.2);
-  ctx.lineTo(-r * 1.3, -r * 0.5);
+  ctx.moveTo(r * 1.7 * noseLen, r * 0.08 * noseWid);
+  ctx.lineTo(-r * 1.1 * len, r * 0.55 * beamY);
+  ctx.moveTo(r * 1.5 * noseLen, -r * 0.1 * noseWid);
+  ctx.lineTo(-r * 1.1 * len, -r * 0.5 * beamY);
+  if (stage >= 3) {
+    ctx.moveTo(r * 2.1 * noseLen, 0);
+    ctx.lineTo(-r * 0.4 * len, r * 0.25 * wid);
+  }
   ctx.stroke();
   const blink = (phase) => 0.22 + 0.78 * (Math.sin(time / 520 + phase) > 0.62 ? 1 : 0.08);
-  glowDot(ctx, -r * 1.42, r * 0.58, r * 0.045, '#ff6f6f', blink(0));
-  glowDot(ctx, -r * 1.3, -r * 0.58, r * 0.045, '#7dffa8', blink(2.1));
-  glowDot(ctx, r * 2.08, -r * 0.05, r * 0.04, '#e9f5ff', blink(4.2));
+  glowDot(ctx, r * aftX * 0.85, r * beamY * 0.7, r * 0.045, '#ff6f6f', blink(0));
+  glowDot(ctx, r * aftX * 0.85, -r * beamY * 0.7, r * 0.045, '#7dffa8', blink(2.1));
+  glowDot(ctx, r * tipX * 0.88, 0, r * 0.045 * noseWid, '#e9f5ff', blink(4.2));
+  if (stage >= 4) {
+    glowDot(ctx, towerX, -towerH * 1.05, r * 0.05, '#9ef0ff', blink(1.2));
+  }
 
-  // Localized scorch and venting communicate battle damage without swapping art.
   if (hpFraction < 0.72) {
     const severity = 1 - hpFraction;
-    for (const [x, y, phase] of [[0.42, 0.3, 0], [-0.64, -0.38, 2.4], [1.12, -0.16, 4.7]]) {
+    for (const [x, y, phase] of [[0.55, 0.25, 0], [-0.7, -0.35, 2.4], [1.4, -0.12, 4.7]]) {
       if (severity * 3 < phase / 2.5) continue;
-      const soot = ctx.createRadialGradient(x * r, y * r, 0, x * r, y * r, r * 0.34);
+      const px = x * r * (x > 0.8 ? noseLen : len);
+      const py = y * r * (x > 0.8 ? noseWid : wid);
+      const soot = ctx.createRadialGradient(px, py, 0, px, py, r * 0.34);
       soot.addColorStop(0, 'rgba(0,0,0,0.72)');
       soot.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = soot;
       ctx.beginPath();
-      ctx.arc(x * r, y * r, r * 0.34, 0, Math.PI * 2);
+      ctx.arc(px, py, r * 0.34, 0, Math.PI * 2);
       ctx.fill();
-      if (hpFraction < 0.42) glowDot(ctx, x * r, y * r, r * 0.055, '#ff8b52', 0.45 + 0.3 * Math.sin(time / 95 + phase));
+      if (hpFraction < 0.42) glowDot(ctx, px, py, r * 0.055, '#ff8b52', 0.45 + 0.3 * Math.sin(time / 95 + phase));
     }
   }
 }
@@ -1011,7 +1311,96 @@ function drawHeroFlagshipModel(ctx, r, colors, time = performance.now()) {
   engineFlame(ctx, -r * 1.05, 0, r * 1.4, r * 0.28, colors.engine, flicker);
 }
 
-function drawHullShape(ctx, hull, r, colors, time) {
+function drawHullRefitAccent(ctx, hull, r, c, refitId) {
+  if (!refitId) return;
+  ctx.save();
+  if (hull === 'corvette' && refitId === 'hardening') {
+    ctx.strokeStyle = hexToRgba(c.stroke, 0.75);
+    ctx.lineWidth = Math.max(0.7, r * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(r * 0.9, r * 0.28);
+    ctx.lineTo(-r * 0.55, r * 0.48);
+    ctx.moveTo(r * 0.9, -r * 0.28);
+    ctx.lineTo(-r * 0.55, -r * 0.48);
+    ctx.stroke();
+  } else if (hull === 'destroyer' && refitId === 'torpedo') {
+    for (const y of [0.22, -0.22]) {
+      ctx.fillStyle = '#050910';
+      ctx.fillRect(-r * 0.15, r * (y - 0.06), r * 0.95, r * 0.12);
+      glowDot(ctx, r * 0.75, r * y, r * 0.05, c.glow, 0.8);
+    }
+  } else if (hull === 'frigate' && refitId === 'alloy') {
+    ctx.fillStyle = 'rgba(120, 150, 175, 0.4)';
+    ctx.beginPath();
+    ctx.moveTo(r * 1.1, 0);
+    ctx.lineTo(r * 0.2, r * 0.22);
+    ctx.lineTo(-r * 0.6, r * 0.18);
+    ctx.lineTo(-r * 0.5, 0);
+    ctx.lineTo(-r * 0.6, -r * 0.18);
+    ctx.lineTo(r * 0.2, -r * 0.22);
+    ctx.closePath();
+    ctx.fill();
+  } else if (hull === 'cruiser' && refitId === 'beam') {
+    ctx.strokeStyle = hexToRgba(c.glow, 0.85);
+    ctx.lineWidth = Math.max(0.8, r * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.55, 0);
+    ctx.lineTo(r * 0.35, 0);
+    ctx.stroke();
+    glowDot(ctx, r * 1.5, 0, r * 0.07, '#9ef0ff', 0.9);
+  } else if (hull === 'battleship' && refitId === 'siege') {
+    for (const y of [0.28, -0.28]) {
+      ctx.fillStyle = '#0a1018';
+      ctx.beginPath();
+      ctx.moveTo(r * 0.9, r * y);
+      ctx.lineTo(r * 0.2, r * (y + 0.1));
+      ctx.lineTo(r * 0.2, r * (y - 0.1));
+      ctx.closePath();
+      ctx.fill();
+      glowDot(ctx, r * 0.85, r * y, r * 0.05, c.glow, 0.75);
+    }
+  } else if (hull === 'dreadnought' && refitId === 'plate') {
+    ctx.strokeStyle = hexToRgba(c.stroke, 0.65);
+    ctx.lineWidth = Math.max(0.8, r * 0.09);
+    ctx.beginPath();
+    ctx.moveTo(r * 1.2, r * 0.2);
+    ctx.lineTo(-r * 0.9, r * 0.45);
+    ctx.moveTo(r * 1.2, -r * 0.2);
+    ctx.lineTo(-r * 0.9, -r * 0.45);
+    ctx.stroke();
+  } else if ((hull === 'light_carrier' && refitId === 'hangar')
+    || (hull === 'fleet_carrier' && refitId === 'bombers')) {
+    ctx.strokeStyle = hexToRgba(c.glow, 0.55);
+    ctx.lineWidth = Math.max(0.6, r * 0.06);
+    ctx.strokeRect(-r * 0.55, -r * 0.22, r * 1.1, r * 0.44);
+  } else if (hull === 'healer' && refitId === 'hospital') {
+    ctx.strokeStyle = hexToRgba('#7dffa8', 0.8);
+    ctx.lineWidth = Math.max(0.7, r * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(0, -r * 0.28);
+    ctx.lineTo(0, r * 0.28);
+    ctx.moveTo(-r * 0.22, 0);
+    ctx.lineTo(r * 0.22, 0);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawEmpireHullMark(ctx, r, c) {
+  ctx.save();
+  ctx.strokeStyle = hexToRgba('#ffe08a', 0.45);
+  ctx.lineWidth = Math.max(0.5, r * 0.05);
+  ctx.beginPath();
+  ctx.moveTo(r * 0.85, r * 0.12);
+  ctx.lineTo(-r * 0.5, r * 0.22);
+  ctx.stroke();
+  glowDot(ctx, r * 0.7, r * 0.1, r * 0.04, '#ffe08a', 0.55);
+  ctx.restore();
+}
+
+function drawHullShape(ctx, hull, r, colors, time, drawOpts = {}) {
+  const refitId = drawOpts.refitId || null;
+  const hullStage = drawOpts.hullStage || 0;
   switch (hull) {
     case 'patrol_cutter': drawPatrolCutterModel(ctx, r, colors); break;
     case 'frigate': drawFrigateModel(ctx, r, colors); break;
@@ -1034,7 +1423,15 @@ function drawHullShape(ctx, hull, r, colors, time) {
     case 'builder_ship': drawBuilderShipModel(ctx, r, colors); break;
     case 'command_cruiser': drawCommandCruiserModel(ctx, r, colors); break;
     case 'miner': drawMinerModel(ctx, r, colors, time); break;
-    case 'flagship': drawFlagshipModel(ctx, r * 0.85, { time, side: 'player' }); break;
+    case 'flagship':
+      drawFlagshipModel(ctx, r * 0.85 * flagshipVisualScale(hullStage), {
+        time,
+        side: drawOpts.side || 'player',
+        hullStage,
+        hardpointFireAt: drawOpts.hardpointFireAt ?? null,
+        hpFraction: drawOpts.hpFraction ?? 1,
+      });
+      break;
     case 'hero_flagship': drawHeroFlagshipModel(ctx, r, colors, time); break;
     case 'corvette': drawCorvetteModel(ctx, r, colors); break;
     case 'scout':
@@ -1042,6 +1439,8 @@ function drawHullShape(ctx, hull, r, colors, time) {
       drawScoutModel(ctx, r, colors);
       break;
   }
+  drawHullRefitAccent(ctx, hull, r, colors, refitId);
+  if (drawOpts.empireMark && hull !== 'flagship') drawEmpireHullMark(ctx, r, colors);
 }
 
 export function hullRenderScale(hull) {
@@ -1058,20 +1457,32 @@ export function drawHullSprite(ctx, x, y, hull, baseR, opts = {}) {
     maxShield = 0,
     showHp = true,
     alwaysShowBars = false,
+    refitId = null,
+    hullStage = 0,
+    empireMark = false,
+    hardpointFireAt = null,
   } = opts;
 
   const scale = hullRenderScale(hull);
   const r = baseR * scale;
   const colors = hullColors(hull, side);
   const time = performance.now();
+  const drawOpts = {
+    refitId,
+    hullStage,
+    empireMark,
+    side,
+    hardpointFireAt,
+    hpFraction: maxHp > 0 ? Math.max(0, hp / maxHp) : 1,
+  };
 
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
-  if (ANIMATED_HULLS.has(hull)) {
-    drawHullShape(ctx, hull, r, colors, time);
+  if (ANIMATED_HULLS.has(hull) || hull === 'flagship' || hardpointFireAt) {
+    drawHullShape(ctx, hull, r, colors, time, drawOpts);
   } else {
-    const cached = cacheHullBitmap(hull, side, r);
+    const cached = cacheHullBitmap(hull, side, r, drawOpts);
     // Scale bucket bitmap to the exact requested radius so zoom is continuous.
     const s = cached.r > 0 ? r / cached.r : 1;
     const half = cached.half * s;
@@ -1151,14 +1562,18 @@ export function drawHullSpriteLite(ctx, x, y, hull, baseR, opts = {}) {
 
 /** Flagship sprite at a screen position/heading (system + galaxy views). */
 export function drawFlagshipSprite(ctx, x, y, heading, r, thrusting, hp = 1, maxHp = 1, opts = {}) {
+  const hullStage = opts.hullStage ?? 0;
+  const drawR = r * flagshipVisualScale(hullStage);
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
-  drawFlagshipModel(ctx, r, {
+  drawFlagshipModel(ctx, drawR, {
     thrusting,
     time: opts.time ?? performance.now(),
     hpFraction: maxHp > 0 ? Math.max(0, hp / maxHp) : 1,
     hardpointFireAt: opts.hardpointFireAt ?? null,
+    hullStage,
+    side: opts.side ?? 'player',
   });
   ctx.restore();
 }

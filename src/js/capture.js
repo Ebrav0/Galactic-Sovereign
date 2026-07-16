@@ -28,6 +28,7 @@ import { isOperationalStructure, reconcileStructureTechnology } from './body-str
 import { canAttackSystem, isAtWar, recordOccupation } from './diplomacy.js';
 import { hostileStructureCombatPresence } from './combat.js';
 import { captureForceForShip } from './hull.js';
+import { tutorialCaptureHoldMs } from './tutorial-access.js';
 
 export function captureRequirement(state, systemId) {
   const system = systemById(state, systemId);
@@ -141,7 +142,7 @@ export function tickCapture(state) {
       entry.progressMs += TICK_MS;
       capture[systemId] = entry;
 
-      if (entry.progressMs >= CAPTURE_HOLD_MS) {
+      if (entry.progressMs >= tutorialCaptureHoldMs(state, CAPTURE_HOLD_MS)) {
         const system = systemById(state, systemId);
         const previousOwner = system.owner;
         const previousFactionId = system.factionId

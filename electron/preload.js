@@ -5,6 +5,11 @@ contextBridge.exposeInMainWorld('gameSave', {
   read: (slot) => ipcRenderer.invoke('save:read', slot),
   list: () => ipcRenderer.invoke('save:list'),
   delete: (slot) => ipcRenderer.invoke('save:delete', slot),
+  writeInternal: (slot, envelopeJson) => ipcRenderer.invoke('save:internal-write', slot, envelopeJson),
+  readInternal: (slot) => ipcRenderer.invoke('save:internal-read', slot),
+  deleteInternal: (slot) => ipcRenderer.invoke('save:internal-delete', slot),
+  readProfile: () => ipcRenderer.invoke('profile:read'),
+  writeProfile: (profile) => ipcRenderer.invoke('profile:write', profile),
   onExitSaveRequest: (callback) => {
     ipcRenderer.on('exit-save:request', () => {
       Promise.resolve(callback()).finally(() => {

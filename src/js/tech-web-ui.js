@@ -6,17 +6,21 @@ import {
   isTechUnlocked,
   techNode,
   techPrereqsMet,
+  isSpineTech,
 } from './tech-web.js';
 import {
   layoutHorizontalTree,
   ancestorChain,
   NODE_SIZE,
-  CLUSTER_BAND,
-  TECH_CLUSTER_ORDER,
+  SPINE_NODE_SIZE,
+  TECH_LANE_ORDER,
+  TECH_LANE_LABELS,
+  LANE_BAND,
 } from './tech-web-layout.js';
 import { attachTechWebViewport } from './tech-web-viewport.js';
 
 export const TECH_CLUSTERS = {
+  spine: { label: 'Main Path', color: '#ffb44a', icon: '☀' },
   economy: { label: 'Economy', color: '#ffd27a', icon: '◈' },
   military: { label: 'Military', color: '#ff7a7a', icon: '✦' },
   megastructure: { label: 'Dyson', color: '#ff9a4a', icon: '☀' },
@@ -75,7 +79,11 @@ function nodeSearchText(node) {
 }
 
 function nodeMatchesFilters(state, node, summary, filters = {}) {
-  if (filters.cluster && node.cluster !== filters.cluster) return false;
+  if (filters.cluster === 'spine') {
+    if (!isSpineTech(node) && !node?.tags?.includes('spine')) return false;
+  } else if (filters.cluster && node.cluster !== filters.cluster) {
+    return false;
+  }
   if (filters.tier && derivedTier(node.id) !== Number(filters.tier)) return false;
   const status = isNodeHidden(state, node.id) ? 'hidden' : nodeState(state, node.id, summary);
   if (filters.state && status !== filters.state) return false;
@@ -91,10 +99,11 @@ function costLabel(node) {
 }
 
 function edgeCurve(from, to) {
-  const half = NODE_SIZE / 2;
-  const sx = from.x + half;
+  const fromHalf = (from.size ?? NODE_SIZE) / 2;
+  const toHalf = (to.size ?? NODE_SIZE) / 2;
+  const sx = from.x + fromHalf;
   const sy = from.y;
-  const tx = to.x - half;
+  const tx = to.x - toHalf;
   const ty = to.y;
   const mx = (sx + tx) / 2;
   return `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ty}, ${tx} ${ty}`;
@@ -103,16 +112,29 @@ function edgeCurve(from, to) {
 function createBandLabels(svg, bandCenters) {
   const bandsG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   bandsG.setAttribute('class', 'tech-web-bands');
-  for (const clusterId of TECH_CLUSTER_ORDER) {
-    const band = CLUSTER_BAND[clusterId];
+  const laneColors = {
+    mil_capital: '#ff8a7a',
+    mil_carrier: '#ff6a9a',
+    mil_screen: '#ffb07a',
+    mil_defense: '#ff7070',
+    economy: '#ffd27a',
+    trade: '#7aff9e',
+    spine: '#ffb44a',
+    research: '#7ad0ff',
+    wormhole: '#b07adb',
+    diplomacy: '#9ae6ff',
+    flagship: '#ffe08a',
+    sw_modes: '#ff4a6a',
+  };
+  for (const laneId of TECH_LANE_ORDER) {
+    const band = LANE_BAND[laneId];
     const y = bandCenters.get(band) ?? 0;
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('class', 'tech-web-band-label');
+    label.setAttribute('class', `tech-web-band-label${laneId === 'spine' ? ' tech-web-band-label--spine' : ''}`);
     label.setAttribute('x', '12');
     label.setAttribute('y', String(y + 4));
-    const meta = TECH_CLUSTERS[clusterId] ?? null;
-    label.setAttribute('fill', meta?.color ?? '#888');
-    label.textContent = meta?.label ?? '';
+    label.setAttribute('fill', laneColors[laneId] ?? '#888');
+    label.textContent = TECH_LANE_LABELS[laneId] ?? laneId;
     bandsG.appendChild(label);
   }
   svg.appendChild(bandsG);
@@ -151,9 +173,11 @@ function buildSvgGraph(state, summary, opts = {}) {
       if (!from) continue;
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', edgeCurve(from, to));
-      path.setAttribute('class', 'tech-web-edge');
+      const spineEdge = isSpineTech(prereqId) && isSpineTech(node.id);
+      path.setAttribute('class', spineEdge ? 'tech-web-edge tech-web-edge--spine' : 'tech-web-edge');
       path.dataset.fromId = prereqId;
       path.dataset.toId = node.id;
+      if (spineEdge) path.dataset.spine = '1';
       edgesG.appendChild(path);
     }
   }
@@ -162,20 +186,22 @@ function buildSvgGraph(state, summary, opts = {}) {
   const nodesG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   nodesG.setAttribute('class', 'tech-web-nodes');
 
-  const half = NODE_SIZE / 2;
-
   for (const node of nodes) {
     const pos = positions.get(node.id);
     if (!pos) continue;
     const cluster = TECH_CLUSTERS[node.cluster] ?? TECH_CLUSTERS.economy;
     const hidden = isNodeHidden(state, node.id);
     const filtered = !nodeMatchesFilters(state, node, summary, filters);
+    const spine = isSpineTech(node);
+    const size = pos.size ?? (spine ? SPINE_NODE_SIZE : NODE_SIZE);
+    const half = size / 2;
 
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', 'tech-web-node tech-web-node--locked');
+    g.setAttribute('class', `tech-web-node tech-web-node--locked${spine ? ' tech-web-node--spine' : ''}`);
     g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
     g.dataset.nodeId = node.id;
     g.dataset.cluster = node.cluster;
+    if (spine) g.dataset.spine = '1';
     if (filtered) g.classList.add('tech-web-node--filtered');
     if (hidden) g.classList.add('tech-web-node--hidden');
 
@@ -183,11 +209,11 @@ function buildSvgGraph(state, summary, opts = {}) {
     tile.setAttribute('class', 'tech-web-node__tile');
     tile.setAttribute('x', String(-half));
     tile.setAttribute('y', String(-half));
-    tile.setAttribute('width', String(NODE_SIZE));
-    tile.setAttribute('height', String(NODE_SIZE));
-    tile.setAttribute('rx', '6');
-    tile.setAttribute('stroke', cluster.color);
-    tile.setAttribute('stroke-width', '2');
+    tile.setAttribute('width', String(size));
+    tile.setAttribute('height', String(size));
+    tile.setAttribute('rx', spine ? '8' : '6');
+    tile.setAttribute('stroke', spine ? '#ffb44a' : cluster.color);
+    tile.setAttribute('stroke-width', spine ? '3' : '2');
     g.appendChild(tile);
 
     const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -205,7 +231,7 @@ function buildSvgGraph(state, summary, opts = {}) {
     icon.setAttribute('class', 'tech-web-node__icon');
     icon.setAttribute('y', '5');
     icon.setAttribute('text-anchor', 'middle');
-    icon.textContent = hidden ? '?' : nodeIcon(node);
+    icon.textContent = hidden ? '?' : (spine ? '☀' : nodeIcon(node));
     g.appendChild(icon);
 
     const pct = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -226,7 +252,7 @@ function buildSvgGraph(state, summary, opts = {}) {
     const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
     title.textContent = hidden
       ? 'Unknown technology'
-      : `${node.name} · ${costLabel(node)}`;
+      : `${spine ? 'Main Path · ' : ''}${node.name} · ${costLabel(node)}`;
     g.appendChild(title);
 
     nodesG.appendChild(g);
@@ -245,16 +271,19 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const summarySafe = summary ?? { activeNodeId: null, queue: [], progress: 0 };
   const hoverId = opts.hoverNodeId ?? null;
+  const tracedId = opts.tracedNodeId ?? null;
+  const focusId = tracedId || hoverId;
   const filters = opts.filters ?? { cluster: opts.clusterFilter ?? null };
-  const pathIds = hoverId
-    ? new Set(ancestorChain(hoverId, techNode))
+  const tracing = !!focusId;
+  const pathIds = tracing
+    ? new Set(ancestorChain(focusId, techNode))
     : new Set(
       (state.research?.unlocked ?? []).filter((id) => id !== 'eco_baseline'),
     );
 
   const pathEdges = new Set();
-  if (hoverId) {
-    const chain = ancestorChain(hoverId, techNode);
+  if (tracing) {
+    const chain = ancestorChain(focusId, techNode);
     for (let i = 1; i < chain.length; i++) {
       pathEdges.add(`${chain[i - 1]}->${chain[i]}`);
     }
@@ -276,40 +305,65 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
     const hidden = isNodeHidden(state, node.id);
     const status = hidden ? 'hidden' : nodeState(state, node.id, summarySafe);
     const onPath = pathIds.has(node.id);
+    const isFocus = node.id === focusId;
     const filtered = !nodeMatchesFilters(state, node, summarySafe, filters);
+    const dimmed = tracing && !onPath;
 
     g.setAttribute('class', [
       'tech-web-node',
       `tech-web-node--${status}`,
-      onPath ? 'tech-web-node--path' : '',
+      isSpineTech(node) ? 'tech-web-node--spine' : '',
+      onPath && tracing ? 'tech-web-node--path' : '',
+      isFocus ? 'tech-web-node--traced' : '',
+      dimmed ? 'tech-web-node--dimmed' : '',
       filtered ? 'tech-web-node--filtered' : '',
     ].filter(Boolean).join(' '));
 
     const tile = g.querySelector('.tech-web-node__tile');
     if (tile) {
-      if (status === 'unlocked' || onPath) {
+      const spine = isSpineTech(node);
+      if (isFocus) {
         tile.setAttribute('fill', '#3a2818');
+        tile.setAttribute('stroke', '#ffe08a');
+        tile.setAttribute('stroke-width', '4');
+        tile.setAttribute('filter', 'url(#tech-glow)');
+      } else if (onPath && tracing) {
+        tile.setAttribute('fill', spine ? '#4a3018' : '#3a2818');
         tile.setAttribute('stroke', '#ff9a4a');
-        tile.setAttribute('stroke-width', onPath ? '3' : '2');
+        tile.setAttribute('stroke-width', '3');
+        tile.removeAttribute('filter');
+      } else if (status === 'unlocked') {
+        tile.setAttribute('fill', spine ? '#4a3018' : '#3a2818');
+        tile.setAttribute('stroke', tracing ? '#6a5030' : '#ff9a4a');
+        tile.setAttribute('stroke-width', spine ? '3' : '2');
+        tile.removeAttribute('filter');
       } else if (status === 'active' || status === 'available' || status === 'queued') {
         tile.setAttribute('fill', '#142838');
-        tile.setAttribute('stroke', '#7ad0ff');
-        tile.setAttribute('stroke-width', status === 'active' ? '3' : '2');
+        tile.setAttribute('stroke', spine ? '#ffb44a' : '#7ad0ff');
+        tile.setAttribute('stroke-width', status === 'active' || spine ? '3' : '2');
+        if (status === 'active') tile.setAttribute('filter', 'url(#tech-glow)');
+        else tile.removeAttribute('filter');
       } else if (status === 'hidden') {
         tile.setAttribute('fill', '#121620');
         tile.setAttribute('stroke', '#3a4050');
+        tile.removeAttribute('filter');
       } else {
-        tile.setAttribute('fill', '#141820');
-        tile.setAttribute('stroke', '#3a4555');
+        tile.setAttribute('fill', spine ? '#1a1810' : '#141820');
+        tile.setAttribute('stroke', spine ? '#6a5030' : '#3a4555');
+        if (spine) tile.setAttribute('stroke-width', '3');
+        tile.removeAttribute('filter');
       }
-      if (status === 'active') tile.setAttribute('filter', 'url(#tech-glow)');
-      else tile.removeAttribute('filter');
     }
 
     const icon = g.querySelector('.tech-web-node__icon');
     if (icon) {
       icon.textContent = hidden ? '?' : nodeIcon(node);
-      icon.setAttribute('fill', status === 'unlocked' || onPath ? '#ffb86a' : cluster.color);
+      icon.setAttribute(
+        'fill',
+        isFocus || (onPath && tracing) || status === 'unlocked'
+          ? '#ffb86a'
+          : cluster.color,
+      );
     }
 
     const ring = g.querySelector('.tech-web-node__progress');
@@ -331,8 +385,7 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
       nameEl.textContent = shortName;
     }
 
-    if (status === 'available') g.style.cursor = 'pointer';
-    else g.style.cursor = '';
+    g.style.cursor = 'pointer';
   }
 
   for (const path of svg.querySelectorAll('.tech-web-edge')) {
@@ -345,9 +398,11 @@ export function updateTechWebGraph(svg, state, summary, opts = {}) {
     const onPath = pathEdges.has(key);
     const filtered = !nodeMatchesFilters(state, fromNode, summarySafe, filters)
       && !nodeMatchesFilters(state, toNode, summarySafe, filters);
-    let cls = 'tech-web-edge';
+    let cls = path.dataset.spine === '1' ? 'tech-web-edge tech-web-edge--spine' : 'tech-web-edge';
     if (filtered) cls += ' tech-web-edge--filtered';
-    if (onPath) cls += ' tech-web-edge--path';
+    if (onPath && tracing) cls += ' tech-web-edge--path tech-web-edge--traced';
+    else if (onPath) cls += ' tech-web-edge--path';
+    else if (tracing) cls += ' tech-web-edge--dimmed';
     else if (bothUnlocked) cls += ' tech-web-edge--lit';
     path.setAttribute('class', cls);
   }
@@ -433,10 +488,12 @@ export function mountTechWebGraph(container, state, opts = {}) {
   container.appendChild(graphHost);
 
   let hoverNodeId = null;
+  let tracedNodeId = null;
   opts.filters = { cluster: opts.clusterFilter ?? null, ...(opts.filters ?? {}) };
   const graphOpts = () => ({
     filters: opts.filters,
     hoverNodeId,
+    tracedNodeId,
   });
 
   const { svg, positions, width, height } = buildSvgGraph(state, summary, graphOpts());
@@ -451,10 +508,22 @@ export function mountTechWebGraph(container, state, opts = {}) {
     onHoverNode: (nodeId) => {
       hoverNodeId = nodeId;
       updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
-      opts.onHoverNode?.(nodeId);
+      opts.onHoverNode?.(nodeId, { tracedNodeId });
+    },
+    onSelectNode: (nodeId) => {
+      tracedNodeId = nodeId;
+      updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
+      opts.onSelectNode?.(nodeId);
+      opts.onHoverNode?.(nodeId ?? hoverNodeId, { tracedNodeId });
     },
   });
-  createTechMinimap(graphHost, positions, nodes, width, height, viewport.fitView);
+  createTechMinimap(graphHost, positions, nodes, width, height, () => {
+    tracedNodeId = null;
+    hoverNodeId = null;
+    viewport.fitView();
+    updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
+    opts.onHoverNode?.(null, { tracedNodeId: null });
+  });
 
   return {
     svg,
@@ -475,16 +544,20 @@ export function mountTechWebGraph(container, state, opts = {}) {
     focusNode: (nodeId) => {
       if (!positions.has(nodeId)) return false;
       hoverNodeId = nodeId;
+      tracedNodeId = nodeId;
       updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
       viewport.fitBounds(nodeBounds(positions, nodeId), 90);
-      opts.onHoverNode?.(nodeId);
+      opts.onSelectNode?.(nodeId);
+      opts.onHoverNode?.(nodeId, { tracedNodeId });
       return true;
     },
     resetView: () => {
       hoverNodeId = null;
+      tracedNodeId = null;
       viewport.fitView();
       updateTechWebGraph(svg, currentState, currentSummary, graphOpts());
-      opts.onHoverNode?.(null);
+      opts.onHoverNode?.(null, { tracedNodeId: null });
+      opts.onSelectNode?.(null);
     },
     refresh: (st, sum) => {
       currentState = st;

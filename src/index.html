@@ -393,6 +393,8 @@
           <div class="title-screen__actions">
             <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">New Campaign</button>
             <button id="title-custom-campaign-btn" type="button" class="btn btn--ghost btn--block">Custom Campaign</button>
+            <button id="title-missions-btn" type="button" class="btn btn--ghost btn--block">Missions</button>
+            <button id="title-sandbox-btn" type="button" class="btn btn--ghost btn--block">Sandbox</button>
             <button id="title-continue-btn" type="button" class="btn btn--ghost btn--block hidden">Continue</button>
             <button id="title-load-btn" type="button" class="btn btn--ghost btn--block">Load Game</button>
           </div>
@@ -426,10 +428,10 @@
       </div>
       <div id="new-game-modal" class="panel panel--modal hidden">
         <div class="panel__header">
-          <span class="panel__title">Custom Campaign</span>
+          <span class="panel__title" id="new-game-modal-title">Custom Campaign</span>
         </div>
         <div class="panel__body">
-          <p class="panel-note">Choose how to begin your reign.</p>
+          <p class="panel-note" id="new-game-modal-note">Choose how to begin your reign.</p>
           <label class="panel-note">Victory goal</label>
           <select id="new-game-victory" class="btn btn--ghost btn--block">
             <option value="sandbox">Sandbox (no victory)</option>
@@ -454,6 +456,22 @@
         </div>
         <div class="panel__footer save-menu-actions">
           <button id="close-new-game-btn" type="button" class="btn btn--ghost btn--sm">Cancel</button>
+        </div>
+      </div>
+      <div id="field-manual-backdrop" class="modal-backdrop hidden"></div>
+      <div id="field-manual-modal" class="panel panel--modal field-manual-modal hidden" role="dialog" aria-modal="true" aria-labelledby="field-manual-title">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title" id="field-manual-title">Field Manual</span>
+          <button id="field-manual-close" type="button" class="btn btn--ghost btn--xs" aria-label="Close briefing">×</button>
+        </div>
+        <div class="panel__body">
+          <p id="field-manual-summary" class="panel-note"></p>
+          <ol id="field-manual-steps" class="field-manual-steps"></ol>
+        </div>
+        <div class="panel__footer panel__actions">
+          <button id="field-manual-show" type="button" class="btn btn--ghost btn--sm">Show me</button>
+          <button id="field-manual-ack" type="button" class="btn btn--primary btn--sm">Understood</button>
         </div>
       </div>
       <div id="save-menu" class="panel panel--modal hidden">
@@ -493,6 +511,27 @@
           <div id="dev-context" class="dev-context">—</div>
           <div id="dev-status" class="dev-status dev-status--muted">Ready</div>
 
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Tutorial Controls</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <button id="dev-tutorial-override" type="button" class="btn btn--ghost btn--sm">Override Locks</button>
+                <button id="dev-tutorial-relock" type="button" class="btn btn--ghost btn--sm">Relock</button>
+                <button id="dev-tutorial-reset" type="button" class="btn btn--ghost btn--sm">Reset Tutorial</button>
+              </div>
+              <div class="dev-row">
+                <select id="dev-tutorial-step" class="dev-select dev-select--wide"></select>
+                <button id="dev-tutorial-prev" type="button" class="btn btn--ghost btn--sm">Previous</button>
+                <button id="dev-tutorial-next" type="button" class="btn btn--ghost btn--sm">Complete / Next</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-tutorial-retry" type="button" class="btn btn--ghost btn--sm">Retry Battle</button>
+                <button id="dev-tutorial-graduate" type="button" class="btn btn--primary btn--sm">Mark Graduated</button>
+                <button id="dev-tutorial-clear-profile" type="button" class="btn btn--danger btn--sm">Clear Profile</button>
+              </div>
+            </div>
+          </details>
+
           <details class="dev-section">
             <summary class="dev-section__title">Cheats</summary>
             <div class="dev-section__body">
@@ -520,6 +559,37 @@
               <div class="dev-row">
                 <button id="dev-advance-60" type="button" class="btn btn--ghost btn--sm">+60s</button>
                 <button id="dev-advance-300" type="button" class="btn btn--ghost btn--sm">+300s</button>
+              </div>
+            </div>
+          </details>
+
+          <details class="dev-section" open>
+            <summary class="dev-section__title">Hull Forge &amp; Flagship</summary>
+            <div class="dev-section__body">
+              <div class="dev-row">
+                <span class="dev-label" id="dev-hull-stage-label">Mk —</span>
+              </div>
+              <div class="dev-row">
+                <button id="dev-hull-stage-0" type="button" class="btn btn--ghost btn--sm" data-hull-stage="0">Mk 0</button>
+                <button id="dev-hull-stage-1" type="button" class="btn btn--ghost btn--sm" data-hull-stage="1">Mk I</button>
+                <button id="dev-hull-stage-2" type="button" class="btn btn--ghost btn--sm" data-hull-stage="2">Mk II</button>
+                <button id="dev-hull-stage-3" type="button" class="btn btn--ghost btn--sm" data-hull-stage="3">Mk III</button>
+                <button id="dev-hull-stage-4" type="button" class="btn btn--ghost btn--sm" data-hull-stage="4">Mk IV</button>
+                <button id="dev-hull-stage-5" type="button" class="btn btn--ghost btn--sm" data-hull-stage="5">Mk V</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-unlock-hull-forge" type="button" class="btn btn--primary btn--sm">Unlock Hull Forge</button>
+                <button id="dev-unlock-fleet-refits" type="button" class="btn btn--ghost btn--sm">Unlock Fleet Refits</button>
+                <button id="dev-unlock-late-flagship" type="button" class="btn btn--ghost btn--sm">Unlock Late Flagship</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-max-flagship-kit" type="button" class="btn btn--primary btn--sm">Max Flagship Kit</button>
+                <button id="dev-damage-flagship-50" type="button" class="btn btn--ghost btn--sm">Damage 50%</button>
+                <button id="dev-damage-flagship-25" type="button" class="btn btn--ghost btn--sm">Damage 25%</button>
+                <button id="dev-heal-flagship" type="button" class="btn btn--ghost btn--sm">Heal Flagship</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-mark-all-briefings" type="button" class="btn btn--ghost btn--sm">Mark All Briefings Seen</button>
               </div>
             </div>
           </details>
@@ -642,7 +712,6 @@
                 </select>
               </div>
               <div class="dev-row">
-                <button id="dev-heal-flagship" type="button" class="btn btn--ghost btn--sm">Heal Flagship</button>
                 <button id="dev-heal-ships" type="button" class="btn btn--ghost btn--sm">Heal Ships Here</button>
               </div>
             </div>

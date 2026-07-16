@@ -16,6 +16,7 @@ import { findPath, neighborsOf } from './galaxy.js';
 import { getGalaxyIntel, getGraph, getSystems } from './galaxy-scope.js';
 import { hasIntel } from './intel.js';
 import { isTechUnlocked } from './tech-web.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 
 export {
   cloneConstructionTemplate,
@@ -652,6 +653,8 @@ export function previewExpansionCampaign(state, spec = {}, options = {}) {
 }
 
 export function createExpansionCampaign(state, spec = {}, options = {}) {
+  const tutorial = requireTutorialAccess(state, 'operations', { bypass: options.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const orders = ensureStrategicOrdersState(state);
   const preview = spec.kind === 'expansion-preview' ? copy(spec) : previewExpansionCampaign(state, spec, options);
   if (!preview.ok) {

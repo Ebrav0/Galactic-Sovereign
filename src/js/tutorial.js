@@ -1,133 +1,126 @@
-// Guided new-player tutorial. Coach marks hover beside concrete HUD controls;
-// each beat advances from real game state (or a short Continue when needed).
+// Required first-command curriculum. Steps advance from authoritative game
+// state; presentation is handled by the coach UI.
 
 import { ensureCampaign, startTutorial } from './campaign.js';
 import { getGraph, getSystems } from './galaxy-scope.js';
 import { hasOutpost, hasShipyard, systemById } from './state.js';
 import { hasIntel } from './intel.js';
+import {
+  TUTORIAL_CURRICULUM_VERSION,
+  TUTORIAL_STEP_IDS,
+  tutorialStepIndex,
+} from './tutorial-access.js';
 
-export const TUTORIAL_STEPS = [
+export const TUTORIAL_STEPS = Object.freeze([
   {
-    id: 0,
-    title: 'Enter System View',
-    objective: 'Open your Stronghold in System view.',
-    instruction: 'Tap System to inspect planets and build surface structures.',
-    actionLabel: 'Show homeworld',
-    uiTargetId: 'tab-system',
-    placement: 'top',
+    id: 'command_basics',
+    title: 'Take Command',
+    objective: 'Open System view, then pause and resume time once.',
+    instruction: 'System and Galaxy views show different command layers. Pause whenever you need time to plan.',
+    actionLabel: 'Show Stronghold',
+    uiTargetId: 'pause-btn',
+    placement: 'bottom',
   },
   {
-    id: 1,
-    title: 'Establish the Supply Chain',
-    objective: 'Build an outpost on your homeworld.',
-    instruction: 'Outposts produce cargo and a steady credit stipend. Moons boost both.',
-    actionLabel: 'Show homeworld',
+    id: 'build_outpost',
+    title: 'Establish an Outpost',
+    objective: 'Build an outpost on the highlighted Stronghold world.',
+    instruction: 'Outposts generate credits and cargo. Moons improve their output.',
+    actionLabel: 'Show build site',
     uiTargetId: 'build-outpost-btn',
     placement: 'left',
   },
   {
-    id: 2,
+    id: 'review_logistics',
     title: 'Review Logistics',
-    objective: 'Open the Logistics panel.',
-    instruction: 'Your first outpost commissions an export depot. Cargo delivers to Trade Nexuses for credits.',
+    objective: 'Open Logistics and inspect your first export depot.',
+    instruction: 'Cargo moves through depots and convoys to Trade Nexuses for credits.',
     actionLabel: 'Open Logistics',
     uiTargetId: 'tab-logistics',
     placement: 'top',
   },
   {
-    id: 3,
-    title: 'Commission a Shipyard',
-    objective: 'Build a shipyard beside your first outpost.',
-    instruction: 'Shipyards turn credits into scouts and combat ships.',
+    id: 'build_shipyard',
+    title: 'Build an Orbital Shipyard',
+    objective: 'Commission a shipyard beside the outpost.',
+    instruction: 'Shipyards fulfill the empire-wide production queue and deliver completed hulls.',
     actionLabel: 'Show shipyard site',
     uiTargetId: 'build-shipyard-btn',
     placement: 'left',
   },
   {
-    id: 4,
+    id: 'launch_scout',
     title: 'Launch a Scout',
-    objective: 'Add a scout to the Empire Build Queue.',
-    instruction: 'Scouts reveal systems before you risk the flagship. Keep time running while it fabricates.',
-    actionLabel: 'Show scout production',
+    objective: 'Queue a scout and wait for it to launch.',
+    instruction: 'Scouts reveal ownership, planets, threats, and capture requirements before your fleet commits.',
+    actionLabel: 'Show scout queue',
     uiTargetId: 'queue-scout-btn',
     placement: 'left',
   },
   {
-    id: 5,
-    title: 'Recon the Frontier',
-    objective: 'Shift+click the marked neighboring system to dispatch your scout.',
-    instruction: 'The cyan ring marks your first destination.',
-    actionLabel: 'Open galaxy map',
+    id: 'scout_frontier',
+    title: 'Survey the Frontier',
+    objective: 'Send the scout to the cyan-marked neighboring system.',
+    instruction: 'Select the scout, then Shift-click the marked system on the Galaxy map.',
+    actionLabel: 'Show target',
     uiTargetId: 'tab-galaxy',
     placement: 'bottom',
   },
   {
-    id: 6,
-    title: 'Read the Scout Report',
-    objective: 'Wait for the scout to gather intel.',
-    instruction: 'Watch the scout chip. Intel reveals planets, ownership, and capture requirement.',
-    actionLabel: 'Track scout',
-    uiTargetId: 'scout-summary',
-    placement: 'bottom',
-  },
-  {
-    id: 7,
+    id: 'assemble_escort',
     title: 'Assemble an Escort',
-    objective: 'Queue a combat ship (corvette or better).',
-    instruction: 'Capture needs force. Queue a corvette so the flagship is not alone.',
-    actionLabel: 'Show fleet queue',
+    objective: 'Queue a corvette and wait for it to join your fleet.',
+    instruction: 'Combat hulls protect the flagship and provide capture force after battle.',
+    actionLabel: 'Open Fleet Command',
     uiTargetId: 'queue-corvette-btn',
     placement: 'right',
   },
   {
-    id: 8,
-    title: 'Set a Course',
-    objective: 'Click the marked, scouted system to send the flagship there.',
-    instruction: 'The flagship follows the lane route. Its presence supplies capture force on arrival.',
-    actionLabel: 'Open galaxy map',
+    id: 'travel_to_battle',
+    title: 'Set a Battle Course',
+    objective: 'Send the flagship and its escort to the surveyed system.',
+    instruction: 'Click the marked system. Training Command will route the home escort alongside the flagship.',
+    actionLabel: 'Show destination',
     uiTargetId: 'tab-galaxy',
     placement: 'bottom',
   },
   {
-    id: 9,
-    title: 'Review Capture Requirement',
-    objective: 'Arrive at the marked system and check System Intel.',
-    instruction: 'Compare your capture force with the requirement before you hold the claim.',
-    actionLabel: 'Open System Intel',
-    uiTargetId: 'capture-panel-body',
+    id: 'win_first_battle',
+    title: 'Win the Engagement',
+    objective: 'Select your ships, issue an Attack order, resume time, and destroy the training raider.',
+    instruction: 'Pause to plan. Advanced Tactics exposes Move, Attack, Hold, formations, and retreat.',
+    actionLabel: 'Show battle',
+    uiTargetId: 'combat-hud-attack',
     placement: 'right',
   },
   {
-    id: 10,
+    id: 'capture_first_system',
     title: 'Claim the System',
-    objective: 'Hold the system until capture completes.',
-    instruction: 'Keep enough force present and uncontested for the hold timer.',
-    actionLabel: 'Show capture panel',
+    objective: 'Hold the cleared system for five seconds.',
+    instruction: 'Capture progresses only while sufficient friendly force is present and no enemy contests the system.',
+    actionLabel: 'Show capture status',
     uiTargetId: 'capture-panel-body',
     placement: 'right',
   },
   {
-    id: 11,
-    title: 'Dyson Horizon',
-    objective: 'Build a Sail Foundry — or finish when ready.',
-    instruction: 'Foundries mint Dyson sails. Launchers weave shells that unlock Solarii.',
-    actionLabel: 'Show foundry site',
-    uiTargetId: 'build-foundry-btn',
-    placement: 'left',
-  },
-  {
-    id: 12,
-    title: 'You Have Command',
-    objective: 'Your first expedition loop is complete.',
-    instruction: 'Scout before you travel, protect cargo routes, and grow Dysons when ready.',
+    id: 'graduation',
+    title: 'Sovereign Command Granted',
+    objective: 'Your first expansion loop is complete.',
+    instruction: 'Choose a victory condition and difficulty. New systems will explain themselves through unlock briefings in the Field Manual.',
     actionLabel: null,
     uiTargetId: 'tab-campaign',
     placement: 'top',
   },
-];
+]);
+
+function tutorialState(state) {
+  ensureCampaign(state);
+  return state.campaign.tutorial;
+}
 
 function tutorialTargetSystemId(state) {
-  const saved = state.campaign.tutorialTargetSystemId;
+  const tutorial = tutorialState(state);
+  const saved = tutorial.targetSystemId;
   if (saved && systemById(state, saved)) return saved;
 
   const graph = getGraph(state);
@@ -137,12 +130,14 @@ function tutorialTargetSystemId(state) {
     if (a === state.stronghold) candidates.push(b);
     if (b === state.stronghold) candidates.push(a);
   }
-  const viable = candidates.filter((id) => id !== 'core' && systems[id]?.star?.kind !== 'trade_nexus');
+  const viable = candidates
+    .filter((id) => id !== 'core' && systems[id]?.star?.kind !== 'trade_nexus')
+    .sort((a, b) => String(a).localeCompare(String(b)));
   const target = viable.find((id) => systems[id]?.owner === 'neutral')
     ?? viable.find((id) => systems[id]?.owner !== 'ai')
     ?? viable[0]
     ?? null;
-  state.campaign.tutorialTargetSystemId = target;
+  tutorial.targetSystemId = target;
   return target;
 }
 
@@ -171,235 +166,248 @@ function hasScout(state) {
   return (state.scouts ?? []).length > 0;
 }
 
-function scoutWasSentToTarget(state, targetId) {
-  return (state.scouts ?? []).some((scout) => {
-    const destination = scout.transit?.path?.[scout.transit.path.length - 1] ?? scout.systemId;
-    return destination === targetId && (scout.transit || scout.systemId === targetId);
-  });
-}
-
-function flagshipIsHeadingToTarget(state, targetId) {
-  const destination = state.flagship.transit?.path?.[state.flagship.transit.path.length - 1]
-    ?? state.flagship.systemId;
-  return destination === targetId && (state.flagship.transit || state.flagship.systemId === targetId);
-}
-
-function flagshipArrivedAtTarget(state, targetId) {
-  return state.flagship.systemId === targetId && !state.flagship.transit && !state.flagship.wormholeTransit;
-}
-
-function hasCombatShipProgress(state) {
-  const ships = (state.playerShips ?? []).some((ship) => ship.hull && ship.hull !== 'scout');
-  const queued = (state.empireQueue ?? []).some((item) => item.hull && item.hull !== 'scout');
-  return ships || queued;
+function hasCombatShip(state) {
+  return (state.playerShips ?? []).some((ship) => ship.hp > 0 && ship.hull && ship.hull !== 'scout');
 }
 
 function targetOwnedByPlayer(state, targetId) {
   return systemById(state, targetId)?.owner === 'player';
 }
 
-function hasHomeFoundry(state) {
-  const home = systemById(state, state.stronghold);
-  return (home?.structures ?? []).some((s) => s.type === 'sail_foundry' && (s.hp ?? 1) > 0);
-}
-
 function targetName(state, targetId) {
   return systemById(state, targetId)?.name ?? 'the marked neighboring system';
 }
 
-function statusForStep(state, step, targetId) {
-  const target = targetName(state, targetId);
-  if (step === 0) return 'Open System view on your Stronghold.';
-  if (step === 1) return hasHomeOutpost(state) ? 'Outpost online.' : 'Select a habitable world in your Stronghold.';
-  if (step === 2) {
-    return state.campaign.tutorialLogisticsOpened
-      ? 'Logistics reviewed.'
-      : 'Open Logistics to see depots and convoy flow.';
-  }
-  if (step === 3) return hasHomeShipyard(state) ? 'Shipyard commissioned.' : 'Your home outpost is ready for a shipyard.';
-  if (step === 4) return hasScout(state) ? 'Scout ready for deployment.' : 'Queue a scout, then wait for fabrication.';
-  if (step === 5) return scoutWasSentToTarget(state, targetId) ? `Scout dispatched to ${target}.` : `Dispatch your scout to ${target}.`;
-  if (step === 6) return hasIntel(state, targetId) ? `${target} has been surveyed.` : 'Scout en route — route highlighted in cyan.';
-  if (step === 7) return hasCombatShipProgress(state) ? 'Combat hull queued.' : 'Queue a corvette from the Empire Build Queue.';
-  if (step === 8) return flagshipIsHeadingToTarget(state, targetId) ? `Flagship has a route to ${target}.` : `Send the flagship to ${target}.`;
-  if (step === 9) {
-    if (!flagshipArrivedAtTarget(state, targetId)) return `Move the flagship to ${target}.`;
-    return `${target} is surveyed. Review the capture requirement.`;
-  }
-  if (step === 10) {
-    if (targetOwnedByPlayer(state, targetId)) return `${target} is yours.`;
-    return `Hold ${target} uncontested until capture completes.`;
-  }
-  if (step === 11) {
-    return hasHomeFoundry(state)
-      ? 'Sail Foundry online.'
-      : 'Build a Sail Foundry when ready, or finish the tutorial.';
-  }
-  return 'Tutorial complete. You are ready to expand on your own.';
-}
-
-function canAdvance(state, step, targetId) {
-  if (step === 0) return state.campaign.tutorialSystemViewed === true;
-  if (step === 1) return hasHomeOutpost(state);
-  if (step === 2) return state.campaign.tutorialLogisticsOpened === true;
-  if (step === 3) return hasHomeShipyard(state);
-  if (step === 4) return hasScout(state);
-  if (step === 5) return scoutWasSentToTarget(state, targetId);
-  if (step === 6) return hasIntel(state, targetId);
-  if (step === 7) return hasCombatShipProgress(state);
-  if (step === 8) return flagshipIsHeadingToTarget(state, targetId);
-  if (step === 9) return flagshipArrivedAtTarget(state, targetId) && hasIntel(state, targetId);
-  if (step === 10) return targetOwnedByPlayer(state, targetId);
-  if (step === 11) return hasHomeFoundry(state);
+function canAdvance(state, stepId, targetId) {
+  const flags = tutorialState(state).flags;
+  if (stepId === 'command_basics') return flags.systemViewed && flags.timeToggled;
+  if (stepId === 'build_outpost') return hasHomeOutpost(state);
+  if (stepId === 'review_logistics') return flags.logisticsOpened;
+  if (stepId === 'build_shipyard') return hasHomeShipyard(state);
+  if (stepId === 'launch_scout') return hasScout(state);
+  if (stepId === 'scout_frontier') return hasIntel(state, targetId);
+  if (stepId === 'assemble_escort') return hasCombatShip(state);
+  if (stepId === 'travel_to_battle') return flags.battlePrepared;
+  if (stepId === 'win_first_battle') return flags.battleCommandIssued && flags.battleWon;
+  if (stepId === 'capture_first_system') return targetOwnedByPlayer(state, targetId);
   return false;
 }
 
+function statusForStep(state, stepId, targetId) {
+  const flags = tutorialState(state).flags;
+  const target = targetName(state, targetId);
+  if (stepId === 'command_basics') {
+    if (!flags.systemViewed) return 'Open System view on your Stronghold.';
+    return flags.timeToggled ? 'Command timeline confirmed.' : 'Pause and resume time once.';
+  }
+  if (stepId === 'build_outpost') return hasHomeOutpost(state) ? 'Outpost online.' : 'Select the highlighted habitable world.';
+  if (stepId === 'review_logistics') return flags.logisticsOpened ? 'Logistics reviewed.' : 'Open Logistics to inspect cargo flow.';
+  if (stepId === 'build_shipyard') return hasHomeShipyard(state) ? 'Shipyard commissioned.' : 'Build beside the Stronghold outpost.';
+  if (stepId === 'launch_scout') return hasScout(state) ? 'Scout ready.' : 'Queue a scout and keep time running.';
+  if (stepId === 'scout_frontier') return hasIntel(state, targetId) ? `${target} surveyed.` : `Dispatch the scout to ${target}.`;
+  if (stepId === 'assemble_escort') return hasCombatShip(state) ? 'Escort ready.' : 'Queue a corvette and wait for delivery.';
+  if (stepId === 'travel_to_battle') return flags.battlePrepared ? `Training contact at ${target}.` : `Send the flagship to ${target}.`;
+  if (stepId === 'win_first_battle') {
+    if (flags.battleWon) return 'Training raider destroyed.';
+    return flags.battleCommandIssued ? 'Attack order accepted — resume time.' : 'Select friendlies and issue an Attack order.';
+  }
+  if (stepId === 'capture_first_system') return targetOwnedByPlayer(state, targetId) ? `${target} secured.` : 'Hold uncontested for five seconds.';
+  return 'Training complete. Choose the shape of your campaign.';
+}
+
 function currentStep(state) {
-  const step = state.campaign.tutorialStep ?? 0;
-  const base = TUTORIAL_STEPS[step] ?? null;
+  const tutorial = tutorialState(state);
+  const index = Math.max(0, tutorialStepIndex(tutorial.currentStepId));
+  const base = TUTORIAL_STEPS[index] ?? null;
   if (!base) return null;
   const targetSystemId = tutorialTargetSystemId(state);
-  const target = targetName(state, targetSystemId);
-  const canConfirm = (step === 2 && !state.campaign.tutorialLogisticsOpened)
-    || (step === 9 && flagshipArrivedAtTarget(state, targetSystemId))
-    || (step === 11 && !hasHomeFoundry(state));
   return {
     ...base,
+    index,
     targetSystemId,
-    targetName: target,
-    status: statusForStep(state, step, targetSystemId),
-    canConfirm,
-    readyToFinish: step === TUTORIAL_STEPS.length - 1,
+    targetName: targetName(state, targetSystemId),
+    status: statusForStep(state, base.id, targetSystemId),
+    canConfirm: false,
+    readyToFinish: base.id === 'graduation',
   };
 }
 
 export function getTutorialState(state) {
-  ensureCampaign(state);
-  const active = state.campaign.mode === 'tutorial';
+  const tutorial = tutorialState(state);
+  const active = state.campaign.mode === 'tutorial' && tutorial.status === 'active';
   return {
     active,
-    step: state.campaign.tutorialStep,
+    status: tutorial.status,
+    step: tutorial.currentStepId,
+    stepIndex: tutorialStepIndex(tutorial.currentStepId),
     totalSteps: TUTORIAL_STEPS.length,
-    targetSystemId: active ? tutorialTargetSystemId(state) : null,
+    targetSystemId: tutorial.targetSystemId,
     current: active ? currentStep(state) : null,
-    completedAt: state.campaign.tutorialCompletedAt ?? null,
+    graduationPending: tutorial.graduationPending,
+    completedAt: tutorial.completedAt,
   };
 }
 
 export function getTutorialFocus(state) {
-  ensureCampaign(state);
-  if (state.campaign.mode !== 'tutorial') return null;
-
-  const step = state.campaign.tutorialStep ?? 0;
+  const tutorial = tutorialState(state);
+  if (state.campaign.mode !== 'tutorial' || tutorial.status !== 'active') return null;
+  const stepId = tutorial.currentStepId;
   const targetSystemId = tutorialTargetSystemId(state);
-  if (step === 0 || step === 1) {
+  if (['command_basics', 'build_outpost'].includes(stepId)) {
     const body = homeBuildBody(state, (candidate) => !hasOutpost(state, state.stronghold, candidate.id))
       ?? homeOutpostBody(state)
       ?? homeBuildBody(state, () => true);
     return body ? { view: 'system', systemId: state.stronghold, bodyId: body.id } : { view: 'system', systemId: state.stronghold };
   }
-  if (step === 2) return { view: 'system', systemId: state.stronghold, panel: 'logistics' };
-  if (step === 3) {
-    const body = homeBuildBody(state, (candidate) => hasOutpost(state, state.stronghold, candidate.id)
-      && !hasShipyard(state, state.stronghold, candidate.id))
-      ?? homeOutpostBody(state);
-    return body ? { view: 'system', systemId: state.stronghold, bodyId: body.id } : null;
-  }
-  if (step === 4 || step === 7) {
+  if (stepId === 'review_logistics') return { view: 'system', systemId: state.stronghold, panel: 'logistics' };
+  if (['build_shipyard', 'launch_scout', 'assemble_escort'].includes(stepId)) {
     const body = homeShipyardBody(state) ?? homeOutpostBody(state);
     return body
-      ? { view: 'system', systemId: state.stronghold, bodyId: body.id, panel: step === 7 ? 'fleet' : null }
-      : { view: 'system', systemId: state.stronghold, panel: step === 7 ? 'fleet' : null };
+      ? { view: 'system', systemId: state.stronghold, bodyId: body.id, panel: stepId === 'assemble_escort' ? 'fleet' : null }
+      : { view: 'system', systemId: state.stronghold, panel: stepId === 'assemble_escort' ? 'fleet' : null };
   }
-  if (step === 5 || step === 6 || step === 8) {
+  if (['scout_frontier', 'travel_to_battle'].includes(stepId)) {
     return targetSystemId ? { view: 'galaxy', systemId: targetSystemId } : null;
   }
-  if (step === 9 || step === 10) {
+  if (['win_first_battle', 'capture_first_system'].includes(stepId)) {
     return targetSystemId ? { view: 'system', systemId: targetSystemId, showIntel: true } : null;
-  }
-  if (step === 11) {
-    const body = homeOutpostBody(state) ?? homeBuildBody(state, () => true);
-    return body ? { view: 'system', systemId: state.stronghold, bodyId: body.id } : null;
   }
   return { view: 'system', systemId: state.stronghold, panel: 'campaign' };
 }
 
 export function markTutorialSystemViewed(state) {
-  ensureCampaign(state);
-  if (state.campaign.mode === 'tutorial') state.campaign.tutorialSystemViewed = true;
+  const tutorial = tutorialState(state);
+  if (state.campaign.mode === 'tutorial') tutorial.flags.systemViewed = true;
+}
+
+export function markTutorialTimeToggled(state) {
+  const tutorial = tutorialState(state);
+  if (state.campaign.mode === 'tutorial') tutorial.flags.timeToggled = true;
 }
 
 export function markTutorialLogisticsOpened(state) {
-  ensureCampaign(state);
-  if (state.campaign.mode === 'tutorial') state.campaign.tutorialLogisticsOpened = true;
+  const tutorial = tutorialState(state);
+  if (state.campaign.mode === 'tutorial') tutorial.flags.logisticsOpened = true;
+}
+
+export function markTutorialBattlePrepared(state) {
+  const tutorial = tutorialState(state);
+  tutorial.flags.battlePrepared = true;
+  return setTutorialStep(state, 'win_first_battle');
+}
+
+export function markTutorialBattleCommand(state) {
+  const tutorial = tutorialState(state);
+  tutorial.flags.battleCommandIssued = true;
+}
+
+export function markTutorialBattleResolved(state, playerWon) {
+  const tutorial = tutorialState(state);
+  tutorial.flags.battleWon = playerWon === true;
+  tutorial.flags.battleFailed = playerWon !== true;
+  if (playerWon) return setTutorialStep(state, 'capture_first_system');
+  return { ok: true, failed: true };
+}
+
+export function tutorialNeedsBattlePreparation(state, systemId) {
+  const tutorial = tutorialState(state);
+  return state.campaign.mode === 'tutorial'
+    && tutorial.status === 'active'
+    && tutorial.currentStepId === 'travel_to_battle'
+    && tutorial.targetSystemId === systemId
+    && !tutorial.flags.battlePrepared;
 }
 
 export function setTutorialStep(state, step) {
-  ensureCampaign(state);
-  if (!Number.isInteger(step) || step < 0 || step >= TUTORIAL_STEPS.length) {
-    return { ok: false, reason: 'Invalid tutorial step' };
-  }
+  const tutorial = tutorialState(state);
+  const stepId = Number.isInteger(step) ? TUTORIAL_STEP_IDS[step] : step;
+  if (!TUTORIAL_STEP_IDS.includes(stepId)) return { ok: false, reason: 'Invalid tutorial step' };
+  tutorial.status = 'active';
+  tutorial.currentStepId = stepId;
+  tutorial.graduationPending = false;
   state.campaign.mode = 'tutorial';
-  state.campaign.tutorialStep = step;
   tutorialTargetSystemId(state);
-  return { ok: true, step };
+  return { ok: true, step: stepId, stepIndex: tutorialStepIndex(stepId) };
 }
 
 export function tryAdvanceTutorial(state) {
-  ensureCampaign(state);
-  if (state.campaign.mode !== 'tutorial') return null;
-  const step = state.campaign.tutorialStep ?? 0;
+  const tutorial = tutorialState(state);
+  if (state.campaign.mode !== 'tutorial' || tutorial.status !== 'active') return null;
+  const index = tutorialStepIndex(tutorial.currentStepId);
+  if (index < 0 || index >= TUTORIAL_STEP_IDS.length - 1) return null;
   const targetSystemId = tutorialTargetSystemId(state);
-  if (!canAdvance(state, step, targetSystemId) || step >= TUTORIAL_STEPS.length - 1) return null;
-
-  state.campaign.tutorialStep = step + 1;
-  return { advanced: true, step: state.campaign.tutorialStep };
+  if (!canAdvance(state, tutorial.currentStepId, targetSystemId)) return null;
+  if (!tutorial.completedStepIds.includes(tutorial.currentStepId)) {
+    tutorial.completedStepIds.push(tutorial.currentStepId);
+  }
+  tutorial.currentStepId = TUTORIAL_STEP_IDS[index + 1];
+  return { advanced: true, step: tutorial.currentStepId, stepIndex: index + 1 };
 }
 
 export function acknowledgeTutorialStep(state) {
-  ensureCampaign(state);
-  if (state.campaign.mode !== 'tutorial') {
-    return { ok: false, reason: 'Tutorial is not active' };
-  }
-  const step = state.campaign.tutorialStep ?? 0;
-  const targetSystemId = tutorialTargetSystemId(state);
-
-  if (step === 2) {
-    state.campaign.tutorialLogisticsOpened = true;
-    state.campaign.tutorialStep = 3;
-    return { ok: true, step: 3 };
-  }
-  if (step === 9) {
-    if (!flagshipArrivedAtTarget(state, targetSystemId)) {
-      return { ok: false, reason: 'Reach the marked system before continuing' };
-    }
-    state.campaign.tutorialStep = 10;
-    return { ok: true, step: 10 };
-  }
-  if (step === 11) {
-    state.campaign.tutorialStep = 12;
-    return { ok: true, step: 12 };
-  }
-  return { ok: false, reason: 'There is no tutorial briefing to confirm' };
+  const advanced = tryAdvanceTutorial(state);
+  return advanced ? { ok: true, ...advanced } : { ok: false, reason: 'Complete the current objective first' };
 }
 
-export function finishTutorial(state, { skipped = false } = {}) {
-  ensureCampaign(state);
-  if (state.campaign.mode !== 'tutorial') return { ok: false, reason: 'Tutorial is not active' };
-  if (!skipped && state.campaign.tutorialStep !== TUTORIAL_STEPS.length - 1) {
-    return { ok: false, reason: 'Complete the current tutorial objective first' };
+export function beginTutorialGraduation(state) {
+  const tutorial = tutorialState(state);
+  if (state.campaign.mode !== 'tutorial' || tutorial.currentStepId !== 'graduation') {
+    return { ok: false, reason: 'Complete the tutorial first' };
   }
+  tutorial.status = 'graduation_pending';
+  tutorial.graduationPending = true;
+  tutorial.completedAt = state.time;
+  return { ok: true, graduationPending: true };
+}
+
+export function completeTutorialGraduation(state, { victoryType = 'sandbox', aiDifficulty = 'normal' } = {}) {
+  const tutorial = tutorialState(state);
+  if (!tutorial.graduationPending) return { ok: false, reason: 'Graduation is not pending' };
+  tutorial.status = 'complete';
+  tutorial.graduationPending = false;
+  tutorial.currentStepId = 'graduation';
   state.campaign.mode = 'sandbox';
-  state.campaign.tutorialStep = null;
-  state.campaign.tutorialCompletedAt = skipped ? null : state.time;
-  return { ok: true, skipped };
+  state.campaign.tutorialCompletedAt = tutorial.completedAt;
+  state.campaign.victoryType = victoryType;
+  state.campaign.defeated = false;
+  state.campaign.won = false;
+  state.aiDifficulty = aiDifficulty;
+  return { ok: true, victoryType, aiDifficulty };
 }
 
-export function initTutorial(state) {
+export function finishTutorial(state, { skipped = false, allowReplayExit = false } = {}) {
+  if (skipped && !allowReplayExit) return { ok: false, reason: 'Tutorial graduation is required' };
+  if (skipped) {
+    state.campaign.mode = 'sandbox';
+    const tutorial = tutorialState(state);
+    tutorial.status = 'inactive';
+    tutorial.graduationPending = false;
+    return { ok: true, skipped: true };
+  }
+  return beginTutorialGraduation(state);
+}
+
+export function initTutorial(state, { replay = false } = {}) {
   const result = startTutorial(state);
-  ensureCampaign(state);
-  state.campaign.tutorialSystemViewed = false;
-  state.campaign.tutorialLogisticsOpened = false;
+  const tutorial = tutorialState(state);
+  tutorial.version = TUTORIAL_CURRICULUM_VERSION;
+  tutorial.status = 'active';
+  tutorial.currentStepId = TUTORIAL_STEP_IDS[0];
+  tutorial.completedStepIds = [];
+  tutorial.targetSystemId = null;
+  tutorial.flags = {
+    systemViewed: false,
+    timeToggled: false,
+    logisticsOpened: false,
+    battlePrepared: false,
+    battleCommandIssued: false,
+    battleWon: false,
+    battleFailed: false,
+  };
+  tutorial.graduationPending = false;
+  tutorial.completedAt = null;
+  tutorial.replay = replay === true;
+  state.credits = Math.max(state.credits ?? 0, 2500);
   tutorialTargetSystemId(state);
   return result;
 }

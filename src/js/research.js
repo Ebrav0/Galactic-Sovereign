@@ -28,6 +28,7 @@ import {
   applyTechEffect,
   techEffects,
 } from './tech-web.js';
+import { refreshFlagshipHullFromTech } from './hull.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingResearchJob, queueConstructionJob } from './drones.js';
 import {
@@ -37,6 +38,7 @@ import {
   structureResearchOutputMultiplier,
   structureResearchQueueSlotBonus,
 } from './body-structures.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 
 export function ensureResearchState(state) {
   if (!state.research) {
@@ -87,6 +89,8 @@ export function canBuildResearchStation(state, systemId, opts = {}) {
 }
 
 export function buildResearchStation(state, systemId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'research', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildResearchStation(state, systemId, opts);
   if (!check.ok) return check;
 
@@ -197,7 +201,9 @@ export function canStartResearch(state, nodeId) {
   return { ok: true, cost, durationMs: nodeResearchMs(nodeId) };
 }
 
-export function startResearch(state, nodeId) {
+export function startResearch(state, nodeId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'research', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canStartResearch(state, nodeId);
   if (!check.ok) return check;
 
@@ -258,6 +264,9 @@ export function tickResearch(state) {
   const nodeId = state.research.activeNodeId;
   state.research.unlocked.push(nodeId);
   applyTechEffect(state, nodeId);
+  if (String(nodeId).startsWith('fs_hull_')) {
+    refreshFlagshipHullFromTech(state);
+  }
   events.push({ type: 'research_complete', nodeId });
 
   state.research.activeNodeId = null;

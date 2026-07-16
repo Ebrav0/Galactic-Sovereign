@@ -1,6 +1,7 @@
 // Scripted missions (Phase 6, GDD §14).
 
 import { ensureCampaign } from './campaign.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 
 export const MISSIONS = {
   wormhole_race: {
@@ -45,7 +46,9 @@ export function listMissions() {
   return Object.values(MISSIONS);
 }
 
-export function startMission(state, missionId) {
+export function startMission(state, missionId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'missions', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   if (!MISSIONS[missionId]) return { ok: false, reason: 'Unknown mission' };
   ensureCampaign(state);
   state.campaign.mode = 'mission';

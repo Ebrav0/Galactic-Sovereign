@@ -19,6 +19,7 @@ import {
   LANE_SPEED,
   LANE_MIN_LEG_MS,
   CELESTIAL_VISUAL_SCALE,
+  PLANET_ORBIT_BASE,
   FLAGSHIP_MANUAL_OVERRIDE_MS,
   FLAGSHIP_AUTOPILOT_BLEND_MS,
 } from './constants.js';
@@ -27,7 +28,7 @@ import { systemById, findBody, bodyAngle, planetPosition, moonPosition } from '.
 import { getGraph } from './galaxy-scope.js';
 import { effectiveLegDurationMs } from './strategic-structures.js';
 import { keepOutRepulsion } from './ship-motion.js';
-import { getStarVisualProfile } from './star-types.js';
+import { techEffects } from './tech-web.js';
 import { canRouteThroughSystem } from './diplomacy.js';
 import { flagshipAutopilotPlan } from './combat-autonomy.js';
 import {
@@ -164,10 +165,23 @@ export function orbitTargetLabel(state) {
 function starOrbitMinRadius(system) {
   const star = system.star;
   const baseR = (star?.radius ?? 200) * CELESTIAL_VISUAL_SCALE;
-  if (star?.kind === 'blackhole') return baseR * 4.2 + FLAGSHIP_ORBIT_PAD_STAR;
-  const profile = getStarVisualProfile(star);
-  const glowScale = profile?.glowScale ?? 3;
-  return baseR * glowScale + FLAGSHIP_ORBIT_PAD_STAR;
+  if (star?.kind === 'blackhole') return baseR * 2.8 + FLAGSHIP_ORBIT_PAD_STAR;
+  // Stable orbit sits outside the photosphere, not the entire soft glow halo —
+  // using full glowScale made the min radius larger than the engage max.
+  return baseR * 1.35 + FLAGSHIP_ORBIT_PAD_STAR;
+}
+
+function starOrbitEngageMax(system) {
+  const minR = starOrbitMinRadius(system);
+  const firstOrbit = system?.bodies?.length
+    ? Math.min(...system.bodies.map((b) => b.orbitRadius))
+    : PLANET_ORBIT_BASE;
+  // Wide band: just outside the photosphere out toward the innermost planet.
+  return Math.max(
+    FLAGSHIP_ORBIT_STAR_MAX_DISTANCE,
+    minR + 320,
+    Math.min(firstOrbit * 0.94, minR + 1100),
+  );
 }
 
 function orbitCenterPose(state, system, orbit, time = state.time) {
@@ -216,13 +230,15 @@ function orbitTargetCandidates(state, system, fx, fy, preferredBodyId) {
 
   const starDist = Math.hypot(fx, fy);
   const starMin = starOrbitMinRadius(system);
-  if (starDist <= FLAGSHIP_ORBIT_STAR_MAX_DISTANCE && starDist >= starMin * 0.85) {
+  const starMax = starOrbitEngageMax(system);
+  const preferStar = preferredBodyId === 'star' || preferredBodyId === system?.star?.id;
+  if (starDist <= starMax && starDist >= starMin * 0.72) {
     candidates.push({
       kind: 'star',
       bodyId: null,
       dist: starDist,
       minR: starMin,
-      preferred: preferredBodyId === 'star',
+      preferred: preferStar,
     });
   }
 
@@ -477,6 +493,9 @@ export function tickFlagship(state) {
   }
 
   const dt = TICK_MS / 1000;
+  const speedMult = Math.max(0.5, techEffects(state).flagshipSpeedMult ?? 1);
+  const accel = FLAGSHIP_ACCEL * speedMult;
+  const maxSpeed = FLAGSHIP_MAX_SPEED * speedMult;
   let ax = driveX;
   let ay = driveY;
   const mag = Math.hypot(ax, ay);
@@ -485,12 +504,12 @@ export function tickFlagship(state) {
       ax /= mag;
       ay /= mag;
     }
-    f.vx += ax * FLAGSHIP_ACCEL * dt;
-    f.vy += ay * FLAGSHIP_ACCEL * dt;
+    f.vx += ax * accel * dt;
+    f.vy += ay * accel * dt;
     const speed = Math.hypot(f.vx, f.vy);
-    if (speed > FLAGSHIP_MAX_SPEED) {
-      f.vx = (f.vx / speed) * FLAGSHIP_MAX_SPEED;
-      f.vy = (f.vy / speed) * FLAGSHIP_MAX_SPEED;
+    if (speed > maxSpeed) {
+      f.vx = (f.vx / speed) * maxSpeed;
+      f.vy = (f.vy / speed) * maxSpeed;
     }
   } else {
     const damp = Math.max(0, 1 - FLAGSHIP_DRAG * dt);

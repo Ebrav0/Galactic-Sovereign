@@ -19,6 +19,15 @@ import {
   devCanForceBuildFoundry,
   devCanForceBuildLauncher,
 } from './dev.js';
+import { getTutorialState, initTutorial, setTutorialStep } from './tutorial.js';
+import {
+  setTutorialSessionOverride,
+  tutorialSessionOverrideEnabled,
+  TUTORIAL_STEP_IDS,
+} from './tutorial-access.js';
+import { clearTutorialProfile, markTutorialGraduated, markBriefingSeen } from './profile.js';
+import { FIELD_MANUAL_ENTRIES } from './field-manual.js';
+import { flagshipHullStage } from './hull.js';
 
 const el = (id) => document.getElementById(id);
 const PASSIVE_REFRESH_MS = 250;
@@ -81,6 +90,7 @@ export function initDevPanel(ctx) {
     toast,
     runAction,
     onResult,
+    retryTutorialBattle,
   } = ctx;
 
   const panel = el('dev-panel');
@@ -95,6 +105,7 @@ export function initDevPanel(ctx) {
   const doctrineSelect = el('dev-doctrine-select');
   const bodyStructureSelect = el('dev-body-structure-select');
   const strategicStructureSelect = el('dev-strategic-structure-select');
+  const tutorialStepSelect = el('dev-tutorial-step');
 
   populateHullSelect(hullSelect);
   populateTechSelect(techSelect);
@@ -102,6 +113,11 @@ export function initDevPanel(ctx) {
     bodyStructureSelect,
     Object.entries(BODY_STRUCTURE_DEFS),
     (id, def) => `${id} — ${def.label ?? id}`,
+  );
+  populateKeyedSelect(
+    tutorialStepSelect,
+    TUTORIAL_STEP_IDS.map((id) => [id, { label: id.replaceAll('_', ' ') }]),
+    (id) => id.replaceAll('_', ' '),
   );
   populateKeyedSelect(
     strategicStructureSelect,
@@ -158,6 +174,89 @@ export function initDevPanel(ctx) {
   bindClick('dev-close-btn', () => toggle(false));
   backdrop?.addEventListener('click', () => toggle(false));
 
+  bindClick('dev-tutorial-override', () => {
+    setTutorialSessionOverride(true);
+    setStatus({ ok: true, details: { tutorialOverride: true } });
+    updateDevPanel(true);
+  });
+  bindClick('dev-tutorial-relock', () => {
+    setTutorialSessionOverride(false);
+    setStatus({ ok: true, details: { tutorialOverride: false } });
+    updateDevPanel(true);
+  });
+  bindClick('dev-tutorial-reset', () => {
+    initTutorial(getState());
+    setStatus({ ok: true, details: { tutorial: 'reset' } });
+    updateDevPanel(true);
+  });
+  tutorialStepSelect?.addEventListener('change', () => {
+    const result = setTutorialStep(getState(), tutorialStepSelect.value);
+    setStatus(result.ok ? { ok: true, details: { step: result.step } } : { ...result, code: 'TUTORIAL_STEP' });
+  });
+  bindClick('dev-tutorial-prev', () => {
+    const tutorial = getTutorialState(getState());
+    const index = Math.max(0, tutorial.stepIndex - 1);
+    const result = setTutorialStep(getState(), TUTORIAL_STEP_IDS[index]);
+    setStatus({ ok: result.ok, code: 'TUTORIAL_STEP', reason: result.reason, details: { step: result.step } });
+    updateDevPanel(true);
+  });
+  bindClick('dev-tutorial-next', () => {
+    const tutorial = getTutorialState(getState());
+    const index = Math.min(TUTORIAL_STEP_IDS.length - 1, tutorial.stepIndex + 1);
+    const result = setTutorialStep(getState(), TUTORIAL_STEP_IDS[index]);
+    setStatus({ ok: result.ok, code: 'TUTORIAL_STEP', reason: result.reason, details: { step: result.step } });
+    updateDevPanel(true);
+  });
+  bindClick('dev-tutorial-retry', async () => {
+    const result = await retryTutorialBattle?.() ?? { ok: false, reason: 'Retry hook unavailable' };
+    setStatus(result.ok ? { ok: true, details: { battle: 'restored' } } : { ...result, code: 'TUTORIAL_RETRY' });
+  });
+  bindClick('dev-tutorial-graduate', async () => {
+    try {
+      const result = await markTutorialGraduated(Date.now());
+      if (!result?.ok) {
+        setStatus({
+          ok: false,
+          code: 'TUTORIAL_GRADUATE',
+          reason: result?.reason ?? 'Could not mark graduated',
+        });
+        return;
+      }
+      setStatus({
+        ok: true,
+        details: { profile: 'graduated', at: result.profile?.tutorialGraduatedAt ?? null },
+      });
+      updateDevPanel(true);
+    } catch (error) {
+      setStatus({
+        ok: false,
+        code: 'TUTORIAL_GRADUATE',
+        reason: String(error?.message ?? error),
+      });
+    }
+  });
+  bindClick('dev-tutorial-clear-profile', async () => {
+    try {
+      const result = await clearTutorialProfile();
+      if (!result?.ok) {
+        setStatus({
+          ok: false,
+          code: 'TUTORIAL_CLEAR',
+          reason: result?.reason ?? 'Could not clear profile',
+        });
+        return;
+      }
+      setStatus({ ok: true, details: { profile: 'cleared' } });
+      updateDevPanel(true);
+    } catch (error) {
+      setStatus({
+        ok: false,
+        code: 'TUTORIAL_CLEAR',
+        reason: String(error?.message ?? error),
+      });
+    }
+  });
+
   bindClick('dev-grant-1k', () => exec('grantCredits', { amount: 1000 }));
   bindClick('dev-grant-10k', () => exec('grantCredits', { amount: 10000 }));
   bindClick('dev-grant-100k', () => exec('grantCredits', { amount: 100000 }));
@@ -189,6 +288,29 @@ export function initDevPanel(ctx) {
     const nodeId = techSelect?.value;
     if (!nodeId) return;
     exec('unlockTech', { nodeId });
+  });
+
+  for (let stage = 0; stage <= 5; stage++) {
+    bindClick(`dev-hull-stage-${stage}`, () => exec('setHullForgeStage', { stage }));
+  }
+  bindClick('dev-unlock-hull-forge', () => exec('unlockHullForge'));
+  bindClick('dev-unlock-fleet-refits', () => exec('unlockFleetRefits'));
+  bindClick('dev-unlock-late-flagship', () => exec('unlockLateFlagship'));
+  bindClick('dev-max-flagship-kit', () => exec('maxFlagshipKit'));
+  bindClick('dev-damage-flagship-50', () => exec('damageFlagship', { fraction: 0.5 }));
+  bindClick('dev-damage-flagship-25', () => exec('damageFlagship', { fraction: 0.25 }));
+  bindClick('dev-mark-all-briefings', async () => {
+    try {
+      for (const entry of FIELD_MANUAL_ENTRIES) {
+        await markBriefingSeen(entry.id);
+      }
+      setStatus({ ok: true, details: { briefings: FIELD_MANUAL_ENTRIES.length } });
+      toast(`Marked ${FIELD_MANUAL_ENTRIES.length} Field Manual briefings seen`, 'ok');
+      updateDevPanel(true);
+    } catch (err) {
+      setStatus({ ok: false, reason: String(err?.message || err) });
+      toast('Failed to mark briefings', 'error');
+    }
   });
 
   bindClick('dev-build-outpost', () => exec('forceBuildOutpost'));
@@ -320,11 +442,20 @@ export function initDevPanel(ctx) {
       const lines = [
         `Galaxy ${state.activeGalaxyId ?? '?'} · View ${getView?.() ?? 'system'} · ${system?.name ?? '?'} (${systemId})`,
         `Owner ${system?.owner ?? '?'} · Credits ${Math.floor(state.credits)} · Solarii ${Math.floor(state.solarii ?? 0)}${state.solariiUnlocked ? '' : ' (locked)'}`,
-        `Planet ${planet ? `${planet.name} (${selection})` : 'none — click a planet'} · Flagship @ ${flagship?.systemId ?? 'transit'}`,
+        `Planet ${planet ? `${planet.name} (${selection})` : 'none — click a planet'} · Flagship @ ${flagship?.systemId ?? 'transit'} · Hull Mk ${flagshipHullStage(state) || 0}`,
         `Research ${research.activeNodeId ?? 'idle'} (${Math.round((research.progress ?? 0) * 100)}%) · Queue ${queue.length ?? 0} · AI systems ${ai.ownedSystemCount ?? 0}`,
         `Dysons ${state.milestones?.completedDysonSystems?.length ?? 0} · Diplo ${state.milestones?.diplomacyUnlocked ? 'on' : 'off'} · SW ${state.milestones?.superweaponUnlocked ? 'on' : 'off'}`,
       ];
       contextEl.innerHTML = lines.map((line) => `<span class="dev-context__line">${line}</span>`).join('');
+    }
+
+    const hullStageLabel = el('dev-hull-stage-label');
+    if (hullStageLabel) {
+      const stage = flagshipHullStage(state);
+      const roman = ['0', 'I', 'II', 'III', 'IV', 'V'][stage] ?? String(stage);
+      const hp = Math.floor(flagship?.hp ?? 0);
+      const maxHp = Math.floor(flagship?.maxHp ?? 0);
+      hullStageLabel.textContent = `Hull Forge Mk ${roman} · HP ${hp}/${maxHp}`;
     }
 
     if (stanceSelect && state.battleStance) stanceSelect.value = state.battleStance;
@@ -355,6 +486,15 @@ export function initDevPanel(ctx) {
       const btn = el(id);
       if (btn) btn.disabled = !enabled;
     };
+
+    const tutorial = getTutorialState(state);
+    if (tutorialStepSelect && tutorial.step) tutorialStepSelect.value = tutorial.step;
+    const overrideBtn = el('dev-tutorial-override');
+    if (overrideBtn) overrideBtn.disabled = tutorialSessionOverrideEnabled();
+    setBtn('dev-tutorial-relock', tutorialSessionOverrideEnabled());
+    setBtn('dev-tutorial-prev', tutorial.active && tutorial.stepIndex > 0);
+    setBtn('dev-tutorial-next', tutorial.active && tutorial.stepIndex < TUTORIAL_STEP_IDS.length - 1);
+    setBtn('dev-tutorial-retry', tutorial.active && ['travel_to_battle', 'win_first_battle'].includes(tutorial.step));
 
     setBtn('dev-grant-cargo', sysOk);
     setBtn('dev-grant-cargo-raw', sysOk);
@@ -399,6 +539,15 @@ export function initDevPanel(ctx) {
     setBtn('dev-sw-destroy', sysOk);
     setBtn('dev-sw-jump', sysOk);
     setBtn('dev-heal-flagship', !!flagship);
+    setBtn('dev-damage-flagship-50', !!flagship);
+    setBtn('dev-damage-flagship-25', !!flagship);
+    setBtn('dev-max-flagship-kit', !!flagship);
+    setBtn('dev-unlock-hull-forge', true);
+    setBtn('dev-unlock-fleet-refits', true);
+    setBtn('dev-unlock-late-flagship', true);
+    for (let stage = 0; stage <= 5; stage++) {
+      setBtn(`dev-hull-stage-${stage}`, true);
+    }
     setBtn('dev-heal-ships', sysOk);
   }
 

@@ -8,10 +8,11 @@ import {
   LAUNCHERS_PER_BODY_MAX,
   SHELL_SAILS_REQUIRED,
   SHELL_COUNT,
-  SAIL_CREDIT_COST,
-  FOUNDRY_SAIL_RATE,
+  SAIL_CREDIT_COST_MIN,
+  SAIL_CREDIT_COST_MAX,
+  SAIL_COST_LAUNCHER_REF,
+  LAUNCHER_SAILS_PER_SECOND,
   LAUNCHER_BATCH_SIZE,
-  LAUNCHER_LAUNCH_INTERVAL_MS,
   SAIL_SHUTTLE_CAPACITY,
   SOLARII_BASE_RATE,
   SOLARII_SHELL_MULTIPLIERS,
@@ -26,6 +27,7 @@ import {
   STRUCTURE_BUILD_MS,
 } from './constants.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 import {
   systemById,
   findBody,
@@ -122,6 +124,8 @@ export function canBuildFoundry(state, systemId, bodyId, opts = {}) {
 }
 
 export function buildFoundry(state, systemId, bodyId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'dyson', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildFoundry(state, systemId, bodyId, opts);
   if (!check.ok) return check;
 
@@ -182,6 +186,8 @@ export function canBuildLauncher(state, systemId, bodyId, opts = {}) {
 }
 
 export function buildLauncher(state, systemId, bodyId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'dyson', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildLauncher(state, systemId, bodyId, opts);
   if (!check.ok) return check;
 
@@ -313,6 +319,15 @@ export function applySolariiTick(state) {
   state.solarii = Math.max(0, (state.solarii ?? 0) + net);
 }
 
+/** Credits per sail: 0.75 with few launchers → 1.25 as the pad densifies. */
+export function sailCreditCost(launcherCount, sailCostMult = 1) {
+  const n = Math.max(0, Math.floor(launcherCount));
+  const span = Math.max(1, SAIL_COST_LAUNCHER_REF - 1);
+  const t = n <= 1 ? 0 : Math.min(1, (n - 1) / span);
+  const base = SAIL_CREDIT_COST_MIN + (SAIL_CREDIT_COST_MAX - SAIL_CREDIT_COST_MIN) * t;
+  return Math.max(0.01, base * sailCostMult);
+}
+
 function completeShell(state, system, dyson) {
   dyson.completedShells = Math.min(SHELL_COUNT, dyson.completedShells + 1);
   dyson.shellSails -= SHELL_SAILS_REQUIRED;
@@ -342,24 +357,27 @@ function tickSystemDyson(state, system) {
   const prevTime = state.time - TICK_MS;
   const effects = techEffects(state);
 
-  // 1. Foundry production
-  const sailRate = FOUNDRY_SAIL_RATE
-    * shellSailEfficiencyBonus(system)
-    * structureLevelMultiplier(foundry)
-    * structureFoundryOutputMultiplier(state, system.id)
-    * effects.foundryOutputMult
-    * effects.dysonOutputMult;
-  const sailsToMake = sailRate * dt;
-  if (sailsToMake > 0) {
-    const creditCost = sailsToMake * SAIL_CREDIT_COST * effects.sailCostMult;
-    if (state.credits >= creditCost) {
-      state.credits -= creditCost;
-      dyson.foundryStock += sailsToMake;
+  // 1. Foundry production — scales with launchers (more pads = higher credit burn).
+  const launcherCount = launchers.length;
+  if (launcherCount > 0) {
+    const sailRate = launcherCount * LAUNCHER_SAILS_PER_SECOND
+      * shellSailEfficiencyBonus(system)
+      * structureLevelMultiplier(foundry)
+      * structureFoundryOutputMultiplier(state, system.id)
+      * effects.foundryOutputMult
+      * effects.dysonOutputMult;
+    const sailsToMake = sailRate * dt;
+    if (sailsToMake > 0) {
+      const creditCost = sailsToMake * sailCreditCost(launcherCount, effects.sailCostMult);
+      if (state.credits >= creditCost) {
+        state.credits -= creditCost;
+        dyson.foundryStock += sailsToMake;
+      }
     }
   }
 
   // 2. Trip logistics: one shuttle per launcher; deliver capacity on each docking
-  if (launchers.length > 0 && dyson.foundryStock > 0) {
+  if (launcherCount > 0 && dyson.foundryStock > 0) {
     launchers.forEach((launcher, idx) => {
       const arrivals = sailShuttleLauncherArrivals(prevTime, state.time, idx, launchers.length);
       if (arrivals <= 0) return;
@@ -371,7 +389,7 @@ function tickSystemDyson(state, system) {
     });
   }
 
-  // 3. Launcher firing
+  // 3. Launcher firing — ≥ LAUNCHER_SAILS_PER_SECOND each (constant floor).
   for (const launcher of launchers) {
     const stock = dyson.launcherStock[launcher.id] ?? 0;
     if (stock < LAUNCHER_BATCH_SIZE) continue;
@@ -381,7 +399,9 @@ function tickSystemDyson(state, system) {
       * effects.launcherRateMult
       * effects.dysonOutputMult
       * (effects.dysonShellSync ? 1.12 : 1);
-    const intervalMs = LAUNCHER_LAUNCH_INTERVAL_MS / Math.max(0.1, launcherThroughput);
+    // Upgrades may only make launchers faster — never slower than 1 sail/s.
+    const sailsPerSec = Math.max(LAUNCHER_SAILS_PER_SECOND, LAUNCHER_SAILS_PER_SECOND * launcherThroughput);
+    const intervalMs = (LAUNCHER_BATCH_SIZE / sailsPerSec) * 1000;
     if (state.time - lastFire < intervalMs) continue;
 
     dyson.launcherStock[launcher.id] = stock - LAUNCHER_BATCH_SIZE;

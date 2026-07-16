@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Galactic Sovereign Save v21",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 21 },
+    "checksum": { "type": "string" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": ["campaign"],
+      "properties": {
+        "campaign": {
+          "type": "object",
+          "required": ["mode", "victoryType", "tutorial"],
+          "properties": {
+            "mode": { "type": "string" },
+            "victoryType": { "type": "string" },
+            "tutorial": {
+              "type": "object",
+              "required": [
+                "version",
+                "status",
+                "currentStepId",
+                "completedStepIds",
+                "flags",
+                "graduationPending"
+              ],
+              "properties": {
+                "version": { "const": 2 },
+                "status": {
+                  "enum": ["inactive", "active", "graduation_pending", "complete"]
+                },
+                "currentStepId": { "type": "string" },
+                "completedStepIds": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true
+                },
+                "targetSystemId": { "type": ["string", "null"] },
+                "flags": { "type": "object" },
+                "graduationPending": { "type": "boolean" },
+                "completedAt": { "type": ["number", "null"] },
+                "replay": { "type": "boolean" }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

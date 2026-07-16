@@ -28,6 +28,7 @@ import {
   FIGHTER_SORTIE_AFTERBURNER_MULT,
   COMBAT_DISENGAGE_MS,
   TACTICAL_BATTLE_RADIUS,
+  FLAGSHIP_RADIUS,
 } from './constants.js';
 import {
   carrierWingLoadout,
@@ -36,11 +37,14 @@ import {
   effectiveDamageAgainst,
   healRateForShip,
   createFlagshipCombatUnit,
+  flagshipMaxHpForState,
   grantShipExperience,
   hullStats,
+  isCarrierHull,
   maxCarrierWingCount,
   normalizeCarrierWingState,
   weaponProfile,
+  ensureFlagshipWeapons,
 } from './hull.js';
 import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
 import { aiShipFactionId, aiShipsInSystem } from './ai-ships.js';
@@ -421,10 +425,11 @@ function collectAllyShips(state, systemId) {
   }
   if (hasFlagship) {
     const unit = createFlagshipCombatUnit(state);
+    const maxHp = state.flagship?.maxHp ?? flagshipMaxHpForState(state);
     out.push({
       ...unit,
       hp: state.flagship?.hp ?? state.systemBattles[systemId]?.flagshipHp ?? unit.hp,
-      maxHp: state.flagship?.maxHp ?? FLAGSHIP_HP,
+      maxHp,
       side: 'player',
     });
   }
@@ -445,8 +450,11 @@ function collectAllyShips(state, systemId) {
   return out;
 }
 
-function launchCarrierWings(state, battle, carrier, side, ordinal) {
+function launchCarrierWings(state, battle, carrier, side, ordinal, opts = {}) {
   if (!carrier || carrier.hp <= 0) return [];
+  if (!isCarrierHull(carrier.hull) && carrier.hull !== 'flagship' && carrier.id !== 'flagship') {
+    return [];
+  }
   const isFlagshipCarrier = carrier.hull === 'flagship' || carrier.id === 'flagship';
   const techState = techStateForUnit(state, { ...carrier, side });
   const localCapacityMultiplier = side === 'player'
@@ -455,26 +463,66 @@ function launchCarrierWings(state, battle, carrier, side, ordinal) {
       owner: 'ai',
       factionId: carrier.factionId,
     });
-  if (!carrierWingLoadout(carrier, isFlagshipCarrier ? state : techState, localCapacityMultiplier).length) return [];
+  if (!carrierWingLoadout(carrier, isFlagshipCarrier ? state : techState, localCapacityMultiplier).length) {
+    return [];
+  }
 
   const source = side === 'player' && !isFlagshipCarrier
     ? state.playerShips?.find((s) => s.id === carrier.id)
     : null;
-  const legacyWing = isFlagshipCarrier
-    ? normalizeCarrierWingState(carrier, state, localCapacityMultiplier)
-    : (source
-      ? normalizeCarrierWingState(source, state, localCapacityMultiplier)
-      : normalizeCarrierWingState(carrier, techState, localCapacityMultiplier));
-  const capacity = maxCarrierWingCount(carrier, isFlagshipCarrier ? state : techState, localCapacityMultiplier);
+  const hangarShip = isFlagshipCarrier
+    ? carrier
+    : (source ?? carrier);
+  const legacyWing = normalizeCarrierWingState(
+    hangarShip,
+    isFlagshipCarrier ? state : (source ? state : techState),
+    localCapacityMultiplier,
+  );
+  const capacity = maxCarrierWingCount(
+    carrier,
+    isFlagshipCarrier ? state : techState,
+    localCapacityMultiplier,
+  );
   const wingState = normalizeFighterWingState(legacyWing, {
     capacity,
     ammoPerCraft: 8,
     fuelPerCraft: 100,
   });
+
+  // Auto-deploy: on first combat sortie for this carrier (or a mid-fight arrival),
+  // restock hangar from remaining capacity and clear stale prior-battle launched counts.
+  const liveWings = (battle.units ?? []).filter((wing) => (
+    wing.isWing
+    && wing.hp > 0
+    && !wing.escaped
+    && String(wing.parentCarrierId) === String(carrier.id)
+  )).length;
+  const launchedThisBattle = battle.wingLaunches?.[carrier.id] ?? 0;
+  if (opts.autoDeploy !== false && liveWings === 0 && launchedThisBattle === 0 && wingState) {
+    const available = Math.max(0, capacity - Math.floor(wingState.lost ?? 0));
+    if ((wingState.ready ?? 0) < available) {
+      wingState.ready = available;
+      wingState.launched = 0;
+      wingState.status = 'ready';
+    }
+    if (isFlagshipCarrier && state.flagship?.wing) {
+      state.flagship.wing.ready = wingState.ready;
+      state.flagship.wing.launched = 0;
+    }
+    if (source?.wingState) {
+      source.wingState.ready = wingState.ready;
+      source.wingState.launched = 0;
+    }
+  }
+
   const ready = Math.floor(wingState?.ready ?? capacity);
   if (ready <= 0) return [];
 
-  const loadout = carrierWingLoadout(carrier, isFlagshipCarrier ? state : techState, localCapacityMultiplier).slice(0, ready);
+  const loadout = carrierWingLoadout(
+    carrier,
+    isFlagshipCarrier ? state : techState,
+    localCapacityMultiplier,
+  ).slice(0, ready);
   battle.wingLaunches = battle.wingLaunches ?? {};
   battle.wingLaunches[carrier.id] = (battle.wingLaunches[carrier.id] ?? 0) + loadout.length;
   if (wingState) {
@@ -486,13 +534,18 @@ function launchCarrierWings(state, battle, carrier, side, ordinal) {
     state.flagship.wing.ready = wingState?.ready ?? Math.max(0, ready - loadout.length);
     state.flagship.wing.launched = (state.flagship.wing.launched ?? 0) + loadout.length;
   }
+  if (source?.wingState && wingState) {
+    source.wingState.ready = wingState.ready;
+    source.wingState.launched = wingState.launched;
+    source.wingState.status = wingState.status;
+  }
 
   const launched = loadout.map((hull, i) => {
     const stats = hullStats(hull);
     const spread = (i / Math.max(1, loadout.length)) * Math.PI * 2 + ordinal * 0.41;
     const ring = 38 + (i % 3) * 13;
     return {
-      id: `${carrier.id}-wing-${i}`,
+      id: `${carrier.id}-wing-${i}-${state.time}-${i}`,
       hull,
       hp: stats.hp,
       maxHp: stats.hp,
@@ -545,6 +598,7 @@ function ensureCarrierWingsDeployed(state, battle) {
     && !unit.isStructure
     && !unit.isConvoy
     && !unit.escaped
+    && (isCarrierHull(unit.hull) || unit.hull === 'flagship' || unit.id === 'flagship')
   ));
   for (const carrier of carriers) {
     const hasLiveWings = battle.units.some((wing) => (
@@ -554,8 +608,85 @@ function ensureCarrierWingsDeployed(state, battle) {
       && String(wing.parentCarrierId) === String(carrier.id)
     ));
     if (hasLiveWings) continue;
-    const launched = launchCarrierWings(state, battle, carrier, carrier.side ?? 'player', ordinal++);
+    const launched = launchCarrierWings(
+      state,
+      battle,
+      carrier,
+      carrier.side ?? 'player',
+      ordinal++,
+      { autoDeploy: true },
+    );
     if (launched.length) battle.units.push(...launched);
+  }
+}
+
+/** Pull newly arrived carriers/ships into an active tactical battle and sortie wings. */
+function syncTacticalReinforcements(state, systemId, battle) {
+  if (!battle?.active || battle.mode !== 'tactical' || !battle.units) return;
+  const system = getSystems(state)[systemId];
+  if (!system) return;
+  const presentIds = new Set(battle.units.map((unit) => String(unit.id)));
+  const allies = collectAllyShips(state, systemId);
+  let combatIdx = battle.units.length;
+
+  for (const ship of allies) {
+    if (presentIds.has(String(ship.id))) continue;
+    if (ship.isStructure || ship.isConvoy) continue;
+    let unit;
+    if (ship.hull === 'flagship') {
+      const f = state.flagship;
+      const safe = softKeepOut(state, system, f.x, f.y);
+      unit = {
+        ...ship,
+        x: safe.x,
+        y: safe.y,
+        heading: f.heading ?? 0,
+        cooldownMs: 0,
+        weapons: (ship.weapons ?? createFlagshipCombatUnit(state).weapons).map((w) => ({ ...w })),
+        hardpointFireAt: {},
+        hideSprite: true,
+      };
+    } else {
+      const safe = softKeepOut(state, system, ship.x ?? 0, ship.y ?? 0);
+      unit = {
+        ...ship,
+        x: safe.x,
+        y: safe.y,
+        heading: ship.heading ?? 0,
+        cooldownMs: 0,
+      };
+    }
+    battle.units.push(unit);
+    presentIds.add(String(unit.id));
+    if (isCarrierHull(unit.hull) || unit.hull === 'flagship') {
+      const launched = launchCarrierWings(state, battle, unit, unit.side ?? 'player', combatIdx++, {
+        autoDeploy: true,
+      });
+      if (launched.length) battle.units.push(...launched);
+    }
+  }
+
+  const enemies = collectEnemyShips(state, systemId);
+  for (const ship of enemies) {
+    if (presentIds.has(String(ship.id))) continue;
+    if (ship.isStructure || ship.isConvoy) continue;
+    const safe = softKeepOut(state, system, ship.x ?? 0, ship.y ?? 0);
+    const unit = {
+      ...ship,
+      x: safe.x,
+      y: safe.y,
+      heading: ship.heading ?? Math.PI,
+      cooldownMs: 0,
+      side: 'enemy',
+    };
+    battle.units.push(unit);
+    presentIds.add(String(unit.id));
+    if (isCarrierHull(unit.hull)) {
+      const launched = launchCarrierWings(state, battle, unit, 'enemy', combatIdx++, {
+        autoDeploy: true,
+      });
+      if (launched.length) battle.units.push(...launched);
+    }
   }
 }
 
@@ -894,7 +1025,7 @@ function applyCasualtiesToState(state, systemId, battle) {
     if (flagshipUnit) {
       battle.flagshipHp = Math.max(0, flagshipUnit.hp);
       state.flagship.hp = battle.flagshipHp;
-      state.flagship.maxHp ??= FLAGSHIP_HP;
+      state.flagship.maxHp = state.flagship.maxHp ?? flagshipMaxHpForState(state);
     }
 
     for (const [carrierId, launched] of Object.entries(battle.wingLaunches ?? {})) {
@@ -1152,7 +1283,8 @@ function resolveAutoBattle(state, systemId, battle) {
       state.flagship.hp = 0;
     } else {
       const damageFraction = Math.min(0.45, enemyScore / Math.max(1, allyScore + enemyScore));
-      state.flagship.hp = Math.max(1, (state.flagship.hp ?? FLAGSHIP_HP) - Math.round(FLAGSHIP_HP * damageFraction));
+      const baseHp = state.flagship.maxHp ?? flagshipMaxHpForState(state);
+      state.flagship.hp = Math.max(1, (state.flagship.hp ?? baseHp) - Math.round(baseHp * damageFraction));
     }
   }
   battle.casualtiesApplied = true;
@@ -1724,6 +1856,7 @@ function tickLargeTacticalBattle(state, systemId, battle, context, repairMult) {
 
 function tickTacticalBattle(state, systemId, battle) {
   if (!battle.units) initTacticalUnits(state, systemId, battle);
+  syncTacticalReinforcements(state, systemId, battle);
   ensureCarrierWingsDeployed(state, battle);
   maybeApplyApproachFormation(state, battle);
   const system = getSystems(state)[systemId];
@@ -2281,6 +2414,12 @@ function tickTacticalBattle(state, systemId, battle) {
 
       if (unit.hull === 'flagship' && Array.isArray(unit.weapons) && unit.weapons.length > 0) {
         unit.hardpointFireAt = unit.hardpointFireAt ?? {};
+        // Keep combat muzzles glued to the current Hull Forge silhouette.
+        const live = ensureFlagshipWeapons(state);
+        for (const slot of unit.weapons) {
+          const synced = live.find((w) => w.id === slot.id);
+          if (synced?.muzzle) slot.muzzle = { ...synced.muzzle };
+        }
         let anyFired = false;
         for (const slot of unit.weapons) {
           slot.cooldownMs = Math.max(0, (slot.cooldownMs ?? 0) - TICK_MS);
@@ -2310,9 +2449,10 @@ function tickTacticalBattle(state, systemId, battle) {
           const muzzle = slot.muzzle ?? { x: 1, y: 0 };
           const cos = Math.cos(unit.heading ?? 0);
           const sin = Math.sin(unit.heading ?? 0);
+          const muzzleScale = FLAGSHIP_RADIUS;
           const muzzleWorld = {
-            x: unit.x + (muzzle.x * cos - muzzle.y * sin) * 12,
-            y: unit.y + (muzzle.x * sin + muzzle.y * cos) * 12,
+            x: unit.x + (muzzle.x * cos - muzzle.y * sin) * muzzleScale,
+            y: unit.y + (muzzle.x * sin + muzzle.y * cos) * muzzleScale,
           };
           emitShotFx(battle, {
             state,

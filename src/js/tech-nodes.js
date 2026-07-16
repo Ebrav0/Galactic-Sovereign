@@ -1,4 +1,4 @@
-// Technology tree node definitions — large interconnected web (GDD §10).
+// Technology tree — Dyson → Novacula spine with merge-back branches (GDD §10).
 
 export const V13_TECH_COST_CURVE = Object.freeze({
   baseCredits: 300,
@@ -36,1096 +36,942 @@ const multiply = (target, value) => ({ type: 'multiply', target, value });
 const add = (target, value) => ({ type: 'add', target, value });
 const max = (target, value) => ({ type: 'max', target, value });
 const set = (target, value = true) => ({ type: 'set', target, value });
-const levelCap = (structures, level) => ({ type: 'structure-level-cap', structures, level });
+const hullRefit = (hull, refitId, label) => ({
+  type: 'hull-refit',
+  hull,
+  refitId,
+  label,
+});
+const flagshipUpgrade = (upgradeId, label) => ({
+  type: 'flagship-upgrade',
+  upgradeId,
+  label,
+});
+const flagshipHullStage = (stage) => ({
+  type: 'flagship-hull-stage',
+  stage,
+});
+const swPart = (partId) => ({ type: 'sw-part-blueprint', partId });
 
-function v13Node({
-  id,
-  cluster,
-  name,
-  prereqs,
-  effect,
-  description,
-  tags,
-  unlocks,
-  effects,
-  ...milestoneFields
-}) {
+/** Ordered Dyson → Novacula main path (layout + CSS). */
+export const TECH_SPINE_IDS = Object.freeze([
+  'eco_baseline',
+  'eco_surveyor',
+  'mega_foundry_unlock',
+  'mega_launcher_unlock',
+  'mega_shell_ops',
+  'mega_dyson_maturity',
+  'eco_sector_capitals',
+  'sw_cradle_unlock',
+  'sw_cradle_power_core',
+  'sw_precision_targeting',
+  'sw_novacula_online',
+]);
+
+function node(def) {
+  const spine = TECH_SPINE_IDS.includes(def.id) || def.spine === true;
+  const tags = [...new Set([
+    ...(def.tags ?? [def.cluster]),
+    ...(spine ? ['spine'] : []),
+  ])];
   return {
-    id,
-    cluster,
-    name,
-    prereqs,
-    creditCost: 0,
-    solariiCost: 0,
-    researchMs: 0,
-    effect,
-    description,
+    creditCost: def.creditCost ?? 0,
+    solariiCost: def.solariiCost ?? 0,
+    researchMs: def.researchMs ?? 0,
+    description: def.description
+      ?? `${def.name} advances the ${def.cluster} technology branch.`,
     tags,
-    unlocks,
-    effects,
-    introducedIn: 13,
-    ...milestoneFields,
+    unlocks: def.unlocks ?? [def.name],
+    effects: def.effects ?? (def.effect ? [{ type: 'legacy', id: def.effect }] : []),
+    milestones: def.milestones ?? [
+      ...(def.requiresDiplomacy ? ['diplomacy'] : []),
+      ...(def.requiresSuperweapon ? ['superweapon'] : []),
+    ],
+    spine,
+    spineIndex: spine ? TECH_SPINE_IDS.indexOf(def.id) : -1,
+    ...def,
+    tags,
   };
 }
 
 export const TECH_NODES = {
-  // ─── Economy ───
-  eco_baseline: {
+  // ═══ SPINE: Baseline → Foundry → Launcher → Sphere → Maturity → Orders → Cradle → Power → Focus → Novacula ═══
+  eco_baseline: node({
     id: 'eco_baseline', cluster: 'economy', name: 'Baseline Economics',
     prereqs: [], creditCost: 0, solariiCost: 0, researchMs: 0, effect: 'seed',
-  },
-  eco_surveyor: {
+    description: 'Founding economic doctrine. Root of the Dyson → Novacula path.',
+    unlocks: ['Technology web foundation'],
+  }),
+  eco_surveyor: node({
     id: 'eco_surveyor', cluster: 'economy', name: 'Surveyor Drones',
-    prereqs: ['eco_baseline'], creditCost: 250, solariiCost: 0, researchMs: 36000, effect: 'credit_income_5',
-  },
-  eco_outpost_2: {
-    id: 'eco_outpost_2', cluster: 'economy', name: 'Outpost Efficiency I',
-    prereqs: ['eco_surveyor'], creditCost: 400, solariiCost: 0, researchMs: 45000, effect: 'outpost_income_10',
-  },
-  eco_construction_drones: {
-    id: 'eco_construction_drones', cluster: 'economy', name: 'Construction Drones',
-    prereqs: ['eco_surveyor'], creditCost: 350, solariiCost: 0, researchMs: 45000, effect: 'unlock_construction_drones',
-  },
-  eco_outpost_3: {
-    id: 'eco_outpost_3', cluster: 'economy', name: 'Outpost Efficiency II',
-    prereqs: ['eco_outpost_2', 'res_lab_1'], creditCost: 650, solariiCost: 0, researchMs: 54000, effect: 'outpost_income_15',
-  },
-  eco_miner_hull: {
-    id: 'eco_miner_hull', cluster: 'economy', name: 'Orbital Miners',
-    prereqs: ['eco_outpost_2'], creditCost: 450, solariiCost: 0, researchMs: 45000, effect: 'unlock_miner_hull',
-  },
-  eco_moon_rights: {
-    id: 'eco_moon_rights', cluster: 'economy', name: 'Lunar Claim Charters',
-    prereqs: ['eco_outpost_2', 'eco_miner_hull'], creditCost: 550, solariiCost: 0, researchMs: 50000, effect: 'moon_yield_10',
-  },
-  eco_mining_complex: {
-    id: 'eco_mining_complex', cluster: 'economy', name: 'Mining Complexes',
-    prereqs: ['eco_miner_hull'], creditCost: 520, solariiCost: 0, researchMs: 50000, effect: 'unlock_mining_complex',
-  },
-  eco_refinery: {
-    id: 'eco_refinery', cluster: 'economy', name: 'Refinery Chains',
-    prereqs: ['eco_mining_complex', 'trade_tariff_law'], creditCost: 720, solariiCost: 0, researchMs: 56000, effect: 'unlock_refinery',
-  },
-  eco_storage_depot: {
-    id: 'eco_storage_depot', cluster: 'economy', name: 'Storage Depots',
-    prereqs: ['eco_refinery'], creditCost: 760, solariiCost: 1, researchMs: 62000, effect: 'unlock_storage_depot',
-  },
-  eco_asteroid_harvester: {
-    id: 'eco_asteroid_harvester', cluster: 'economy', name: 'Asteroid Harvesters',
-    prereqs: ['eco_mining_complex', 'wh_scout_range'], creditCost: 680, solariiCost: 1, researchMs: 62000, effect: 'unlock_asteroid_harvester',
-  },
-  eco_trade_hub: {
-    id: 'eco_trade_hub', cluster: 'economy', name: 'Trade Hub Protocol',
-    prereqs: ['eco_outpost_2', 'trade_tariff_law'], creditCost: 600, solariiCost: 0, researchMs: 54000, effect: 'unlock_trade_station',
-  },
-  eco_shipyard_bureau: {
-    id: 'eco_shipyard_bureau', cluster: 'economy', name: 'Shipyard Bureau',
-    prereqs: ['eco_outpost_2', 'mil_corvette_2'], creditCost: 500, solariiCost: 0, researchMs: 48000, effect: 'shipyard_cost_10',
-  },
-  eco_industrial_chain: {
-    id: 'eco_industrial_chain', cluster: 'economy', name: 'Industrial Chain',
-    prereqs: ['mega_foundry_2', 'eco_outpost_3'], creditCost: 800, solariiCost: 1, researchMs: 60000, effect: 'credit_income_10',
-  },
-  eco_credits_surge: {
-    id: 'eco_credits_surge', cluster: 'economy', name: 'Credit Surge',
-    prereqs: ['eco_trade_hub', 'mega_foundry_2'], creditCost: 900, solariiCost: 2, researchMs: 67500, effect: 'credit_income_15',
-  },
-  eco_finance_hub: {
-    id: 'eco_finance_hub', cluster: 'economy', name: 'Galactic Finance',
-    prereqs: ['eco_credits_surge', 'trade_galactic_net'], creditCost: 1200, solariiCost: 3, researchMs: 78750, effect: 'credit_income_20',
-  },
-  eco_solarii_treaty: {
-    id: 'eco_solarii_treaty', cluster: 'economy', name: 'Solarii Treaty',
-    prereqs: ['mega_solarii_boost', 'eco_finance_hub'], creditCost: 0, solariiCost: 6, researchMs: 90000, effect: 'solarii_income_15',
-  },
-
-  // ─── Military ───
-  mil_corvette_2: {
-    id: 'mil_corvette_2', cluster: 'military', name: 'Corvette Hardening',
-    prereqs: ['eco_baseline', 'res_lab_1'], creditCost: 350, solariiCost: 0, researchMs: 45000, effect: 'corvette_hp_15',
-  },
-  mil_scout_mast: {
-    id: 'mil_scout_mast', cluster: 'military', name: 'Scout Mast Arrays',
-    prereqs: ['eco_surveyor', 'wh_scout_range'], creditCost: 320, solariiCost: 0, researchMs: 42000, effect: 'scout_cost_15',
-  },
-  mil_patrol_cutter: {
-    id: 'mil_patrol_cutter', cluster: 'military', name: 'Patrol Cutters',
-    prereqs: ['mil_corvette_2'], creditCost: 400, solariiCost: 0, researchMs: 45000, effect: 'unlock_patrol_cutter',
-  },
-  mil_healer_tech: {
-    id: 'mil_healer_tech', cluster: 'military', name: 'Field Medics',
-    prereqs: ['mil_corvette_2'], creditCost: 500, solariiCost: 0, researchMs: 45000, effect: 'healer_repair_10',
-  },
-  mil_field_hospital: {
-    id: 'mil_field_hospital', cluster: 'military', name: 'Fleet Hospitals',
-    prereqs: ['mil_healer_tech', 'res_station_protocol'], creditCost: 700, solariiCost: 1, researchMs: 56250, effect: 'healer_repair_15',
-  },
-  mil_parallel_dock: {
-    id: 'mil_parallel_dock', cluster: 'military', name: 'Parallel Docking',
-    prereqs: ['mil_corvette_2', 'eco_shipyard_bureau'], creditCost: 800, solariiCost: 0, researchMs: 56250, effect: 'shipyard_slots_2',
-  },
-  mil_destroyer_unlock: {
-    id: 'mil_destroyer_unlock', cluster: 'military', name: 'Destroyer Blueprints',
-    prereqs: ['mil_parallel_dock'], creditCost: 950, solariiCost: 0, researchMs: 60000, effect: 'unlock_destroyer_queue',
-  },
-  mil_frigate_unlock: {
-    id: 'mil_frigate_unlock', cluster: 'military', name: 'Frigate Blueprints',
-    prereqs: ['mil_parallel_dock', 'mil_destroyer_unlock'], creditCost: 1200, solariiCost: 1, researchMs: 67500, effect: 'unlock_frigate_queue',
-  },
-  mil_armor_alloy: {
-    id: 'mil_armor_alloy', cluster: 'military', name: 'Armor Alloys',
-    prereqs: ['mil_frigate_unlock', 'mega_sail_weave'], creditCost: 1100, solariiCost: 1, researchMs: 65000, effect: 'frigate_hp_10',
-  },
-  mil_torpedo_bays: {
-    id: 'mil_torpedo_bays', cluster: 'military', name: 'Torpedo Bays',
-    prereqs: ['mil_destroyer_unlock'], creditCost: 1000, solariiCost: 1, researchMs: 62000, effect: 'destroyer_dps_10',
-  },
-  mil_point_defense: {
-    id: 'mil_point_defense', cluster: 'military', name: 'Point Defense Grid',
-    prereqs: ['mil_patrol_cutter'], creditCost: 850, solariiCost: 1, researchMs: 60000, effect: 'unlock_destroyer_aa',
-  },
-  mil_kinetic_batteries: {
-    id: 'mil_kinetic_batteries', cluster: 'military', name: 'Kinetic Batteries',
-    prereqs: ['mil_frigate_unlock'], creditCost: 900, solariiCost: 1, researchMs: 62000, effect: 'kinetic_damage_10',
-  },
-  mil_light_carrier: {
-    id: 'mil_light_carrier', cluster: 'military', name: 'Light Carrier',
-    prereqs: ['mil_parallel_dock', 'mil_frigate_unlock'], creditCost: 1400, solariiCost: 2, researchMs: 78750, effect: 'unlock_light_carrier_queue',
-  },
-  mil_hangar_deck: {
-    id: 'mil_hangar_deck', cluster: 'military', name: 'Hangar Decks',
-    prereqs: ['mil_light_carrier'], creditCost: 1600, solariiCost: 2, researchMs: 80000, effect: 'carrier_dps_10',
-  },
-  mil_carrier_launch_doctrine: {
-    id: 'mil_carrier_launch_doctrine', cluster: 'military', name: 'Carrier Launch Doctrine',
-    prereqs: ['mil_light_carrier'], creditCost: 1500, solariiCost: 2, researchMs: 78000, effect: 'carrier_wings',
-  },
-  mil_interceptor_screens: {
-    id: 'mil_interceptor_screens', cluster: 'military', name: 'Interceptor Screens',
-    prereqs: ['mil_carrier_launch_doctrine', 'mil_hangar_deck'], creditCost: 1700, solariiCost: 2, researchMs: 82000, effect: 'point_defense_20',
-  },
-  mil_bomber_bays: {
-    id: 'mil_bomber_bays', cluster: 'military', name: 'Bomber Bays',
-    prereqs: ['mil_carrier_launch_doctrine', 'mil_torpedo_bays'], creditCost: 1900, solariiCost: 3, researchMs: 90000, effect: 'bomber_damage_20',
-  },
-  mil_cruiser_unlock: {
-    id: 'mil_cruiser_unlock', cluster: 'military', name: 'Cruiser Blueprints',
-    prereqs: ['mil_frigate_unlock', 'mil_armor_alloy'], creditCost: 1500, solariiCost: 2, researchMs: 78750, effect: 'unlock_cruiser_queue',
-  },
-  mil_beam_lances: {
-    id: 'mil_beam_lances', cluster: 'military', name: 'Beam Lances',
-    prereqs: ['mil_cruiser_unlock', 'mega_shell_precision'], creditCost: 1800, solariiCost: 3, researchMs: 92000, effect: 'beam_damage_15',
-  },
-  mil_battleship_unlock: {
-    id: 'mil_battleship_unlock', cluster: 'military', name: 'Battleship Hulls',
-    prereqs: ['mil_cruiser_unlock', 'mil_torpedo_bays'], creditCost: 2000, solariiCost: 3, researchMs: 90000, effect: 'unlock_battleship_queue',
-  },
-  mil_ion_disruptors: {
-    id: 'mil_ion_disruptors', cluster: 'military', name: 'Ion Disruptors',
-    prereqs: ['mil_beam_lances', 'mega_orbital_shield'], creditCost: 2100, solariiCost: 4, researchMs: 100000, effect: 'ion_damage_15',
-  },
-  mil_siege_platform: {
-    id: 'mil_siege_platform', cluster: 'military', name: 'Siege Platforms',
-    prereqs: ['mil_battleship_unlock'], creditCost: 2400, solariiCost: 4, researchMs: 95000, effect: 'battleship_dps_10',
-  },
-  mil_dreadnought_unlock: {
-    id: 'mil_dreadnought_unlock', cluster: 'military', name: 'Dreadnought Class',
-    prereqs: ['mil_battleship_unlock', 'mil_siege_platform'], creditCost: 2800, solariiCost: 5, researchMs: 112500, effect: 'unlock_dreadnought_queue',
-  },
-  mil_fleet_carrier: {
-    id: 'mil_fleet_carrier', cluster: 'military', name: 'Fleet Carrier',
-    prereqs: ['mil_light_carrier', 'mil_hangar_deck'], creditCost: 2200, solariiCost: 3, researchMs: 90000, effect: 'unlock_fleet_carrier_queue',
-  },
-  mil_super_carrier: {
-    id: 'mil_super_carrier', cluster: 'military', name: 'Super Carrier',
-    prereqs: ['mil_fleet_carrier', 'mega_dual_launcher'], creditCost: 3200, solariiCost: 5, researchMs: 112500, effect: 'unlock_super_carrier_queue',
-  },
-  mil_sensor_ship: {
-    id: 'mil_sensor_ship', cluster: 'military', name: 'Sensor Arrays',
-    prereqs: ['mil_healer_tech', 'wh_probe_swarm'], creditCost: 600, solariiCost: 1, researchMs: 56250, effect: 'unlock_sensor_ship',
-  },
-  mil_builder_ship: {
-    id: 'mil_builder_ship', cluster: 'military', name: 'Construction Tender',
-    prereqs: ['mil_sensor_ship', 'mega_auto_sail'], creditCost: 900, solariiCost: 1, researchMs: 67500, effect: 'unlock_builder_ship',
-  },
-  mil_command_cruiser: {
-    id: 'mil_command_cruiser', cluster: 'military', name: 'Command Cruiser',
-    prereqs: ['mil_cruiser_unlock', 'res_lab_2'], creditCost: 1800, solariiCost: 3, researchMs: 90000, effect: 'unlock_command_cruiser',
-  },
-  mil_war_doctrine: {
-    id: 'mil_war_doctrine', cluster: 'military', name: 'War Doctrine',
-    prereqs: ['mil_command_cruiser', 'mil_dreadnought_unlock'], creditCost: 3500, solariiCost: 6, researchMs: 120000, effect: 'capture_force_1',
-  },
-  mil_tri_dock: {
-    id: 'mil_tri_dock', cluster: 'military', name: 'Tri-Stream Docking',
-    prereqs: ['mil_parallel_dock', 'mega_foundry_3'], creditCost: 2000, solariiCost: 3, researchMs: 90000, effect: 'shipyard_slots_3',
-  },
-  mil_fighter_factory: {
-    id: 'mil_fighter_factory', cluster: 'military', name: 'Fighter Factories',
-    prereqs: ['mil_carrier_launch_doctrine', 'eco_industrial_chain'], creditCost: 1500, solariiCost: 2, researchMs: 85000, effect: 'unlock_fighter_factory',
-  },
-  mil_drydock: {
-    id: 'mil_drydock', cluster: 'military', name: 'Orbital Drydocks',
-    prereqs: ['mil_field_hospital', 'mil_parallel_dock'], creditCost: 1200, solariiCost: 2, researchMs: 78000, effect: 'unlock_drydock',
-  },
-  mil_orbital_defense: {
-    id: 'mil_orbital_defense', cluster: 'military', name: 'Orbital Defense Platforms',
-    prereqs: ['mil_point_defense', 'mil_drydock'], creditCost: 1500, solariiCost: 3, researchMs: 90000, effect: 'unlock_orbital_defense',
-  },
-  mil_shield_generator: {
-    id: 'mil_shield_generator', cluster: 'military', name: 'Planetary Shield Generators',
-    prereqs: ['mil_orbital_defense', 'mega_orbital_shield'], creditCost: 1900, solariiCost: 4, researchMs: 105000, effect: 'unlock_planetary_shield',
-  },
-  mil_ion_battery: {
-    id: 'mil_ion_battery', cluster: 'military', name: 'Ion Batteries',
-    prereqs: ['mil_ion_disruptors', 'mil_shield_generator'], creditCost: 2200, solariiCost: 5, researchMs: 112500, effect: 'unlock_ion_battery',
-  },
-
-  // ─── Megastructure / Dyson ───
-  mega_foundry_unlock: {
+    prereqs: ['eco_baseline'], creditCost: 250, solariiCost: 0, researchMs: 32000,
+    effect: 'credit_income_5',
+    description: 'Survey drones map claim sites and speed early construction.',
+    unlocks: ['Surveyor drone bonus'],
+  }),
+  mega_foundry_unlock: node({
     id: 'mega_foundry_unlock', cluster: 'megastructure', name: 'Sail Foundry',
-    prereqs: ['eco_outpost_2', 'res_lab_1'], creditCost: 500, solariiCost: 0, researchMs: 45000, effect: 'unlock_foundry',
-  },
-  mega_sail_weave: {
-    id: 'mega_sail_weave', cluster: 'megastructure', name: 'Sail Weaving',
-    prereqs: ['mega_foundry_unlock'], creditCost: 600, solariiCost: 0, researchMs: 48000, effect: 'sail_cost_10',
-  },
-  mega_foundry_2: {
-    id: 'mega_foundry_2', cluster: 'megastructure', name: 'Foundry Output I',
-    prereqs: ['mega_foundry_unlock', 'mega_sail_weave'], creditCost: 700, solariiCost: 0, researchMs: 45000, effect: 'foundry_output_10',
-  },
-  mega_foundry_3: {
-    id: 'mega_foundry_3', cluster: 'megastructure', name: 'Foundry Output II',
-    prereqs: ['mega_foundry_2', 'res_station_protocol'], creditCost: 950, solariiCost: 1, researchMs: 60000, effect: 'foundry_output_15',
-  },
-  mega_auto_sail: {
-    id: 'mega_auto_sail', cluster: 'megastructure', name: 'Automated Sail Lines',
-    prereqs: ['mega_foundry_3', 'trade_market_2'], creditCost: 1100, solariiCost: 1, researchMs: 65000, effect: 'foundry_output_20',
-  },
-  mega_launcher_unlock: {
+    prereqs: ['eco_surveyor'], creditCost: 500, solariiCost: 0, researchMs: 40000,
+    effect: 'unlock_foundry',
+    description: 'Unlocks the sail foundry — first step of every Dyson sphere.',
+    tags: ['megastructure', 'dyson', 'spine'],
+    unlocks: ['Sail Foundry'],
+  }),
+  mega_launcher_unlock: node({
     id: 'mega_launcher_unlock', cluster: 'megastructure', name: 'Dyson Launcher',
-    prereqs: ['mega_foundry_2'], creditCost: 800, solariiCost: 0, researchMs: 54000, effect: 'unlock_launcher',
-  },
-  mega_launcher_rate: {
-    id: 'mega_launcher_rate', cluster: 'megastructure', name: 'Launcher Cadence',
-    prereqs: ['mega_launcher_unlock'], creditCost: 900, solariiCost: 1, researchMs: 56250, effect: 'launcher_rate_10',
-  },
-  mega_dual_launcher: {
-    id: 'mega_dual_launcher', cluster: 'megastructure', name: 'Dual Launch Rails',
-    prereqs: ['mega_launcher_rate', 'trade_lane_secured'], creditCost: 1300, solariiCost: 2, researchMs: 72000, effect: 'launcher_rate_15',
-  },
-  mega_shell_precision: {
-    id: 'mega_shell_precision', cluster: 'megastructure', name: 'Shell Alignment',
-    prereqs: ['mega_launcher_rate'], creditCost: 1100, solariiCost: 2, researchMs: 67500, effect: 'dyson_shell_sync',
-  },
-  mega_shell_matrix: {
-    id: 'mega_shell_matrix', cluster: 'megastructure', name: 'Shell Matrix',
-    prereqs: ['mega_shell_precision', 'res_lab_2'], creditCost: 1500, solariiCost: 3, researchMs: 80000, effect: 'dyson_shell_bonus',
-  },
-  mega_solarii_boost: {
-    id: 'mega_solarii_boost', cluster: 'megastructure', name: 'Solarii Amplifier',
-    prereqs: ['mega_shell_matrix'], creditCost: 0, solariiCost: 5, researchMs: 90000, effect: 'solarii_income_10',
-  },
-  mega_shell_harmonic: {
-    id: 'mega_shell_harmonic', cluster: 'megastructure', name: 'Harmonic Shells',
-    prereqs: ['mega_shell_matrix', 'res_lab_3'], creditCost: 1800, solariiCost: 4, researchMs: 95000, effect: 'solarii_income_15',
-  },
-  mega_orbital_shield: {
-    id: 'mega_orbital_shield', cluster: 'megastructure', name: 'Orbital Dyson Shield',
-    prereqs: ['mega_shell_precision', 'mil_armor_alloy'], creditCost: 2000, solariiCost: 4, researchMs: 100000, effect: 'dyson_shield',
-  },
-  mega_solar_tap: {
-    id: 'mega_solar_tap', cluster: 'megastructure', name: 'Solar Tap',
-    prereqs: ['mega_solarii_boost', 'eco_finance_hub'], creditCost: 0, solariiCost: 7, researchMs: 105000, effect: 'solarii_income_20',
-  },
-  mega_dyson_overdrive: {
-    id: 'mega_dyson_overdrive', cluster: 'megastructure', name: 'Dyson Overdrive',
-    prereqs: ['mega_solar_tap', 'res_dual_core'], creditCost: 2500, solariiCost: 8, researchMs: 135000, effect: 'launcher_rate_20',
-  },
-
-  // ─── Trade ───
-  trade_tariff_law: {
-    id: 'trade_tariff_law', cluster: 'trade', name: 'Tariff Law',
-    prereqs: ['eco_surveyor'], creditCost: 350, solariiCost: 0, researchMs: 40000, effect: 'trade_income_10',
-  },
-  trade_route_opt: {
-    id: 'trade_route_opt', cluster: 'trade', name: 'Route Optimization',
-    prereqs: ['eco_trade_hub'], creditCost: 500, solariiCost: 0, researchMs: 45000, effect: 'trade_income_20',
-  },
-  trade_market_2: {
-    id: 'trade_market_2', cluster: 'trade', name: 'Deep Space Markets',
-    prereqs: ['trade_route_opt'], creditCost: 650, solariiCost: 0, researchMs: 52000, effect: 'trade_income_25',
-  },
-  trade_light_hauler: {
-    id: 'trade_light_hauler', cluster: 'trade', name: 'Light Haulers',
-    prereqs: ['trade_route_opt'], creditCost: 400, solariiCost: 0, researchMs: 45000, effect: 'unlock_light_hauler',
-  },
-  trade_bulk_freighter: {
-    id: 'trade_bulk_freighter', cluster: 'trade', name: 'Bulk Freighters',
-    prereqs: ['trade_light_hauler', 'trade_market_2'], creditCost: 700, solariiCost: 1, researchMs: 56250, effect: 'unlock_bulk_freighter',
-  },
-  trade_lane_secured: {
-    id: 'trade_lane_secured', cluster: 'trade', name: 'Secured Lanes',
-    prereqs: ['trade_route_opt', 'mil_patrol_cutter'], creditCost: 800, solariiCost: 1, researchMs: 67500, effect: 'trade_neutral_bridge',
-  },
-  trade_armored_convoy: {
-    id: 'trade_armored_convoy', cluster: 'trade', name: 'Armored Convoys',
-    prereqs: ['trade_bulk_freighter', 'mil_torpedo_bays'], creditCost: 1100, solariiCost: 2, researchMs: 67500, effect: 'unlock_armored_convoy',
-  },
-  trade_convoy_guard: {
-    id: 'trade_convoy_guard', cluster: 'trade', name: 'Convoy Guard Protocol',
-    prereqs: ['trade_armored_convoy', 'mil_field_hospital'], creditCost: 1400, solariiCost: 2, researchMs: 75000, effect: 'trade_income_30',
-  },
-  trade_galactic_net: {
-    id: 'trade_galactic_net', cluster: 'trade', name: 'Galactic Trade Net',
-    prereqs: ['trade_lane_secured', 'trade_market_2'], creditCost: 1600, solariiCost: 3, researchMs: 85000, effect: 'trade_hub_2',
-  },
-  trade_black_market: {
-    id: 'trade_black_market', cluster: 'trade', name: 'Shadow Lanes',
-    prereqs: ['wh_probe_swarm', 'trade_light_hauler'], creditCost: 900, solariiCost: 1, researchMs: 62000, effect: 'credit_income_10',
-  },
-
-  // ─── Wormhole ───
-  wh_scout_range: {
-    id: 'wh_scout_range', cluster: 'wormhole', name: 'Extended Sensors',
-    prereqs: ['eco_baseline'], creditCost: 600, solariiCost: 0, researchMs: 45000, effect: 'intel_hop_1',
-  },
-  wh_probe_swarm: {
-    id: 'wh_probe_swarm', cluster: 'wormhole', name: 'Probe Swarms',
-    prereqs: ['wh_scout_range', 'mil_scout_mast'], creditCost: 750, solariiCost: 0, researchMs: 52000, effect: 'intel_hop_2',
-  },
-  wh_nav_beacon: {
-    id: 'wh_nav_beacon', cluster: 'wormhole', name: 'Nav Beacons',
-    prereqs: ['wh_probe_swarm', 'res_lab_1'], creditCost: 850, solariiCost: 1, researchMs: 58000, effect: 'intel_hop_1',
-  },
-  wh_anchor_discount: {
-    id: 'wh_anchor_discount', cluster: 'wormhole', name: 'Anchor Engineering',
-    prereqs: ['wh_scout_range'], creditCost: 1000, solariiCost: 2, researchMs: 67500, effect: 'anchor_cost_15',
-  },
-  wh_stable_gate: {
-    id: 'wh_stable_gate', cluster: 'wormhole', name: 'Stable Gate Theory',
-    prereqs: ['wh_anchor_discount', 'res_lab_2'], creditCost: 1400, solariiCost: 3, researchMs: 80000, effect: 'anchor_cost_25',
-  },
-  wh_fleet_jump: {
-    id: 'wh_fleet_jump', cluster: 'wormhole', name: 'Fleet Jump Doctrine',
-    prereqs: ['wh_stable_gate', 'mil_frigate_unlock'], creditCost: 1700, solariiCost: 3, researchMs: 85000, effect: 'wormhole_transit_10',
-  },
-  wh_core_mapping: {
-    id: 'wh_core_mapping', cluster: 'wormhole', name: 'Core Mapping',
-    prereqs: ['wh_probe_swarm', 'mega_shell_matrix'], creditCost: 1500, solariiCost: 3, researchMs: 82000, effect: 'intel_hop_2',
-  },
-  wh_empire_relay: {
-    id: 'wh_empire_relay', cluster: 'wormhole', name: 'Empire Relay Network',
-    prereqs: ['wh_fleet_jump', 'res_dual_core'], creditCost: 2200, solariiCost: 5, researchMs: 110000, effect: 'intel_hop_3',
-  },
-
-  // ─── Research ───
-  res_lab_1: {
-    id: 'res_lab_1', cluster: 'research', name: 'Lab Protocols I',
-    prereqs: ['eco_baseline'], creditCost: 300, solariiCost: 0, researchMs: 45000, effect: 'research_speed_5',
-  },
-  res_station_protocol: {
-    id: 'res_station_protocol', cluster: 'research', name: 'Research Station',
-    prereqs: ['res_lab_1'], creditCost: 400, solariiCost: 0, researchMs: 45000, effect: 'unlock_research_station',
-  },
-  res_lab_2: {
-    id: 'res_lab_2', cluster: 'research', name: 'Lab Protocols II',
-    prereqs: ['res_station_protocol'], creditCost: 600, solariiCost: 1, researchMs: 56250, effect: 'research_speed_10',
-  },
-  res_station_2: {
-    id: 'res_station_2', cluster: 'research', name: 'Advanced Research Hub',
-    prereqs: ['res_lab_2', 'mega_foundry_3'], creditCost: 900, solariiCost: 2, researchMs: 65000, effect: 'research_speed_5',
-  },
-  res_lab_3: {
-    id: 'res_lab_3', cluster: 'research', name: 'Lab Protocols III',
-    prereqs: ['res_lab_2', 'trade_market_2'], creditCost: 1000, solariiCost: 2, researchMs: 72000, effect: 'research_speed_15',
-  },
-  res_archivist: {
-    id: 'res_archivist', cluster: 'research', name: 'Archivist Core',
-    prereqs: ['res_lab_2', 'wh_nav_beacon'], creditCost: 1100, solariiCost: 2, researchMs: 75000, effect: 'research_speed_10',
-  },
-  res_dual_core: {
-    id: 'res_dual_core', cluster: 'research', name: 'Dual Research Core',
-    prereqs: ['res_lab_2', 'mega_solarii_boost'], creditCost: 1200, solariiCost: 4, researchMs: 112500, effect: 'research_queue_2',
-  },
-  res_queue_3: {
-    id: 'res_queue_3', cluster: 'research', name: 'Tri-Core Queue',
-    prereqs: ['res_dual_core', 'res_lab_3'], creditCost: 1800, solariiCost: 5, researchMs: 120000, effect: 'research_queue_3',
-  },
-  res_ai_core: {
-    id: 'res_ai_core', cluster: 'research', name: 'AI Research Core',
-    prereqs: ['res_lab_3', 'wh_empire_relay'], creditCost: 2500, solariiCost: 6, researchMs: 135000, effect: 'research_speed_20',
-  },
-
-  // ─── Diplomacy (Phase 6) ───
-  dip_truce_protocol: {
-    id: 'dip_truce_protocol', cluster: 'diplomacy', name: 'Truce Protocol',
-    prereqs: ['mega_shell_matrix'], creditCost: 800, solariiCost: 2, researchMs: 72000, effect: 'unlock_diplomacy',
-    requiresDiplomacy: true,
-  },
-  dip_trade_charter: {
-    id: 'dip_trade_charter', cluster: 'diplomacy', name: 'Trade Charter',
-    prereqs: ['dip_truce_protocol', 'trade_galactic_net'], creditCost: 1000, solariiCost: 2, researchMs: 80000, effect: 'diplomacy_trade',
-    requiresDiplomacy: true,
-  },
-  dip_alliance_pact: {
-    id: 'dip_alliance_pact', cluster: 'diplomacy', name: 'Alliance Pact',
-    prereqs: ['dip_trade_charter', 'mil_war_doctrine'], creditCost: 1500, solariiCost: 4, researchMs: 90000, effect: 'diplomacy_alliance',
-    requiresDiplomacy: true,
-  },
-  dip_embassy_network: {
-    id: 'dip_embassy_network', cluster: 'diplomacy', name: 'Embassy Network',
-    prereqs: ['dip_trade_charter'], creditCost: 1200, solariiCost: 3, researchMs: 85000, effect: 'diplomacy_trade_bonus',
-    requiresDiplomacy: true,
-  },
-
-  // ─── Superweapon (Phase 6) ───
-  sw_cradle_unlock: {
-    id: 'sw_cradle_unlock', cluster: 'superweapon', name: 'Superweapon Cradle',
-    prereqs: ['mega_dyson_overdrive', 'dip_truce_protocol'], creditCost: 3000, solariiCost: 8, researchMs: 120000, effect: 'unlock_superweapon_cradle',
-    requiresSuperweapon: true,
-  },
-  sw_create_star: {
-    id: 'sw_create_star', cluster: 'superweapon', name: 'Stellar Genesis',
-    prereqs: ['sw_cradle_unlock'], creditCost: 0, solariiCost: 10, researchMs: 100000, effect: 'superweapon_create',
-    requiresSuperweapon: true,
-  },
-  sw_destroy_star: {
-    id: 'sw_destroy_star', cluster: 'superweapon', name: 'Stellar Annihilation',
-    prereqs: ['sw_cradle_unlock', 'sw_create_star'], creditCost: 0, solariiCost: 12, researchMs: 110000, effect: 'superweapon_destroy',
-    requiresSuperweapon: true,
-  },
-  sw_jump_gate: {
-    id: 'sw_jump_gate', cluster: 'superweapon', name: 'Superweapon Jump',
-    prereqs: ['sw_cradle_unlock', 'wh_fleet_jump'], creditCost: 2000, solariiCost: 8, researchMs: 95000, effect: 'superweapon_jump',
-    requiresSuperweapon: true,
-  },
-
-  // ─── Hero / Flagship (Phase 6) ───
-  hero_hull_unlock: {
-    id: 'hero_hull_unlock', cluster: 'flagship', name: 'Hero Flagship Protocol',
-    prereqs: ['sw_cradle_unlock', 'mil_command_cruiser'], creditCost: 2500, solariiCost: 5, researchMs: 90000, effect: 'unlock_hero_flagship',
-    requiresSuperweapon: true,
-  },
-  hero_rally_doctrine: {
-    id: 'hero_rally_doctrine', cluster: 'flagship', name: 'Rally Doctrine',
-    prereqs: ['hero_hull_unlock'], creditCost: 1800, solariiCost: 4, researchMs: 80000, effect: 'hero_rally_bonus',
-    requiresSuperweapon: true,
-  },
-  hero_command_aura: {
-    id: 'hero_command_aura', cluster: 'flagship', name: 'Command Aura',
-    prereqs: ['hero_hull_unlock', 'mil_war_doctrine'], creditCost: 2200, solariiCost: 5, researchMs: 85000, effect: 'hero_combat_bonus',
-    requiresSuperweapon: true,
-  },
-
-  // ─── v13 Economy expansion ───
-  eco_power_grid: v13Node({
-    id: 'eco_power_grid', cluster: 'economy', name: 'Power Grid',
-    prereqs: ['eco_storage_depot'], effect: 'unlock_power_grid',
-    description: 'Standardizes planetary energy distribution for high-output civilian and industrial structures.',
-    tags: ['economy', 'building', 'industry', 'cargo'],
-    unlocks: ['Power Grid building'],
-    effects: [unlockStructure('power_grid', {
-      cargoOutputMult: 1.15,
-      industrialOutputMult: 1.15,
-      shieldGeneratorHpMult: 1.2,
-    })],
+    prereqs: ['mega_foundry_unlock'], creditCost: 650, solariiCost: 0, researchMs: 45000,
+    effect: 'unlock_launcher',
+    description: 'Unlocks sail launchers. Each fires at least one sail per second.',
+    tags: ['megastructure', 'dyson', 'spine'],
+    unlocks: ['Dyson Launcher'],
   }),
-  eco_orbital_habitats: v13Node({
-    id: 'eco_orbital_habitats', cluster: 'economy', name: 'Orbital Habitats',
-    prereqs: ['eco_power_grid', 'wh_nav_beacon'], effect: 'unlock_orbital_habitat',
-    description: 'Creates permanent orbital population centers around developed worlds.',
-    tags: ['economy', 'building', 'habitat', 'cargo', 'research'],
-    unlocks: ['Orbital Habitat building'],
-    effects: [unlockStructure('orbital_habitat', {
-      cargoOutputMult: 1.1,
-      researchStationOutputMult: 1.1,
-      capPerSystem: 2,
-    })],
+  mega_shell_ops: node({
+    id: 'mega_shell_ops', cluster: 'megastructure', name: 'Shell Operations',
+    prereqs: ['mega_launcher_unlock'], creditCost: 800, solariiCost: 0, researchMs: 50000,
+    effect: 'dyson_shell_bonus',
+    description: 'Coordinates shell placement and Solarii harvest on incomplete spheres.',
+    tags: ['megastructure', 'dyson', 'spine'],
+    unlocks: ['Shell matrix bonus'],
+    effects: [set('dysonShellBonus'), multiply('solariiIncomeMult', 1.1)],
   }),
-  eco_habitat_network: v13Node({
-    id: 'eco_habitat_network', cluster: 'economy', name: 'Habitat Network',
-    prereqs: ['eco_orbital_habitats', 'trade_galactic_net'], effect: 'habitat_output_15',
-    description: 'Links orbital habitats into an empire-wide labor, research, and cargo network.',
-    tags: ['economy', 'habitat', 'network', 'cargo'],
-    unlocks: ['Improved habitat output', 'One additional habitat slot per system'],
-    effects: [multiply('habitatOutputMult', 1.15), add('orbitalHabitatCapBonus', 1)],
+  mega_dyson_maturity: node({
+    id: 'mega_dyson_maturity', cluster: 'megastructure', name: 'Dyson Maturity',
+    prereqs: ['mega_shell_ops', 'mil_parallel_dock'],
+    creditCost: 1200, solariiCost: 1, researchMs: 60000,
+    effect: 'dyson_shell_sync',
+    description: 'First-sphere maturity. Military dock branch merges here. Mid-game gate.',
+    tags: ['megastructure', 'dyson', 'spine', 'merge'],
+    unlocks: ['Dyson shell sync'],
+    effects: [set('dysonShellSync'), multiply('dysonOutputMult', 1.1)],
   }),
-  eco_nanoforges: v13Node({
-    id: 'eco_nanoforges', cluster: 'economy', name: 'Nanoforges',
-    prereqs: ['eco_industrial_chain', 'res_lab_2'], effect: 'unlock_nanoforge',
-    description: 'Deploys programmable fabrication swarms throughout strategic production centers.',
-    tags: ['economy', 'building', 'industry', 'throughput'],
-    unlocks: ['Nanoforge building'],
-    effects: [unlockStructure('nanoforge', {
-      shipThroughputMult: 1.15,
-      fighterThroughputMult: 1.15,
-      repairThroughputMult: 1.15,
-      sailFoundryThroughputMult: 1.15,
-    })],
-  }),
-  eco_industrial_automation: v13Node({
-    id: 'eco_industrial_automation', cluster: 'economy', name: 'Industrial Automation',
-    prereqs: ['eco_nanoforges', 'mega_auto_sail'], effect: 'industrial_output_15',
-    description: 'Coordinates automated extractors, refineries, depots, and shipyards as one production fabric.',
-    tags: ['economy', 'industry', 'automation', 'upgrade'],
-    unlocks: ['Industrial structures level II'],
-    effects: [
-      multiply('industrialOutputMult', 1.15),
-      levelCap(['mining_complex', 'refinery', 'storage_depot', 'shipyard'], 2),
-    ],
-  }),
-  eco_zero_waste_industry: v13Node({
-    id: 'eco_zero_waste_industry', cluster: 'economy', name: 'Zero-Waste Industry',
-    prereqs: ['eco_industrial_automation', 'mega_dyson_overdrive'], effect: 'industrial_output_20',
-    description: 'Closes every material loop to turn industrial byproducts back into usable cargo.',
-    tags: ['economy', 'industry', 'cargo', 'upgrade'],
-    unlocks: ['Extraction, refinery, and storage structures level III'],
-    effects: [
-      multiply('cargoProductionMult', 1.2),
-      levelCap(['mining_complex', 'refinery', 'storage_depot'], 3),
-    ],
-  }),
-  eco_outpost_administration: v13Node({
-    id: 'eco_outpost_administration', cluster: 'economy', name: 'Outpost Administration',
-    prereqs: ['eco_outpost_3'], effect: 'outpost_level_2',
-    description: 'Professionalizes frontier governance and expands outpost cargo operations.',
-    tags: ['economy', 'outpost', 'cargo', 'upgrade'],
-    unlocks: ['Outposts level II'],
-    effects: [levelCap(['outpost'], 2), multiply('outpostCargoOutputMult', 1.1)],
-  }),
-  eco_sector_capitals: v13Node({
+  eco_sector_capitals: node({
     id: 'eco_sector_capitals', cluster: 'economy', name: 'Sector Capitals',
-    prereqs: ['eco_outpost_administration', 'eco_finance_hub', 'mil_command_cruiser'], effect: 'outpost_level_3',
-    description: 'Elevates mature outposts into regional command and distribution capitals.',
-    tags: ['economy', 'outpost', 'administration', 'upgrade'],
-    unlocks: ['Outposts level III'],
-    effects: [levelCap(['outpost'], 3), multiply('outpostCargoOutputMult', 1.15)],
+    prereqs: ['mega_dyson_maturity', 'eco_trade_hub'],
+    creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'sector_capitals',
+    description: 'Authorizes mega-orders and expansion campaigns from sector capitals.',
+    tags: ['economy', 'orders', 'campaign', 'spine', 'merge'],
+    unlocks: ['Mega-orders', 'Expansion campaigns'],
+    effects: [set('sectorCapitals', true), multiply('creditIncomeMult', 1.1)],
   }),
-  eco_imperial_provisioning: v13Node({
-    id: 'eco_imperial_provisioning', cluster: 'economy', name: 'Imperial Provisioning',
-    prereqs: ['eco_sector_capitals', 'dip_embassy_network'], effect: 'outpost_stock_50',
-    description: 'Maintains deep strategic reserves without altering the fixed passive outpost credit stipend.',
-    tags: ['economy', 'outpost', 'cargo', 'capacity'],
-    unlocks: ['Expanded outpost cargo reserves'],
-    effects: [add('outpostStockCapacityBonus', 50), multiply('cargoProductionMult', 1.1)],
-  }),
-
-  // ─── v13 Military expansion ───
-  mil_fleet_academy: v13Node({
-    id: 'mil_fleet_academy', cluster: 'military', name: 'Fleet Academy',
-    prereqs: ['mil_field_hospital', 'res_lab_2'], effect: 'unlock_fleet_academy',
-    description: 'Establishes formal officer training and a persistent fleet veterancy program.',
-    tags: ['military', 'building', 'veterancy', 'fleet'],
-    unlocks: ['Fleet Academy building'],
-    effects: [unlockStructure('fleet_academy', {
-      startingVeterancy: 1,
-      maxVeterancy: 3,
-      damagePerLevel: 0.05,
-      hpPerLevel: 0.05,
-    })],
-  }),
-  mil_veteran_corps: v13Node({
-    id: 'mil_veteran_corps', cluster: 'military', name: 'Veteran Corps',
-    prereqs: ['mil_fleet_academy', 'mil_command_cruiser'], effect: 'veterancy_gain_25',
-    description: 'Retains combat-tested crews and spreads their doctrine across fleet support facilities.',
-    tags: ['military', 'veterancy', 'fighter', 'repair', 'upgrade'],
-    unlocks: ['Fighter factories and drydocks level II', 'Faster veterancy gain'],
-    effects: [
-      multiply('veterancyExperienceMult', 1.25),
-      levelCap(['fighter_factory', 'drydock'], 2),
-    ],
-  }),
-  mil_missile_silo_network: v13Node({
-    id: 'mil_missile_silo_network', cluster: 'military', name: 'Missile Silo Network',
-    prereqs: ['mil_torpedo_bays'], effect: 'unlock_missile_silo',
-    description: 'Disperses hardened torpedo batteries across vulnerable planetary surfaces.',
-    tags: ['military', 'building', 'defense', 'torpedo'],
-    unlocks: ['Missile Silo building'],
-    effects: [unlockStructure('missile_silo', {
-      autoResolveDefenseBonus: 12,
-      capPerBody: 2,
-    })],
-  }),
-  mil_fortress_worlds: v13Node({
-    id: 'mil_fortress_worlds', cluster: 'military', name: 'Fortress Worlds',
-    prereqs: ['mil_missile_silo_network', 'mil_shield_generator'], effect: 'defense_level_2',
-    description: 'Integrates shields, batteries, silos, and orbital platforms into layered planetary fortresses.',
-    tags: ['military', 'defense', 'planetary', 'upgrade'],
-    unlocks: ['Defensive structures level II'],
-    effects: [
-      multiply('defensePowerMult', 1.15),
-      levelCap(['orbital_defense', 'planetary_shield', 'ion_battery', 'missile_silo', 'interdiction_array'], 2),
-    ],
-  }),
-  mil_total_war_infrastructure: v13Node({
-    id: 'mil_total_war_infrastructure', cluster: 'military', name: 'Total-War Infrastructure',
-    prereqs: ['mil_fortress_worlds', 'mil_war_doctrine', 'mil_super_carrier'], effect: 'military_level_3',
-    description: 'Mobilizes every major production and defense network for sustained interstellar war.',
-    tags: ['military', 'defense', 'production', 'upgrade'],
-    unlocks: ['Military support and defensive structures level III'],
-    effects: [
-      multiply('shipBuildSpeedMult', 1.15),
-      levelCap([
-        'fighter_factory', 'drydock', 'orbital_defense', 'planetary_shield',
-        'ion_battery', 'missile_silo', 'interdiction_array',
-      ], 3),
-    ],
-  }),
-  mil_gravitic_interdiction: v13Node({
-    id: 'mil_gravitic_interdiction', cluster: 'military', name: 'Gravitic Interdiction',
-    prereqs: ['mil_ion_disruptors', 'wh_stable_gate'], effect: 'unlock_interdiction_array',
-    description: 'Weaponizes controlled gravity gradients to trap hostile fleets inside contested systems.',
-    tags: ['military', 'building', 'wormhole', 'interdiction'],
-    unlocks: ['Interdiction Array building'],
-    effects: [unlockStructure('interdiction_array', {
-      retreatChargeTimeMult: 1.5,
-      blocksHostileDepartureWhileActive: true,
-    })],
-  }),
-  mil_carrier_command: v13Node({
-    id: 'mil_carrier_command', cluster: 'military', name: 'Carrier Command',
-    prereqs: ['mil_carrier_launch_doctrine'], effect: 'unlock_carrier_command',
-    description: 'Creates dedicated orbital command centers for carrier wings and replenishment crews.',
-    tags: ['military', 'building', 'carrier', 'fighter'],
-    unlocks: ['Carrier Command building'],
-    effects: [unlockStructure('carrier_command', {
-      carrierWingCapacityMult: 1.25,
-      fighterReplenishmentMult: 1.25,
-    })],
-  }),
-  mil_squadron_coordination: v13Node({
-    id: 'mil_squadron_coordination', cluster: 'military', name: 'Squadron Coordination',
-    prereqs: ['mil_carrier_command'], effect: 'carrier_coordination_10',
-    description: 'Synchronizes carrier squadrons into shared strike, escort, and replacement rotations.',
-    tags: ['military', 'carrier', 'fighter', 'coordination'],
-    unlocks: ['Improved carrier capacity and fighter replenishment'],
-    effects: [multiply('carrierWingCapacityMult', 1.1), multiply('fighterReplenishmentMult', 1.15)],
-  }),
-  mil_orbital_sensor_arrays: v13Node({
-    id: 'mil_orbital_sensor_arrays', cluster: 'military', name: 'Orbital Sensor Arrays',
-    prereqs: ['mil_sensor_ship'], effect: 'unlock_sensor_array',
-    description: 'Deploys long-baseline orbital sensors for regional intelligence and local fire support.',
-    tags: ['military', 'building', 'sensor', 'intel'],
-    unlocks: ['Sensor Array building'],
-    effects: [unlockStructure('sensor_array', {
-      intelHopBonus: 1,
-      friendlyWeaponRangeMult: 1.1,
-    })],
-  }),
-  mil_integrated_fire_control: v13Node({
-    id: 'mil_integrated_fire_control', cluster: 'military', name: 'Integrated Fire Control',
-    prereqs: ['mil_orbital_sensor_arrays', 'mil_beam_lances'], effect: 'weapon_range_10',
-    description: 'Fuses fleet and orbital targeting data into a single precision engagement network.',
-    tags: ['military', 'sensor', 'weapons', 'range'],
-    unlocks: ['Improved friendly weapon range and beam accuracy'],
-    effects: [multiply('weaponRangeMult', 1.1), multiply('beamDamageMult', 1.1)],
-  }),
-
-  // ─── v13 Megastructure expansion ───
-  mega_solar_collectors: v13Node({
-    id: 'mega_solar_collectors', cluster: 'megastructure', name: 'Solar Collectors',
-    prereqs: ['mega_solarii_boost', 'eco_power_grid'], effect: 'unlock_solar_collector',
-    description: 'Captures stellar power at the source to reinforce every stage of Dyson construction.',
-    tags: ['megastructure', 'building', 'dyson', 'solarii'],
-    unlocks: ['Solar Collector building'],
-    effects: [unlockStructure('solar_collector', {
-      foundryOutputMult: 1.15,
-      launcherRateMult: 1.1,
-      solariiOutputMult: 1.05,
-    })],
-  }),
-  mega_collector_swarms: v13Node({
-    id: 'mega_collector_swarms', cluster: 'megastructure', name: 'Collector Swarms',
-    prereqs: ['mega_solar_collectors'], effect: 'solar_collector_output_15',
-    description: 'Coordinates dense collector constellations around active Dyson construction sites.',
-    tags: ['megastructure', 'dyson', 'collector', 'throughput'],
-    unlocks: ['Improved collector and Solarii output'],
-    effects: [multiply('solarCollectorOutputMult', 1.15), multiply('solariiIncomeMult', 1.05)],
-  }),
-  mega_foundry_refits: v13Node({
-    id: 'mega_foundry_refits', cluster: 'megastructure', name: 'Foundry Refits',
-    prereqs: ['mega_foundry_3', 'eco_nanoforges'], effect: 'dyson_industry_level_2',
-    description: 'Rebuilds sail and launcher production lines around modular nanoforge assemblies.',
-    tags: ['megastructure', 'foundry', 'launcher', 'upgrade'],
-    unlocks: ['Dyson industrial structures level II'],
-    effects: [
-      multiply('foundryOutputMult', 1.15),
-      levelCap(['sail_foundry', 'dyson_launcher', 'solar_collector'], 2),
-    ],
-  }),
-  mega_stellar_forge: v13Node({
-    id: 'mega_stellar_forge', cluster: 'megastructure', name: 'Stellar Forge',
-    prereqs: ['mega_foundry_refits'], effect: 'dyson_industry_level_3',
-    description: 'Turns an entire developed system into a coordinated ship and megastructure forge.',
-    tags: ['megastructure', 'foundry', 'shipyard', 'upgrade'],
-    unlocks: ['Shipyards and Dyson industrial structures level III'],
-    effects: [
-      multiply('industrialOutputMult', 1.2),
-      levelCap(['shipyard', 'sail_foundry', 'dyson_launcher', 'solar_collector'], 3),
-    ],
-  }),
-  mega_launcher_synchronization: v13Node({
-    id: 'mega_launcher_synchronization', cluster: 'megastructure', name: 'Launcher Synchronization',
-    prereqs: ['mega_dual_launcher', 'mil_integrated_fire_control'], effect: 'launcher_sync_15',
-    description: 'Applies military fire-control timing to planet-scale sail launcher networks.',
-    tags: ['megastructure', 'launcher', 'sensor', 'throughput'],
-    unlocks: ['Synchronized launcher cadence'],
-    effects: [multiply('launcherRateMult', 1.15)],
-  }),
-  mega_stellar_lattice: v13Node({
-    id: 'mega_stellar_lattice', cluster: 'megastructure', name: 'Stellar Lattice',
-    prereqs: ['mega_shell_harmonic'], effect: 'stellar_lattice_output_15',
-    description: 'Links completed shell segments into a resilient stellar-scale energy lattice.',
-    tags: ['megastructure', 'dyson', 'shell', 'energy'],
-    unlocks: ['Improved Dyson and Solarii output'],
-    effects: [multiply('dysonOutputMult', 1.15), multiply('solariiIncomeMult', 1.1)],
-  }),
-  mega_ascendant_engineering: v13Node({
-    id: 'mega_ascendant_engineering', cluster: 'megastructure', name: 'Ascendant Engineering',
-    prereqs: ['mega_stellar_lattice', 'res_ai_core', 'mega_dyson_overdrive'], effect: 'ascendant_engineering',
-    description: 'Combines machine intelligence and stellar engineering into post-scarcity construction doctrine.',
-    tags: ['megastructure', 'research', 'dyson', 'endgame'],
-    unlocks: ['Ascendant megastructure efficiency'],
-    effects: [multiply('dysonOutputMult', 1.25), multiply('industrialOutputMult', 1.15)],
-  }),
-
-  // ─── v13 Trade expansion ───
-  trade_logistics_hubs: v13Node({
-    id: 'trade_logistics_hubs', cluster: 'trade', name: 'Logistics Hubs',
-    prereqs: ['trade_route_opt', 'eco_storage_depot'], effect: 'unlock_logistics_hub',
-    description: 'Centralizes depot traffic, convoy dispatch, and regional route capacity.',
-    tags: ['trade', 'building', 'logistics', 'cargo'],
-    unlocks: ['Logistics Hub building'],
-    effects: [unlockStructure('logistics_hub', {
-      depotCapacityBonus: 100,
-      dispatchIntervalMult: 0.8,
-      convoyRouteBonus: 1,
-    })],
-  }),
-  trade_predictive_dispatch: v13Node({
-    id: 'trade_predictive_dispatch', cluster: 'trade', name: 'Predictive Dispatch',
-    prereqs: ['trade_logistics_hubs'], effect: 'dispatch_interval_20',
-    description: 'Forecasts cargo demand and dispatches convoys before local stock imbalances emerge.',
-    tags: ['trade', 'logistics', 'convoy', 'automation'],
-    unlocks: ['Faster dispatch and one additional convoy route'],
-    effects: [multiply('logisticsDispatchIntervalMult', 0.8), add('convoyRouteBonus', 1)],
-  }),
-  trade_galactic_exchange: v13Node({
-    id: 'trade_galactic_exchange', cluster: 'trade', name: 'Galactic Exchange',
-    prereqs: ['trade_galactic_net', 'eco_finance_hub'], effect: 'unlock_galactic_exchange',
-    description: 'Creates a trusted orbital exchange for high-volume Nexus settlement and route brokerage.',
-    tags: ['trade', 'building', 'finance', 'nexus'],
-    unlocks: ['Galactic Exchange building'],
-    effects: [unlockStructure('galactic_exchange', {
-      nexusDeliveryValueMult: 1.15,
-      activeConvoyRouteBonus: 2,
-    })],
-  }),
-  trade_freeport_network: v13Node({
-    id: 'trade_freeport_network', cluster: 'trade', name: 'Freeport Network',
-    prereqs: ['trade_galactic_exchange', 'dip_embassy_complex'], effect: 'manual_trade_routes_2',
-    description: 'Links protected neutral markets into a resilient cross-faction commerce network.',
-    tags: ['trade', 'diplomacy', 'freeport', 'routes'],
-    unlocks: ['Two additional convoy routes'],
-    effects: [add('convoyRouteBonus', 2), multiply('tradeIncomeMult', 1.1)],
-  }),
-  trade_quantum_markets: v13Node({
-    id: 'trade_quantum_markets', cluster: 'trade', name: 'Quantum Markets',
-    prereqs: ['trade_freeport_network', 'wh_empire_relay'], effect: 'nexus_delivery_15',
-    description: 'Settles cargo contracts across interstellar distances with near-instant market clearing.',
-    tags: ['trade', 'wormhole', 'finance', 'nexus'],
-    unlocks: ['Improved Nexus delivery value'],
-    effects: [multiply('nexusDeliveryValueMult', 1.15), multiply('tradeIncomeMult', 1.15)],
-  }),
-  trade_cargo_insurance: v13Node({
-    id: 'trade_cargo_insurance', cluster: 'trade', name: 'Cargo Insurance',
-    prereqs: ['trade_armored_convoy'], effect: 'cargo_loss_25',
-    description: 'Pools convoy risk across the empire and standardizes loss recovery contracts.',
-    tags: ['trade', 'cargo', 'convoy', 'insurance'],
-    unlocks: ['Reduced cargo losses'],
-    effects: [multiply('cargoLossMult', 0.75)],
-  }),
-  trade_salvage_doctrine: v13Node({
-    id: 'trade_salvage_doctrine', cluster: 'trade', name: 'Salvage Doctrine',
-    prereqs: ['trade_cargo_insurance', 'mil_drydock'], effect: 'unlock_salvage_yard',
-    description: 'Formalizes battlefield recovery crews and routes reclaimed material into orbital yards.',
-    tags: ['trade', 'building', 'salvage', 'military'],
-    unlocks: ['Salvage Yard building'],
-    effects: [unlockStructure('salvage_yard', {
-      friendlyHullRecoveryRate: 0.2,
-      carrierCraftRecoveryRate: 0.25,
-    })],
-  }),
-
-  // ─── v13 Wormhole expansion ───
-  wh_observatory: v13Node({
-    id: 'wh_observatory', cluster: 'wormhole', name: 'Wormhole Observatory',
-    prereqs: ['wh_core_mapping', 'res_lab_2'], effect: 'unlock_wormhole_observatory',
-    description: 'Maps unanchored destinations from a black-hole observatory and accelerates jump calculations.',
-    tags: ['wormhole', 'building', 'black-hole', 'intel'],
-    unlocks: ['Wormhole Observatory building'],
-    effects: [unlockStructure('wormhole_observatory', {
-      anchorChargeRateMult: 1.25,
-      fleetJumpChargeRateMult: 1.25,
-      galaxyCap: 1,
-      revealsUnanchoredDestinationPool: true,
-    })],
-  }),
-  wh_route_prediction: v13Node({
-    id: 'wh_route_prediction', cluster: 'wormhole', name: 'Route Prediction',
-    prereqs: ['wh_observatory'], effect: 'wormhole_charge_20',
-    description: 'Predicts destination drift and precomputes stable fleet-jump solutions.',
-    tags: ['wormhole', 'navigation', 'routes', 'charge'],
-    unlocks: ['Faster anchor and fleet-jump charge'],
-    effects: [multiply('wormholeChargeRateMult', 1.2)],
-  }),
-  wh_anchor_network: v13Node({
-    id: 'wh_anchor_network', cluster: 'wormhole', name: 'Anchor Network',
-    prereqs: ['wh_stable_gate', 'trade_logistics_hubs'], effect: 'anchor_network_capacity',
-    description: 'Coordinates anchor deployment through the same dispatch network used by strategic logistics.',
-    tags: ['wormhole', 'anchor', 'logistics', 'network'],
-    unlocks: ['Faster anchor deployment and expanded anchor support'],
-    effects: [multiply('wormholeChargeRateMult', 1.15), add('anchorNetworkCapacityBonus', 1)],
-  }),
-  wh_interdiction_field: v13Node({
-    id: 'wh_interdiction_field', cluster: 'wormhole', name: 'Interdiction Field',
-    prereqs: ['wh_anchor_network', 'mil_gravitic_interdiction'], effect: 'interdiction_strength_25',
-    description: 'Extends gravitic interdiction across anchored wormhole approaches.',
-    tags: ['wormhole', 'military', 'interdiction', 'anchor'],
-    unlocks: ['Stronger interdiction arrays'],
-    effects: [multiply('interdictionStrengthMult', 1.25)],
-  }),
-  wh_mass_transit: v13Node({
-    id: 'wh_mass_transit', cluster: 'wormhole', name: 'Mass Transit',
-    prereqs: ['wh_fleet_jump', 'trade_bulk_freighter'], effect: 'wormhole_transit_20',
-    description: 'Adapts stabilized wormholes for frequent bulk-freighter and fleet passage.',
-    tags: ['wormhole', 'trade', 'freighter', 'transit'],
-    unlocks: ['Faster high-mass wormhole transit'],
-    effects: [multiply('wormholeTransitMult', 1.2)],
-  }),
-  wh_quantum_corridors: v13Node({
-    id: 'wh_quantum_corridors', cluster: 'wormhole', name: 'Quantum Corridors',
-    prereqs: ['wh_mass_transit', 'wh_empire_relay', 'sw_jump_gate'], effect: 'quantum_corridor',
-    description: 'Maintains empire-scale corridors for simultaneous civilian, military, and superweapon transit.',
-    tags: ['wormhole', 'superweapon', 'relay', 'endgame'],
-    unlocks: ['Quantum corridor capacity'],
-    effects: [multiply('wormholeChargeRateMult', 1.25), add('quantumCorridorCapacityBonus', 1)],
-  }),
-
-  // ─── v13 Research expansion ───
-  res_quantum_archives: v13Node({
-    id: 'res_quantum_archives', cluster: 'research', name: 'Quantum Archives',
-    prereqs: ['res_archivist'], effect: 'unlock_quantum_archive',
-    description: 'Stores entangled research records in redundant planetary archive complexes.',
-    tags: ['research', 'building', 'archive', 'queue'],
-    unlocks: ['Quantum Archive building'],
-    effects: [unlockStructure('quantum_archive', {
-      localResearchOutputMult: 1.15,
-      firstEmpireQueueSlotBonus: 1,
-    })],
-  }),
-  res_data_redundancy: v13Node({
-    id: 'res_data_redundancy', cluster: 'research', name: 'Data Redundancy',
-    prereqs: ['res_quantum_archives', 'wh_observatory'], effect: 'research_structure_level_2',
-    description: 'Replicates live research state through observatory-linked quantum archives.',
-    tags: ['research', 'archive', 'wormhole', 'upgrade'],
-    unlocks: ['Research stations and Quantum Archives level II'],
-    effects: [
-      multiply('quantumArchiveOutputMult', 1.15),
-      levelCap(['research_station', 'quantum_archive'], 2),
-    ],
-  }),
-  res_applied_sciences: v13Node({
-    id: 'res_applied_sciences', cluster: 'research', name: 'Applied Sciences',
-    prereqs: ['res_station_2', 'eco_nanoforges'], effect: 'applied_science_output_10',
-    description: 'Moves discoveries directly from laboratory models into programmable production lines.',
-    tags: ['research', 'economy', 'nanoforge', 'industry'],
-    unlocks: ['Improved research and industrial throughput'],
-    effects: [multiply('researchSpeedMult', 1.1), multiply('industrialOutputMult', 1.1)],
-  }),
-  res_combat_analytics: v13Node({
-    id: 'res_combat_analytics', cluster: 'research', name: 'Combat Analytics',
-    prereqs: ['res_applied_sciences', 'mil_fleet_academy'], effect: 'combat_analytics_10',
-    description: 'Feeds academy combat records into continuously refined tactical models.',
-    tags: ['research', 'military', 'veterancy', 'combat'],
-    unlocks: ['Improved fleet damage and veterancy gain'],
-    effects: [multiply('fleetDamageMult', 1.1), multiply('veterancyExperienceMult', 1.15)],
-  }),
-  res_social_prediction: v13Node({
-    id: 'res_social_prediction', cluster: 'research', name: 'Social Prediction',
-    prereqs: ['res_archivist'], effect: 'social_prediction_10',
-    description: 'Models faction behavior from deep diplomatic and economic archives.',
-    tags: ['research', 'diplomacy', 'prediction', 'archives'],
-    unlocks: ['Improved treaty effects'],
-    effects: [multiply('treatyEffectMult', 1.1)],
-  }),
-  res_singularity_institute: v13Node({
-    id: 'res_singularity_institute', cluster: 'research', name: 'Singularity Institute',
-    prereqs: ['res_social_prediction', 'mega_stellar_lattice', 'res_ai_core'], effect: 'research_structure_level_3',
-    description: 'Unifies advanced machine cognition, social models, and stellar-scale experimental science.',
-    tags: ['research', 'ai', 'megastructure', 'upgrade', 'endgame'],
-    unlocks: ['Research stations and Quantum Archives level III'],
-    effects: [
-      multiply('researchSpeedMult', 1.25),
-      levelCap(['research_station', 'quantum_archive'], 3),
-    ],
-  }),
-
-  // ─── v13 Diplomacy expansion ───
-  dip_embassy_complex: v13Node({
-    id: 'dip_embassy_complex', cluster: 'diplomacy', name: 'Embassy Complex',
-    prereqs: ['dip_embassy_network'], effect: 'unlock_embassy_complex',
-    description: 'Establishes permanent diplomatic missions on strategically important worlds.',
-    tags: ['diplomacy', 'building', 'treaty', 'trade'],
-    unlocks: ['Embassy Complex building'],
-    effects: [unlockStructure('embassy_complex', {
-      treatyCostMult: 0.8,
-      tradeTreatyEffectMult: 1.1,
-      allianceTreatyEffectMult: 1.1,
-      empireCap: 3,
-    })],
-    requiresDiplomacy: true,
-  }),
-  dip_cultural_exchange: v13Node({
-    id: 'dip_cultural_exchange', cluster: 'diplomacy', name: 'Cultural Exchange',
-    prereqs: ['dip_embassy_complex', 'res_quantum_archives'], effect: 'treaty_cost_10',
-    description: 'Shares archives and institutions to reduce diplomatic friction between civilizations.',
-    tags: ['diplomacy', 'research', 'culture', 'treaty'],
-    unlocks: ['Lower treaty costs and stronger treaty effects'],
-    effects: [multiply('treatyCostMult', 0.9), multiply('treatyEffectMult', 1.1)],
-    requiresDiplomacy: true,
-  }),
-  dip_joint_logistics: v13Node({
-    id: 'dip_joint_logistics', cluster: 'diplomacy', name: 'Joint Logistics',
-    prereqs: ['dip_cultural_exchange', 'trade_logistics_hubs'], effect: 'joint_logistics_15',
-    description: 'Allows treaty partners to coordinate protected cargo routes and shared depots.',
-    tags: ['diplomacy', 'trade', 'logistics', 'alliance'],
-    unlocks: ['Improved allied trade and convoy capacity'],
-    effects: [multiply('treatyEffectMult', 1.15), add('convoyRouteBonus', 1)],
-    requiresDiplomacy: true,
-  }),
-  dip_defense_compact: v13Node({
-    id: 'dip_defense_compact', cluster: 'diplomacy', name: 'Defense Compact',
-    prereqs: ['dip_alliance_pact', 'mil_fortress_worlds'], effect: 'allied_defense_20',
-    description: 'Coordinates fortress doctrine, warning networks, and mutual fleet response plans.',
-    tags: ['diplomacy', 'military', 'alliance', 'defense'],
-    unlocks: ['Improved allied defensive strength'],
-    effects: [multiply('alliedDefenseMult', 1.2)],
-    requiresDiplomacy: true,
-  }),
-  dip_galactic_council: v13Node({
-    id: 'dip_galactic_council', cluster: 'diplomacy', name: 'Galactic Council',
-    prereqs: ['dip_defense_compact', 'trade_freeport_network', 'hero_rally_doctrine'], effect: 'galactic_council',
-    description: 'Convenes allied powers, freeports, and sovereign fleets under a permanent council.',
-    tags: ['diplomacy', 'trade', 'flagship', 'endgame'],
-    unlocks: ['Galactic Council mandate'],
-    effects: [set('galacticCouncil'), multiply('treatyEffectMult', 1.25)],
-    requiresDiplomacy: true,
-  }),
-
-  // ─── v13 Flagship expansion ───
-  hero_command_suite: v13Node({
-    id: 'hero_command_suite', cluster: 'flagship', name: 'Command Suite',
-    prereqs: ['hero_command_aura'], effect: 'flagship_command_15',
-    description: 'Refits the sovereign flagship as a true empire-scale fleet command center.',
-    tags: ['flagship', 'command', 'fleet', 'aura'],
-    unlocks: ['Improved flagship command aura'],
-    effects: [multiply('flagshipCommandMult', 1.15)],
+  sw_cradle_unlock: node({
+    id: 'sw_cradle_unlock', cluster: 'superweapon', name: 'Cradle Frame',
+    prereqs: ['eco_sector_capitals', 'dip_truce_protocol', 'res_station_protocol'],
+    creditCost: 2500, solariiCost: 5, researchMs: 90000,
+    effect: 'unlock_superweapon_cradle',
+    description: 'Blueprint for an incomplete Novacula cradle at the Stronghold.',
+    tags: ['superweapon', 'spine', 'merge'],
+    unlocks: ['Superweapon cradle frame'],
+    effects: [swPart('frame'), { type: 'legacy', id: 'unlock_superweapon_cradle' }],
     requiresSuperweapon: true,
   }),
-  hero_mobile_shipyard: v13Node({
-    id: 'hero_mobile_shipyard', cluster: 'flagship', name: 'Mobile Shipyard',
-    prereqs: ['hero_command_suite', 'eco_nanoforges'], effect: 'flagship_mobile_shipyard',
-    description: 'Integrates nanoforge-fed repair and limited construction bays into the flagship.',
-    tags: ['flagship', 'nanoforge', 'shipyard', 'repair'],
-    unlocks: ['Flagship mobile shipyard capability'],
-    effects: [set('flagshipMobileShipyard'), multiply('flagshipBuildSpeedMult', 1.2)],
+  sw_cradle_power_core: node({
+    id: 'sw_cradle_power_core', cluster: 'superweapon', name: 'Power Core',
+    prereqs: ['sw_cradle_unlock'],
+    creditCost: 2200, solariiCost: 6, researchMs: 85000,
+    effect: 'cradle_power_core',
+    description: 'Cradle power skeleton — install to enable charging.',
+    tags: ['superweapon', 'spine'],
+    unlocks: ['Power core blueprint'],
+    effects: [swPart('power'), set('cradlePowerCore'), multiply('superweaponPowerMult', 1.15)],
     requiresSuperweapon: true,
   }),
-  hero_wormhole_compass: v13Node({
-    id: 'hero_wormhole_compass', cluster: 'flagship', name: 'Wormhole Compass',
-    prereqs: ['hero_hull_unlock', 'wh_route_prediction'], effect: 'flagship_jump_charge_25',
-    description: 'Gives the flagship an autonomous predictive navigator for unstable wormhole routes.',
-    tags: ['flagship', 'wormhole', 'navigation', 'jump'],
-    unlocks: ['Faster flagship wormhole charge'],
-    effects: [multiply('flagshipJumpChargeMult', 1.25)],
+  sw_precision_targeting: node({
+    id: 'sw_precision_targeting', cluster: 'superweapon', name: 'Focus Array',
+    prereqs: ['sw_cradle_power_core'],
+    creditCost: 2400, solariiCost: 7, researchMs: 90000,
+    effect: 'superweapon_precision',
+    description: 'Focus / targeting skeleton — install to aim stellar fire.',
+    tags: ['superweapon', 'spine'],
+    unlocks: ['Focus array blueprint'],
+    effects: [swPart('focus'), set('precisionTargeting'), multiply('superweaponPrecisionMult', 1.2)],
     requiresSuperweapon: true,
   }),
-  hero_diplomatic_mandate: v13Node({
-    id: 'hero_diplomatic_mandate', cluster: 'flagship', name: 'Diplomatic Mandate',
-    prereqs: ['hero_hull_unlock', 'dip_embassy_complex'], effect: 'flagship_diplomacy_15',
-    description: 'Authorizes the flagship to negotiate with the full standing of the imperial court.',
-    tags: ['flagship', 'diplomacy', 'embassy', 'treaty'],
-    unlocks: ['Improved treaty influence while the flagship is present'],
-    effects: [multiply('flagshipDiplomacyMult', 1.15)],
-    requiresSuperweapon: true,
-  }),
-  hero_sovereign_core: v13Node({
-    id: 'hero_sovereign_core', cluster: 'flagship', name: 'Sovereign Core',
+  sw_novacula_online: node({
+    id: 'sw_novacula_online', cluster: 'superweapon', name: 'Novacula Online',
     prereqs: [
-      'hero_mobile_shipyard', 'hero_wormhole_compass', 'hero_diplomatic_mandate',
-      'mega_ascendant_engineering', 'dip_galactic_council',
+      'sw_precision_targeting',
+      'sw_create_star',
+      'sw_destroy_star',
+      'sw_jump_gate',
+      'hero_command_suite',
     ],
-    effect: 'sovereign_core',
-    description: 'Unifies command, engineering, navigation, and diplomacy inside the empire flagship.',
-    tags: ['flagship', 'megastructure', 'diplomacy', 'endgame'],
-    unlocks: ['Sovereign Core'],
-    effects: [set('sovereignCore'), multiply('flagshipCommandMult', 1.25)],
-    requiresSuperweapon: true,
-  }),
-
-  // ─── v13 Superweapon expansion ───
-  sw_cradle_power_core: v13Node({
-    id: 'sw_cradle_power_core', cluster: 'superweapon', name: 'Cradle Power Core',
-    prereqs: ['sw_cradle_unlock', 'mega_stellar_lattice'], effect: 'cradle_power_core',
-    description: 'Channels lattice-scale stellar energy into the superweapon cradle.',
-    tags: ['superweapon', 'megastructure', 'power', 'cradle'],
-    unlocks: ['Cradle power-core system'],
-    effects: [set('cradlePowerCore'), multiply('superweaponPowerMult', 1.25)],
-    requiresSuperweapon: true,
-  }),
-  sw_precision_targeting: v13Node({
-    id: 'sw_precision_targeting', cluster: 'superweapon', name: 'Precision Targeting',
-    prereqs: ['sw_cradle_unlock', 'mil_integrated_fire_control'], effect: 'superweapon_precision',
-    description: 'Adapts integrated fleet fire control to stellar-scale superweapon targeting.',
-    tags: ['superweapon', 'military', 'targeting', 'sensor'],
-    unlocks: ['Precision targeting system'],
-    effects: [set('precisionTargeting'), multiply('superweaponPrecisionMult', 1.25)],
-    requiresSuperweapon: true,
-  }),
-  sw_genesis_matrix: v13Node({
-    id: 'sw_genesis_matrix', cluster: 'superweapon', name: 'Genesis Matrix',
-    prereqs: ['sw_create_star', 'eco_orbital_habitats'], effect: 'genesis_matrix',
-    description: 'Applies habitat-scale ecological modeling to controlled stellar genesis.',
-    tags: ['superweapon', 'economy', 'habitat', 'genesis'],
-    unlocks: ['Genesis Matrix system'],
-    effects: [set('genesisMatrix'), multiply('genesisEfficiencyMult', 1.25)],
-    requiresSuperweapon: true,
-  }),
-  sw_gate_array: v13Node({
-    id: 'sw_gate_array', cluster: 'superweapon', name: 'Gate Array',
-    prereqs: ['sw_jump_gate', 'wh_quantum_corridors'], effect: 'superweapon_gate_array',
-    description: 'Builds a corridor-linked gate array capable of moving the completed superweapon.',
-    tags: ['superweapon', 'wormhole', 'gate', 'corridor'],
-    unlocks: ['Superweapon Gate Array'],
-    effects: [set('gateArray'), multiply('gateChargeMult', 1.25)],
-    requiresSuperweapon: true,
-  }),
-  sw_sovereign_protocol: v13Node({
-    id: 'sw_sovereign_protocol', cluster: 'superweapon', name: 'Sovereign Protocol',
-    prereqs: [
-      'sw_cradle_power_core', 'sw_precision_targeting', 'sw_genesis_matrix',
-      'sw_gate_array', 'hero_sovereign_core',
-    ],
+    creditCost: 4000, solariiCost: 12, researchMs: 120000,
     effect: 'sovereign_protocol',
-    description: 'Authorizes the fully integrated cradle, targeting, genesis, gate, and sovereign systems.',
-    tags: ['superweapon', 'flagship', 'endgame', 'protocol'],
-    unlocks: ['Sovereign Protocol'],
-    effects: [set('sovereignProtocol'), multiply('superweaponPowerMult', 1.25)],
+    description: 'Integrates installed skeletons into a fully online Novacula.',
+    tags: ['superweapon', 'spine', 'endgame', 'merge'],
+    unlocks: ['Novacula online'],
+    effects: [set('sovereignProtocol'), set('novaculaOnline'), multiply('superweaponPowerMult', 1.25)],
+    requiresSuperweapon: true,
+  }),
+
+  // ═══ UPPER: Industry / Trade (fork surveyor → merge sector capitals) ═══
+  eco_construction_drones: node({
+    id: 'eco_construction_drones', cluster: 'economy', name: 'Construction Drones',
+    prereqs: ['eco_surveyor'], creditCost: 350, solariiCost: 0, researchMs: 40000,
+    effect: 'unlock_construction_drones',
+    description: 'Remote construction drone fleets.',
+    unlocks: ['Construction drones'],
+  }),
+  eco_miner_hull: node({
+    id: 'eco_miner_hull', cluster: 'economy', name: 'Orbital Miners',
+    prereqs: ['eco_construction_drones'], creditCost: 450, solariiCost: 0, researchMs: 42000,
+    effect: 'unlock_miner_hull',
+    unlocks: ['Miner hull'],
+  }),
+  eco_mining_complex: node({
+    id: 'eco_mining_complex', cluster: 'economy', name: 'Mining Complexes',
+    prereqs: ['eco_miner_hull'], creditCost: 550, solariiCost: 0, researchMs: 45000,
+    effect: 'unlock_mining_complex',
+    unlocks: ['Mining complex'],
+  }),
+  eco_refinery: node({
+    id: 'eco_refinery', cluster: 'economy', name: 'Refinery Chains',
+    prereqs: ['eco_mining_complex'], creditCost: 600, solariiCost: 0, researchMs: 48000,
+    effect: 'unlock_refinery',
+    unlocks: ['Refinery'],
+  }),
+  eco_storage_depot: node({
+    id: 'eco_storage_depot', cluster: 'economy', name: 'Storage Depots',
+    prereqs: ['eco_refinery'], creditCost: 650, solariiCost: 0, researchMs: 50000,
+    effect: 'unlock_storage_depot',
+    unlocks: ['Storage depot'],
+  }),
+  eco_asteroid_harvester: node({
+    id: 'eco_asteroid_harvester', cluster: 'economy', name: 'Asteroid Harvesters',
+    prereqs: ['eco_storage_depot', 'wh_scout_range'], creditCost: 900, solariiCost: 1, researchMs: 55000,
+    effect: 'unlock_asteroid_harvester',
+    unlocks: ['Asteroid harvester'],
+  }),
+  eco_trade_hub: node({
+    id: 'eco_trade_hub', cluster: 'trade', name: 'Trade Hub Protocol',
+    prereqs: ['eco_construction_drones'], creditCost: 500, solariiCost: 0, researchMs: 45000,
+    effect: 'unlock_trade_station',
+    description: 'Unlocks trade stations. Merges into Sector Capitals on the spine.',
+    unlocks: ['Trade station'],
+  }),
+  trade_route_opt: node({
+    id: 'trade_route_opt', cluster: 'trade', name: 'Route Optimization',
+    prereqs: ['eco_trade_hub'], creditCost: 600, solariiCost: 0, researchMs: 48000,
+    effect: 'trade_income_20',
+    unlocks: ['Trade income +20%'],
+  }),
+  trade_light_hauler: node({
+    id: 'trade_light_hauler', cluster: 'trade', name: 'Light Haulers',
+    prereqs: ['trade_route_opt'], creditCost: 700, solariiCost: 0, researchMs: 50000,
+    effect: 'unlock_light_hauler',
+    unlocks: ['Light hauler'],
+  }),
+  trade_bulk_freighter: node({
+    id: 'trade_bulk_freighter', cluster: 'trade', name: 'Bulk Freighters',
+    prereqs: ['trade_light_hauler'], creditCost: 900, solariiCost: 1, researchMs: 55000,
+    effect: 'unlock_bulk_freighter',
+    unlocks: ['Bulk freighter'],
+  }),
+  trade_lane_secured: node({
+    id: 'trade_lane_secured', cluster: 'trade', name: 'Secured Lanes',
+    prereqs: ['trade_route_opt'], creditCost: 750, solariiCost: 0, researchMs: 52000,
+    effect: 'trade_neutral_bridge',
+    unlocks: ['Neutral trade bridges'],
+  }),
+  trade_logistics_hubs: node({
+    id: 'trade_logistics_hubs', cluster: 'trade', name: 'Logistics Hubs',
+    prereqs: ['trade_bulk_freighter'], creditCost: 1000, solariiCost: 1, researchMs: 58000,
+    effect: 'unlock_logistics_hub',
+    unlocks: ['Logistics hub'],
+    effects: [unlockStructure('logistics_hub')],
+  }),
+  trade_galactic_exchange: node({
+    id: 'trade_galactic_exchange', cluster: 'trade', name: 'Galactic Exchange',
+    prereqs: ['trade_logistics_hubs', 'eco_sector_capitals'], creditCost: 1600, solariiCost: 3, researchMs: 70000,
+    effect: 'unlock_galactic_exchange',
+    unlocks: ['Galactic exchange'],
+    effects: [unlockStructure('galactic_exchange'), multiply('tradeIncomeMult', 1.15)],
+  }),
+  trade_salvage_doctrine: node({
+    id: 'trade_salvage_doctrine', cluster: 'trade', name: 'Salvage Doctrine',
+    prereqs: ['trade_lane_secured'], creditCost: 850, solariiCost: 1, researchMs: 52000,
+    effect: 'unlock_salvage_yard',
+    unlocks: ['Salvage yard'],
+    effects: [unlockStructure('salvage_yard')],
+  }),
+  trade_armored_convoy: node({
+    id: 'trade_armored_convoy', cluster: 'trade', name: 'Armored Convoys',
+    prereqs: ['trade_bulk_freighter', 'mil_destroyer_unlock'], creditCost: 1100, solariiCost: 2, researchMs: 60000,
+    effect: 'unlock_armored_convoy',
+    unlocks: ['Armored convoy'],
+  }),
+  eco_industrial_automation: node({
+    id: 'eco_industrial_automation', cluster: 'economy', name: 'Industrial Automation',
+    prereqs: ['eco_storage_depot', 'mega_shell_ops'], creditCost: 1000, solariiCost: 1, researchMs: 55000,
+    effect: 'industrial_output_15',
+    unlocks: ['Bulk production scheduling'],
+    effects: [multiply('industrialOutputMult', 1.15), multiply('shipBuildSpeedMult', 1.1)],
+  }),
+  eco_power_grid: node({
+    id: 'eco_power_grid', cluster: 'economy', name: 'Power Grids',
+    prereqs: ['mega_shell_ops'], creditCost: 900, solariiCost: 1, researchMs: 52000,
+    effect: 'unlock_power_grid',
+    unlocks: ['Power grid'],
+    effects: [unlockStructure('power_grid')],
+  }),
+  eco_orbital_habitats: node({
+    id: 'eco_orbital_habitats', cluster: 'economy', name: 'Orbital Habitats',
+    prereqs: ['eco_power_grid', 'wh_nav_beacon'], creditCost: 1200, solariiCost: 2, researchMs: 60000,
+    effect: 'unlock_orbital_habitat',
+    unlocks: ['Orbital habitat'],
+    effects: [unlockStructure('orbital_habitat')],
+  }),
+  eco_nanoforges: node({
+    id: 'eco_nanoforges', cluster: 'economy', name: 'Nanoforges',
+    prereqs: ['eco_industrial_automation', 'res_lab_2'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'unlock_nanoforge',
+    unlocks: ['Nanoforge'],
+    effects: [unlockStructure('nanoforge'), multiply('shipBuildSpeedMult', 1.1)],
+  }),
+  mega_orbital_shield: node({
+    id: 'mega_orbital_shield', cluster: 'megastructure', name: 'Orbital Shield',
+    prereqs: ['mega_shell_ops'], creditCost: 1100, solariiCost: 2, researchMs: 58000,
+    effect: 'dyson_shield',
+    unlocks: ['Dyson orbital shield'],
+    effects: [set('dysonShield')],
+  }),
+  mega_solar_collectors: node({
+    id: 'mega_solar_collectors', cluster: 'megastructure', name: 'Solar Collectors',
+    prereqs: ['mega_launcher_unlock'], creditCost: 700, solariiCost: 0, researchMs: 48000,
+    effect: 'unlock_solar_collector',
+    unlocks: ['Solar collector'],
+    effects: [unlockStructure('solar_collector'), multiply('solariiIncomeMult', 1.1)],
+  }),
+  mega_foundry_output: node({
+    id: 'mega_foundry_output', cluster: 'megastructure', name: 'Foundry Throughput',
+    prereqs: ['mega_foundry_unlock'], creditCost: 550, solariiCost: 0, researchMs: 40000,
+    effect: 'foundry_output_15',
+    unlocks: ['Foundry output +15%'],
+  }),
+  mega_launcher_cadence: node({
+    id: 'mega_launcher_cadence', cluster: 'megastructure', name: 'Launcher Cadence',
+    prereqs: ['mega_launcher_unlock'], creditCost: 600, solariiCost: 0, researchMs: 42000,
+    effect: 'launcher_rate_15',
+    description: 'Raises launcher fire rate above the 1 sail/sec floor.',
+    unlocks: ['Launcher rate +15%'],
+  }),
+
+  // ═══ UPPER: Military (fork launcher → merge maturity via parallel dock) ═══
+  mil_parallel_dock: node({
+    id: 'mil_parallel_dock', cluster: 'military', name: 'Parallel Docking',
+    prereqs: ['mega_launcher_unlock', 'res_lab_1'], creditCost: 700, solariiCost: 0, researchMs: 50000,
+    effect: 'shipyard_slots_2',
+    description: 'Second shipyard queue. Required merge into Dyson Maturity.',
+    tags: ['military', 'merge'],
+    unlocks: ['Shipyard slots ×2'],
+  }),
+  mil_corvette_hardening: node({
+    id: 'mil_corvette_hardening', cluster: 'military', name: 'Corvette Hardening',
+    prereqs: ['mil_parallel_dock'], creditCost: 500, solariiCost: 0, researchMs: 40000,
+    effect: 'corvette_hp_15',
+    unlocks: ['Corvette Mk II'],
+    effects: [
+      { type: 'legacy', id: 'corvette_hp_15' },
+      hullRefit('corvette', 'hardening', 'Mk II Hardening'),
+    ],
+  }),
+  mil_patrol_cutter: node({
+    id: 'mil_patrol_cutter', cluster: 'military', name: 'Patrol Cutters',
+    prereqs: ['mil_parallel_dock'], creditCost: 450, solariiCost: 0, researchMs: 40000,
+    effect: 'unlock_patrol_cutter',
+    unlocks: ['Patrol cutter'],
+  }),
+  mil_destroyer_unlock: node({
+    id: 'mil_destroyer_unlock', cluster: 'military', name: 'Destroyer Blueprints',
+    prereqs: ['mil_parallel_dock'], creditCost: 800, solariiCost: 0, researchMs: 52000,
+    effect: 'unlock_destroyer_queue',
+    unlocks: ['Destroyer'],
+  }),
+  mil_destroyer_torpedoes: node({
+    id: 'mil_destroyer_torpedoes', cluster: 'military', name: 'Torpedo Refit',
+    prereqs: ['mil_destroyer_unlock'], creditCost: 700, solariiCost: 0, researchMs: 48000,
+    effect: 'destroyer_dps_10',
+    unlocks: ['Destroyer · Torpedo Refit'],
+    effects: [
+      { type: 'legacy', id: 'destroyer_dps_10' },
+      hullRefit('destroyer', 'torpedo', 'Torpedo Refit'),
+    ],
+  }),
+  mil_frigate_unlock: node({
+    id: 'mil_frigate_unlock', cluster: 'military', name: 'Frigate Blueprints',
+    prereqs: ['mil_destroyer_unlock'], creditCost: 900, solariiCost: 0, researchMs: 55000,
+    effect: 'unlock_frigate_queue',
+    unlocks: ['Frigate'],
+  }),
+  mil_frigate_alloy: node({
+    id: 'mil_frigate_alloy', cluster: 'military', name: 'Armor Alloy',
+    prereqs: ['mil_frigate_unlock'], creditCost: 750, solariiCost: 0, researchMs: 48000,
+    effect: 'frigate_hp_10',
+    unlocks: ['Frigate · Armor Alloy'],
+    effects: [
+      { type: 'legacy', id: 'frigate_hp_10' },
+      hullRefit('frigate', 'alloy', 'Armor Alloy'),
+    ],
+  }),
+  mil_point_defense: node({
+    id: 'mil_point_defense', cluster: 'military', name: 'Point Defense Grid',
+    prereqs: ['mil_patrol_cutter', 'mil_destroyer_unlock'], creditCost: 650, solariiCost: 0, researchMs: 45000,
+    effect: 'point_defense_20',
+    unlocks: ['Point defense +20%'],
+    effects: [{ type: 'legacy', id: 'unlock_destroyer_aa' }],
+  }),
+  mil_healer_tech: node({
+    id: 'mil_healer_tech', cluster: 'military', name: 'Field Medics',
+    prereqs: ['mil_parallel_dock'], creditCost: 500, solariiCost: 0, researchMs: 42000,
+    effect: 'healer_repair_10',
+    unlocks: ['Healer repair +10%'],
+  }),
+  mil_healer_hospital: node({
+    id: 'mil_healer_hospital', cluster: 'military', name: 'Field Hospital',
+    prereqs: ['mil_healer_tech'], creditCost: 700, solariiCost: 0, researchMs: 48000,
+    effect: 'healer_repair_15',
+    unlocks: ['Healer · Field Hospital'],
+    effects: [
+      { type: 'legacy', id: 'healer_repair_15' },
+      hullRefit('healer', 'hospital', 'Field Hospital'),
+    ],
+  }),
+  mil_sensor_ship: node({
+    id: 'mil_sensor_ship', cluster: 'military', name: 'Sensor Ships',
+    prereqs: ['mil_healer_tech'], creditCost: 600, solariiCost: 0, researchMs: 45000,
+    effect: 'unlock_sensor_ship',
+    unlocks: ['Sensor ship'],
+  }),
+  mil_light_carrier: node({
+    id: 'mil_light_carrier', cluster: 'military', name: 'Light Carrier',
+    prereqs: ['mil_frigate_unlock'], creditCost: 1100, solariiCost: 1, researchMs: 60000,
+    effect: 'unlock_light_carrier_queue',
+    unlocks: ['Light carrier', 'Basic wings'],
+    effects: [
+      { type: 'legacy', id: 'unlock_light_carrier_queue' },
+      { type: 'legacy', id: 'carrier_wings' },
+    ],
+  }),
+  mil_carrier_hangar: node({
+    id: 'mil_carrier_hangar', cluster: 'military', name: 'Hangar Expansion',
+    prereqs: ['mil_light_carrier'], creditCost: 900, solariiCost: 1, researchMs: 52000,
+    effect: 'carrier_dps_10',
+    unlocks: ['Carrier · Hangar Expansion'],
+    effects: [
+      multiply('carrierWingCapacityMult', 1.25),
+      hullRefit('light_carrier', 'hangar', 'Hangar Expansion'),
+    ],
+  }),
+  mil_fleet_carrier: node({
+    id: 'mil_fleet_carrier', cluster: 'military', name: 'Fleet Carrier',
+    prereqs: ['mil_light_carrier', 'mega_dyson_maturity'], creditCost: 1600, solariiCost: 2, researchMs: 70000,
+    effect: 'unlock_fleet_carrier_queue',
+    unlocks: ['Fleet carrier'],
+  }),
+  mil_carrier_bombers: node({
+    id: 'mil_carrier_bombers', cluster: 'military', name: 'Bomber Wings',
+    prereqs: ['mil_fleet_carrier'], creditCost: 1200, solariiCost: 2, researchMs: 60000,
+    effect: 'bomber_damage_20',
+    unlocks: ['Carrier · Bomber Wings'],
+    effects: [
+      { type: 'legacy', id: 'bomber_damage_20' },
+      hullRefit('fleet_carrier', 'bombers', 'Bomber Wings'),
+    ],
+  }),
+  mil_cruiser_unlock: node({
+    id: 'mil_cruiser_unlock', cluster: 'military', name: 'Cruiser Blueprints',
+    prereqs: ['mil_frigate_unlock'], creditCost: 1200, solariiCost: 1, researchMs: 62000,
+    effect: 'unlock_cruiser_queue',
+    unlocks: ['Cruiser'],
+  }),
+  mil_cruiser_beams: node({
+    id: 'mil_cruiser_beams', cluster: 'military', name: 'Beam Lance Refit',
+    prereqs: ['mil_cruiser_unlock'], creditCost: 1000, solariiCost: 1, researchMs: 55000,
+    effect: 'beam_damage_15',
+    unlocks: ['Cruiser · Beam Lance'],
+    effects: [
+      { type: 'legacy', id: 'beam_damage_15' },
+      hullRefit('cruiser', 'beam', 'Beam Lance Refit'),
+    ],
+  }),
+  mil_command_cruiser: node({
+    id: 'mil_command_cruiser', cluster: 'military', name: 'Command Cruiser',
+    prereqs: ['mil_cruiser_unlock', 'res_lab_2'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'unlock_command_cruiser',
+    unlocks: ['Command cruiser'],
+  }),
+  mil_battleship_unlock: node({
+    id: 'mil_battleship_unlock', cluster: 'military', name: 'Battleship Hulls',
+    prereqs: ['mil_cruiser_unlock', 'eco_sector_capitals'], creditCost: 1800, solariiCost: 3, researchMs: 75000,
+    effect: 'unlock_battleship_queue',
+    unlocks: ['Battleship'],
+  }),
+  mil_battleship_siege: node({
+    id: 'mil_battleship_siege', cluster: 'military', name: 'Siege Refit',
+    prereqs: ['mil_battleship_unlock'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'battleship_dps_10',
+    unlocks: ['Battleship · Siege Refit'],
+    effects: [
+      { type: 'legacy', id: 'battleship_dps_10' },
+      hullRefit('battleship', 'siege', 'Siege Refit'),
+    ],
+  }),
+  mil_dreadnought_unlock: node({
+    id: 'mil_dreadnought_unlock', cluster: 'military', name: 'Dreadnought',
+    prereqs: ['mil_battleship_unlock', 'mil_battleship_siege'], creditCost: 2400, solariiCost: 4, researchMs: 90000,
+    effect: 'unlock_dreadnought_queue',
+    unlocks: ['Dreadnought'],
+  }),
+  mil_dreadnought_plate: node({
+    id: 'mil_dreadnought_plate', cluster: 'military', name: 'Sovereign Plate',
+    prereqs: ['mil_dreadnought_unlock'], creditCost: 2000, solariiCost: 4, researchMs: 80000,
+    effect: 'fleet_damage_10',
+    unlocks: ['Dreadnought · Sovereign Plate'],
+    effects: [
+      multiply('fleetDamageMult', 1.1),
+      hullRefit('dreadnought', 'plate', 'Sovereign Plate'),
+    ],
+  }),
+  mil_super_carrier: node({
+    id: 'mil_super_carrier', cluster: 'military', name: 'Super Carrier',
+    prereqs: ['mil_fleet_carrier', 'mega_launcher_cadence'], creditCost: 2800, solariiCost: 5, researchMs: 95000,
+    effect: 'unlock_super_carrier_queue',
+    unlocks: ['Super carrier'],
+  }),
+  mil_drydock: node({
+    id: 'mil_drydock', cluster: 'military', name: 'Orbital Drydocks',
+    prereqs: ['mil_parallel_dock'], creditCost: 800, solariiCost: 0, researchMs: 50000,
+    effect: 'unlock_drydock',
+    unlocks: ['Drydock'],
+  }),
+  mil_orbital_defense: node({
+    id: 'mil_orbital_defense', cluster: 'military', name: 'Orbital Defense',
+    prereqs: ['mil_parallel_dock'], creditCost: 750, solariiCost: 0, researchMs: 48000,
+    effect: 'unlock_orbital_defense',
+    unlocks: ['Orbital defense'],
+  }),
+  mil_shield_generator: node({
+    id: 'mil_shield_generator', cluster: 'military', name: 'Planetary Shields',
+    prereqs: ['mil_orbital_defense', 'mega_dyson_maturity'], creditCost: 1100, solariiCost: 2, researchMs: 58000,
+    effect: 'unlock_planetary_shield',
+    unlocks: ['Planetary shield'],
+  }),
+  mil_ion_battery: node({
+    id: 'mil_ion_battery', cluster: 'military', name: 'Ion Batteries',
+    prereqs: ['mil_orbital_defense'], creditCost: 900, solariiCost: 1, researchMs: 52000,
+    effect: 'unlock_ion_battery',
+    unlocks: ['Ion battery'],
+  }),
+  mil_fighter_factory: node({
+    id: 'mil_fighter_factory', cluster: 'military', name: 'Fighter Factories',
+    prereqs: ['mil_light_carrier'], creditCost: 1000, solariiCost: 1, researchMs: 55000,
+    effect: 'unlock_fighter_factory',
+    unlocks: ['Fighter factory'],
+  }),
+  mil_carrier_command: node({
+    id: 'mil_carrier_command', cluster: 'military', name: 'Carrier Command',
+    prereqs: ['mil_fleet_carrier'], creditCost: 1300, solariiCost: 2, researchMs: 62000,
+    effect: 'unlock_carrier_command',
+    unlocks: ['Carrier command'],
+    effects: [unlockStructure('carrier_command')],
+  }),
+  mil_fleet_academy: node({
+    id: 'mil_fleet_academy', cluster: 'military', name: 'Fleet Academy',
+    prereqs: ['mil_cruiser_unlock', 'res_lab_2'], creditCost: 1200, solariiCost: 2, researchMs: 60000,
+    effect: 'unlock_fleet_academy',
+    unlocks: ['Fleet academy'],
+    effects: [unlockStructure('fleet_academy'), multiply('veterancyExperienceMult', 1.25)],
+  }),
+  mil_missile_silo_network: node({
+    id: 'mil_missile_silo_network', cluster: 'military', name: 'Missile Silos',
+    prereqs: ['mil_shield_generator'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'unlock_missile_silo',
+    unlocks: ['Missile silo'],
+    effects: [unlockStructure('missile_silo')],
+  }),
+  mil_gravitic_interdiction: node({
+    id: 'mil_gravitic_interdiction', cluster: 'military', name: 'Gravitic Interdiction',
+    prereqs: ['mil_ion_battery', 'wh_stable_gate'], creditCost: 1800, solariiCost: 3, researchMs: 75000,
+    effect: 'unlock_interdiction_array',
+    unlocks: ['Interdiction array'],
+    effects: [unlockStructure('interdiction_array')],
+  }),
+  mil_orbital_sensor_arrays: node({
+    id: 'mil_orbital_sensor_arrays', cluster: 'military', name: 'Sensor Arrays',
+    prereqs: ['mil_sensor_ship', 'res_lab_2'], creditCost: 1000, solariiCost: 1, researchMs: 55000,
+    effect: 'unlock_sensor_array',
+    unlocks: ['Orbital sensor array'],
+    effects: [unlockStructure('sensor_array')],
+  }),
+  mil_builder_ship: node({
+    id: 'mil_builder_ship', cluster: 'military', name: 'Builder Ships',
+    prereqs: ['eco_construction_drones', 'mil_parallel_dock'], creditCost: 800, solariiCost: 0, researchMs: 50000,
+    effect: 'unlock_builder_ship',
+    unlocks: ['Builder ship'],
+  }),
+  mil_tri_dock: node({
+    id: 'mil_tri_dock', cluster: 'military', name: 'Tri-Stream Docking',
+    prereqs: ['mil_parallel_dock', 'mega_dyson_maturity'], creditCost: 1300, solariiCost: 2, researchMs: 62000,
+    effect: 'shipyard_slots_3',
+    unlocks: ['Shipyard slots ×3'],
+  }),
+  mil_war_doctrine: node({
+    id: 'mil_war_doctrine', cluster: 'military', name: 'War Doctrine',
+    prereqs: ['mil_cruiser_unlock', 'eco_sector_capitals'], creditCost: 1500, solariiCost: 2, researchMs: 70000,
+    effect: 'capture_force_1',
+    unlocks: ['Capture force +1'],
+  }),
+
+  // ═══ LOWER: Research / Wormhole (fork launcher → merge cradle) ═══
+  res_lab_1: node({
+    id: 'res_lab_1', cluster: 'research', name: 'Lab Protocols I',
+    prereqs: ['eco_surveyor'], creditCost: 400, solariiCost: 0, researchMs: 40000,
+    effect: 'research_speed_10',
+    unlocks: ['Research speed +10%'],
+  }),
+  res_station_protocol: node({
+    id: 'res_station_protocol', cluster: 'research', name: 'Research Station',
+    prereqs: ['res_lab_1', 'mega_launcher_unlock'], creditCost: 700, solariiCost: 0, researchMs: 50000,
+    effect: 'unlock_research_station',
+    description: 'Unlocks research stations. Merges into Cradle Frame.',
+    tags: ['research', 'merge'],
+    unlocks: ['Research station'],
+  }),
+  res_lab_2: node({
+    id: 'res_lab_2', cluster: 'research', name: 'Lab Protocols II',
+    prereqs: ['res_station_protocol'], creditCost: 900, solariiCost: 1, researchMs: 55000,
+    effect: 'research_speed_15',
+    unlocks: ['Research speed +15%'],
+  }),
+  res_dual_core: node({
+    id: 'res_dual_core', cluster: 'research', name: 'Dual Research Core',
+    prereqs: ['res_lab_2'], creditCost: 1200, solariiCost: 2, researchMs: 60000,
+    effect: 'research_queue_2',
+    unlocks: ['Research queue ×2'],
+  }),
+  res_queue_3: node({
+    id: 'res_queue_3', cluster: 'research', name: 'Tri-Core Research',
+    prereqs: ['res_dual_core', 'eco_sector_capitals'], creditCost: 1800, solariiCost: 3, researchMs: 75000,
+    effect: 'research_queue_3',
+    unlocks: ['Research queue ×3'],
+  }),
+  res_quantum_archives: node({
+    id: 'res_quantum_archives', cluster: 'research', name: 'Quantum Archives',
+    prereqs: ['res_dual_core'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'unlock_quantum_archive',
+    unlocks: ['Quantum archive'],
+    effects: [unlockStructure('quantum_archive')],
+  }),
+  wh_nav_beacon: node({
+    id: 'wh_nav_beacon', cluster: 'wormhole', name: 'Nav Beacons',
+    prereqs: ['res_lab_1'], creditCost: 500, solariiCost: 0, researchMs: 42000,
+    effect: 'intel_hop_1',
+    unlocks: ['Intel hop +1'],
+  }),
+  wh_scout_range: node({
+    id: 'wh_scout_range', cluster: 'wormhole', name: 'Extended Sensors',
+    prereqs: ['wh_nav_beacon', 'mega_launcher_unlock'], creditCost: 650, solariiCost: 0, researchMs: 48000,
+    effect: 'intel_hop_2',
+    unlocks: ['Intel hop +2'],
+  }),
+  wh_observatory: node({
+    id: 'wh_observatory', cluster: 'wormhole', name: 'Wormhole Observatory',
+    prereqs: ['wh_scout_range', 'res_lab_2'], creditCost: 1100, solariiCost: 2, researchMs: 58000,
+    effect: 'unlock_wormhole_observatory',
+    unlocks: ['Wormhole observatory'],
+    effects: [unlockStructure('wormhole_observatory')],
+  }),
+  wh_stable_gate: node({
+    id: 'wh_stable_gate', cluster: 'wormhole', name: 'Stable Gate Theory',
+    prereqs: ['wh_scout_range', 'res_lab_2'], creditCost: 1200, solariiCost: 2, researchMs: 60000,
+    effect: 'anchor_cost_25',
+    unlocks: ['Anchor cost −25%'],
+  }),
+  wh_fleet_jump: node({
+    id: 'wh_fleet_jump', cluster: 'wormhole', name: 'Fleet Jump Doctrine',
+    prereqs: ['wh_stable_gate', 'mil_frigate_unlock'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'wormhole_transit_10',
+    unlocks: ['Fleet wormhole transit +10%'],
+  }),
+  wh_anchor_network: node({
+    id: 'wh_anchor_network', cluster: 'wormhole', name: 'Anchor Network',
+    prereqs: ['wh_stable_gate', 'eco_sector_capitals'], creditCost: 1600, solariiCost: 3, researchMs: 70000,
+    effect: 'anchor_network',
+    unlocks: ['Anchor network capacity'],
+    effects: [add('anchorNetworkCapacityBonus', 2), multiply('wormholeChargeRateMult', 1.15)],
+  }),
+
+  // ═══ Diplomacy (fork maturity → merge cradle) ═══
+  dip_truce_protocol: node({
+    id: 'dip_truce_protocol', cluster: 'diplomacy', name: 'Truce Protocol',
+    prereqs: ['mega_dyson_maturity'], creditCost: 1000, solariiCost: 1, researchMs: 55000,
+    effect: 'unlock_diplomacy',
+    description: 'Opens diplomacy. Merges into Cradle Frame.',
+    tags: ['diplomacy', 'merge'],
+    unlocks: ['Truce treaties'],
+    requiresDiplomacy: true,
+  }),
+  dip_trade_charter: node({
+    id: 'dip_trade_charter', cluster: 'diplomacy', name: 'Trade Charter',
+    prereqs: ['dip_truce_protocol'], creditCost: 1200, solariiCost: 2, researchMs: 60000,
+    effect: 'diplomacy_trade',
+    unlocks: ['Trade treaties'],
+    requiresDiplomacy: true,
+  }),
+  dip_embassy_network: node({
+    id: 'dip_embassy_network', cluster: 'diplomacy', name: 'Embassy Network',
+    prereqs: ['dip_trade_charter'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'diplomacy_trade_bonus',
+    unlocks: ['Embassy network'],
+    requiresDiplomacy: true,
+  }),
+  dip_embassy_complex: node({
+    id: 'dip_embassy_complex', cluster: 'diplomacy', name: 'Embassy Complex',
+    prereqs: ['dip_embassy_network'], creditCost: 1600, solariiCost: 3, researchMs: 70000,
+    effect: 'unlock_embassy_complex',
+    unlocks: ['Embassy complex'],
+    effects: [unlockStructure('embassy_complex')],
+    requiresDiplomacy: true,
+  }),
+  dip_alliance_pact: node({
+    id: 'dip_alliance_pact', cluster: 'diplomacy', name: 'Alliance Pact',
+    prereqs: ['dip_trade_charter', 'mil_war_doctrine'], creditCost: 2000, solariiCost: 4, researchMs: 80000,
+    effect: 'diplomacy_alliance',
+    unlocks: ['Alliance treaties'],
+    requiresDiplomacy: true,
+  }),
+  dip_galactic_council: node({
+    id: 'dip_galactic_council', cluster: 'diplomacy', name: 'Galactic Council',
+    prereqs: ['dip_embassy_complex', 'sw_novacula_online'], creditCost: 3000, solariiCost: 6, researchMs: 100000,
+    effect: 'galactic_council',
+    unlocks: ['Galactic council'],
+    effects: [set('galacticCouncil')],
+    requiresDiplomacy: true,
+    requiresSuperweapon: true,
+  }),
+
+  // ═══ Mode skeletons (fork focus → merge Novacula) ═══
+  sw_create_star: node({
+    id: 'sw_create_star', cluster: 'superweapon', name: 'Genesis Skeleton',
+    prereqs: ['sw_precision_targeting'], creditCost: 0, solariiCost: 8, researchMs: 90000,
+    effect: 'superweapon_create',
+    description: 'Create-mode skeleton — install on the cradle to enable stellar genesis.',
+    unlocks: ['Create mode blueprint'],
+    effects: [swPart('create'), { type: 'legacy', id: 'superweapon_create' }],
+    requiresSuperweapon: true,
+  }),
+  sw_destroy_star: node({
+    id: 'sw_destroy_star', cluster: 'superweapon', name: 'Annihilation Skeleton',
+    prereqs: ['sw_create_star'], creditCost: 0, solariiCost: 10, researchMs: 100000,
+    effect: 'superweapon_destroy',
+    description: 'Destroy-mode skeleton — install to enable stellar annihilation.',
+    unlocks: ['Destroy mode blueprint'],
+    effects: [swPart('destroy'), { type: 'legacy', id: 'superweapon_destroy' }],
+    requiresSuperweapon: true,
+  }),
+  sw_jump_gate: node({
+    id: 'sw_jump_gate', cluster: 'superweapon', name: 'Jump Skeleton',
+    prereqs: ['sw_precision_targeting', 'wh_fleet_jump'], creditCost: 1800, solariiCost: 6, researchMs: 85000,
+    effect: 'superweapon_jump',
+    description: 'Jump-mode skeleton — install to relocate the cradle.',
+    unlocks: ['Jump mode blueprint'],
+    effects: [swPart('jump'), { type: 'legacy', id: 'superweapon_jump' }],
+    requiresSuperweapon: true,
+  }),
+
+  // ═══ Hull Forge (mid-game flagship stages — own layout lane) ═══
+  fs_hull_frame: node({
+    id: 'fs_hull_frame', cluster: 'flagship', name: 'Reinforced Frame',
+    prereqs: ['mil_parallel_dock'], creditCost: 600, solariiCost: 0, researchMs: 42000,
+    effect: 'flagship_hull_frame',
+    description: 'Hull Forge stage 1. Reinforced flagship frame and fleet plating doctrine.',
+    unlocks: ['Flagship Mk I armor · +12% hull', 'Fleet hull +5% HP'],
+    effects: [
+      flagshipHullStage(1),
+      flagshipUpgrade('frame', 'Reinforced Frame'),
+      multiply('flagshipHpMult', 1.12),
+      multiply('fleetHpMult', 1.05),
+    ],
+  }),
+  fs_hull_drives: node({
+    id: 'fs_hull_drives', cluster: 'flagship', name: 'Drive Lattice',
+    prereqs: ['fs_hull_frame'], creditCost: 800, solariiCost: 0, researchMs: 48000,
+    effect: 'flagship_hull_drives',
+    description: 'Hull Forge stage 2. Drive lattice and escort wing readiness.',
+    unlocks: ['Flagship Mk II drives · +12% speed', 'Wing capacity +8%'],
+    effects: [
+      flagshipHullStage(2),
+      flagshipUpgrade('drives', 'Drive Lattice'),
+      multiply('flagshipSpeedMult', 1.12),
+      multiply('carrierWingCapacityMult', 1.08),
+    ],
+  }),
+  fs_hull_arsenal: node({
+    id: 'fs_hull_arsenal', cluster: 'flagship', name: 'Arsenal Hardpoints',
+    prereqs: ['fs_hull_drives', 'mega_dyson_maturity'], creditCost: 1100, solariiCost: 1, researchMs: 55000,
+    effect: 'flagship_hull_arsenal',
+    description: 'Hull Forge stage 3. Capital hardpoints and lance mounts.',
+    unlocks: ['Flagship Mk III arsenal · +15% DPS', 'Hardpoint batteries'],
+    effects: [
+      flagshipHullStage(3),
+      flagshipUpgrade('arsenal', 'Arsenal Hardpoints'),
+      multiply('flagshipDpsMult', 1.15),
+    ],
+  }),
+  fs_hull_command: node({
+    id: 'fs_hull_command', cluster: 'flagship', name: 'Command Lattice',
+    prereqs: ['fs_hull_arsenal', 'res_lab_2'], creditCost: 1400, solariiCost: 2, researchMs: 65000,
+    effect: 'flagship_hull_command',
+    description: 'Hull Forge stage 4. Command lattice and capture aura.',
+    unlocks: ['Flagship Mk IV command · +15% aura', 'Capture force bonus'],
+    effects: [
+      flagshipHullStage(4),
+      flagshipUpgrade('command_lattice', 'Command Lattice'),
+      multiply('flagshipCommandMult', 1.15),
+    ],
+  }),
+  fs_hull_sovereign: node({
+    id: 'fs_hull_sovereign', cluster: 'flagship', name: 'Sovereign Hull',
+    prereqs: ['fs_hull_command', 'eco_sector_capitals'], creditCost: 1800, solariiCost: 3, researchMs: 75000,
+    effect: 'flagship_hull_sovereign',
+    description: 'Hull Forge stage 5. Full sovereign cladding — gates late Flagship protocols.',
+    unlocks: ['Flagship Mk V sovereign · +20% hull', 'Fleet damage +5%'],
+    effects: [
+      flagshipHullStage(5),
+      flagshipUpgrade('sovereign', 'Sovereign Hull'),
+      multiply('flagshipHpMult', 1.2),
+      multiply('fleetDamageMult', 1.05),
+    ],
+  }),
+
+  // ═══ Flagship upgrades (fork power → merge Novacula) ═══
+  hero_arsenal: node({
+    id: 'hero_arsenal', cluster: 'flagship', name: 'Arsenal Suite',
+    prereqs: ['fs_hull_arsenal', 'sw_cradle_power_core', 'mil_command_cruiser'],
+    creditCost: 1600, solariiCost: 3, researchMs: 70000,
+    effect: 'flagship_arsenal',
+    unlocks: ['Late arsenal suite · weapon range'],
+    effects: [
+      flagshipUpgrade('arsenal_suite', 'Arsenal Suite'),
+      multiply('weaponRangeMult', 1.1),
+    ],
+    requiresSuperweapon: true,
+  }),
+  hero_wing_bay: node({
+    id: 'hero_wing_bay', cluster: 'flagship', name: 'Wing Bay',
+    prereqs: ['hero_arsenal'], creditCost: 1700, solariiCost: 3, researchMs: 72000,
+    effect: 'flagship_wing_bay',
+    unlocks: ['Flagship wing bay'],
+    effects: [flagshipUpgrade('wing', 'Wing Bay'), multiply('carrierWingCapacityMult', 1.1)],
+    requiresSuperweapon: true,
+  }),
+  hero_hull_unlock: node({
+    id: 'hero_hull_unlock', cluster: 'flagship', name: 'Hero Flagship Protocol',
+    prereqs: ['hero_wing_bay', 'sw_cradle_unlock', 'fs_hull_sovereign'],
+    creditCost: 2200, solariiCost: 5, researchMs: 85000,
+    effect: 'unlock_hero_flagship',
+    unlocks: ['Hero flagship'],
+    effects: [
+      { type: 'legacy', id: 'unlock_hero_flagship' },
+      flagshipUpgrade('hero_hull', 'Hero Hull'),
+    ],
+    requiresSuperweapon: true,
+  }),
+  hero_rally_doctrine: node({
+    id: 'hero_rally_doctrine', cluster: 'flagship', name: 'Rally Doctrine',
+    prereqs: ['hero_hull_unlock'], creditCost: 1600, solariiCost: 3, researchMs: 70000,
+    effect: 'hero_rally_bonus',
+    unlocks: ['Hero rally'],
+    requiresSuperweapon: true,
+  }),
+  hero_plate: node({
+    id: 'hero_plate', cluster: 'flagship', name: 'Hero Plate',
+    prereqs: ['hero_hull_unlock'], creditCost: 1800, solariiCost: 4, researchMs: 75000,
+    effect: 'flagship_plate',
+    unlocks: ['Hero flagship plate'],
+    effects: [
+      flagshipUpgrade('plate', 'Hero Plate'),
+      multiply('defensePowerMult', 1.05),
+    ],
+    requiresSuperweapon: true,
+  }),
+  hero_command_suite: node({
+    id: 'hero_command_suite', cluster: 'flagship', name: 'Command Suite',
+    prereqs: ['hero_plate', 'hero_rally_doctrine', 'mil_war_doctrine'], creditCost: 2200, solariiCost: 5, researchMs: 85000,
+    effect: 'hero_combat_bonus',
+    description: 'Command suite. Merges into Novacula Online.',
+    tags: ['flagship', 'merge'],
+    unlocks: ['Flagship command suite'],
+    effects: [
+      { type: 'legacy', id: 'hero_combat_bonus' },
+      flagshipUpgrade('command', 'Command Suite'),
+    ],
     requiresSuperweapon: true,
   }),
 };
+
+/** Old tech IDs → nearest kept node (save migration). */
+export const TECH_ID_MIGRATION = Object.freeze({
+  eco_outpost_2: 'eco_surveyor',
+  eco_outpost_3: 'eco_surveyor',
+  eco_moon_rights: 'eco_miner_hull',
+  eco_shipyard_bureau: 'mil_parallel_dock',
+  eco_credits_surge: 'eco_sector_capitals',
+  eco_industrial_chain: 'eco_industrial_automation',
+  eco_zero_waste_industry: 'eco_industrial_automation',
+  eco_habitat_network: 'eco_orbital_habitats',
+  eco_finance_hub: 'trade_galactic_exchange',
+  mega_foundry_2: 'mega_foundry_output',
+  mega_foundry_3: 'mega_foundry_output',
+  mega_sail_weave: 'mega_foundry_output',
+  mega_launcher_rate: 'mega_launcher_cadence',
+  mega_shell_matrix: 'mega_shell_ops',
+  mega_shell_harmonic: 'mega_shell_ops',
+  mega_solarii_boost: 'mega_solar_collectors',
+  mega_dyson_overdrive: 'mega_dyson_maturity',
+  mega_dual_launcher: 'mega_launcher_cadence',
+  mega_ascendant_engineering: 'mega_dyson_maturity',
+  mega_stellar_lattice: 'mega_dyson_maturity',
+  mil_corvette_2: 'mil_corvette_hardening',
+  mil_torpedo_bays: 'mil_destroyer_torpedoes',
+  mil_armor_alloy: 'mil_frigate_alloy',
+  mil_kinetic_batteries: 'mil_frigate_alloy',
+  mil_hangar_deck: 'mil_carrier_hangar',
+  mil_carrier_launch_doctrine: 'mil_light_carrier',
+  mil_bomber_bays: 'mil_carrier_bombers',
+  mil_beam_lances: 'mil_cruiser_beams',
+  mil_siege_platform: 'mil_battleship_siege',
+  mil_field_hospital: 'mil_healer_hospital',
+  mil_interceptor_screens: 'mil_point_defense',
+  mil_integrated_fire_control: 'sw_precision_targeting',
+  mil_fortress_worlds: 'mil_missile_silo_network',
+  trade_tariff_law: 'eco_trade_hub',
+  trade_market_2: 'trade_route_opt',
+  trade_galactic_net: 'trade_galactic_exchange',
+  res_station_2: 'res_lab_2',
+  res_lab_3: 'res_lab_2',
+  res_archivist: 'res_dual_core',
+  wh_probe_swarm: 'wh_scout_range',
+  wh_anchor_discount: 'wh_stable_gate',
+  wh_core_mapping: 'wh_scout_range',
+  wh_mass_transit: 'wh_anchor_network',
+  wh_empire_relay: 'wh_anchor_network',
+  wh_route_prediction: 'wh_fleet_jump',
+  wh_quantum_corridors: 'wh_anchor_network',
+  wh_interdiction_field: 'mil_gravitic_interdiction',
+  dip_defense_compact: 'dip_alliance_pact',
+  dip_trade_charter_old: 'dip_trade_charter',
+  hero_command_aura: 'hero_command_suite',
+  hero_mobile_shipyard: 'hero_command_suite',
+  hero_wormhole_compass: 'hero_command_suite',
+  hero_diplomatic_mandate: 'hero_command_suite',
+  hero_sovereign_core: 'hero_command_suite',
+  sw_sovereign_protocol: 'sw_novacula_online',
+  sw_genesis_matrix: 'sw_create_star',
+  sw_gate_array: 'sw_jump_gate',
+  sw_cradle_power_core_old: 'sw_cradle_power_core',
+});
 
 function humanizeEffect(effect) {
   if (!effect || effect === 'seed') return 'Technology web foundation';
@@ -1135,47 +981,51 @@ function humanizeEffect(effect) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-// Preserve the legacy `effect` field while exposing normalized descriptors and
-// searchable metadata on every node. Existing node costs are intentionally left
-// untouched; only v13 nodes use the shared derived-tier curve below.
-for (const node of Object.values(TECH_NODES)) {
-  node.effects ??= node.effect ? [{ type: 'legacy', id: node.effect }] : [];
-  node.description ??= `${node.name} advances the ${node.cluster} technology branch.`;
-  node.tags ??= [node.cluster, ...String(node.effect ?? '').split('_').filter(Boolean)];
-  node.unlocks ??= [humanizeEffect(node.effect)];
-  node.milestones ??= [
-    ...(node.requiresDiplomacy ? ['diplomacy'] : []),
-    ...(node.requiresSuperweapon ? ['superweapon'] : []),
+for (const tech of Object.values(TECH_NODES)) {
+  tech.effects ??= tech.effect ? [{ type: 'legacy', id: tech.effect }] : [];
+  tech.description ??= `${tech.name} advances the ${tech.cluster} technology branch.`;
+  tech.tags ??= [tech.cluster, ...String(tech.effect ?? '').split('_').filter(Boolean)];
+  if (tech.spine && !tech.tags.includes('spine')) tech.tags.push('spine');
+  tech.unlocks ??= [humanizeEffect(tech.effect)];
+  tech.milestones ??= [
+    ...(tech.requiresDiplomacy ? ['diplomacy'] : []),
+    ...(tech.requiresSuperweapon ? ['superweapon'] : []),
   ];
 }
 
 function rawDerivedTier(nodeId, memo = new Map(), visiting = new Set()) {
   if (memo.has(nodeId)) return memo.get(nodeId);
-  const node = TECH_NODES[nodeId];
-  if (!node) return 0;
+  const tech = TECH_NODES[nodeId];
+  if (!tech) return 0;
   if (visiting.has(nodeId)) throw new Error(`Technology cycle encountered at ${nodeId}`);
   visiting.add(nodeId);
-  const tier = node.prereqs.length === 0
+  const tier = tech.prereqs.length === 0
     ? 1
-    : 1 + Math.max(...node.prereqs.map((id) => rawDerivedTier(id, memo, visiting)));
+    : 1 + Math.max(...tech.prereqs.map((id) => rawDerivedTier(id, memo, visiting)));
   visiting.delete(nodeId);
   memo.set(nodeId, tier);
   return tier;
 }
 
 const tierMemo = new Map();
-for (const node of Object.values(TECH_NODES)) {
-  if (node.introducedIn !== 13) continue;
-  const tier = rawDerivedTier(node.id, tierMemo);
+for (const tech of Object.values(TECH_NODES)) {
+  if (tech.creditCost > 0 || tech.researchMs > 0) continue;
+  if (tech.id === 'eco_baseline') continue;
+  const tier = rawDerivedTier(tech.id, tierMemo);
   const cost = v13TechCostsForTier(tier);
-  node.creditCost = cost.credits;
-  node.solariiCost = cost.solarii;
-  node.researchMs = cost.researchMs;
-  node.costTier = tier;
+  if (!tech.creditCost) tech.creditCost = cost.credits;
+  if (tech.solariiCost == null) tech.solariiCost = cost.solarii;
+  if (!tech.researchMs) tech.researchMs = cost.researchMs;
+  tech.costTier = tier;
 }
 
 export const V13_TECH_NODE_IDS = Object.freeze(
   Object.values(TECH_NODES)
-    .filter((node) => node.introducedIn === 13)
-    .map((node) => node.id),
+    .filter((tech) => tech.introducedIn === 13)
+    .map((tech) => tech.id),
 );
+
+export function isSpineTech(nodeOrId) {
+  const id = typeof nodeOrId === 'string' ? nodeOrId : nodeOrId?.id;
+  return TECH_SPINE_IDS.includes(id) || !!TECH_NODES[id]?.spine;
+}

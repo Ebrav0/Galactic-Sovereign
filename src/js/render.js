@@ -16,6 +16,7 @@ import {
   CAPTURE_HOLD_MS,
   BATTLE_RENDER_LOD_UNITS,
   BATTLE_RENDER_SWARM_UNITS,
+  CELESTIAL_VISUAL_SCALE,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
 import {
@@ -83,7 +84,7 @@ import {
 } from './research-render.js';
 import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
 import { flagshipWingPoses } from './flagship-wing.js';
-import { ensureFlagshipWeapons } from './hull.js';
+import { ensureFlagshipWeapons, flagshipHullStage, hullSpriteVisualOpts } from './hull.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
 import { hasIntel } from './intel.js';
 import { captureProgressMs, canHoldCapture } from './capture.js';
@@ -110,6 +111,7 @@ import {
 } from './ship-sprites.js';
 import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache, starKeepOutOuterRadius } from './ship-motion.js';
+import { fleetFollowHome } from './battle-groups.js';
 import { builderDroneTransitPositions, builderDroneBuildPose } from './builder-drones.js';
 import { drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
 import { activeFleetOrders, weaponArcRadians, weaponMountBearing } from './combat-orders.js';
@@ -961,7 +963,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       thrusting,
       state.flagship.hp ?? state.systemBattles?.[systemId]?.flagshipHp ?? 1,
       state.flagship.maxHp ?? 1,
-      { time: t, hardpointFireAt },
+      { time: t, hardpointFireAt, hullStage: flagshipHullStage(state) },
     );
   }
 
@@ -1692,6 +1694,8 @@ function drawCombatLayer(
         ...unitShieldTotals(unit),
         showHp: mode !== 'swarm',
         alwaysShowBars: true,
+        ...hullSpriteVisualOpts(state, unit.hull, unit.side),
+        hardpointFireAt: unit.hull === 'flagship' ? (unit.hardpointFireAt ?? null) : null,
       }, mode);
       if (mode !== 'swarm' && fb) drawHitFeedbackOverlay(ctx, p.x, p.y, shipR, unit, fb, z);
       if (selected && focusScreen && unit.side === 'player') {
@@ -1714,8 +1718,32 @@ function drawCombatLayer(
   const pirateFleets = pirateFleetAtSystem(state, systemId);
   const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
   const ambientMode = combatRenderMode(playerShips.length + pirateTotal, z);
+  const flagDisplay = state.flagship?.systemId === systemId && !state.flagship?.transit
+    ? getFlagshipDisplayPose(state, accumulatorMs)
+    : null;
   playerShips.forEach((ship, idx) => {
-    const pose = ambientShipPose(state, system, ship, idx, playerShips.length, time, bodyCache);
+    const follow = fleetFollowHome(state, ship, systemId);
+    let homeOverride = null;
+    if (follow?.kind === 'flagship' && flagDisplay) {
+      homeOverride = {
+        ...follow,
+        x: flagDisplay.x,
+        y: flagDisplay.y,
+        heading: flagDisplay.heading,
+        vx: state.flagship?.vx ?? follow.vx,
+        vy: state.flagship?.vy ?? follow.vy,
+      };
+    }
+    const pose = ambientShipPose(
+      state,
+      system,
+      ship,
+      idx,
+      playerShips.length,
+      time,
+      bodyCache,
+      { homeOverride },
+    );
     const p = worldToScreen(camera, pose.x, pose.y, canvas);
     if (!screenInView(p, canvas, 70)) return;
     drawCombatShipSprite(ctx, p.x, p.y, ship.hull, baseR, {
@@ -1724,6 +1752,7 @@ function drawCombatLayer(
       hp: ship.hp,
       maxHp: ship.maxHp,
       showHp: ambientMode === 'detail',
+      ...hullSpriteVisualOpts(state, ship.hull, 'player'),
     }, ambientMode);
   });
 
@@ -2379,7 +2408,17 @@ export function drawGalaxy(
     }
 
     if (state.flagship.galaxyId === state.activeGalaxyId && state.flagship.systemId === star.id) {
-      drawFlagshipSprite(ctx, s.x + nodeR + 14 * z, s.y - nodeR - 12 * z, -Math.PI / 4, Math.max(3, 5.5 * z), false);
+      drawFlagshipSprite(
+        ctx,
+        s.x + nodeR + 14 * z,
+        s.y - nodeR - 12 * z,
+        -Math.PI / 4,
+        Math.max(3, 5.5 * z),
+        false,
+        state.flagship.hp ?? 1,
+        state.flagship.maxHp ?? 1,
+        { hullStage: flagshipHullStage(state) },
+      );
     }
 
     let heroIdx = 0;
@@ -2433,7 +2472,17 @@ export function drawGalaxy(
 
   if (transit) {
     const s = worldToScreen(galaxyCamera, transit.x, transit.y, canvas);
-    drawFlagshipSprite(ctx, s.x, s.y, transit.angle, Math.max(3.5, 6.5 * z), true);
+    drawFlagshipSprite(
+      ctx,
+      s.x,
+      s.y,
+      transit.angle,
+      Math.max(3.5, 6.5 * z),
+      true,
+      state.flagship.hp ?? 1,
+      state.flagship.maxHp ?? 1,
+      { hullStage: flagshipHullStage(state) },
+    );
 
     const dest = nodePos(galaxy, transit.destId);
     const ds = worldToScreen(galaxyCamera, dest.x, dest.y, canvas);
@@ -2665,6 +2714,16 @@ export function hitTestPlanet(state, systemId, wx, wy) {
     const hitR = planet.radius + 10 / camera.zoom;
     if (dx * dx + dy * dy <= hitR * hitR) return planet.id;
   }
+  return null;
+}
+
+/** Local-star pick in system view — selection id `'star'` prefers star orbit on O. */
+export function hitTestSystemStar(state, systemId, wx, wy) {
+  const system = systemById(state, systemId);
+  if (!system?.star) return null;
+  const r = (system.star.radius ?? 200) * CELESTIAL_VISUAL_SCALE;
+  const hitR = r * 1.15 + 18 / Math.max(0.001, camera.zoom);
+  if (wx * wx + wy * wy <= hitR * hitR) return 'star';
   return null;
 }
 

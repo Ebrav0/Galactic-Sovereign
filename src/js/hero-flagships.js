@@ -14,6 +14,7 @@ import { getGraph } from './galaxy-scope.js';
 import { systemById } from './state.js';
 import { effectiveLegDurationMs } from './strategic-structures.js';
 import { canRouteThroughSystem } from './diplomacy.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 
 let nextHeroId = 1;
 
@@ -65,7 +66,9 @@ export function canBuildHeroFlagship(state) {
   return { ok: true, cradleSystemId: cradleId };
 }
 
-export function buildHeroFlagship(state, rallyStarId = null) {
+export function buildHeroFlagship(state, rallyStarId = null, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'hero_flagships', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildHeroFlagship(state);
   if (!check.ok) return check;
 

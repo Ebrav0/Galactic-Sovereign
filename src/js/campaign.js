@@ -12,10 +12,13 @@ import { superweaponSummary } from './superweapon.js';
 import { countCompletedDysons } from './milestones.js';
 import { listAiFactionsFromState } from './diplomacy.js';
 import { FLAGSHIP_HP } from './constants.js';
+import { createTutorialCampaignState } from './tutorial-access.js';
 
 export const VICTORY_TYPES = [
   'sandbox', 'dominion', 'megastructure', 'annihilation', 'economic', 'sculptor',
 ];
+
+export { createTutorialCampaignState } from './tutorial-access.js';
 
 export function ensureCampaign(state) {
   if (!state.campaign) {
@@ -30,12 +33,28 @@ export function ensureCampaign(state) {
       missionProgress: {},
       tutorialTargetSystemId: null,
       tutorialCompletedAt: null,
+      tutorial: createTutorialCampaignState(),
     };
   }
   // Tutorial fields were added after campaign saves already existed. Keep old
   // saves playable without requiring a save-version bump for additive data.
   state.campaign.tutorialTargetSystemId ??= null;
   state.campaign.tutorialCompletedAt ??= null;
+  if (!state.campaign.tutorial || typeof state.campaign.tutorial !== 'object') {
+    state.campaign.tutorial = createTutorialCampaignState();
+  } else {
+    const defaults = createTutorialCampaignState();
+    for (const [key, value] of Object.entries(defaults)) {
+      if (state.campaign.tutorial[key] == null) state.campaign.tutorial[key] = value;
+    }
+    state.campaign.tutorial.flags ??= {};
+    for (const [key, value] of Object.entries(defaults.flags)) {
+      if (state.campaign.tutorial.flags[key] == null) state.campaign.tutorial.flags[key] = value;
+    }
+    if (!Array.isArray(state.campaign.tutorial.completedStepIds)) {
+      state.campaign.tutorial.completedStepIds = [];
+    }
+  }
 }
 
 export function setVictoryType(state, type, mode = 'sandbox') {
@@ -59,6 +78,8 @@ export function startTutorial(state) {
   state.campaign.tutorialCompletedAt = null;
   state.campaign.tutorialSystemViewed = false;
   state.campaign.tutorialLogisticsOpened = false;
+  state.campaign.tutorial = createTutorialCampaignState();
+  state.campaign.tutorial.status = 'active';
   state.campaign.defeated = false;
   state.campaign.won = false;
   return { ok: true };
@@ -174,6 +195,11 @@ export function campaignSummary(state) {
     tutorialStep: state.campaign.tutorialStep,
     tutorialTargetSystemId: state.campaign.tutorialTargetSystemId,
     tutorialCompletedAt: state.campaign.tutorialCompletedAt,
+    tutorial: {
+      ...state.campaign.tutorial,
+      completedStepIds: [...state.campaign.tutorial.completedStepIds],
+      flags: { ...state.campaign.tutorial.flags },
+    },
     activeMissionId: state.campaign.activeMissionId,
     completedMissions: [...(state.campaign.completedMissions ?? [])],
     missionProgress: { ...(state.campaign.missionProgress ?? {}) },

@@ -41,6 +41,7 @@ import {
   PRODUCTION_KIND_BUILDER_DRONE,
   normalizeProductionProduct,
 } from './production-products.js';
+import { requireTutorialAccess, tutorialDurationMs } from './tutorial-access.js';
 
 export function canBuildShipyard(state, systemId, planetId, opts = {}) {
   const system = systemById(state, systemId);
@@ -66,6 +67,8 @@ export function canBuildShipyard(state, systemId, planetId, opts = {}) {
 }
 
 export function buildShipyard(state, systemId, planetId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'shipyard', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildShipyard(state, systemId, planetId, opts);
   if (!check.ok) return check;
 
@@ -113,12 +116,12 @@ function canQueueHullType(state, shipyardId, systemId, hull) {
   const cost = hull === 'scout' ? SCOUT_HULL_COST : stats.cost;
   if (state.credits < cost) return { ok: false, reason: `Need ${cost} credits` };
   const baseBuildMs = hull === 'scout' ? SCOUT_BUILD_MS : stats.buildMs;
-  const buildMs = Math.max(1, Math.round(
+  const buildMs = tutorialDurationMs(state, Math.max(1, Math.round(
     baseBuildMs
       * shipyardBuildTimeMultiplier(shipyard)
       * structureShipBuildTimeMultiplier(state, systemId)
       / Math.max(0.1, techEffects(state).shipBuildSpeedMult),
-  ));
+  )), 'production');
   return { ok: true, cost, buildMs };
 }
 
@@ -139,6 +142,8 @@ export function queueScout(state, shipyardId, systemId) {
 
 /** Local shipyard queue — test/regression hook only (Phase 5). */
 export function queueHull(state, shipyardId, systemId, hull) {
+  const tutorial = requireTutorialAccess(state, hull === 'scout' ? 'scout_queue' : 'combat_ship_queue');
+  if (!tutorial.ok) return tutorial;
   const check = canQueueHull(state, shipyardId, systemId, hull);
   if (!check.ok) return check;
 

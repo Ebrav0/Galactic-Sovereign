@@ -24,6 +24,7 @@ import {
   normalizeProductionProduct,
   productionProductDefinition,
 } from './production-products.js';
+import { requireTutorialAccess, tutorialDurationMs } from './tutorial-access.js';
 
 export function shipyardSlots(state) {
   return techShipyardSlots(state);
@@ -147,6 +148,12 @@ export function enqueueProduct(state, productInput, options = {}) {
     return { ok: false, reason: 'No shipyard built yet' };
   }
   const product = normalizeProductionProduct(productInput);
+  const tutorial = requireTutorialAccess(
+    state,
+    product.productId === 'scout' ? 'scout_queue' : 'combat_ship_queue',
+    { bypass: options.tutorialBypass },
+  );
+  if (!tutorial.ok) return tutorial;
   const definition = productionProductDefinition(state, product);
   if (!definition.unlocked) return { ok: false, reason: `${definition.label} is not unlocked` };
   const cost = definition.cost;
@@ -265,12 +272,12 @@ export function dispatchEmpireQueue(state) {
 
       const shipyard = findStructure(state, yard.systemId, yard.shipyardId);
       normalizeShipyardBuilds(shipyard);
-      const buildMs = Math.max(1, Math.round(
+      const buildMs = tutorialDurationMs(state, Math.max(1, Math.round(
         productionProductDefinition(state, product).buildMs
           * shipyardBuildTimeMultiplier(shipyard)
           * structureShipBuildTimeMultiplier(state, yard.systemId)
           / Math.max(0.1, techEffects(state).shipBuildSpeedMult),
-      ));
+      )), 'production');
       shipyard.builds.push({
         kind: product.kind,
         productId: product.productId,

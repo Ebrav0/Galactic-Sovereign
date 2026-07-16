@@ -16,6 +16,7 @@ import {
 } from './constants.js';
 import { techEffects } from './tech-web.js';
 import { createDefaultFlagshipWing, ensureFlagshipWing, flagshipWingLoadout } from './flagship-wing.js';
+import { flagshipHardpointAnchors } from './flagship-morph.js';
 
 export function hullStats(hull) {
   return HULL_STATS[hull] ?? null;
@@ -29,28 +30,42 @@ export function isCombatHull(hull) {
 function hpMultForHull(state, hull) {
   if (!state) return 1;
   const fx = techEffects(state);
-  if (hull === 'corvette') return fx.corvetteHpMult;
-  if (hull === 'frigate') return fx.frigateHpMult;
-  return 1;
+  let mult = 1;
+  if (hull === 'corvette') mult = fx.corvetteHpMult;
+  else if (hull === 'frigate') mult = fx.frigateHpMult;
+  if (hull !== 'flagship' && hull !== 'hero_flagship') {
+    mult *= fx.fleetHpMult ?? 1;
+  }
+  const refit = fx.hullRefits?.[hull]?.id;
+  if (refit === 'hardening' || refit === 'alloy' || refit === 'plate') mult *= 1.12;
+  if (refit === 'hospital') mult *= 1.05;
+  return mult;
 }
 
 function dpsMultForHull(state, hull) {
   if (!state) return 1;
   const fx = techEffects(state);
-  if (hull === 'destroyer') return fx.destroyerDpsMult;
-  if (hull === 'battleship') return fx.battleshipDpsMult;
-  if (hull === 'light_carrier' || hull === 'fleet_carrier' || hull === 'super_carrier') {
-    return fx.carrierDpsMult;
+  let mult = 1;
+  if (hull === 'destroyer') mult = fx.destroyerDpsMult;
+  else if (hull === 'battleship') mult = fx.battleshipDpsMult;
+  else if (hull === 'light_carrier' || hull === 'fleet_carrier' || hull === 'super_carrier') {
+    mult = fx.carrierDpsMult;
   }
-  return 1;
+  const refit = fx.hullRefits?.[hull]?.id;
+  if (refit === 'torpedo' || refit === 'beam' || refit === 'siege' || refit === 'bombers') mult *= 1.1;
+  return mult;
 }
 
 export function isCarrierHull(hull) {
   return !!CARRIER_WING_SPECS[hull] || hull === 'flagship';
 }
 
-export function defaultWeaponProfileForHull(hull) {
+export function defaultWeaponProfileForHull(hull, state = null) {
+  const refit = state ? techEffects(state).hullRefits?.[hull]?.id : null;
   if (hull === 'healer') return 'repair';
+  if (hull === 'destroyer' && refit === 'torpedo') return 'torpedo';
+  if (hull === 'cruiser' && refit === 'beam') return 'beam_lance';
+  if (hull === 'battleship' && refit === 'siege') return 'torpedo';
   if (hull === 'corvette' || hull === 'patrol_cutter' || hull === 'interceptor') return 'point_defense';
   if (hull === 'destroyer' || hull === 'battleship' || hull === 'dreadnought' || hull === 'bomber') return 'torpedo';
   if (hull === 'cruiser' || hull === 'command_cruiser' || hull === 'hero_flagship' || hull === 'flagship') return 'beam_lance';
@@ -58,25 +73,122 @@ export function defaultWeaponProfileForHull(hull) {
   return 'kinetic';
 }
 
+/** Visible refit / Mk label for shipyard and empire queue UI. */
+export function hullRefitLabel(state, hull) {
+  const refit = techEffects(state).hullRefits?.[hull];
+  if (!refit?.label) return null;
+  return refit.label;
+}
+
+export function hullDisplayName(state, hull) {
+  const base = String(hull ?? '').replace(/_/g, ' ');
+  if (hull === 'flagship') {
+    const stage = flagshipHullStage(state);
+    if (stage > 0) return `${base} · Mk ${romanHullStage(stage)}`;
+  }
+  const refit = hullRefitLabel(state, hull);
+  return refit ? `${base} · ${refit}` : base;
+}
+
+const HULL_STAGE_ROMAN = Object.freeze(['', 'I', 'II', 'III', 'IV', 'V']);
+
+function romanHullStage(stage) {
+  return HULL_STAGE_ROMAN[Math.max(0, Math.min(5, Math.round(stage)))] || String(stage);
+}
+
+/** Hull Forge stage 0–5 from researched tech. */
+export function flagshipHullStage(state) {
+  if (!state) return 0;
+  return Math.max(0, Math.min(5, Math.round(techEffects(state).flagshipHullStage ?? 0)));
+}
+
+/** Sprite opts for Hull Forge stage + fleet refit accents (player side). */
+export function hullSpriteVisualOpts(state, hull, side = 'player') {
+  if (!state || side !== 'player') {
+    return { hullStage: 0, refitId: null, empireMark: false };
+  }
+  const stage = flagshipHullStage(state);
+  const refitId = techEffects(state).hullRefits?.[hull]?.id ?? null;
+  return {
+    hullStage: hull === 'flagship' ? stage : 0,
+    refitId,
+    empireMark: stage >= 4 && hull !== 'flagship',
+  };
+}
+
+/** Base flagship max HP after Hull Forge multipliers. */
+export function flagshipMaxHpForState(state) {
+  const base = hullStats('flagship')?.hp ?? FLAGSHIP_HP;
+  if (!state) return base;
+  return Math.round(base * (techEffects(state).flagshipHpMult ?? 1));
+}
+
+/**
+ * Recompute flagship maxHp from tech; preserve current HP ratio.
+ * @returns {{ previousMax: number, nextMax: number, hp: number }}
+ */
+export function refreshFlagshipHullFromTech(state) {
+  if (!state?.flagship) return null;
+  const previousMax = Math.max(1, state.flagship.maxHp ?? FLAGSHIP_HP);
+  const ratio = Math.max(0, Math.min(1, (state.flagship.hp ?? previousMax) / previousMax));
+  const nextMax = flagshipMaxHpForState(state);
+  state.flagship.maxHp = nextMax;
+  state.flagship.hp = Math.max(1, Math.round(nextMax * ratio));
+  syncFlagshipWeaponMuzzles(state);
+  return { previousMax, nextMax, hp: state.flagship.hp };
+}
+
 export function weaponProfile(profileId) {
   return WEAPON_PROFILES[profileId] ?? WEAPON_PROFILES.kinetic;
 }
 
-export function createDefaultFlagshipWeapons() {
-  return FLAGSHIP_WEAPON_SUITE.map((slot) => ({
-    id: slot.id,
-    profile: slot.profile,
-    hardpoint: slot.hardpoint,
-    muzzle: { ...slot.muzzle },
-    cooldownMs: 0,
-    lastFiredAt: 0,
-  }));
+export function createDefaultFlagshipWeapons(hullStage = 0) {
+  const anchors = new Map(flagshipHardpointAnchors(hullStage).map((a) => [a.id, a]));
+  return FLAGSHIP_WEAPON_SUITE.map((slot) => {
+    const anchor = anchors.get(slot.id);
+    return {
+      id: slot.id,
+      profile: slot.profile,
+      hardpoint: slot.hardpoint,
+      muzzle: anchor ? { x: anchor.x, y: anchor.y } : { ...slot.muzzle },
+      cooldownMs: 0,
+      lastFiredAt: 0,
+    };
+  });
+}
+
+export function syncFlagshipWeaponMuzzles(state) {
+  return ensureFlagshipWeapons(state);
 }
 
 export function ensureFlagshipWeapons(state) {
   if (!state?.flagship) return [];
   if (!Array.isArray(state.flagship.weapons) || state.flagship.weapons.length === 0) {
-    state.flagship.weapons = createDefaultFlagshipWeapons();
+    state.flagship.weapons = createDefaultFlagshipWeapons(flagshipHullStage(state));
+  } else {
+    // Keep mounts glued to the current Hull Forge silhouette.
+    const anchors = new Map(flagshipHardpointAnchors(flagshipHullStage(state)).map((a) => [a.id, a]));
+    const byId = new Map(state.flagship.weapons.map((w) => [w.id, w]));
+    state.flagship.weapons = FLAGSHIP_WEAPON_SUITE.map((slot) => {
+      const existing = byId.get(slot.id);
+      const anchor = anchors.get(slot.id);
+      if (existing) {
+        existing.profile = slot.profile;
+        existing.hardpoint = slot.hardpoint;
+        existing.muzzle = anchor ? { x: anchor.x, y: anchor.y } : existing.muzzle ?? { ...slot.muzzle };
+        existing.cooldownMs = existing.cooldownMs ?? 0;
+        existing.lastFiredAt = existing.lastFiredAt ?? 0;
+        return existing;
+      }
+      return {
+        id: slot.id,
+        profile: slot.profile,
+        hardpoint: slot.hardpoint,
+        muzzle: anchor ? { x: anchor.x, y: anchor.y } : { ...slot.muzzle },
+        cooldownMs: 0,
+        lastFiredAt: 0,
+      };
+    });
   }
   return state.flagship.weapons;
 }
@@ -92,7 +204,12 @@ export function maxCarrierWingCount(shipOrHull, state = null, localMultiplier = 
   if (!spec) return 0;
   const base = Object.values(spec).reduce((n, count) => n + count, 0);
   const mult = (state ? techEffects(state).carrierWingCapacityMult : 1) * Math.max(0, localMultiplier || 1);
-  return Math.max(0, Math.round(base * mult));
+  const hangarBonus = state && techEffects(state).hullRefits?.light_carrier?.id === 'hangar' ? 1.15 : 1;
+  const bomberBonus = state && (
+    techEffects(state).hullRefits?.fleet_carrier?.id === 'bombers'
+    || techEffects(state).hullRefits?.super_carrier?.id === 'bombers'
+  ) ? 1.1 : 1;
+  return Math.max(0, Math.round(base * mult * hangarBonus * bomberBonus));
 }
 
 export function carrierWingLoadout(shipOrHull, state = null, localMultiplier = 1) {
@@ -149,7 +266,7 @@ export function createShipInstance(id, hull, state = null) {
     baseMaxHp: hp,
     veterancy: 0,
     experience: 0,
-    weaponProfile: defaultWeaponProfileForHull(hull),
+    weaponProfile: defaultWeaponProfileForHull(hull, state),
   };
   normalizeCarrierWingState(ship, state);
   return ship;
@@ -187,8 +304,8 @@ export function grantShipExperience(ship, amount) {
 }
 
 export function createFlagshipCombatUnit(state = null) {
-  const hp = state?.flagship?.hp ?? FLAGSHIP_HP;
-  const maxHp = state?.flagship?.maxHp ?? hullStats('flagship')?.hp ?? FLAGSHIP_HP;
+  const maxHp = state ? flagshipMaxHpForState(state) : (hullStats('flagship')?.hp ?? FLAGSHIP_HP);
+  const hp = state?.flagship?.hp ?? maxHp;
   const weapons = state
     ? ensureFlagshipWeapons(state).map((w) => ({ ...w, cooldownMs: w.cooldownMs ?? 0 }))
     : createDefaultFlagshipWeapons();
@@ -227,6 +344,7 @@ export function effectiveDps(ship, state = null, { heroCombatAura = false } = {}
     let dps = Math.max(FLAGSHIP_DPS * 0.85, total);
     if (state) {
       const fx = techEffects(state);
+      dps *= fx.flagshipDpsMult ?? 1;
       dps *= fx.fleetDamageMult;
       const aura = heroCombatAura || fx.heroCombatAura;
       if (aura) dps *= 1.1;

@@ -2,6 +2,9 @@
 // Pure serialize/deserialize plus I/O calls; holds no live state references.
 
 import { SAVE_VERSION, FLAGSHIP_HP } from './constants.js';
+import { TECH_NODES, TECH_ID_MIGRATION } from './tech-nodes.js';
+import { refreshFlagshipHullFromTech } from './hull.js';
+import { ensureSuperweapon } from './superweapon.js';
 import {
   createNewGame,
   seedNeutralStructuresForGalaxy,
@@ -40,6 +43,7 @@ import { ensureBulkProductionState } from './bulk-production.js';
 import { ensureStrategicOrdersState } from './strategic-operations.js';
 import { ensureDiplomacy } from './diplomacy.js';
 import { ensureCombatSettings } from './combat-autonomy.js';
+import { createTutorialCampaignState } from './tutorial-access.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -112,6 +116,8 @@ function migrateSave(envelope) {
   if (e.saveVersion === 17) e = migrateV17toV18(e);
   if (e.saveVersion === 18) e = migrateV18toV19(e);
   if (e.saveVersion === 19) e = migrateV19toV20(e);
+  if (e.saveVersion === 20) e = migrateV20toV21(e);
+  if (e.saveVersion === 21) e = migrateV21toV22(e);
   return e;
 }
 
@@ -463,9 +469,11 @@ function initPhase6State(state) {
     missionProgress: {},
     tutorialTargetSystemId: null,
     tutorialCompletedAt: null,
+    tutorial: createTutorialCampaignState(),
   };
   state.campaign.tutorialTargetSystemId ??= null;
   state.campaign.tutorialCompletedAt ??= null;
+  state.campaign.tutorial ??= createTutorialCampaignState();
   state.diplomacy = state.diplomacy ?? { relations: {} };
   state.superweapon = state.superweapon ?? {
     cradleSystemId: null,
@@ -1136,6 +1144,114 @@ function migrateV19toV20(envelope) {
   };
 }
 
+function initV21State(state, { migrateLegacyTutorial = false } = {}) {
+  state.campaign ??= {
+    mode: 'sandbox',
+    victoryType: 'sandbox',
+    defeated: false,
+    won: false,
+    activeMissionId: null,
+    completedMissions: [],
+    missionProgress: {},
+  };
+  const defaults = createTutorialCampaignState();
+  const existing = state.campaign.tutorial;
+  state.campaign.tutorial = {
+    ...defaults,
+    ...(existing && typeof existing === 'object' ? existing : {}),
+    flags: { ...defaults.flags, ...(existing?.flags ?? {}) },
+    completedStepIds: Array.isArray(existing?.completedStepIds) ? existing.completedStepIds : [],
+  };
+  if (migrateLegacyTutorial && state.campaign.mode === 'tutorial') {
+    state.campaign.tutorial = createTutorialCampaignState();
+    state.campaign.tutorial.status = 'active';
+  }
+  return state;
+}
+
+// v20 -> v21 (stable tutorial curriculum state and profile-backed graduation).
+function migrateV20toV21(envelope) {
+  const state = initV21State(envelope.state, { migrateLegacyTutorial: true });
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 21,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+function remapTechId(id) {
+  if (TECH_NODES[id]) return id;
+  const mapped = TECH_ID_MIGRATION[id];
+  if (mapped && TECH_NODES[mapped]) return mapped;
+  return null;
+}
+
+function migrateResearchTechIds(research) {
+  if (!research || typeof research !== 'object') return;
+  const mapList = (list) => {
+    if (!Array.isArray(list)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const id of list) {
+      const next = remapTechId(id);
+      if (!next || seen.has(next)) continue;
+      seen.add(next);
+      out.push(next);
+    }
+    return out;
+  };
+  research.unlocked = mapList(research.unlocked);
+  research.queue = mapList(research.queue);
+  if (research.activeNodeId) {
+    research.activeNodeId = remapTechId(research.activeNodeId);
+  }
+  if (!TECH_NODES[research.activeNodeId]) research.activeNodeId = null;
+}
+
+function initV22State(state) {
+  initV21State(state);
+  ensureSuperweapon(state);
+  migrateResearchTechIds(state.research);
+  if (Array.isArray(state.unlockedTech)) {
+    state.unlockedTech = state.unlockedTech
+      .map(remapTechId)
+      .filter(Boolean);
+  }
+  for (const faction of state.factions?.list ?? []) {
+    migrateResearchTechIds(faction.research);
+  }
+  // Legacy cradles that were instantly online become frame-only skeletons.
+  if (state.superweapon?.cradleSystemId && !state.superweapon.installedParts?.frame) {
+    state.superweapon.installedParts = {
+      frame: { installedAt: state.time ?? 0, label: 'Cradle Frame' },
+      ...(state.superweapon.online
+        ? {
+          power: { installedAt: state.time ?? 0, label: 'Power Core' },
+          focus: { installedAt: state.time ?? 0, label: 'Focus Array' },
+          create: { installedAt: state.time ?? 0, label: 'Genesis Skeleton' },
+          destroy: { installedAt: state.time ?? 0, label: 'Annihilation Skeleton' },
+          jump: { installedAt: state.time ?? 0, label: 'Jump Skeleton' },
+        }
+        : {}),
+    };
+  }
+  return state;
+}
+
+// v21 -> v22 (Dyson→Novacula spine tech tree + superweapon skeleton parts).
+function migrateV21toV22(envelope) {
+  const state = initV22State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 22,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
 export function deserialize(envelopeJson) {
   let envelope;
@@ -1162,6 +1278,8 @@ export function deserialize(envelopeJson) {
   initV18State(envelope.state);
   initV19State(envelope.state);
   initV20State(envelope.state);
+  initV21State(envelope.state);
+  initV22State(envelope.state);
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;
@@ -1199,6 +1317,7 @@ export function deserialize(envelopeJson) {
   if (envelope.state.flagship) {
     envelope.state.flagship.hp = envelope.state.flagship.hp ?? FLAGSHIP_HP;
     envelope.state.flagship.maxHp = envelope.state.flagship.maxHp ?? FLAGSHIP_HP;
+    refreshFlagshipHullFromTech(envelope.state);
   }
   initV13State(envelope.state);
   migrateShipyardsOnLoad(envelope.state);
@@ -1212,6 +1331,7 @@ export function deserialize(envelopeJson) {
 
 const isElectron = () => typeof window !== 'undefined' && !!window.gameSave;
 const lsKey = (slot) => `gs-save-${slot}`;
+const TUTORIAL_CHECKPOINT_KEY = 'tutorial-checkpoint';
 
 export async function writeSlot(slot, state) {
   if (!SLOTS.includes(slot)) return { ok: false, error: `Invalid slot: ${slot}` };
@@ -1259,6 +1379,40 @@ export async function listSlots() {
     saves.push({ slot, savedAt, saveVersion, sizeBytes: raw.length });
   }
   return { ok: true, saves };
+}
+
+export async function writeTutorialCheckpoint(state) {
+  const envelopeJson = serialize(state);
+  if (isElectron() && window.gameSave.writeInternal) {
+    return window.gameSave.writeInternal(TUTORIAL_CHECKPOINT_KEY, envelopeJson);
+  }
+  try {
+    localStorage.setItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`, envelopeJson);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
+export async function readTutorialCheckpoint() {
+  let raw = null;
+  if (isElectron() && window.gameSave.readInternal) {
+    const result = await window.gameSave.readInternal(TUTORIAL_CHECKPOINT_KEY);
+    if (!result?.ok) return result;
+    raw = result.data;
+  } else {
+    raw = localStorage.getItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`);
+  }
+  if (!raw) return { ok: false, error: 'No tutorial checkpoint' };
+  return deserialize(raw);
+}
+
+export async function clearTutorialCheckpoint() {
+  if (isElectron() && window.gameSave.deleteInternal) {
+    return window.gameSave.deleteInternal(TUTORIAL_CHECKPOINT_KEY);
+  }
+  localStorage.removeItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`);
+  return { ok: true };
 }
 
 // --- Browser-only export/import (JSON file download / file picker) ---

@@ -18,6 +18,7 @@ import {
 import { dehydrateGalaxy, hydrateGalaxy } from './hydration.js';
 import { techEffects } from './tech-web.js';
 import { empireStructureEffectValue } from './body-structures.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 
 let wormholeJumpCounter = 0;
 let wormholeArrivalFx = null;
@@ -111,7 +112,9 @@ export function wormholeTransitStatus(state) {
   };
 }
 
-export function orderWormholeTravel(state, { targetGalaxyId = null, forceAnchored = false } = {}) {
+export function orderWormholeTravel(state, { targetGalaxyId = null, forceAnchored = false, tutorialBypass = false } = {}) {
+  const tutorial = requireTutorialAccess(state, 'wormholes', { bypass: tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canEnterWormhole(state);
   if (!check.ok) return check;
 
@@ -204,7 +207,9 @@ export function canBuildWormholeAnchor(state) {
   return { ok: true, cost };
 }
 
-export function buildWormholeAnchor(state, targetGalaxyId) {
+export function buildWormholeAnchor(state, targetGalaxyId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'wormholes', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildWormholeAnchor(state);
   if (!check.ok) return check;
   if (!targetGalaxyId || !state.galaxies[targetGalaxyId]) {

@@ -12,10 +12,10 @@ import {
   STRUCTURE_BUILD_MS,
   FOUNDRY_COST,
   LAUNCHER_COST,
-  SAIL_CREDIT_COST,
-  FOUNDRY_SAIL_RATE,
-  LAUNCHER_BATCH_SIZE,
-  LAUNCHER_LAUNCH_INTERVAL_MS,
+  LAUNCHER_SAILS_PER_SECOND,
+  SAIL_CREDIT_COST_MIN,
+  SAIL_CREDIT_COST_MAX,
+  SAIL_COST_LAUNCHER_REF,
   SHELL_SAILS_REQUIRED,
   SHELL_COUNT,
   SOLARII_BASE_RATE,
@@ -568,13 +568,15 @@ function tickAiDyson(state, faction, deltaMs = TICK_MS) {
     if (dyson.completedShells >= SHELL_COUNT) continue;
     const collectors = (system.structures ?? []).filter((structure) =>
       structure.type === 'solar_collector' && operationalStructure(state, structure)).length;
-    const foundryRate = FOUNDRY_SAIL_RATE * foundries.length
+    const foundryRate = launchers.length * LAUNCHER_SAILS_PER_SECOND
       * (effects.foundryOutputMult ?? 1) * Math.pow(1.15, collectors);
-    const launcherRate = launchers.length * LAUNCHER_BATCH_SIZE
-      / (LAUNCHER_LAUNCH_INTERVAL_MS / 1000)
-      * (effects.launcherRateMult ?? 1) * Math.pow(1.1, collectors);
+    const launcherRate = launchers.length * LAUNCHER_SAILS_PER_SECOND
+      * Math.max(1, effects.launcherRateMult ?? 1) * Math.pow(1.1, collectors);
     const wanted = Math.min(foundryRate, launcherRate) * seconds;
-    const sailCost = Math.max(0.01, SAIL_CREDIT_COST * (effects.sailCostMult ?? 1));
+    const span = Math.max(1, SAIL_COST_LAUNCHER_REF - 1);
+    const t = launchers.length <= 1 ? 0 : Math.min(1, (launchers.length - 1) / span);
+    const baseCost = SAIL_CREDIT_COST_MIN + (SAIL_CREDIT_COST_MAX - SAIL_CREDIT_COST_MIN) * t;
+    const sailCost = Math.max(0.01, baseCost * (effects.sailCostMult ?? 1));
     const produced = Math.min(wanted, faction.credits / sailCost);
     if (produced <= 0) continue;
     faction.credits -= produced * sailCost;

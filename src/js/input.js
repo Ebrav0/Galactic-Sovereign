@@ -10,6 +10,7 @@ import {
   clampGalaxyZoom,
   screenToWorld,
   hitTestPlanet,
+  hitTestSystemStar,
   hitTestStar,
   hitTestScout,
   hitTestFleetMarker,
@@ -297,7 +298,8 @@ export function attachInput(canvas, ctx) {
         onCombatClearSelection?.();
         return;
       }
-      const hit = hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y);
+      const hit = hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y)
+        ?? hitTestSystemStar(getState(), getViewedSystemId(), w.x, w.y);
       onSelect(hit);
       return;
     }

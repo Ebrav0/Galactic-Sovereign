@@ -5,7 +5,7 @@
 // isolated and makes the state safe to serialize.
 
 import { TICK_MS } from './constants.js';
-import { TECH_NODES } from './tech-nodes.js';
+import { TECH_NODES, TECH_SPINE_IDS } from './tech-nodes.js';
 import { techEffects } from './tech-web.js';
 
 export const AI_DIFFICULTY_PROFILES = Object.freeze({
@@ -225,8 +225,9 @@ export function scoreAiTechNode(faction, node, tickIndex = 0) {
   const completionPressure = Math.min(8, Math.floor(unlockedCount / 12));
   const cost = nodeCost(node);
   const affordabilityBias = cost.solarii === 0 ? 1 : 0;
+  const spineBias = TECH_SPINE_IDS.includes(node.id) || node.tags?.includes('spine') ? 48 : 0;
   const tie = stableHash(`${faction.id}:${node.id}:${Math.floor(tickIndex / 20)}`) / 0xffffffff;
-  return clusterScore * 100 + keywordHits * 24 + completionPressure + affordabilityBias + tie;
+  return clusterScore * 100 + keywordHits * 24 + completionPressure + affordabilityBias + spineBias + tie;
 }
 
 export function selectAiTechNode(state, faction, tickIndex = 0, opts = {}) {

@@ -26,6 +26,7 @@ import {
 } from './state.js';
 import { isTechUnlocked, techEffects } from './tech-web.js';
 import { refreshMilestones } from './milestones.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 import { orderTravel } from './flagship.js';
 import {
   canAttackSystem,
@@ -62,10 +63,112 @@ export function ensureSuperweapon(state) {
       shieldCooldowns: {},
       createCount: 0,
       fireSequence: null,
+      installedParts: {},
     };
   }
   if (!state.superweapon.shieldCooldowns) state.superweapon.shieldCooldowns = {};
   if (state.superweapon.fireSequence === undefined) state.superweapon.fireSequence = null;
+  if (!state.superweapon.installedParts || typeof state.superweapon.installedParts !== 'object') {
+    state.superweapon.installedParts = {};
+  }
+}
+
+/** Part ids that can be researched then installed on the cradle skeleton. */
+export const SUPERWEAPON_PART_IDS = Object.freeze([
+  'frame', 'power', 'focus', 'create', 'destroy', 'jump',
+]);
+
+const PART_LABELS = Object.freeze({
+  frame: 'Cradle Frame',
+  power: 'Power Core',
+  focus: 'Focus Array',
+  create: 'Genesis Skeleton',
+  destroy: 'Annihilation Skeleton',
+  jump: 'Jump Skeleton',
+});
+
+const PART_INSTALL_COST = Object.freeze({
+  frame: { credits: 0, solarii: 0 },
+  power: { credits: 1200, solarii: 4 },
+  focus: { credits: 1400, solarii: 5 },
+  create: { credits: 1600, solarii: 6 },
+  destroy: { credits: 1800, solarii: 7 },
+  jump: { credits: 1500, solarii: 5 },
+});
+
+export function hasSuperweaponPart(state, partId) {
+  ensureSuperweapon(state);
+  return !!state.superweapon.installedParts?.[partId];
+}
+
+export function refreshSuperweaponOnline(state) {
+  ensureSuperweapon(state);
+  const fx = techEffects(state);
+  const parts = state.superweapon.installedParts;
+  const hasCradle = !!state.superweapon.cradleSystemId
+    || Object.values(getSystems(state)).some((system) =>
+      (system.structures ?? []).some((s) => s.type === 'superweapon_cradle'));
+  if (!hasCradle) {
+    state.superweapon.online = false;
+    return state.superweapon.online;
+  }
+  // Power + focus installed → charge-capable; Novacula research = full online.
+  const charged = !!(parts.power && parts.focus);
+  state.superweapon.online = charged && (!!fx.novaculaOnline || !!fx.sovereignProtocol
+    || !!(parts.create && parts.destroy && parts.jump));
+  // Allow mode fire once that mode part is installed even before full Novacula,
+  // as long as power+focus are present (partial online for modes).
+  if (charged && (parts.create || parts.destroy || parts.jump)) {
+    state.superweapon.online = true;
+  }
+  return state.superweapon.online;
+}
+
+export function canInstallSuperweaponPart(state, partId) {
+  ensureSuperweapon(state);
+  if (!SUPERWEAPON_PART_IDS.includes(partId)) {
+    return { ok: false, reason: 'Unknown cradle part' };
+  }
+  if (!state.superweapon.cradleSystemId && !hasSuperweaponCradle(state, state.stronghold)) {
+    return { ok: false, reason: 'Build the cradle frame first' };
+  }
+  const fx = techEffects(state);
+  if (!fx.swPartBlueprints?.[partId] && partId !== 'frame') {
+    return { ok: false, reason: `Research ${PART_LABELS[partId] ?? partId} first` };
+  }
+  if (partId === 'frame' && !isTechUnlocked(state, 'sw_cradle_unlock')) {
+    return { ok: false, reason: 'Research Cradle Frame first' };
+  }
+  if (hasSuperweaponPart(state, partId)) {
+    return { ok: false, reason: `${PART_LABELS[partId] ?? partId} already installed` };
+  }
+  if (partId === 'power' && !hasSuperweaponPart(state, 'frame')) {
+    return { ok: false, reason: 'Install cradle frame first' };
+  }
+  if (partId === 'focus' && !hasSuperweaponPart(state, 'power')) {
+    return { ok: false, reason: 'Install power core first' };
+  }
+  if (['create', 'destroy', 'jump'].includes(partId) && !hasSuperweaponPart(state, 'focus')) {
+    return { ok: false, reason: 'Install focus array first' };
+  }
+  const cost = PART_INSTALL_COST[partId] ?? { credits: 0, solarii: 0 };
+  if (state.credits < cost.credits) return { ok: false, reason: `Need ${cost.credits} credits` };
+  if ((state.solarii ?? 0) < cost.solarii) return { ok: false, reason: `Need ${cost.solarii} Solarii` };
+  return { ok: true, cost };
+}
+
+export function installSuperweaponPart(state, partId) {
+  const check = canInstallSuperweaponPart(state, partId);
+  if (!check.ok) return check;
+  state.credits -= check.cost.credits;
+  state.solarii = (state.solarii ?? 0) - check.cost.solarii;
+  ensureSuperweapon(state);
+  state.superweapon.installedParts[partId] = {
+    installedAt: state.time,
+    label: PART_LABELS[partId] ?? partId,
+  };
+  refreshSuperweaponOnline(state);
+  return { ok: true, partId, online: state.superweapon.online };
 }
 
 function flagshipInSystem(state, systemId) {
@@ -85,7 +188,7 @@ export function canBuildSuperweaponCradle(state, systemId) {
     return { ok: false, reason: 'Requires 3 completed Dyson spheres' };
   }
   if (!isTechUnlocked(state, 'sw_cradle_unlock')) {
-    return { ok: false, reason: 'Research Superweapon Cradle first' };
+    return { ok: false, reason: 'Research Cradle Frame first' };
   }
   if (systemId !== state.stronghold) {
     return { ok: false, reason: 'Superweapon cradle must be built at your Stronghold' };
@@ -108,7 +211,9 @@ export function canBuildSuperweaponCradle(state, systemId) {
   return { ok: true };
 }
 
-export function buildSuperweaponCradle(state, systemId = state.stronghold) {
+export function buildSuperweaponCradle(state, systemId = state.stronghold, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'superweapon', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildSuperweaponCradle(state, systemId);
   if (!check.ok) return check;
 
@@ -116,7 +221,11 @@ export function buildSuperweaponCradle(state, systemId = state.stronghold) {
   state.solarii -= SUPERWEAPON_CRADLE_SOLARII;
   ensureSuperweapon(state);
   state.superweapon.cradleSystemId = systemId;
-  state.superweapon.online = true;
+  state.superweapon.online = false;
+  state.superweapon.installedParts.frame = {
+    installedAt: state.time,
+    label: PART_LABELS.frame,
+  };
 
   const system = systemById(state, systemId);
   system.structures.push({
@@ -125,6 +234,7 @@ export function buildSuperweaponCradle(state, systemId = state.stronghold) {
     bodyId: null,
     builtAtTime: state.time,
   });
+  refreshSuperweaponOnline(state);
   return { ok: true, systemId };
 }
 
@@ -242,15 +352,24 @@ export function fireSequenceStatus(state) {
 
 function canStartAction(state, type, targetSystemId) {
   ensureSuperweapon(state);
-  if (!state.superweapon.online) return { ok: false, reason: 'Superweapon not online' };
+  refreshSuperweaponOnline(state);
+  if (!state.superweapon.online) {
+    return { ok: false, reason: 'Install power core and focus array on the cradle first' };
+  }
   if (state.superweapon.fireSequence) return { ok: false, reason: 'Superweapon already firing' };
 
   if (type === 'create') {
-    if (!isTechUnlocked(state, 'sw_create_star')) return { ok: false, reason: 'Research Stellar Genesis first' };
+    if (!isTechUnlocked(state, 'sw_create_star')) return { ok: false, reason: 'Research Genesis Skeleton first' };
+    if (!hasSuperweaponPart(state, 'create')) {
+      return { ok: false, reason: 'Install Genesis Skeleton on the cradle' };
+    }
     if (onCooldown(state)) return { ok: false, reason: 'Superweapon on cooldown' };
     if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid anchor system' };
   } else if (type === 'destroy') {
-    if (!isTechUnlocked(state, 'sw_destroy_star')) return { ok: false, reason: 'Research Stellar Annihilation first' };
+    if (!isTechUnlocked(state, 'sw_destroy_star')) return { ok: false, reason: 'Research Annihilation Skeleton first' };
+    if (!hasSuperweaponPart(state, 'destroy')) {
+      return { ok: false, reason: 'Install Annihilation Skeleton on the cradle' };
+    }
     if (targetSystemId === state.stronghold || targetSystemId === BLACK_HOLE_ID) {
       return { ok: false, reason: 'Cannot destroy the Stronghold or galactic core' };
     }
@@ -259,7 +378,10 @@ function canStartAction(state, type, targetSystemId) {
     const attack = canAttackSystem(state, targetSystemId, 'player', { galaxyId: state.activeGalaxyId });
     if (!attack.ok) return attack;
   } else if (type === 'jump') {
-    if (!isTechUnlocked(state, 'sw_jump_gate')) return { ok: false, reason: 'Research Superweapon Jump first' };
+    if (!isTechUnlocked(state, 'sw_jump_gate')) return { ok: false, reason: 'Research Jump Skeleton first' };
+    if (!hasSuperweaponPart(state, 'jump')) {
+      return { ok: false, reason: 'Install Jump Skeleton on the cradle' };
+    }
     if (onCooldown(state, 'jumpCooldownUntil')) return { ok: false, reason: 'Jump on cooldown' };
     if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid target star' };
     const transit = canRouteThroughSystem(state, targetSystemId, 'player', {
@@ -489,7 +611,9 @@ export function tickSuperweapon(state) {
 }
 
 /** Instant path for headless tests — skips cinema, still applies costs/cooldowns. */
-export function superweaponCreate(state, anchorSystemId, { immediate = false } = {}) {
+export function superweaponCreate(state, anchorSystemId, { immediate = false, tutorialBypass = false } = {}) {
+  const tutorial = requireTutorialAccess(state, 'superweapon', { bypass: tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   if (!immediate) return requestSuperweaponCreate(state, anchorSystemId);
   const check = canStartAction(state, 'create', anchorSystemId);
   if (!check.ok) return check;
@@ -504,7 +628,9 @@ export function superweaponCreate(state, anchorSystemId, { immediate = false } =
   return result;
 }
 
-export function superweaponDestroy(state, targetSystemId, { immediate = false } = {}) {
+export function superweaponDestroy(state, targetSystemId, { immediate = false, tutorialBypass = false } = {}) {
+  const tutorial = requireTutorialAccess(state, 'superweapon', { bypass: tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   if (!immediate) return requestSuperweaponDestroy(state, targetSystemId);
   const check = canStartAction(state, 'destroy', targetSystemId);
   if (!check.ok) return check;
@@ -524,7 +650,9 @@ export function superweaponDestroy(state, targetSystemId, { immediate = false } 
   return result;
 }
 
-export function superweaponJump(state, targetSystemId, { immediate = false } = {}) {
+export function superweaponJump(state, targetSystemId, { immediate = false, tutorialBypass = false } = {}) {
+  const tutorial = requireTutorialAccess(state, 'superweapon', { bypass: tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   if (!immediate) return requestSuperweaponJump(state, targetSystemId);
   const check = canStartAction(state, 'jump', targetSystemId);
   if (!check.ok) return check;
@@ -641,8 +769,11 @@ function purgeSystemEntities(state, systemId, galaxyId = state.activeGalaxyId) {
 
 export function superweaponSummary(state) {
   ensureSuperweapon(state);
+  refreshSuperweaponOnline(state);
   const seq = fireSequenceStatus(state);
   const fx = techEffects(state);
+  const parts = state.superweapon.installedParts ?? {};
+  const blueprints = fx.swPartBlueprints ?? {};
   return {
     online: !!state.superweapon.online,
     cradleSystemId: state.superweapon.cradleSystemId,
@@ -653,6 +784,15 @@ export function superweaponSummary(state) {
     panicUntil: state.superweapon.panicUntil ?? 0,
     fireSequence: seq,
     sovereignProtocol: !!fx.sovereignProtocol,
+    novaculaOnline: !!fx.novaculaOnline || !!fx.sovereignProtocol,
+    installedParts: { ...parts },
+    partStatus: SUPERWEAPON_PART_IDS.map((id) => ({
+      id,
+      label: PART_LABELS[id],
+      installed: !!parts[id],
+      blueprint: id === 'frame' || !!blueprints[id],
+      canInstall: canInstallSuperweaponPart(state, id).ok,
+    })),
     costs: {
       create: solariiCostFor('create', state),
       destroy: solariiCostFor('destroy', state),

@@ -31,7 +31,7 @@ import { COMBAT_DOCTRINES } from './combat-doctrine.js';
 import { spawnPlayerShip } from './fleets.js';
 import { spawnScout } from './scout.js';
 import { spawnAiShip } from './ai-ships.js';
-import { hullStats } from './hull.js';
+import { hullStats, refreshFlagshipHullFromTech, flagshipHullStage, flagshipMaxHpForState } from './hull.js';
 import {
   devSpawnEnemyFleetAtSystem,
   devTeleportPirateFleet,
@@ -39,7 +39,7 @@ import {
 } from './pirates.js';
 import { ensureResearchState, researchStationCount } from './research.js';
 import { forceAiCapture } from './ai-faction.js';
-import { allTechNodes, applyTechEffect, isTechUnlocked, techNode } from './tech-web.js';
+import { allTechNodes, applyTechEffect, isTechUnlocked, techNode, techEffects } from './tech-web.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
   ensureLogisticsState,
@@ -130,6 +130,36 @@ export const DEV_ENEMY_PRESETS = Object.freeze({
     { hull: 'cruiser', count: 1 },
   ]),
 });
+
+/** Hull Forge stage tech ids (index 0 = stage 1). */
+export const DEV_HULL_FORGE_STAGE_IDS = Object.freeze([
+  'fs_hull_frame',
+  'fs_hull_drives',
+  'fs_hull_arsenal',
+  'fs_hull_command',
+  'fs_hull_sovereign',
+]);
+
+export const DEV_FLEET_REFIT_TECH_IDS = Object.freeze([
+  'mil_corvette_hardening',
+  'mil_destroyer_torpedoes',
+  'mil_frigate_alloy',
+  'mil_healer_hospital',
+  'mil_carrier_hangar',
+  'mil_carrier_bombers',
+  'mil_cruiser_beams',
+  'mil_battleship_siege',
+  'mil_dreadnought_plate',
+]);
+
+export const DEV_LATE_FLAGSHIP_TECH_IDS = Object.freeze([
+  'hero_arsenal',
+  'hero_wing_bay',
+  'hero_hull_unlock',
+  'hero_rally_doctrine',
+  'hero_plate',
+  'hero_command_suite',
+]);
 
 const DEV_SPAWN_COUNT_MAX = 50;
 
@@ -536,7 +566,10 @@ export function devUnlockTech(state, nodeId) {
     state.research.unlocked.push(nodeId);
     applyTechEffect(state, nodeId);
   }
-  return ok({ nodeId, unlocked: true });
+  if (String(nodeId).startsWith('fs_hull_')) {
+    refreshFlagshipHullFromTech(state);
+  }
+  return ok({ nodeId, unlocked: true, hullStage: flagshipHullStage(state) });
 }
 
 export function devUnlockAllTech(state) {
@@ -551,7 +584,109 @@ export function devUnlockAllTech(state) {
       unlocked.push(node.id);
     }
   }
-  return ok({ count: unlocked.length, unlocked });
+  refreshFlagshipHullFromTech(state);
+  return ok({ count: unlocked.length, unlocked, hullStage: flagshipHullStage(state) });
+}
+
+function unlockTechList(state, nodeIds) {
+  ensureResearchState(state);
+  const unlocked = [];
+  const unlockedIds = new Set(state.research.unlocked ?? []);
+  for (const nodeId of nodeIds) {
+    if (!techNode(nodeId)) continue;
+    if (unlockedIds.has(nodeId)) continue;
+    state.research.unlocked.push(nodeId);
+    unlockedIds.add(nodeId);
+    applyTechEffect(state, nodeId);
+    unlocked.push(nodeId);
+  }
+  return unlocked;
+}
+
+function invalidateTechCache(state) {
+  applyTechEffect(state, state.research?.unlocked?.[0] ?? 'eco_baseline');
+}
+
+/**
+ * Set Hull Forge stage to 0–5. Unlocks stages ≤ N and strips higher stage techs
+ * so visuals/stats match the requested Mk for testing.
+ */
+export function devSetHullForgeStage(state, stage) {
+  ensureResearchState(state);
+  const target = Math.max(0, Math.min(5, Math.round(Number(stage) || 0)));
+  const forgeSet = new Set(DEV_HULL_FORGE_STAGE_IDS);
+  state.research.unlocked = (state.research.unlocked ?? []).filter((id) => !forgeSet.has(id));
+  const unlocked = [];
+  for (let i = 0; i < target; i++) {
+    const id = DEV_HULL_FORGE_STAGE_IDS[i];
+    state.research.unlocked.push(id);
+    unlocked.push(id);
+  }
+  invalidateTechCache(state);
+  const hull = refreshFlagshipHullFromTech(state);
+  return ok({
+    stage: flagshipHullStage(state),
+    unlocked,
+    maxHp: hull?.nextMax ?? flagshipMaxHpForState(state),
+    effects: {
+      hpMult: techEffects(state).flagshipHpMult,
+      dpsMult: techEffects(state).flagshipDpsMult,
+      speedMult: techEffects(state).flagshipSpeedMult,
+      commandMult: techEffects(state).flagshipCommandMult,
+    },
+  });
+}
+
+export function devUnlockHullForge(state) {
+  return devSetHullForgeStage(state, 5);
+}
+
+export function devUnlockFleetRefits(state) {
+  const unlocked = unlockTechList(state, DEV_FLEET_REFIT_TECH_IDS);
+  return ok({
+    count: unlocked.length,
+    unlocked,
+    refits: { ...techEffects(state).hullRefits },
+  });
+}
+
+export function devUnlockLateFlagship(state) {
+  // Ensure Hull Forge stage 5 + late cluster for hero path testing.
+  const forge = unlockTechList(state, DEV_HULL_FORGE_STAGE_IDS);
+  const late = unlockTechList(state, DEV_LATE_FLAGSHIP_TECH_IDS);
+  refreshFlagshipHullFromTech(state);
+  return ok({
+    forge,
+    late,
+    hullStage: flagshipHullStage(state),
+    unlockHeroFlagship: !!techEffects(state).unlockHeroFlagship,
+  });
+}
+
+/** Damage flagship to a fraction of max HP (visual scorch testing). */
+export function devDamageFlagship(state, fraction = 0.5) {
+  const flagship = state.flagship;
+  if (!flagship) return err(DEV_CODES.NO_FLAGSHIP, 'No player flagship');
+  refreshFlagshipHullFromTech(state);
+  const maxHp = Math.max(1, flagship.maxHp ?? flagshipMaxHpForState(state));
+  const pct = Math.max(0.01, Math.min(1, Number(fraction) || 0.5));
+  const before = flagship.hp;
+  flagship.hp = Math.max(1, Math.round(maxHp * pct));
+  return ok({ before, after: flagship.hp, maxHp, fraction: pct });
+}
+
+export function devMaxFlagshipKit(state) {
+  const forge = devSetHullForgeStage(state, 5);
+  const refits = devUnlockFleetRefits(state);
+  const late = unlockTechList(state, DEV_LATE_FLAGSHIP_TECH_IDS);
+  refreshFlagshipHullFromTech(state);
+  const heal = devHealFlagship(state);
+  return ok({
+    stage: forge.details?.stage,
+    refitCount: refits.details?.count,
+    late,
+    heal: heal.ok ? heal.details : heal,
+  });
 }
 
 export function devCompleteActiveResearch(state) {
@@ -564,10 +699,13 @@ export function devCompleteActiveResearch(state) {
     state.research.unlocked.push(nodeId);
     applyTechEffect(state, nodeId);
   }
+  if (String(nodeId).startsWith('fs_hull_')) {
+    refreshFlagshipHullFromTech(state);
+  }
   state.research.activeNodeId = null;
   state.research.progress = 0;
   state.research.durationMs = null;
-  return ok({ nodeId, completed: true });
+  return ok({ nodeId, completed: true, hullStage: flagshipHullStage(state) });
 }
 
 export function devForceAiCaptureSystem(state, systemId) {
@@ -838,12 +976,18 @@ export function devSpawnHeroFlagship(state, systemId) {
 export function devHealFlagship(state) {
   const flagship = state.flagship;
   if (!flagship) return err(DEV_CODES.NO_FLAGSHIP, 'No player flagship');
+  refreshFlagshipHullFromTech(state);
   const before = flagship.hp;
-  flagship.hp = flagship.maxHp ?? before;
+  flagship.hp = flagship.maxHp ?? flagshipMaxHpForState(state);
   if (flagship.wing?.ready != null && flagship.wing?.complement) {
     // leave wing as-is; HP heal only
   }
-  return ok({ before, after: flagship.hp, maxHp: flagship.maxHp });
+  return ok({
+    before,
+    after: flagship.hp,
+    maxHp: flagship.maxHp,
+    hullStage: flagshipHullStage(state),
+  });
 }
 
 export function devHealShipsInSystem(state, systemId) {
@@ -986,7 +1130,7 @@ export function devForceBuildSuperweaponCradle(state, systemId = null) {
   }
 
   // Prefer real builder when possible; otherwise force-place
-  const attempt = buildSuperweaponCradle(state, target);
+  const attempt = buildSuperweaponCradle(state, target, { tutorialBypass: true });
   if (attempt.ok) return ok({ built: 'superweapon_cradle', systemId: target });
 
   ensureSuperweapon(state);
@@ -1010,19 +1154,19 @@ function mapGameResult(result, fallbackCode = DEV_CODES.ACTION_FAILED) {
 export function devSuperweaponCreate(state, systemId) {
   const sysCheck = devValidateSystem(state, systemId);
   if (!sysCheck.ok) return sysCheck;
-  return mapGameResult(superweaponCreate(state, systemId, { immediate: true }));
+  return mapGameResult(superweaponCreate(state, systemId, { immediate: true, tutorialBypass: true }));
 }
 
 export function devSuperweaponDestroy(state, systemId) {
   const sysCheck = devValidateSystem(state, systemId);
   if (!sysCheck.ok) return sysCheck;
-  return mapGameResult(superweaponDestroy(state, systemId, { immediate: true }));
+  return mapGameResult(superweaponDestroy(state, systemId, { immediate: true, tutorialBypass: true }));
 }
 
 export function devSuperweaponJump(state, systemId) {
   const sysCheck = devValidateSystem(state, systemId);
   if (!sysCheck.ok) return sysCheck;
-  return mapGameResult(superweaponJump(state, systemId, { immediate: true }));
+  return mapGameResult(superweaponJump(state, systemId, { immediate: true, tutorialBypass: true }));
 }
 
 export function devTeleportPirate(state, systemId, fleetIndex = 0) {
@@ -1100,6 +1244,18 @@ export function devAction(state, action, params = {}) {
       return devUnlockTech(state, params.nodeId);
     case 'unlockAllTech':
       return devUnlockAllTech(state);
+    case 'setHullForgeStage':
+      return devSetHullForgeStage(state, params.stage ?? 5);
+    case 'unlockHullForge':
+      return devUnlockHullForge(state);
+    case 'unlockFleetRefits':
+      return devUnlockFleetRefits(state);
+    case 'unlockLateFlagship':
+      return devUnlockLateFlagship(state);
+    case 'damageFlagship':
+      return devDamageFlagship(state, params.fraction ?? 0.5);
+    case 'maxFlagshipKit':
+      return devMaxFlagshipKit(state);
     case 'completeResearch':
       return devCompleteActiveResearch(state);
     case 'forceAiCapture':

@@ -15,14 +15,17 @@ import {
   KEEP_OUT_SOFT_ZONE,
   KEEP_OUT_REPULSION,
   KEEP_OUT_NUDGE_STRENGTH,
+  FLEET_FOLLOW_PATROL_RADIUS,
+  FLEET_FOLLOW_WANDER_RADIUS,
+  FLEET_FOLLOW_WANDER_SPEED,
+  FLEET_FOLLOW_MIN_HOME,
+  FLEET_FOLLOW_KEEP_CAP,
 } from './constants.js';
 import { planetPosition, moonPosition, hashSeed } from './state.js';
 import { getStarVisualProfile } from './star-types.js';
 import { postBattleReturnPose, stationedShipPose } from './fleets.js';
 import {
-  fleetFollowCohort,
   fleetFollowHome,
-  fleetFollowOffset,
 } from './battle-groups.js';
 
 function motionSeed(key) {
@@ -171,8 +174,67 @@ export function softKeepOut(state, system, x, y, passes = 10, time = state.time,
 }
 
 /**
+ * World-space escort pocket around a follow home (flagship / hero).
+ * Slots are not rotated by home heading — that caused snap/stutter when turning.
+ * Wander matches the starfighter Lissajous style, on a much larger sphere.
+ */
+function fleetFollowLocalPose(shipId, tSec) {
+  const seed = motionSeed(String(shipId));
+  const seedB = motionSeed(`${shipId}:b`);
+  const phase = seed * Math.PI * 2;
+  const slot = seed * Math.PI * 2 + seedB * 1.7;
+  const homeDist = Math.max(
+    FLEET_FOLLOW_MIN_HOME,
+    FLEET_FOLLOW_PATROL_RADIUS * (0.32 + seed * 0.58 + seedB * 0.12),
+  );
+  const homeX = Math.cos(slot) * homeDist;
+  const homeY = Math.sin(slot) * homeDist;
+
+  const wander = FLEET_FOLLOW_WANDER_RADIUS * (0.75 + seed * 0.55);
+  const wanderSpeed = FLEET_FOLLOW_WANDER_SPEED;
+  const fx = (0.38 + seed * 0.45) * wanderSpeed;
+  const fy = (0.48 + seedB * 0.5) * wanderSpeed;
+  const ox =
+    Math.sin(tSec * fx + phase) * wander
+    + Math.sin(tSec * (fx * 1.65 + 0.25) + phase * 2.05) * wander * 0.4;
+  const oy =
+    Math.cos(tSec * fy + phase * 1.25) * wander * 1.25
+    + Math.sin(tSec * (fy * 1.35 + 0.18) + phase * 0.65) * wander * 0.5;
+
+  let lx = homeX + ox;
+  let ly = homeY + oy;
+  const maxR = FLEET_FOLLOW_PATROL_RADIUS + FLEET_FOLLOW_WANDER_RADIUS * 0.9;
+  const envelope = Math.hypot(lx, ly);
+  if (envelope > maxR) {
+    const s = maxR / envelope;
+    lx *= s;
+    ly *= s;
+  }
+
+  const vxRaw = Math.cos(tSec * fx + phase) * wander * fx
+    + Math.cos(tSec * (fx * 1.65 + 0.25) + phase * 2.05) * wander * 0.4 * (fx * 1.65 + 0.25);
+  const vyRaw = -Math.sin(tSec * fy + phase * 1.25) * wander * 1.25 * fy
+    + Math.cos(tSec * (fy * 1.35 + 0.18) + phase * 0.65) * wander * 0.5 * (fy * 1.35 + 0.18);
+
+  return { lx, ly, vxRaw, vyRaw };
+}
+
+function softFollowKeepOut(state, system, x, y, time, bodyCache) {
+  if (!system) return { x, y };
+  // One soft pass + capped pull — multi-pass keep-out fought display interpolation.
+  const safe = softKeepOut(state, system, x, y, 1, time, bodyCache);
+  const pullX = safe.x - x;
+  const pullY = safe.y - y;
+  const pull = Math.hypot(pullX, pullY);
+  if (pull <= FLEET_FOLLOW_KEEP_CAP || pull < 1e-6) return safe;
+  const s = FLEET_FOLLOW_KEEP_CAP / pull;
+  return { x: x + pullX * s, y: y + pullY * s };
+}
+
+/**
  * World pose for a stationed player ship: follow flagship/hero when co-located,
  * otherwise classic star/planet station orbit.
+ * @param {object} [opts.homeOverride] optional display-smoothed home {x,y,heading,vx,vy,kind,homeId}
  */
 export function playerShipWorldPose(
   state,
@@ -182,32 +244,40 @@ export function playerShipWorldPose(
   total,
   time = state.time,
   bodyCache = null,
-  { patrolScale = 1 } = {},
+  { patrolScale = 1, homeOverride = null } = {},
 ) {
   const systemId = system?.id ?? ship?.systemId;
-  const home = fleetFollowHome(state, ship, systemId);
+  const home = homeOverride ?? fleetFollowHome(state, ship, systemId);
   if (home) {
-    const cohort = fleetFollowCohort(state, home.homeId, systemId);
-    const followIdx = Math.max(0, cohort.findIndex((entry) => String(entry.id) === String(ship.id)));
-    const cohortTotal = Math.max(1, cohort.length || total || 1);
-    const offset = fleetFollowOffset(
-      followIdx >= 0 ? followIdx : idx,
-      cohortTotal,
-      home.heading,
-    );
-    const patrol = patrolScale > 0 ? patrolOffset(time, ship.id, 0.32 * patrolScale) : { cx: 0, cy: 0 };
+    const tSec = time / 1000;
+    const local = fleetFollowLocalPose(ship.id, tSec);
     const rawTarget = {
-      x: home.x + offset.x + (patrol.cx ?? 0),
-      y: home.y + offset.y + (patrol.cy ?? 0),
+      x: home.x + local.lx,
+      y: home.y + local.ly,
       heading: home.heading,
     };
     const base = postBattleReturnPose(ship, rawTarget, time);
-    const safe = softKeepOut(state, system, base.x, base.y, AMBIENT_KEEP_OUT_PASSES, time, bodyCache);
+    const safe = softFollowKeepOut(state, system, base.x, base.y, time, bodyCache);
+
+    // Nose faces wander + home travel (analytical), matching starfighter escorts.
+    const lookDt = 0.08;
+    const look = fleetFollowLocalPose(ship.id, tSec + lookDt);
+    const homeVx = Number(home.vx) || 0;
+    const homeVy = Number(home.vy) || 0;
+    const dx = (look.lx - local.lx) + homeVx * lookDt;
+    const dy = (look.ly - local.ly) + homeVy * lookDt;
+    const travel = Math.hypot(dx, dy);
+    const heading = travel > 1e-4
+      ? Math.atan2(dy, dx)
+      : (Math.hypot(local.vxRaw + homeVx, local.vyRaw + homeVy) > 1e-4
+        ? Math.atan2(local.vyRaw + homeVy, local.vxRaw + homeVx)
+        : (Number.isFinite(home.heading) ? home.heading : 0));
+
     return {
       x: safe.x,
       y: safe.y,
-      heading: Number.isFinite(base.heading) ? base.heading : home.heading,
-      following: home.kind,
+      heading,
+      following: home.kind ?? 'flagship',
     };
   }
 
@@ -222,8 +292,20 @@ export function playerShipWorldPose(
   return { x: safe.x, y: safe.y, heading: raw.heading };
 }
 
-export function ambientShipPose(state, system, ship, idx, total, time = state.time, bodyCache = null) {
-  return playerShipWorldPose(state, system, ship, idx, total, time, bodyCache, { patrolScale: 1 });
+export function ambientShipPose(
+  state,
+  system,
+  ship,
+  idx,
+  total,
+  time = state.time,
+  bodyCache = null,
+  opts = {},
+) {
+  return playerShipWorldPose(state, system, ship, idx, total, time, bodyCache, {
+    patrolScale: 1,
+    ...opts,
+  });
 }
 
 export function pirateStationPose(state, system, idx, total) {

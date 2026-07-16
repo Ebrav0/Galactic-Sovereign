@@ -21,6 +21,7 @@ import { getSystems } from './galaxy-scope.js';
 import { flagshipInSystem } from './flagship-presence.js';
 import { hasPendingJob, queueConstructionJob } from './drones.js';
 import { techEffects } from './tech-web.js';
+import { requireTutorialAccess } from './tutorial-access.js';
 
 let nextStructureId = 1;
 
@@ -82,6 +83,8 @@ export function canBuildOutpost(state, systemId, planetId, opts = {}) {
 }
 
 export function buildOutpost(state, systemId, planetId, opts = {}) {
+  const tutorial = requireTutorialAccess(state, 'outpost', { bypass: opts.tutorialBypass });
+  if (!tutorial.ok) return tutorial;
   const check = canBuildOutpost(state, systemId, planetId, opts);
   if (!check.ok) return check;
 

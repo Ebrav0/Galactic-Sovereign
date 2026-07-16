@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 20;
+export const SAVE_VERSION = 22;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -145,15 +145,17 @@ export const FLAGSHIP_WING_HULL_CLEARANCE = 14;
 /** Outer falloff multiple of (FLAGSHIP_RADIUS + clearance) for gradual keep-out. */
 export const FLAGSHIP_WING_KEEP_SOFT_ZONE = 2.35;
 
-/** Multi-battery hardpoint suite for the sovereign flagship. */
+/** Multi-battery hardpoint suite for the sovereign flagship.
+ *  Muzzle coords are local draw-radius units (see flagship-morph.js); combat
+ *  multiplies by FLAGSHIP_RADIUS. ensureFlagshipWeapons refreshes these per Hull Forge stage. */
 export const FLAGSHIP_WEAPON_SUITE = [
-  { id: 'primary_lance', profile: 'beam_lance', hardpoint: 'prow', muzzle: { x: 1.55, y: 0 } },
-  { id: 'broadside_port', profile: 'kinetic', hardpoint: 'port', muzzle: { x: 0.1, y: -0.55 } },
-  { id: 'broadside_starboard', profile: 'kinetic', hardpoint: 'starboard', muzzle: { x: 0.1, y: 0.55 } },
-  { id: 'prow_torpedo', profile: 'torpedo', hardpoint: 'prow_bay', muzzle: { x: 1.2, y: 0.12 } },
-  { id: 'pd_grid_fore', profile: 'point_defense', hardpoint: 'fore_pd', muzzle: { x: 0.85, y: -0.32 } },
-  { id: 'pd_grid_aft', profile: 'point_defense', hardpoint: 'aft_pd', muzzle: { x: -0.55, y: 0.35 } },
-  { id: 'ion_array', profile: 'ion', hardpoint: 'dorsal', muzzle: { x: 0.35, y: 0 } },
+  { id: 'primary_lance', profile: 'beam_lance', hardpoint: 'prow', muzzle: { x: 2.115, y: 0 } },
+  { id: 'broadside_port', profile: 'kinetic', hardpoint: 'port', muzzle: { x: 0.12, y: -0.728 } },
+  { id: 'broadside_starboard', profile: 'kinetic', hardpoint: 'starboard', muzzle: { x: 0.12, y: 0.728 } },
+  { id: 'prow_torpedo', profile: 'torpedo', hardpoint: 'prow_bay', muzzle: { x: 1.45, y: 0.07 } },
+  { id: 'pd_grid_fore', profile: 'point_defense', hardpoint: 'fore_pd', muzzle: { x: 0.75, y: -0.492 } },
+  { id: 'pd_grid_aft', profile: 'point_defense', hardpoint: 'aft_pd', muzzle: { x: -0.85, y: 0.787 } },
+  { id: 'ion_array', profile: 'ion', hardpoint: 'dorsal', muzzle: { x: -0.15, y: 0 } },
 ];
 
 export const WEAPON_PROFILES = {
@@ -213,6 +215,13 @@ export const AMBIENT_KEEP_OUT_PASSES = 3;    // render-only nudge (combat init u
 export const KEEP_OUT_SOFT_ZONE = 2.4;       // repulsion reach as multiple of keep radius
 export const KEEP_OUT_REPULSION = 480;       // flagship push accel (world units / s²)
 export const KEEP_OUT_NUDGE_STRENGTH = 320;  // kinematic ships + tactical nudge
+
+/** Loose same-system fleet escort sphere around flagship / hero (world units). */
+export const FLEET_FOLLOW_PATROL_RADIUS = 340;
+export const FLEET_FOLLOW_WANDER_RADIUS = 125;
+export const FLEET_FOLLOW_WANDER_SPEED = 0.72;
+export const FLEET_FOLLOW_MIN_HOME = 100;    // stay clear of the followed hull
+export const FLEET_FOLLOW_KEEP_CAP = 28;     // max celestial correction per frame (anti-stutter)
 
 // --- Flagship combat ---
 export const FLAGSHIP_HP = 2000;
@@ -429,11 +438,11 @@ export const FLAGSHIP_SPAWN_ORBIT = 580;   // spawn distance from the home star
 export const FLAGSHIP_ENTRY_MARGIN = 280;  // arrival distance beyond the outermost orbit
 export const FLAGSHIP_ENTRY_MIN_RADIUS = 1400;
 export const FLAGSHIP_ORBIT_OMEGA = 0.07;           // rad/s — slow lazy local orbit
-export const FLAGSHIP_ORBIT_PAD_STAR = 220;           // min radius beyond star corona
+export const FLAGSHIP_ORBIT_PAD_STAR = 180;           // min radius beyond star photosphere
 export const FLAGSHIP_ORBIT_PAD_PLANET = 70;          // min radius beyond planet surface
 export const FLAGSHIP_ORBIT_PAD_MOON = 40;            // min radius beyond moon surface
 export const FLAGSHIP_ORBIT_MAX_DISTANCE = 520;       // engage planet/moon orbit within this range
-export const FLAGSHIP_ORBIT_STAR_MAX_DISTANCE = 920;    // engage star orbit within this range
+export const FLAGSHIP_ORBIT_STAR_MAX_DISTANCE = 1400; // floor for star-orbit engage band (also capped by innermost planet)
 
 // --- Lane transit ---
 export const LANE_SPEED = 90;              // galaxy-map units per second
@@ -466,9 +475,18 @@ export const LAUNCHER_COST = 250;
 export const LAUNCHERS_PER_BODY_MAX = 3;
 export const SHELL_SAILS_REQUIRED = 5000;
 export const SHELL_COUNT = 8;
-export const SAIL_CREDIT_COST = 2.5;              // Master Plan §20 band 2.5–5
-export const FOUNDRY_SAIL_RATE = 5;                // sails per second at base (~12.5 cr/s burn)
-export const LAUNCHER_BATCH_SIZE = 4;
+/** Credits per sail — scales up with launcher count in-system (see sailCreditCost). */
+export const SAIL_CREDIT_COST_MIN = 0.75;
+export const SAIL_CREDIT_COST_MAX = 1.25;
+/** Launcher count at which sail cost reaches SAIL_CREDIT_COST_MAX. */
+export const SAIL_COST_LAUNCHER_REF = 6;
+/** @deprecated Use sailCreditCost() / SAIL_CREDIT_COST_MIN–MAX. Kept as mid-band alias. */
+export const SAIL_CREDIT_COST = (SAIL_CREDIT_COST_MIN + SAIL_CREDIT_COST_MAX) / 2;
+/** Each launcher fires this many sails/sec minimum (hard floor; upgrades may only raise it). */
+export const LAUNCHER_SAILS_PER_SECOND = 1;
+/** Foundry produces to match launcher demand (sails/s ≈ launchers × LAUNCHER_SAILS_PER_SECOND). */
+export const FOUNDRY_SAIL_RATE = LAUNCHER_SAILS_PER_SECOND;
+export const LAUNCHER_BATCH_SIZE = 1;
 export const LAUNCHER_LAUNCH_INTERVAL_MS = 1000;
 export const SAIL_SHUTTLE_CAPACITY = 500;          // sails delivered per shuttle arrival at launcher
 export const SOLARII_BASE_RATE = 0.08;             // per second at Shell #1, one system
@@ -497,7 +515,7 @@ export const LAUNCHER_ORBIT_SPREAD = 0.52;         // rad — angular offset per
 export const LAUNCHER_RAIL_LENGTH = LAUNCHER_WORLD_RADIUS; // muzzle at end of visual rail
 export const LAUNCHER_BURST_MS = 600;              // muzzle flash duration after fire
 export const SAIL_LAUNCH_FLIGHT_MS = 900;          // sail particle flight launcher → star
-export const SAIL_LAUNCH_STAGGER_MS = 35;          // stagger within one 4-sail batch
+export const SAIL_LAUNCH_STAGGER_MS = 35;          // stagger within a multi-sail volley (batch > 1)
 export const SAIL_DOT_SIZE = 0.8;                  // world units
 export const SAIL_DOT_LOD_ZOOM = 0.35;             // full in-progress dot field above this zoom
 export const SAIL_DOT_DRAW_MAX = 6000;             // hard cap with stride

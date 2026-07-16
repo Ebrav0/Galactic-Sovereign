@@ -157,7 +157,13 @@ import {
   hitTestCombatUnit,
 } from './render.js';
 import { attachInput } from './input.js';
-import { writeSlot, readSlot } from './save.js';
+import {
+  writeSlot,
+  readSlot,
+  writeTutorialCheckpoint,
+  readTutorialCheckpoint,
+  clearTutorialCheckpoint,
+} from './save.js';
 import { initUi, toast } from './ui.js';
 import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
 import { stellarCatalogInfo } from './star-types.js';
@@ -212,6 +218,7 @@ import { allTechNodes, isTechUnlocked, techPrereqsMet } from './tech-web.js';
 import { milestonesSummary, setCompletedDysonsForTest } from './milestones.js';
 import {
   buildSuperweaponCradle,
+  installSuperweaponPart,
   superweaponCreate,
   superweaponDestroy,
   superweaponJump,
@@ -269,8 +276,27 @@ import {
   setTutorialStep,
   initTutorial,
   markTutorialSystemViewed,
+  markTutorialTimeToggled,
   markTutorialLogisticsOpened,
+  markTutorialBattlePrepared,
+  markTutorialBattleCommand,
+  markTutorialBattleResolved,
+  tutorialNeedsBattlePreparation,
+  tryAdvanceTutorial,
+  beginTutorialGraduation,
+  completeTutorialGraduation,
 } from './tutorial.js';
+import {
+  clearTutorialProfile,
+  currentProfile,
+  markTutorialGraduated,
+  loadProfile,
+} from './profile.js';
+import {
+  requireTutorialAccess,
+  setTutorialSessionOverride,
+  tutorialAccess,
+} from './tutorial-access.js';
 import { buildStrategicStructure, strategicStructuresSummary, STRUCTURE_DEFS } from './strategic-structures.js';
 import {
   allBodyStructuresSummary,
@@ -311,6 +337,7 @@ import {
 } from './sol-commander.js';
 
 let state = createNewGame(DEFAULT_SEED);
+loadProfile();
 state.pirates = spawnPirateFleets(state);
 seedAiFaction(state, state.homeGalaxyId);
 initBuilderDrones(state);
@@ -326,8 +353,8 @@ let selectedBuilderDroneId = null;
 let galaxyTargetStarId = null;
 let followedConvoyId = null;
 let combatSelectionIds = [];
-let combatMarquee = null;
 let combatCommandMode = null;
+let combatMarquee = null;
 
 const COMBAT_SELECTION_CAP = 24;
 
@@ -593,17 +620,45 @@ function doDeleteBattleGroup(groupId) {
 
 // --- Actions ---
 
+function tutorialGuard(featureId) {
+  const access = requireTutorialAccess(state, featureId);
+  if (!access.ok) toast(access.reason, 'error');
+  return access;
+}
+
+function accelerateCurrentTransit(entity, durationMs = 2200) {
+  if (!entity?.transit || state.campaign?.mode !== 'tutorial') return;
+  entity.transit.legStartTime = state.time;
+  entity.transit.legDurationMs = Math.min(entity.transit.legDurationMs ?? durationMs, durationMs);
+}
+
 function doTogglePause() {
+  const tutorial = getTutorialState(state);
+  if (tutorial.active && tutorial.step === 'win_first_battle'
+      && state.paused && !state.campaign.tutorial.flags.battleCommandIssued) {
+    toast('Issue an Attack order before resuming the training battle', 'error');
+    return { ok: false, reason: 'Attack order required' };
+  }
   togglePaused(state);
+  markTutorialTimeToggled(state);
+  tryAdvanceTutorial(state);
+  return { ok: true, paused: state.paused };
 }
 
 function doToggleView() {
-  view = view === 'system' ? 'galaxy' : 'system';
+  const next = view === 'system' ? 'galaxy' : 'system';
+  const access = tutorialGuard(next === 'galaxy' ? 'galaxy_view' : 'system_view');
+  if (!access.ok) return access;
+  view = next;
   setFlagshipInput(0, 0, state.time);
+  if (view === 'system') markTutorialSystemViewed(state);
+  tryAdvanceTutorial(state);
+  return { ok: true, view };
 }
 
 function doSetView(v) {
-  if (v !== view) doToggleView();
+  if (v !== view) return doToggleView();
+  return { ok: true, view };
 }
 
 function doViewSystem(systemId) {
@@ -726,8 +781,19 @@ function doToggleWingHangar() {
 }
 
 function doOrderTravel(targetId) {
+  const access = tutorialGuard('flagship_travel');
+  if (!access.ok) return access;
   const res = orderTravel(state, targetId);
   if (res.ok) {
+    accelerateCurrentTransit(state.flagship);
+    const tutorial = getTutorialState(state);
+    if (tutorial.active && tutorial.step === 'travel_to_battle' && targetId === tutorial.targetSystemId) {
+      for (const ship of state.playerShips ?? []) {
+        if (ship.systemId !== state.stronghold || ship.transit || ship.hp <= 0 || ship.hull === 'scout') continue;
+        const escort = orderShipTravel(state, ship.id, targetId);
+        if (escort.ok) accelerateCurrentTransit(ship);
+      }
+    }
     syncFlagshipAnchoredFleets(state);
     const dest = systemById(state, targetId);
     toast(`Course set: ${dest.name} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
@@ -738,6 +804,8 @@ function doOrderTravel(targetId) {
 }
 
 function doOrderScoutTravel(targetId) {
+  const access = tutorialGuard('scout_travel');
+  if (!access.ok) return access;
   ensureSelectedScout();
   if (!selectedScoutId) {
     toast('Build a scout at your shipyard first', 'error');
@@ -745,6 +813,7 @@ function doOrderScoutTravel(targetId) {
   }
   const res = orderScoutTravel(state, selectedScoutId, targetId);
   if (res.ok) {
+    accelerateCurrentTransit(findScout(state, selectedScoutId), 1800);
     const dest = systemById(state, targetId);
     toast(`Scout dispatched to ${dest.name} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
   } else {
@@ -785,16 +854,21 @@ function doOrderBuilderDroneTravel(targetId) {
 }
 
 function doBuildOutpost(planetId) {
+  const access = tutorialGuard('outpost');
+  if (!access.ok) return access;
   const res = buildOutpost(state, viewedSystemId, planetId);
   if (res.ok) {
     toast(`Outpost established on ${findPlanet(state, viewedSystemId, planetId).name}`, 'ok');
   } else {
     toast(res.reason, 'error');
   }
+  if (res.ok) tryAdvanceTutorial(state);
   return res;
 }
 
 function doBuildShipyard(planetId) {
+  const access = tutorialGuard('shipyard');
+  if (!access.ok) return access;
   const res = buildShipyard(state, viewedSystemId, planetId);
   if (res.ok) {
     toast(`Shipyard established on ${findPlanet(state, viewedSystemId, planetId).name}`, 'ok');
@@ -805,6 +879,8 @@ function doBuildShipyard(planetId) {
 }
 
 function doQueueScout(shipyardId) {
+  const access = tutorialGuard('scout_queue');
+  if (!access.ok) return access;
   const res = queueScout(state, shipyardId, viewedSystemId);
   if (res.ok) {
     toast(`Scout queued (${SCOUT_BUILD_MS / 1000}s)`, 'ok');
@@ -815,6 +891,8 @@ function doQueueScout(shipyardId) {
 }
 
 function doQueueHull(shipyardId, hull) {
+  const access = tutorialGuard(hull === 'scout' ? 'scout_queue' : 'combat_ship_queue');
+  if (!access.ok) return access;
   const res = queueHull(state, shipyardId, viewedSystemId, hull);
   if (res.ok) toast(`${hull} queued`, 'ok');
   else toast(res.reason, 'error');
@@ -831,6 +909,8 @@ function doDispatchShip(shipId, starId) {
 }
 
 function doBuildFoundry(planetId = selection) {
+  const access = tutorialGuard('dyson');
+  if (!access.ok) return access;
   const system = systemById(state, viewedSystemId);
   const resolvedId = planetId
     ?? system?.bodies.find((p) => p.type === 'habitable')?.id
@@ -846,6 +926,8 @@ function doBuildFoundry(planetId = selection) {
 }
 
 function doBuildLauncher(bodyId) {
+  const access = tutorialGuard('dyson');
+  if (!access.ok) return access;
   const res = buildLauncher(state, viewedSystemId, bodyId);
   if (res.ok) toast('Dyson launcher deployed', 'ok');
   else toast(res.reason, 'error');
@@ -853,6 +935,8 @@ function doBuildLauncher(bodyId) {
 }
 
 function doDeployBuilderDrone(systemId) {
+  const access = tutorialGuard('operations');
+  if (!access.ok) return access;
   const res = deployBuilderDrone(state, systemId);
   if (res.ok) {
     const name = systemById(state, res.systemId)?.name ?? res.systemId;
@@ -870,6 +954,8 @@ function doCancelBuilderDrone(droneId) {
 }
 
 function doEnterWormhole(opts = {}) {
+  const access = tutorialGuard('wormholes');
+  if (!access.ok) return access;
   const res = orderWormholeTravel(state, opts);
   if (res.ok) toast(`Wormhole transit — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
   else toast(res.reason, 'error');
@@ -877,6 +963,8 @@ function doEnterWormhole(opts = {}) {
 }
 
 function doBuildWormholeAnchor(targetGalaxyId) {
+  const access = tutorialGuard('wormholes');
+  if (!access.ok) return access;
   const res = buildWormholeAnchor(state, targetGalaxyId);
   if (res.ok) toast(`Wormhole anchored to ${state.galaxies[targetGalaxyId]?.name ?? targetGalaxyId}`, 'ok');
   else toast(res.reason, 'error');
@@ -947,6 +1035,75 @@ function doImportState(newState) {
   document.getElementById('title-screen')?.classList.add('hidden');
 }
 
+let tutorialBattlePreparing = false;
+
+async function prepareTutorialBattle(systemId) {
+  if (tutorialBattlePreparing || !tutorialNeedsBattlePreparation(state, systemId)) return null;
+  tutorialBattlePreparing = true;
+  state.paused = true;
+  const checkpoint = await writeTutorialCheckpoint(state);
+  if (!checkpoint.ok) toast(`Training checkpoint failed: ${checkpoint.error}`, 'error');
+
+  forcePirateIntoSystem(state, systemId);
+  const fixture = state.pirates?.fleets?.[0];
+  if (fixture) {
+    fixture.tutorialFixture = true;
+    fixture.ships = fixture.ships.slice(0, 1);
+    for (const ship of fixture.ships) {
+      ship.hp = Math.max(1, Math.round((ship.maxHp ?? ship.hp ?? 1) * 0.45));
+    }
+  }
+  const battle = checkBattleTrigger(state, systemId);
+  if (battle) {
+    promoteBattleToTactical(state, systemId);
+    battle.advancedTactics = true;
+    battle.alertAcknowledged = true;
+  }
+  viewedSystemId = systemId;
+  view = 'system';
+  selection = null;
+  follow.enabled = false;
+  snapCameraTo(0, 0);
+  markTutorialBattlePrepared(state);
+  toast('Training contact detected — time paused for tactical orders', 'error');
+  tutorialBattlePreparing = false;
+  return battle;
+}
+
+async function doRetryTutorialBattle() {
+  state.paused = true;
+  const checkpoint = await readTutorialCheckpoint();
+  if (!checkpoint.ok) {
+    toast(`Could not restore training checkpoint: ${checkpoint.error}`, 'error');
+    return checkpoint;
+  }
+  doImportState(checkpoint.state);
+  state.paused = true;
+  const targetSystemId = state.campaign?.tutorial?.targetSystemId;
+  tutorialBattlePreparing = false;
+  await prepareTutorialBattle(targetSystemId);
+  toast('Training engagement restored from checkpoint', 'info');
+  return { ok: true };
+}
+
+async function doBeginTutorialGraduation() {
+  const result = beginTutorialGraduation(state);
+  if (!result.ok) return result;
+  await markTutorialGraduated(Date.now());
+  await clearTutorialCheckpoint();
+  state.paused = true;
+  return result;
+}
+
+function doCompleteTutorialGraduation(opts = {}) {
+  const result = completeTutorialGraduation(state, opts);
+  if (result.ok) {
+    state.paused = false;
+    toast('Academy complete — sovereign command granted', 'ok');
+  }
+  return result;
+}
+
 function checkFlagshipArrival() {
   const current = state.flagship.systemId;
   if (current && current !== lastFlagshipSystemId) {
@@ -959,6 +1116,7 @@ function checkFlagshipArrival() {
     } else {
       toast(`Flagship arrived at ${name}`, 'ok');
     }
+    prepareTutorialBattle(current);
   }
   lastFlagshipSystemId = current;
 }
@@ -980,6 +1138,8 @@ function doFollowConvoy(convoyId) {
 }
 
 function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
+  const access = tutorialGuard('tactical_combat');
+  if (!access.ok) return access;
   const group = groupId ? battleGroupsForGalaxy(state).find((entry) => entry.id === groupId) : null;
   const fleetShipIds = new Set(group?.shipIds ?? []);
   const candidateSystemIds = [
@@ -1025,6 +1185,7 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
   if (result.ok && order?.type === 'formation') {
     battle.playerFormationOverride = true;
   }
+  if (result.ok && order?.type === 'attack') markTutorialBattleCommand(state);
   if (result.ok) toast(`Order #${result.order.sequence}: ${result.order.type.replaceAll('_', ' ')}`, 'ok');
   else toast(result.reason, 'error');
   return result;
@@ -1177,6 +1338,10 @@ const { updateUi, closeSidePanel } = initUi({
   getGalaxyTargetStar: () => galaxyTargetStarId,
   doStartNewGame: (opts) => doStartNewGame(opts),
   doFocusTutorial,
+  doBeginTutorialGraduation,
+  doCompleteTutorialGraduation,
+  doRetryTutorialBattle,
+  tutorialAccess: (featureId) => tutorialAccess(state, featureId),
   executeSolRecommendation,
   validateSolRecommendation: validateSolRecommendationForGame,
   issueTacticalOrder: doIssueTacticalOrder,
@@ -1256,6 +1421,7 @@ if (import.meta.env.DEV) {
     toast,
     runAction: runDevAction,
     onResult: (result) => { window.__devLastResult = result; },
+    retryTutorialBattle: doRetryTutorialBattle,
   });
 
   window.__toggleDevPanel = () => devPanel.toggle();
@@ -1349,6 +1515,17 @@ function frame(now) {
     const outcome = battle.playerWins ? 'Victory' : 'Defeat';
     clearBattleAlert(battle.systemId);
     toast(`${outcome} at ${name} (${battle.mode})`, battle.playerWins ? 'ok' : 'error');
+    const tutorial = getTutorialState(state);
+    if (tutorial.active && battle.systemId === tutorial.targetSystemId) {
+      markTutorialBattleResolved(state, battle.playerWins);
+      if (battle.playerWins) {
+        clearTutorialCheckpoint();
+      } else {
+        state.paused = true;
+        toast('Training battle lost — restoring checkpoint', 'error');
+        setTimeout(() => doRetryTutorialBattle(), 700);
+      }
+    }
   }
   const pendingBattle = Object.values(state.systemBattles ?? {}).find(
     (battle) => battle?.active && !battle.alertAcknowledged,
@@ -1385,6 +1562,7 @@ function frame(now) {
     if (!cap?.captured) continue;
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
     toast(`Captured: ${name}`, 'ok');
+    tryAdvanceTutorial(state);
   }
   for (const ev of tickEvents.strategicOperationEvents ?? []) {
     if (ev.type === 'campaign_complete') toast(`Expansion campaign ${ev.campaignId} complete`, 'ok');
@@ -2100,7 +2278,7 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   resetContextualTips();
   galaxyTargetStarId = state.stronghold;
   if (opts.victoryType) setVictoryType(state, opts.victoryType, opts.mode ?? 'sandbox');
-  if (opts.mode === 'tutorial') initTutorial(state);
+  if (opts.mode === 'tutorial') initTutorial(state, { replay: opts.replay === true });
   document.getElementById('new-game-modal')?.classList.add('hidden');
   document.getElementById('new-game-modal-backdrop')?.classList.add('hidden');
   doImportState(state);
@@ -2272,6 +2450,7 @@ window.__completeDysonShell = (systemId, shellNum) =>
   completeDysonShellForTest(state, systemId ?? viewedSystemId, shellNum);
 window.__setCompletedDysons = (n) => setCompletedDysonsForTest(state, n);
 window.__buildSuperweaponCradle = () => buildSuperweaponCradle(state);
+window.__installSuperweaponPart = (partId) => installSuperweaponPart(state, partId);
 window.__superweaponCreate = (anchorId, opts) => superweaponCreate(state, anchorId ?? state.stronghold, opts ?? { immediate: true });
 window.__superweaponDestroy = (systemId, opts) => superweaponDestroy(state, systemId, opts ?? { immediate: true });
 window.__superweaponJump = (starId, opts) => superweaponJump(state, starId ?? state.stronghold, opts ?? { immediate: true });
@@ -2325,6 +2504,14 @@ window.__completeMission = (id) => completeMissionForTest(state, id);
 window.__setTutorialStep = (n) => setTutorialStep(state, n);
 window.__getTutorialState = () => getTutorialState(state);
 window.__initTutorial = () => initTutorial(state);
+window.__tutorialAccess = (featureId) => tutorialAccess(state, featureId);
+window.__setTutorialOverride = (enabled) => setTutorialSessionOverride(enabled);
+window.__getProfile = () => ({ ...currentProfile(), briefingsSeen: [...currentProfile().briefingsSeen] });
+window.__markTutorialGraduated = (at) => markTutorialGraduated(at);
+window.__clearTutorialProfile = () => clearTutorialProfile();
+window.__beginTutorialGraduation = () => doBeginTutorialGraduation();
+window.__completeTutorialGraduation = (opts) => doCompleteTutorialGraduation(opts);
+window.__retryTutorialBattle = () => doRetryTutorialBattle();
 window.__focusTutorial = () => doFocusTutorial();
 window.__setVictoryType = (type, mode) => setVictoryType(state, type, mode);
 window.__checkVictory = () => checkVictory(state);

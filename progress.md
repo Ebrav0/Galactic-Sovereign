@@ -1255,3 +1255,69 @@ Never delete prior entries.
 - Close-galaxy median render cost is 4.80 ms against a 4.90 ms same-environment baseline and inside the 20% guard.
 - The required web-game client completed successfully and generated valid screenshot/text artifacts.
 - Visually inspected dormant, anchored, transit, and collapse frames; the gateway is smaller, cleaner, and its labels remain readable.
+
+---
+
+## Session 2026-07-15 — Required Academy tutorial and Field Manual
+
+**Task claimed:** Replace the short coach tutorial with a required profile-level onboarding campaign, progressive feature locks, graduation flow, contextual unlock briefings, and developer overrides.
+
+### Completed
+- Added stable tutorial step IDs, centralized access gates, tutorial-only pacing, a controlled battle checkpoint contract, and save-v21 migration/schema.
+- Added browser/Electron profile persistence for graduation and one-time Field Manual briefings.
+- Added the Field Manual registry, Campaign-panel archive, unlock briefing modal, title-mode locks, graduation reuse of campaign setup, and developer tutorial controls.
+- Reworked the required Academy into the first expansion loop: command controls, outpost/logistics/shipyard/scout, deterministic frontier intel, escort travel, scripted tactical battle, five-second capture, and same-empire graduation.
+- Kept Save/Load, pause, Help, and accessibility controls available; normal/imported saves bypass tutorial restrictions, and only the permanent developer graduation action writes profile completion.
+
+### Verification
+- `output/verify_tutorial_coach.mjs` — 26/26 stable curriculum, completion predicates, access gates, override/relock, pacing, and capture checks.
+- `output/verify_tutorial_profile_manual.mjs` — 10/10 profile, one-time briefing, v20-to-v21 migration, exact checkpoint restore, and checkpoint cleanup checks.
+- `output/verify_tutorial_browser.mjs` — 20/20 title locks, `aria-disabled`/reason state, coach anchors, shared access rejection, developer override, profile graduation, contextual briefing, pause restoration, and zero page-error checks.
+- `output/verify_phase6.mjs` — 42/42; `output/verify_v16_overhaul_save.mjs` — 5/5; `output/verify_save_v12.mjs` — 11/11; campaign intro/custom routing — 21/21.
+- Required web-game client completed two iterations against the production preview with save v21 and an active `command_basics` tutorial; the title locks, outpost coach, galaxy coach, Field Manual modal, and intro frame were visually inspected.
+- Both standalone and normal Vite builds pass. Vite reports only the existing large-chunk advisory.
+
+---
+
+## Session 2026-07-15 — Hull Forge flagship + fleet upgrades
+
+**Task claimed:** Add a Hull Forge tech-tree lane with 5 progressive flagship stages (visual morph + real effects) and wire fleet hull-refits to matching visual accents.
+
+### Done
+- Added `hull_mods` / “Hull Forge” layout lane between Defense and Economy with five mid-game stages: Reinforced Frame → Drive Lattice → Arsenal Hardpoints → Command Lattice → Sovereign Hull.
+- Stages set `flagshipHullStage` (0–5) plus HP/DPS/speed/command/fleet multipliers; late Flagship/hero nodes now cross-link from stage 3+ / Sovereign Hull without double-counting core flagship mults.
+- Progressive morph layers in `drawFlagshipModel`; fleet refit accents + empire marks in hull sprites; bitmap cache keys include refit/stage.
+- Research completion and save load rescale flagship max HP (preserve ratio); HUD shows Mk I–V on flagship location.
+
+### Verification
+- `validateTechGraph()` passes; Hull Forge nodes route to `hull_mods`.
+- Effects fold check: stage 5 → HP mult 1.344, DPS 1.15, speed 1.12, command 1.15, display `flagship · Mk V`.
+- `npm run build` passes (standalone + Vite).
+
+---
+
+## Session 2026-07-15 — Dev Panel Hull Forge cheats
+
+**Task claimed:** Add Dev Panel cheats/hacks for Hull Forge, fleet refits, late flagship cluster, and Field Manual briefings.
+
+### Done
+- New **Hull Forge & Flagship** section: Mk 0–V stage setter (strips higher stages for visual testing), Unlock Hull Forge / Fleet Refits / Late Flagship, Max Flagship Kit, Damage 50%/25%, Heal Flagship, Mark All Briefings Seen.
+- `devSetHullForgeStage`, `devUnlockFleetRefits`, `devUnlockLateFlagship`, `devDamageFlagship`, `devMaxFlagshipKit` + `devAction` dispatch; unlock-all/unlock-tech/complete-research refresh flagship max HP.
+- Context line shows current Hull Mk; stage label shows Mk + HP.
+
+### Verification
+- Node cheat smoke: stage 3 → Mk III / 2240 HP; fleet refits unlock 9 hulls; damage/heal; max kit → stage 5 + late cluster.
+- `npm run build` passes.
+
+---
+
+## Session 2026-07-15 — Dramatic Hull Forge flagship morphs
+
+**Task claimed:** Make Hull Forge visual upgrades much more stunning — early stages subtle, late stages a longer/thicker powerhouse with more engines and weapons.
+
+### Done
+- Reworked `drawFlagshipModel` with stage-driven length/width morphs, expanding drive banks (4→9), nacelle stalks (2→6), bristling battery grids, spinal lance, command citadel, and Mk V energy spine / hangar / sovereign crest.
+- Added `flagshipVisualScale` (1.0 → ~1.88 at Mk V) applied in `drawFlagshipSprite` and combat hull draw path.
+
+### Verification
+- Scale helper: Mk0=1 … Mk5=1.88; `npm run build` passes.

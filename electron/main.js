@@ -8,6 +8,7 @@ const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
 // Slot whitelist enforced here — never trust the renderer.
 const VALID_SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
+const VALID_INTERNAL_SLOTS = ['tutorial-checkpoint'];
 
 let mainWindow = null;
 
@@ -50,6 +51,51 @@ let solRequestWindow = { startedAt: 0, count: 0 };
 
 function saveDir() {
   return path.join(app.getPath('documents'), 'Galactic Sovereign', 'saves');
+}
+
+function profilePath() {
+  return path.join(app.getPath('userData'), 'profile.json');
+}
+
+function normalizeProfile(raw) {
+  const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    version: 1,
+    tutorialGraduatedAt: Number.isFinite(value.tutorialGraduatedAt) ? value.tutorialGraduatedAt : null,
+    tutorialCurriculumVersion: Number.isInteger(value.tutorialCurriculumVersion)
+      ? value.tutorialCurriculumVersion
+      : 2,
+    briefingsSeen: [...new Set((Array.isArray(value.briefingsSeen) ? value.briefingsSeen : [])
+      .filter((id) => typeof id === 'string' && id.length <= 80))],
+  };
+}
+
+async function writeJsonAtomic(target, value) {
+  await fsp.mkdir(path.dirname(target), { recursive: true });
+  const tmp = `${target}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(value), { encoding: 'utf8', mode: 0o600 });
+  await fsp.rename(tmp, target);
+}
+
+function registerProfileIpc() {
+  ipcMain.handle('profile:read', async () => {
+    try {
+      const parsed = JSON.parse(await fsp.readFile(profilePath(), 'utf8'));
+      return { ok: true, profile: normalizeProfile(parsed) };
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { ok: true, profile: normalizeProfile(null) };
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
+  ipcMain.handle('profile:write', async (_event, rawProfile) => {
+    try {
+      const profile = normalizeProfile(rawProfile);
+      await writeJsonAtomic(profilePath(), profile);
+      return { ok: true, profile };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
 }
 
 function solConfigPath() {
@@ -252,6 +298,11 @@ function slotPath(slot) {
   return path.join(saveDir(), `${slot}.json`);
 }
 
+function internalSlotPath(slot) {
+  if (!VALID_INTERNAL_SLOTS.includes(slot)) throw new Error(`Invalid internal save slot: ${slot}`);
+  return path.join(saveDir(), `.${slot}.json`);
+}
+
 async function ensureSaveDir() {
   await fsp.mkdir(saveDir(), { recursive: true });
 }
@@ -317,6 +368,36 @@ function registerSaveIpc() {
       return { ok: false, error: String(err.message || err) };
     }
   });
+
+  ipcMain.handle('save:internal-write', async (_event, slot, envelopeJson) => {
+    try {
+      if (typeof envelopeJson !== 'string') throw new Error('Payload must be a string');
+      await ensureSaveDir();
+      const target = internalSlotPath(slot);
+      const tmp = `${target}.tmp`;
+      await fsp.writeFile(tmp, envelopeJson, 'utf8');
+      await fsp.rename(tmp, target);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
+  ipcMain.handle('save:internal-read', async (_event, slot) => {
+    try {
+      return { ok: true, data: await fsp.readFile(internalSlotPath(slot), 'utf8') };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
+  ipcMain.handle('save:internal-delete', async (_event, slot) => {
+    try {
+      await fsp.unlink(internalSlotPath(slot));
+      return { ok: true };
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { ok: true };
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
 }
 
 function createWindow() {
@@ -367,6 +448,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   await ensureSaveDir();
   registerSaveIpc();
+  registerProfileIpc();
   registerSolIpc();
   createWindow();
 

@@ -76,6 +76,8 @@ export function fleetFollowHome(state, ship, systemId = ship?.systemId) {
         x: Number(hero.x) || 80,
         y: Number(hero.y) || -100,
         heading: Number.isFinite(hero.heading) ? hero.heading : 0,
+        vx: Number(hero.vx) || 0,
+        vy: Number(hero.vy) || 0,
         kind: 'hero',
         homeId: String(hero.id),
       };
@@ -95,29 +97,13 @@ export function fleetFollowHome(state, ship, systemId = ship?.systemId) {
       x: Number(flagship.x) || 0,
       y: Number(flagship.y) || 0,
       heading: Number.isFinite(flagship.heading) ? flagship.heading : 0,
+      vx: Number(flagship.vx) || 0,
+      vy: Number(flagship.vy) || 0,
       kind: 'flagship',
       homeId: 'flagship',
     };
   }
   return null;
-}
-
-/** Stable formation offset behind a follow home (world delta). */
-export function fleetFollowOffset(idx, total, heading = 0) {
-  const n = Math.max(1, total);
-  const i = Math.max(0, Math.min(n - 1, idx | 0));
-  const cols = Math.min(5, n);
-  const row = Math.floor(i / cols);
-  const col = i % cols;
-  const rowWidth = Math.min(cols, n - row * cols);
-  const localX = -(85 + row * 58);
-  const localY = (col - (rowWidth - 1) / 2) * 44;
-  const c = Math.cos(heading);
-  const s = Math.sin(heading);
-  return {
-    x: localX * c - localY * s,
-    y: localX * s + localY * c,
-  };
 }
 
 /** Ships sharing the same follow home in a system (sorted for stable slots). */

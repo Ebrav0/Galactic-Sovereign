@@ -69,8 +69,21 @@ import {
   markTutorialLogisticsOpened,
   markTutorialSystemViewed,
 } from './tutorial.js';
+import {
+  currentProfile,
+  hasSeenBriefing,
+  loadProfile,
+  markBriefingSeen,
+  tutorialGraduated,
+} from './profile.js';
+import {
+  FIELD_MANUAL_ENTRIES,
+  fieldManualEntry,
+  newlyUnlockedBriefings,
+} from './field-manual.js';
 import { milestonesSummary } from './milestones.js';
 import {
+  installSuperweaponPart,
   superweaponCreate,
   superweaponDestroy,
   superweaponJump,
@@ -100,6 +113,7 @@ import {
 } from './body-structures.js';
 import { allTechNodes, derivedTier, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
+import { hullDisplayName, flagshipHullStage } from './hull.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
@@ -163,7 +177,7 @@ const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
 const el = (id) => document.getElementById(id);
 
 const HINTS = {
-  system: 'WASD / arrows: fly flagship · O: stable orbit · F: follow · drag: pan · M: galaxy map',
+  system: 'WASD / arrows: fly flagship · O: orbit star/planet/moon · F: follow · drag: pan · M: galaxy map',
   galaxy: 'Click star: travel · Fleet tab: select builder, then Shift+click · Ctrl/Cmd+click: quick drone deploy · Tab+click: fleet · Shift+click: scout · double-click: view · M: system',
 };
 
@@ -741,7 +755,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
     if (!selectedUnits.length) {
       const empty = document.createElement('p');
       empty.className = 'combat-hud__empty';
-      empty.textContent = 'Click friendlies to select · Shift multi-select · right-click to command';
+      empty.textContent = 'Drag to box-select · Shift multi-select · right-click to command';
       selectionEl.appendChild(empty);
     } else {
       for (const unit of selectedUnits.slice(0, 6)) {
@@ -841,8 +855,20 @@ function renderCombatHud(state, battle, systemName, ctx) {
       counts.rearm ? `Rearm ${counts.rearm}` : null,
     ].filter(Boolean);
     const sorties = wings.reduce((total, wing) => total + Math.max(1, wing.sortieNumber ?? 1), 0);
+    const selectedCarriers = selectedUnits.filter((unit) => (
+      ['light_carrier', 'fleet_carrier', 'super_carrier', 'flagship', 'hero_flagship'].includes(unit.hull)
+    ));
+    let rearmNote = '';
+    if (selectedCarriers.length) {
+      const carrierIds = new Set(selectedCarriers.map((unit) => String(unit.id)));
+      const rearming = wings.filter((wing) => wing.recovered && carrierIds.has(String(wing.parentCarrierId)));
+      if (rearming.length) {
+        const nextMs = Math.min(...rearming.map((wing) => Math.max(0, (wing.rearmUntil ?? 0) - (state.time ?? 0))));
+        rearmNote = ` · Hangar rearm ${formatEta(nextMs)} (${rearming.length})`;
+      }
+    }
     wingStatusEl.textContent = wings.length
-      ? `Wings ${wings.length} · Sorties ${sorties} · ${parts.join(' · ') || 'Standing by'}`
+      ? `Wings ${wings.length} · Sorties ${sorties} · ${parts.join(' · ') || 'Standing by'}${rearmNote}`
       : 'No active wings';
   }
 
@@ -897,7 +923,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
   }
 }
 
-function renderCampaignPanel(container, state) {
+function renderCampaignPanel(container, state, ctx = {}) {
   clearChildren(container);
   const camp = campaignSummary(state);
   const ms = milestonesSummary(state);
@@ -910,6 +936,39 @@ function renderCampaignPanel(container, state) {
   mile.textContent = `Completed Dysons: ${ms.completedDysonCount} · Diplomacy: ${ms.diplomacyUnlocked ? 'yes' : 'no'} · Superweapon: ${ms.superweaponUnlocked ? 'yes' : 'no'}`;
   container.appendChild(mile);
   const sw = superweaponSummary(state);
+  if (sw.cradleSystemId || sw.partStatus?.some((p) => p.blueprint || p.installed)) {
+    const skeleton = document.createElement('div');
+    skeleton.className = 'panel-note';
+    skeleton.textContent = sw.novaculaOnline
+      ? 'Novacula: online'
+      : sw.online
+        ? 'Novacula cradle: charging (modes available when installed)'
+        : sw.cradleSystemId
+          ? 'Novacula cradle: frame only — install power & focus'
+          : 'Novacula cradle: not built';
+    container.appendChild(skeleton);
+    const partRow = document.createElement('div');
+    partRow.className = 'dev-row';
+    for (const part of sw.partStatus ?? []) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--sm';
+      btn.textContent = part.installed
+        ? `✓ ${part.label}`
+        : part.canInstall
+          ? `Install ${part.label}`
+          : part.blueprint
+            ? `${part.label} (locked)`
+            : part.label;
+      btn.disabled = part.installed || !part.canInstall;
+      btn.onclick = () => {
+        const res = installSuperweaponPart(state, part.id);
+        toast(res.ok ? `Installed ${part.label}` : res.reason, res.ok ? 'ok' : 'error');
+      };
+      partRow.appendChild(btn);
+    }
+    container.appendChild(partRow);
+  }
   if (sw.online) {
     const swRow = document.createElement('div');
     swRow.className = 'dev-row';
@@ -939,20 +998,54 @@ function renderCampaignPanel(container, state) {
     };
     container.appendChild(heroBtn);
   }
-  const tutBtn = document.createElement('button');
-  tutBtn.type = 'button';
-  tutBtn.className = 'btn btn--ghost btn--sm';
-  tutBtn.textContent = camp.mode === 'tutorial' ? 'Restart Guided Tutorial' : 'Start Guided Tutorial';
-  tutBtn.onclick = () => {
-    initTutorial(state);
-    toast('Guided tutorial started', 'ok');
-  };
-  container.appendChild(tutBtn);
+  const tutorial = getTutorialState(state);
+  if (camp.mode === 'tutorial' || tutorial.status === 'complete') {
+    const tracker = document.createElement('div');
+    tracker.className = 'tutorial-curriculum';
+    tracker.innerHTML = `<strong>Academy</strong><span>${tutorial.status === 'complete'
+      ? 'Graduated'
+      : `Step ${Math.max(1, tutorial.stepIndex + 1)} of ${tutorial.totalSteps}`}</span>`;
+    container.appendChild(tracker);
+  }
+
+  const manualTitle = document.createElement('div');
+  manualTitle.className = 'intel-section-title';
+  manualTitle.textContent = 'Field Manual';
+  container.appendChild(manualTitle);
+  const manual = document.createElement('div');
+  manual.className = 'field-manual-list';
+  for (const entry of FIELD_MANUAL_ENTRIES) {
+    const seen = hasSeenBriefing(entry.id);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `field-manual-entry${seen || entry.optional ? ' field-manual-entry--available' : ''}`;
+    btn.disabled = !seen && !entry.optional;
+    btn.innerHTML = `<span>${seen || entry.optional ? '◆' : '🔒'} ${entry.title}</span><small>${seen ? 'Replay briefing' : entry.optional ? 'Reference' : 'Unlock to reveal'}</small>`;
+    btn.onclick = () => ctx.openFieldManualBriefing?.(entry.id, { replay: true });
+    manual.appendChild(btn);
+  }
+  container.appendChild(manual);
+
+  if (tutorialGraduated()) {
+    const replay = document.createElement('button');
+    replay.type = 'button';
+    replay.className = 'btn btn--ghost btn--sm';
+    replay.textContent = 'Replay Tutorial (new academy save)';
+    replay.onclick = () => {
+      if (window.confirm('Start a new Academy save? Unsaved progress in the current session will be replaced.')) {
+        ctx.doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', replay: true });
+      }
+    };
+    container.appendChild(replay);
+  }
   for (const m of listMissions()) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn btn--ghost btn--xs';
     btn.textContent = m.name;
+    const missionAccess = ctx.tutorialAccess?.('missions') ?? { allowed: true };
+    btn.disabled = !missionAccess.allowed;
+    btn.title = missionAccess.reason ?? m.description;
     btn.onclick = () => {
       const res = startMission(state, m.id);
       toast(res.ok ? `Mission: ${m.name}` : res.reason, res.ok ? 'ok' : 'error');
@@ -1064,7 +1157,8 @@ function renderDysonPanel(container, state, systemId) {
 
 const LOG_LIMIT = 40;
 
-function hullLabel(hull) {
+function hullLabel(hull, state = null) {
+  if (state) return hullDisplayName(state, hull);
   return hull.replace(/_/g, ' ');
 }
 
@@ -1266,7 +1360,7 @@ function renderGroupedHullButtons(container, state) {
       btn.dataset.queueHull = hull;
       if (hull === 'corvette') btn.id = 'queue-corvette-btn';
       const cost = HULL_STATS[hull]?.cost ?? 0;
-      btn.textContent = `Queue ${hullLabel(hull)} (${cost} cr)`;
+      btn.textContent = `Queue ${hullLabel(hull, state)} (${cost} cr)`;
       btns.appendChild(btn);
     }
     section.appendChild(btns);
@@ -2130,7 +2224,7 @@ function renderTechScreen(container, state, techUiState) {
       ?? container.querySelector('.tech-screen__graph-wrap');
   }
 
-  const savedDetail = techUiState.detailEl?.textContent ?? 'Hover a node for details';
+  const savedDetailNodeId = techUiState.detailNodeId ?? null;
   clearChildren(chrome);
 
   const stats = document.createElement('div');
@@ -2313,12 +2407,11 @@ function renderTechScreen(container, state, techUiState) {
     techUiState.detailEl = document.createElement('div');
     techUiState.detailEl.className = 'tech-screen__detail';
   }
-  techUiState.detailEl.textContent = savedDetail;
   chrome.appendChild(techUiState.detailEl);
 
   const hint = document.createElement('p');
   hint.className = 'tech-screen__hint';
-  hint.textContent = 'Drag to pan · Scroll to zoom · Click available nodes to research';
+  hint.textContent = 'Drag to pan · Scroll to zoom · Hover for details · Click to trace path · Click available nodes to research';
   chrome.appendChild(hint);
 
   const onResearch = (nodeId) => {
@@ -2327,25 +2420,78 @@ function renderTechScreen(container, state, techUiState) {
     else toast(`Started ${techNode(nodeId)?.name ?? nodeId}`, 'ok');
   };
 
-  const onHoverNode = (nodeId) => {
+  const fillTechDetail = (nodeId, { traced = false } = {}) => {
     if (!techUiState.detailEl) return;
+    techUiState.detailNodeId = nodeId;
+    techUiState.detailEl.replaceChildren();
     if (!nodeId) {
-      techUiState.detailEl.textContent = 'Hover a node for details';
+      techUiState.detailEl.classList.remove('tech-screen__detail--filled');
+      const empty = document.createElement('span');
+      empty.className = 'tech-screen__detail-empty';
+      empty.textContent = 'Hover a node for details · Click a node to trace its path';
+      techUiState.detailEl.appendChild(empty);
       return;
     }
     const node = techNode(nodeId);
     if (!node) return;
-    const prereqNames = node.prereqs.map((p) => techNode(p)?.name ?? p).join(', ') || 'None';
-    const effects = (node.effects ?? [])
-      .map((effect) => effect.label ?? effect.type ?? effect.effect)
-      .filter(Boolean)
-      .join(', ');
-    techUiState.detailEl.textContent = [
-      `${node.name} · Tier ${derivedTier(node.id)} · ${costLabelFromNode(node)}`,
-      node.description,
-      effects ? `Effects: ${effects}` : null,
-      `Requires: ${prereqNames}`,
+    techUiState.detailEl.classList.add('tech-screen__detail--filled');
+
+    const title = document.createElement('div');
+    title.className = 'tech-screen__detail-title';
+    title.textContent = node.name;
+    techUiState.detailEl.appendChild(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'tech-screen__detail-meta';
+    const cluster = TECH_CLUSTERS[node.cluster]?.label ?? node.cluster;
+    meta.textContent = [
+      node.tags?.includes('spine') || node.spine ? 'Main Path' : cluster,
+      `Tier ${derivedTier(node.id)}`,
+      costLabelFromNode(node),
+      traced ? 'Path traced' : null,
     ].filter(Boolean).join(' · ');
+    techUiState.detailEl.appendChild(meta);
+
+    const does = document.createElement('div');
+    does.className = 'tech-screen__detail-block';
+    const doesLabel = document.createElement('strong');
+    doesLabel.textContent = 'Does';
+    does.appendChild(doesLabel);
+    does.append(` ${node.description || 'No description.'}`);
+    techUiState.detailEl.appendChild(does);
+
+    const unlocks = Array.isArray(node.unlocks) ? node.unlocks.filter(Boolean) : [];
+    if (unlocks.length) {
+      const unlockBlock = document.createElement('div');
+      unlockBlock.className = 'tech-screen__detail-block';
+      const unlockLabel = document.createElement('strong');
+      unlockLabel.textContent = 'Unlocks';
+      unlockBlock.appendChild(unlockLabel);
+      unlockBlock.append(` ${unlocks.join(', ')}`);
+      techUiState.detailEl.appendChild(unlockBlock);
+    }
+
+    const prereqNames = (node.prereqs ?? [])
+      .map((p) => techNode(p)?.name ?? p)
+      .join(', ') || 'None';
+    const req = document.createElement('div');
+    req.className = 'tech-screen__detail-block tech-screen__detail-block--muted';
+    const reqLabel = document.createElement('strong');
+    reqLabel.textContent = 'Requires';
+    req.appendChild(reqLabel);
+    req.append(` ${prereqNames}`);
+    techUiState.detailEl.appendChild(req);
+  };
+
+  fillTechDetail(savedDetailNodeId, { traced: !!savedDetailNodeId });
+
+  const onHoverNode = (nodeId, ctx = {}) => {
+    const showId = nodeId || ctx.tracedNodeId || null;
+    fillTechDetail(showId, { traced: !!(ctx.tracedNodeId && (!nodeId || ctx.tracedNodeId === nodeId)) });
+  };
+
+  const onSelectNode = (nodeId) => {
+    fillTechDetail(nodeId, { traced: !!nodeId });
   };
 
   if (!techUiState.mounted) {
@@ -2364,6 +2510,7 @@ function renderTechScreen(container, state, techUiState) {
       },
       onResearch,
       onHoverNode,
+      onSelectNode,
     });
     techUiState.svg = handle.svg;
     techUiState.fitView = handle.fitView;
@@ -2474,6 +2621,10 @@ export function initUi(ctx) {
     getGalaxyTargetStar,
     doStartNewGame,
     doFocusTutorial,
+    doBeginTutorialGraduation,
+    doCompleteTutorialGraduation,
+    doRetryTutorialBattle,
+    tutorialAccess,
     executeSolRecommendation,
     validateSolRecommendation,
     issueTacticalOrder,
@@ -2492,6 +2643,112 @@ export function initUi(ctx) {
     getBootPhase,
     setBootPhase,
   } = ctx;
+
+  let activeBriefingId = null;
+  let briefingWasPaused = null;
+
+  function closeFieldManualBriefing({ acknowledge = true } = {}) {
+    const id = activeBriefingId;
+    activeBriefingId = null;
+    el('field-manual-modal')?.classList.add('hidden');
+    el('field-manual-backdrop')?.classList.add('hidden');
+    if (acknowledge && id) markBriefingSeen(id);
+    if (briefingWasPaused != null) {
+      getState().paused = briefingWasPaused;
+      briefingWasPaused = null;
+    }
+  }
+
+  function openFieldManualBriefing(id, { replay = false } = {}) {
+    const entry = fieldManualEntry(id);
+    if (!entry) return { ok: false, reason: 'Unknown Field Manual entry' };
+    activeBriefingId = id;
+    if (briefingWasPaused == null) briefingWasPaused = getState().paused;
+    getState().paused = true;
+    const title = el('field-manual-title');
+    const summary = el('field-manual-summary');
+    const steps = el('field-manual-steps');
+    if (title) title.textContent = entry.title;
+    if (summary) summary.textContent = entry.summary;
+    if (steps) {
+      clearChildren(steps);
+      for (const text of entry.steps) {
+        const li = document.createElement('li');
+        li.textContent = text;
+        steps.appendChild(li);
+      }
+    }
+    const show = el('field-manual-show');
+    if (show) {
+      show.classList.toggle('hidden', !entry.targetId);
+      show.onclick = () => {
+        closeFieldManualBriefing({ acknowledge: !replay });
+        const target = entry.targetId ? el(entry.targetId) : null;
+        if (!target) {
+          toast('That control is not currently available', 'info');
+          return;
+        }
+        target.click();
+        target.focus({ preventScroll: true });
+      };
+    }
+    const ack = el('field-manual-ack');
+    if (ack) ack.onclick = () => closeFieldManualBriefing({ acknowledge: true });
+    el('field-manual-close').onclick = () => closeFieldManualBriefing({ acknowledge: true });
+    el('field-manual-backdrop').onclick = () => closeFieldManualBriefing({ acknowledge: true });
+    el('field-manual-modal')?.classList.remove('hidden');
+    el('field-manual-backdrop')?.classList.remove('hidden');
+    return { ok: true, id };
+  }
+
+  function renderFieldManualUnlocks(state, phase) {
+    if (phase !== 'playing' || activeBriefingId || !tutorialGraduated()) return;
+    const next = newlyUnlockedBriefings(state, currentProfile().briefingsSeen)[0];
+    if (next) openFieldManualBriefing(next.id);
+  }
+
+  function setTutorialLock(elementId, featureId, state) {
+    const node = el(elementId);
+    if (!node) return;
+    const access = tutorialAccess?.(featureId) ?? { allowed: true };
+    node.disabled = !access.allowed;
+    node.setAttribute('aria-disabled', String(!access.allowed));
+    node.classList.toggle('tutorial-locked', !access.allowed);
+    if (!node.dataset.baseTitle) node.dataset.baseTitle = node.title ?? '';
+    node.title = access.reason ?? node.dataset.baseTitle;
+  }
+
+  function applyTutorialLocks(state) {
+    const controls = [
+      ['tab-galaxy', 'galaxy_view'],
+      ['tab-system', 'system_view'],
+      ['tab-fleet', 'fleet'],
+      ['tab-logistics', 'logistics'],
+      ['tab-tech', 'research'],
+      ['tab-dyson', 'dyson'],
+      ['tab-diplomacy', 'diplomacy'],
+      ['tab-operations', 'operations'],
+      ['tab-campaign', 'campaign_help'],
+      ['build-outpost-btn', 'outpost'],
+      ['build-shipyard-btn', 'shipyard'],
+      ['queue-scout-btn', 'scout_queue'],
+      ['build-foundry-btn', 'dyson'],
+      ['build-launcher-btn', 'dyson'],
+      ['build-research-btn', 'research'],
+      ['builder-drone-deploy-btn', 'operations'],
+      ['enter-wormhole-btn', 'wormholes'],
+      ['build-anchor-btn', 'wormholes'],
+      ['sw-create-btn', 'superweapon'],
+      ['sw-destroy-btn', 'superweapon'],
+      ['sw-jump-btn', 'superweapon'],
+      ['combat-hud-advanced-toggle', 'tactical_combat'],
+      ['combat-hud-move', 'tactical_combat'],
+      ['combat-hud-attack', 'tactical_combat'],
+      ['combat-hud-hold', 'tactical_combat'],
+    ];
+    for (const [elementId, featureId] of controls) setTutorialLock(elementId, featureId, state);
+    setTutorialLock('view-toggle-btn', getView?.() === 'galaxy' ? 'system_view' : 'galaxy_view', state);
+  }
 
   let sidePanel = null;
   const techUiState = {
@@ -2827,7 +3084,7 @@ export function initUi(ctx) {
       meta.className = 'tutorial-coach__meta';
       const step = document.createElement('span');
       step.className = 'tutorial-coach__step';
-      step.textContent = `${current.id + 1}/${tutorial.totalSteps}`;
+      step.textContent = `${current.index + 1}/${tutorial.totalSteps}`;
       meta.appendChild(step);
 
       const title = document.createElement('h2');
@@ -2848,10 +3105,11 @@ export function initUi(ctx) {
         const finish = document.createElement('button');
         finish.type = 'button';
         finish.className = 'btn btn--primary btn--xs';
-        finish.textContent = 'Finish';
-        finish.onclick = () => {
-          const result = finishTutorial(getState());
-          toast(result.ok ? 'Tutorial complete — command is yours' : result.reason, result.ok ? 'ok' : 'error');
+        finish.textContent = 'Graduate';
+        finish.onclick = async () => {
+          const result = await doBeginTutorialGraduation?.();
+          if (result?.ok) openGraduationModal();
+          else toast(result?.reason ?? 'Could not graduate', 'error');
         };
         actions.appendChild(finish);
       } else if (current.canConfirm) {
@@ -2877,14 +3135,14 @@ export function initUi(ctx) {
         actions.appendChild(focus);
       }
 
-      if (!current.readyToFinish) {
+      if (!current.readyToFinish && tutorialGraduated() && getState().campaign?.tutorial?.replay) {
         const skip = document.createElement('button');
         skip.type = 'button';
         skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip';
         skip.textContent = 'Skip';
         skip.onclick = () => {
-          const result = finishTutorial(getState(), { skipped: true });
-          toast(result.ok ? 'Tutorial skipped' : result.reason, result.ok ? 'info' : 'error');
+          const result = finishTutorial(getState(), { skipped: true, allowReplayExit: true });
+          toast(result.ok ? 'Tutorial replay ended' : result.reason, result.ok ? 'info' : 'error');
         };
         actions.appendChild(skip);
       }
@@ -2905,6 +3163,11 @@ export function initUi(ctx) {
   }
 
   function queueHullFromUi(hull) {
+    const access = tutorialAccess?.(hull === 'scout' ? 'scout_queue' : 'combat_ship_queue') ?? { allowed: true };
+    if (!access.allowed) {
+      toast(access.reason, 'error');
+      return access;
+    }
     const res = enqueueHull(getState(), hull);
     if (!res.ok) toast(res.reason, 'error');
     else toast(`Queued ${hull}`, 'ok');
@@ -3113,6 +3376,8 @@ export function initUi(ctx) {
     if (sel) doBuildLauncher(sel);
   });
   el('queue-scout-btn').addEventListener('click', () => {
+    const access = tutorialAccess?.('scout_queue') ?? { allowed: true };
+    if (!access.allowed) { toast(access.reason, 'error'); return; }
     const res = enqueueHull(getState(), 'scout');
     if (!res.ok) toast(res.reason, 'error');
     else toast('Queued scout', 'ok');
@@ -3141,15 +3406,54 @@ export function initUi(ctx) {
   const newGameBackdrop = el('new-game-modal-backdrop');
   const titleScreen = el('title-screen');
 
-  function openNewGameModal() {
+  function configureNewGameModal(flow = 'custom') {
+    const graduation = flow === 'graduation';
+    newGameModal.dataset.flow = flow;
+    const title = el('new-game-modal-title');
+    const note = el('new-game-modal-note');
+    const start = el('new-game-sandbox-btn');
+    if (title) title.textContent = graduation ? 'Academy Graduation' : 'Custom Campaign';
+    if (note) note.textContent = graduation
+      ? 'Choose the victory condition and rival difficulty for this continuing empire.'
+      : 'Choose how to begin your reign.';
+    if (start) start.textContent = graduation ? 'Continue Campaign' : 'Sandbox';
+    el('new-game-tutorial-btn')?.classList.toggle('hidden', graduation);
+    el('new-game-missions-btn')?.classList.toggle('hidden', graduation);
+    el('close-new-game-btn')?.classList.toggle('hidden', graduation);
+  }
+
+  function openNewGameModal(flow = 'custom') {
+    configureNewGameModal(flow);
     titleScreen?.classList.add('hidden');
     newGameModal?.classList.remove('hidden');
     newGameBackdrop?.classList.remove('hidden');
   }
   function closeNewGameModal() {
+    if (newGameModal?.dataset.flow === 'graduation') return;
     newGameModal?.classList.add('hidden');
     newGameBackdrop?.classList.add('hidden');
     if (getBootPhase?.() === 'title') titleScreen?.classList.remove('hidden');
+  }
+
+  function openGraduationModal() {
+    openNewGameModal('graduation');
+  }
+
+  function refreshTitleTutorialAccess() {
+    const graduated = tutorialGraduated();
+    const titleLocks = [
+      ['title-custom-campaign-btn', 'Custom Campaign'],
+      ['title-missions-btn', 'Missions'],
+      ['title-sandbox-btn', 'Sandbox'],
+    ];
+    for (const [id, label] of titleLocks) {
+      const button = el(id);
+      if (!button) continue;
+      button.disabled = !graduated;
+      button.setAttribute('aria-disabled', String(!graduated));
+      button.classList.toggle('tutorial-locked', !graduated);
+      button.title = graduated ? `Open ${label}` : `Complete the Academy tutorial to unlock ${label}`;
+    }
   }
   function showTitleScreen() {
     titleScreen?.classList.remove('hidden');
@@ -3157,10 +3461,29 @@ export function initUi(ctx) {
     getState().paused = true;
   }
 
-  el('title-new-campaign-btn')?.addEventListener('click', () => {
-    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+  el('title-new-campaign-btn')?.addEventListener('click', async () => {
+    await loadProfile();
+    if (tutorialGraduated()) openNewGameModal('custom');
+    else doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
   });
-  el('title-custom-campaign-btn')?.addEventListener('click', openNewGameModal);
+  el('title-custom-campaign-btn')?.addEventListener('click', async () => {
+    await loadProfile();
+    if (!tutorialGraduated()) {
+      toast('Complete the Academy tutorial to unlock Custom Campaign', 'error');
+      return;
+    }
+    openNewGameModal('custom');
+  });
+  for (const id of ['title-missions-btn', 'title-sandbox-btn']) {
+    el(id)?.addEventListener('click', async () => {
+      await loadProfile();
+      if (!tutorialGraduated()) {
+        toast('Complete the Academy tutorial to unlock this campaign mode', 'error');
+        return;
+      }
+      openNewGameModal('custom');
+    });
+  }
   el('title-continue-btn')?.addEventListener('click', async () => {
     titleScreen?.classList.add('hidden');
     setBootPhase?.('playing');
@@ -3178,12 +3501,26 @@ export function initUi(ctx) {
     else btn?.classList.add('hidden');
   });
 
+  refreshTitleTutorialAccess();
   showTitleScreen();
+  loadProfile().then(refreshTitleTutorialAccess);
+  window.addEventListener('gs-profile-changed', refreshTitleTutorialAccess);
   el('close-new-game-btn')?.addEventListener('click', closeNewGameModal);
   newGameBackdrop?.addEventListener('click', closeNewGameModal);
   el('new-game-sandbox-btn')?.addEventListener('click', () => {
     const vt = el('new-game-victory')?.value ?? 'sandbox';
     const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
+    if (newGameModal?.dataset.flow === 'graduation') {
+      const result = doCompleteTutorialGraduation?.({ victoryType: vt, aiDifficulty });
+      if (result?.ok) {
+        newGameModal.dataset.flow = 'custom';
+        newGameModal.classList.add('hidden');
+        newGameBackdrop?.classList.add('hidden');
+        configureNewGameModal('custom');
+        refreshTitleTutorialAccess();
+      } else toast(result?.reason ?? 'Could not continue campaign', 'error');
+      return;
+    }
     doStartNewGame?.({ mode: 'sandbox', victoryType: vt, aiDifficulty });
     closeNewGameModal();
   });
@@ -3193,6 +3530,7 @@ export function initUi(ctx) {
     closeNewGameModal();
   });
   el('new-game-missions-btn')?.addEventListener('click', () => {
+    if (!tutorialGraduated()) { toast('Complete the Academy tutorial to unlock Missions', 'error'); return; }
     const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
     doStartNewGame?.({ mode: 'mission', victoryType: 'dominion', aiDifficulty });
     closeNewGameModal();
@@ -3431,10 +3769,16 @@ export function initUi(ctx) {
           lastAction: campaignSuperweapon.lastAction,
         },
         missions: state.missions,
+        profileTutorialGraduated: tutorialGraduated(),
+        profileBriefingsSeen: currentProfile().briefingsSeen,
       });
       if (campaignSnap !== uiSnapshots.campaignPanel && !uiPointerActive) {
         uiSnapshots.campaignPanel = campaignSnap;
-        renderCampaignPanel(el('campaign-screen-body'), state);
+        renderCampaignPanel(el('campaign-screen-body'), state, {
+          openFieldManualBriefing,
+          doStartNewGame,
+          tutorialAccess,
+        });
       }
     } else {
       campScreen?.classList.add('hidden');
@@ -3639,16 +3983,20 @@ export function initUi(ctx) {
     );
 
     const transit = transitStatus(state);
+    const hullMk = flagshipHullStage(state) > 0
+      ? ` · ${hullDisplayName(state, 'flagship').replace(/^flagship · /, '')}`
+      : '';
     if (transit) {
       const dest = systemById(state, transit.destId);
       el('flagship-loc').textContent =
-        `→ ${dest?.name ?? transit.destId} (${Math.ceil(transit.etaMs / 1000)}s)`;
+        `→ ${dest?.name ?? transit.destId} (${Math.ceil(transit.etaMs / 1000)}s)${hullMk}`;
     } else if (isFlagshipOrbiting(state)) {
       const target = orbitTargetLabel(state);
       el('flagship-loc').textContent =
-        `${systemById(state, state.flagship.systemId)?.name ?? '—'} · orbiting ${target ?? 'body'}`;
+        `${systemById(state, state.flagship.systemId)?.name ?? '—'} · orbiting ${target ?? 'body'}${hullMk}`;
     } else {
-      el('flagship-loc').textContent = systemById(state, state.flagship.systemId)?.name ?? '—';
+      el('flagship-loc').textContent =
+        `${systemById(state, state.flagship.systemId)?.name ?? '—'}${hullMk}`;
     }
 
     const readyScouts = state.scouts.filter((s) => !s.transit).length;
@@ -3711,6 +4059,12 @@ export function initUi(ctx) {
     }
 
     renderTutorialGuide(state, phase);
+    applyTutorialLocks(state);
+    renderFieldManualUnlocks(state, phase);
+    if (state.campaign?.tutorial?.graduationPending
+        && el('new-game-modal')?.dataset.flow !== 'graduation') {
+      openGraduationModal();
+    }
 
     const panel = el('build-panel');
     const wormholePanel = el('wormhole-panel');
@@ -3752,6 +4106,7 @@ export function initUi(ctx) {
         anchorBtn.textContent = `Build Anchor (${canBuildWormholeAnchor(state).cost ?? WORMHOLE_ANCHOR_COST} cr)`;
         anchorBtn.onclick = () => doBuildWormholeAnchor(target);
       }
+      applyTutorialLocks(state);
       return;
     }
     wormholePanel?.classList.add('hidden');
@@ -3762,22 +4117,26 @@ export function initUi(ctx) {
       panel.classList.add('hidden');
       return;
     }
-    if (!selection) {
+    if (!selection || selection === 'star') {
       const showStarConstruction = isPlayerOwned(state, viewedSystemId);
       if (!showStarConstruction) {
         panel.classList.add('hidden');
         return;
       }
       panel.classList.remove('hidden');
-      const starBuildSnap = constructionUiSnapshot(state, viewedSystemId);
+      const starBuildSnap = constructionUiSnapshot(state, viewedSystemId) + `|sel:${selection ?? ''}`;
       if (starBuildSnap !== uiSnapshots.starBuildPanel && !uiPointerActive) {
         uiSnapshots.starBuildPanel = starBuildSnap;
-        el('build-panel-title').textContent = `${viewedSystem?.name ?? 'System'} Star Node`;
+        el('build-panel-title').textContent = selection === 'star'
+          ? `${viewedSystem?.name ?? 'System'} · Star`
+          : `${viewedSystem?.name ?? 'System'} Star Node`;
         const body = el('build-panel-body');
         clearChildren(body);
         const note = document.createElement('p');
         note.className = 'panel-note panel-note--muted';
-        note.textContent = 'System-scale installations orbit the star and do not require a selected planet.';
+        note.textContent = selection === 'star'
+          ? 'Star selected — press O near the star to enter a stable stellar orbit.'
+          : 'System-scale installations orbit the star and do not require a selected planet.';
         body.appendChild(note);
         for (const id of [
           'build-outpost-btn', 'build-shipyard-btn', 'build-foundry-btn', 'build-launcher-btn',
@@ -3915,6 +4274,7 @@ export function initUi(ctx) {
     else if (!researchCheck.ok && isPlayerOwned(state, viewedSystemId)) note = researchCheck.reason;
     else if (!foundryCheck.ok && !hasFoundry(state, viewedSystemId)) note = foundryCheck.reason;
     el('build-panel-note').textContent = note;
+    applyTutorialLocks(state);
   };
 
   return { updateUi, closeSidePanel };
