@@ -156,15 +156,15 @@
 
       <div id="superweapon-galaxy-panel" class="panel hidden">
         <div class="panel__header">
-          <span class="panel__title">Superweapon</span>
+          <span class="panel__title">Helioclast</span>
         </div>
         <div class="panel__body" id="superweapon-galaxy-body">
           <p class="panel-note">Select a target star on the map, then act.</p>
         </div>
         <div class="panel__footer panel__actions">
-          <button id="sw-create-btn" type="button" class="btn btn--primary btn--block">Create Star (adjacent)</button>
+          <button id="sw-create-btn" type="button" class="btn btn--primary btn--block">Create Star (adjacent anchor)</button>
           <button id="sw-destroy-btn" type="button" class="btn btn--primary btn--block">Destroy Target</button>
-          <button id="sw-jump-btn" type="button" class="btn btn--primary btn--block">Jump Flagship Here</button>
+          <button id="sw-jump-btn" type="button" class="btn btn--primary btn--block">Jump Helioclast Here</button>
         </div>
       </div>
 
@@ -436,7 +436,7 @@
           <select id="new-game-victory" class="btn btn--ghost btn--block">
             <option value="sandbox">Sandbox (no victory)</option>
             <option value="dominion">Dominion (35% systems)</option>
-            <option value="megastructure">Megastructure (3 Dysons + Superweapon)</option>
+            <option value="megastructure">Megastructure (3 Dysons + Helioclast)</option>
             <option value="annihilation">Annihilation (eliminate AI)</option>
             <option value="economic">Economic (50k cr + 50 Solarii)</option>
             <option value="sculptor">Sculptor (3 superweapon actions)</option>
@@ -661,7 +661,7 @@
           </details>
 
           <details class="dev-section" open>
-            <summary class="dev-section__title">Dyson &amp; Superweapon</summary>
+            <summary class="dev-section__title">Dyson &amp; Helioclast</summary>
             <div class="dev-section__body">
               <div class="dev-row">
                 <button id="dev-shell-plus-10" type="button" class="btn btn--ghost btn--sm">+10 Sails</button>
@@ -669,11 +669,23 @@
                 <button id="dev-set-dysons-1" type="button" class="btn btn--ghost btn--sm">1 Completed Dyson</button>
                 <button id="dev-set-dysons-3" type="button" class="btn btn--ghost btn--sm">3 Completed Dysons</button>
               </div>
+              <p class="panel-note panel-note--muted">Helioclast berth: yard → assemble parts → online → live-fire → mobile</p>
               <div class="dev-row">
-                <button id="dev-build-cradle" type="button" class="btn btn--ghost btn--sm">Build Cradle</button>
+                <button id="dev-sw-unlock-milestone" type="button" class="btn btn--ghost btn--sm">Unlock SW Milestone</button>
+                <button id="dev-build-cradle" type="button" class="btn btn--primary btn--sm">Force Instant Yard</button>
+                <button id="dev-sw-assemble-next" type="button" class="btn btn--ghost btn--sm">Assemble Next Part</button>
+                <button id="dev-sw-skip-part" type="button" class="btn btn--ghost btn--sm">Finish Berth Job</button>
+              </div>
+              <div class="dev-row">
+                <button id="dev-sw-install-parts" type="button" class="btn btn--ghost btn--sm">Install All Parts</button>
+                <button id="dev-sw-live-fire" type="button" class="btn btn--ghost btn--sm">Mark Live-Fire</button>
+                <button id="dev-sw-force-online" type="button" class="btn btn--primary btn--sm">Force Fully Online</button>
+              </div>
+              <div class="dev-row">
                 <button id="dev-sw-create" type="button" class="btn btn--ghost btn--sm">SW Create</button>
                 <button id="dev-sw-destroy" type="button" class="btn btn--ghost btn--sm">SW Destroy</button>
                 <button id="dev-sw-jump" type="button" class="btn btn--ghost btn--sm">SW Jump</button>
+                <button id="dev-sw-clear-cooldown" type="button" class="btn btn--ghost btn--sm">Clear Cooldown</button>
               </div>
             </div>
           </details>

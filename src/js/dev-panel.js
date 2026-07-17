@@ -19,6 +19,11 @@ import {
   devCanForceBuildFoundry,
   devCanForceBuildLauncher,
 } from './dev.js';
+import {
+  hasSuperweaponCradle,
+  helioclastBuildStage,
+  isHelioclastMobile,
+} from './superweapon.js';
 import { getTutorialState, initTutorial, setTutorialStep } from './tutorial.js';
 import {
   setTutorialSessionOverride,
@@ -401,9 +406,16 @@ export function initDevPanel(ctx) {
   bindClick('dev-set-dysons-1', () => exec('setCompletedDysons', { count: 1 }));
   bindClick('dev-set-dysons-3', () => exec('setCompletedDysons', { count: 3 }));
   bindClick('dev-build-cradle', () => exec('buildSuperweaponCradle', { systemId: getState().stronghold }));
+  bindClick('dev-sw-unlock-milestone', () => exec('unlockSuperweaponMilestone'));
+  bindClick('dev-sw-assemble-next', () => exec('assembleNextHelioclastPart'));
+  bindClick('dev-sw-install-parts', () => exec('installAllSuperweaponParts'));
+  bindClick('dev-sw-force-online', () => exec('forceSuperweaponOnline'));
+  bindClick('dev-sw-live-fire', () => exec('markHelioclastLiveFire'));
+  bindClick('dev-sw-skip-part', () => exec('skipHelioclastPartTimer'));
   bindClick('dev-sw-create', () => exec('superweaponCreate'));
   bindClick('dev-sw-destroy', () => exec('superweaponDestroy'));
   bindClick('dev-sw-jump', () => exec('superweaponJump'));
+  bindClick('dev-sw-clear-cooldown', () => exec('clearSuperweaponCooldown'));
 
   bindClick('dev-heal-flagship', () => exec('healFlagship'));
   bindClick('dev-heal-ships', () => exec('healShipsInSystem'));
@@ -535,9 +547,25 @@ export function initDevPanel(ctx) {
     setBtn('dev-teleport-pirate', sysOk && hasFleets);
     setBtn('dev-shell-plus-10', sysOk);
     setBtn('dev-force-shell', sysOk);
-    setBtn('dev-sw-create', sysOk);
-    setBtn('dev-sw-destroy', sysOk);
-    setBtn('dev-sw-jump', sysOk);
+    setBtn('dev-set-dysons-1', true);
+    setBtn('dev-set-dysons-3', true);
+    const cradleId = state.superweapon?.cradleSystemId ?? state.stronghold;
+    const hasYard = hasSuperweaponCradle(state, cradleId) || hasSuperweaponCradle(state, state.stronghold);
+    const stage = helioclastBuildStage(state);
+    const mobile = isHelioclastMobile(state);
+    const hasBerthJob = !!state.superweapon?.buildJob;
+    const online = !!state.superweapon?.online;
+    setBtn('dev-build-cradle', true);
+    setBtn('dev-sw-unlock-milestone', true);
+    setBtn('dev-sw-assemble-next', hasYard && !mobile && stage < 6);
+    setBtn('dev-sw-skip-part', hasBerthJob);
+    setBtn('dev-sw-install-parts', true);
+    setBtn('dev-sw-live-fire', hasYard && stage >= 5 && !state.superweapon?.liveFireComplete);
+    setBtn('dev-sw-force-online', true);
+    setBtn('dev-sw-create', sysOk && online);
+    setBtn('dev-sw-destroy', sysOk && online);
+    setBtn('dev-sw-jump', sysOk && online);
+    setBtn('dev-sw-clear-cooldown', online);
     setBtn('dev-heal-flagship', !!flagship);
     setBtn('dev-damage-flagship-50', !!flagship);
     setBtn('dev-damage-flagship-25', !!flagship);

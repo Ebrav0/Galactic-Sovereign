@@ -545,6 +545,7 @@ const SOL_BUILD_CATALOG = Object.freeze({
   research_station: { cost: RESEARCH_STATION_COST, tech: 'res_station_protocol' },
   dyson_foundry: { cost: FOUNDRY_COST, requiresBody: true, disallowOnTradeNexus: true },
   solar_sail_launcher: { cost: LAUNCHER_COST, requiresBody: true, disallowOnTradeNexus: true },
+  helioclast_shipyard: { cost: SUPERWEAPON_CRADLE_COST, disallowOnTradeNexus: true },
   superweapon_cradle: { cost: SUPERWEAPON_CRADLE_COST, disallowOnTradeNexus: true },
   ...Object.fromEntries(Object.entries(BODY_STRUCTURE_DEFS).map(([type, def]) => [type, {
     cost: def.cost,
@@ -1272,7 +1273,9 @@ function executeSolRecommendation(recommendation, { confirmed = false } = {}) {
     if (structureType === 'research_station') return buildResearchStation(state, systemId);
     if (structureType === 'dyson_foundry') return buildFoundry(state, systemId, bodyId);
     if (structureType === 'solar_sail_launcher') return buildLauncher(state, systemId, bodyId);
-    if (structureType === 'superweapon_cradle') return buildSuperweaponCradle(state, systemId);
+    if (structureType === 'helioclast_shipyard' || structureType === 'superweapon_cradle') {
+      return buildSuperweaponCradle(state, systemId);
+    }
     if (BODY_STRUCTURE_DEFS[structureType]) {
       return buildBodyStructure(state, systemId, bodyId, structureType);
     }

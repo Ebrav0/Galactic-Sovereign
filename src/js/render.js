@@ -32,11 +32,28 @@ import {
 import { drawDysonLensFlare } from './dyson-megastructure-render.js';
 import {
   drawSuperweaponCradle,
+  drawHelioclastShipyard,
   drawNovaculaBeam,
   cradleWorldPose,
   drawGalaxyNovaculaBeam,
+  helioclastApertureWorld,
+  drawHelioclastChargeAura,
+  drawHelioclastAimLock,
+  drawHelioclastImpactFx,
+  drawHelioclastJumpIris,
+  drawHelioclastCinemaOverlay,
+  drawGalaxyHelioclastPulse,
 } from './superweapon-render.js';
-import { fireSequenceStatus, hasSuperweaponCradle } from './superweapon.js';
+import {
+  fireSequenceStatus,
+  hasSuperweaponCradle,
+  helioclastBuildStage,
+  helioclastBuildProgress,
+  getHelioclastShip,
+  isHelioclastMobile,
+  helioclastFiringSystemId,
+  findHelioclastShipyard,
+} from './superweapon.js';
 import { beginStarPass, flushStars } from './gl/star-renderer.js';
 import { getStarVisualProfile, typeSizeBonus } from './star-types.js';
 import {
@@ -547,38 +564,147 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     );
   }
 
-  // Novacula cradle megastructure at Stronghold when online.
-  if (intel && hasSuperweaponCradle(state, systemId)) {
-    const cradlePose = cradleWorldPose(system, t);
-    const cs = worldToScreen(camera, cradlePose.x, cradlePose.y, canvas);
-    const seq = fireSequenceStatus(state);
-    const activeHere = seq && (seq.fromSystemId === systemId || state.superweapon?.cradleSystemId === systemId);
-    const phase = activeHere ? (seq.phase ?? 'idle') : 'idle';
-    const charge = activeHere
-      ? (phase === 'charge' ? 0.35 + seq.progress * 0.4
-        : phase === 'aim' ? 0.75
-          : (phase === 'fire' || phase === 'impact') ? 1 : 0.2)
-      : 0.1;
-    let aimAngle = cradlePose.angle + Math.PI / 2;
-    if (activeHere && seq.targetSystemId) {
-      // Aim outward from star through cradle (system-local beam toward off-map target).
-      aimAngle = Math.atan2(cradlePose.y, cradlePose.x);
-    }
-    drawSuperweaponCradle(ctx, cs.x, cs.y, z, t, { phase, charge, aimAngle });
+  // Helioclast shipyard berth + staged siege ship.
+  // Yard stays at the cradle system; ship draws wherever it currently is.
+  if (intel) {
+    const ship = getHelioclastShip(state);
+    const mobile = isHelioclastMobile(state);
+    const cradleSystemId = state.superweapon?.cradleSystemId ?? state.stronghold;
+    const yard = findHelioclastShipyard(state, systemId);
+    const yardAtCradle = hasSuperweaponCradle(state, cradleSystemId)
+      || hasSuperweaponCradle(state, state.stronghold);
+    const cradleHere = !!yard || (yardAtCradle && systemId === cradleSystemId);
+    const shipHere = !!ship && ship.systemId === systemId && !ship.transit
+      && (mobile || cradleHere);
+    if (cradleHere || shipHere) {
+      const cradlePose = cradleWorldPose(system, t);
+      const yardBuilding = !!yard?.construction;
+      const yardProg = yardBuilding
+        ? Math.min(1, Math.max(0, (t - (yard.construction.startedAt ?? t)) / Math.max(1, yard.construction.durationMs ?? 1)))
+        : 1;
+      const buildProg = helioclastBuildProgress(state);
+      const assembling = !!(buildProg.partId && buildProg.jobProgress < 1);
+      const berthLocked = !mobile;
+      const shipWx = shipHere ? (ship.x ?? cradlePose.x) : cradlePose.x;
+      const shipWy = shipHere ? (ship.y ?? cradlePose.y) : cradlePose.y;
+      const shipScreen = worldToScreen(camera, shipWx, shipWy, canvas);
+      const berthScreen = worldToScreen(camera, cradlePose.x, cradlePose.y, canvas);
+      const seq = fireSequenceStatus(state);
+      const fromId = helioclastFiringSystemId(state);
+      const activeHere = seq && (seq.fromSystemId === systemId || fromId === systemId);
+      const phase = activeHere ? (seq.phase ?? 'idle') : 'idle';
+      const charge = activeHere
+        ? (phase === 'charge' ? 0.35 + seq.progress * 0.4
+          : phase === 'aim' ? 0.75
+            : (phase === 'fire' || phase === 'impact') ? 1 : 0.2)
+        : 0.1;
+      let aimAngle = Number.isFinite(ship?.heading) ? ship.heading : cradlePose.angle + Math.PI / 2;
+      if (activeHere && seq.targetSystemId) {
+        aimAngle = Math.atan2(shipWy, shipWx);
+      }
+      const stage = helioclastBuildStage(state);
+      const yardWorking = yardBuilding || assembling || (berthLocked && stage > 0 && stage < 6);
 
-    if (activeHere && (phase === 'fire' || phase === 'impact' || phase === 'aim')) {
-      const beamLen = Math.max(320, 720 * z);
-      const bx = cs.x + Math.cos(aimAngle) * beamLen;
-      const by = cs.y + Math.sin(aimAngle) * beamLen;
-      const intensity = phase === 'aim' ? 0.45 : (phase === 'fire' ? 1 : 0.75);
-      drawNovaculaBeam(ctx, cs.x, cs.y, bx, by, z, t, intensity);
+      // Shipyard wraps the hull while berth-locked; stays parked at cradle once the ship flies.
+      if (cradleHere) {
+        const yardScreen = berthLocked && shipHere ? shipScreen : berthScreen;
+        drawHelioclastShipyard(
+          ctx,
+          yardScreen.x,
+          yardScreen.y,
+          z,
+          {
+            buildProgress: yardBuilding ? yardProg : (assembling ? buildProg.jobProgress : 1),
+            building: yardBuilding,
+            working: yardWorking,
+            workProgress: assembling ? buildProg.jobProgress : (yardBuilding ? yardProg : 1),
+            heading: berthLocked && shipHere ? aimAngle : cradlePose.angle + Math.PI / 2,
+            parked: mobile,
+            time: t,
+          },
+        );
+      }
 
-      // Soft letterbox during fire cinema.
-      if (phase === 'fire' || phase === 'impact') {
-        const letter = Math.max(16, canvas.height * 0.04);
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.fillRect(0, 0, canvas.width, letter);
-        ctx.fillRect(0, canvas.height - letter, canvas.width, letter);
+      if (shipHere && (!yardBuilding || yardProg > 0.25)) {
+        const speed = Math.hypot(ship?.vx ?? 0, ship?.vy ?? 0);
+        const plume = mobile
+          ? Math.min(1, 0.5 + speed * 0.1)
+          : (stage >= 2 ? (assembling ? 0.2 : 0.32) : 0);
+        const jumpHide = activeHere && seq?.type === 'jump'
+          && (phase === 'fire' || phase === 'impact')
+          && seq.fromSystemId === systemId;
+        if (!jumpHide) {
+          const shake = activeHere && (phase === 'charge' || phase === 'fire')
+            ? (Math.sin(t / 40) * 2.5 * z * (phase === 'fire' ? 1.4 : 0.7))
+            : 0;
+          drawSuperweaponCradle(ctx, shipScreen.x + shake, shipScreen.y + shake * 0.4, z, t, {
+            phase,
+            charge,
+            aimAngle,
+            heading: aimAngle,
+            stage,
+            partialAlpha: buildProg.jobProgress,
+            mobile,
+            plumeStrength: plume,
+          });
+        }
+      }
+
+      if (activeHere && shipHere) {
+        const aperture = helioclastApertureWorld(shipWx, shipWy, aimAngle);
+        const as = worldToScreen(camera, aperture.x, aperture.y, canvas);
+        const fireType = seq.type ?? 'destroy';
+        const prog = seq.progress ?? 0;
+
+        // Cinema chrome (vignette, letterbox, caption, progress).
+        if (['charge', 'aim', 'fire', 'impact', 'aftermath'].includes(phase)) {
+          drawHelioclastCinemaOverlay(ctx, canvas, t, {
+            type: fireType,
+            phase,
+            progress: prog,
+            totalProgress: seq.totalProgress ?? prog,
+          });
+        }
+
+        if (phase === 'charge' || phase === 'aim') {
+          drawHelioclastChargeAura(ctx, as.x, as.y, z, t, phase === 'charge' ? prog : 0.85, fireType);
+        }
+        if (phase === 'aim' || phase === 'fire') {
+          drawHelioclastAimLock(ctx, as.x, as.y, aimAngle, z, prog, fireType, t);
+        }
+        if (phase === 'aim' || phase === 'fire' || phase === 'impact') {
+          const beamLen = Math.max(420, 980 * z);
+          const bx = as.x + Math.cos(aimAngle) * beamLen;
+          const by = as.y + Math.sin(aimAngle) * beamLen;
+          const intensity = phase === 'aim' ? 0.35 : (phase === 'fire' ? 1 : 0.85);
+          drawNovaculaBeam(ctx, as.x, as.y, bx, by, z, t, intensity, { type: fireType });
+        }
+        if (fireType === 'jump') {
+          if (phase === 'charge' || phase === 'aim' || phase === 'fire') {
+            drawHelioclastJumpIris(ctx, shipScreen.x, shipScreen.y, z, t, prog, false);
+          }
+        }
+        if (phase === 'impact' || phase === 'aftermath') {
+          const tipX = as.x + Math.cos(aimAngle) * Math.max(260, 560 * z);
+          const tipY = as.y + Math.sin(aimAngle) * Math.max(260, 560 * z);
+          drawHelioclastImpactFx(ctx, tipX, tipY, z, t, prog, fireType);
+          if (phase === 'aftermath') {
+            drawHelioclastChargeAura(ctx, tipX, tipY, z * 0.7, t, 0.4 + 0.4 * prog, fireType);
+          }
+        }
+      }
+
+      // Destination jump rematerialize when viewing the jump target system.
+      if (seq && seq.type === 'jump' && seq.targetSystemId === systemId
+          && (seq.phase === 'impact' || seq.phase === 'aftermath' || (seq.resolved && seq.phase === 'aftermath'))) {
+        const destPose = cradleWorldPose(system, t);
+        const dx = shipHere ? shipWx : destPose.x;
+        const dy = shipHere ? shipWy : destPose.y;
+        const ds = worldToScreen(camera, dx, dy, canvas);
+        drawHelioclastJumpIris(ctx, ds.x, ds.y, z, t, seq.progress ?? 1, true);
+        if (seq.phase === 'aftermath') {
+          drawHelioclastImpactFx(ctx, ds.x, ds.y, z, t, seq.progress ?? 1, 'jump');
+        }
       }
     }
   }
@@ -2605,17 +2731,71 @@ export function drawGalaxy(
       ? seq.resultSystemId
       : seq.targetSystemId;
     const toNode = nodePos(galaxy, toId);
+    // Ease galaxy camera toward the fire corridor during aim/fire.
+    if (fromNode && (seq.phase === 'aim' || seq.phase === 'fire' || seq.phase === 'impact')) {
+      const midX = toNode ? (fromNode.x + toNode.x) * 0.5 : fromNode.x;
+      const midY = toNode ? (fromNode.y + toNode.y) * 0.5 : fromNode.y;
+      const follow = Math.min(1, 0.08 + 0.12 * (seq.progress ?? 0));
+      galaxyCamera.x += (midX - galaxyCamera.x) * follow;
+      galaxyCamera.y += (midY - galaxyCamera.y) * follow;
+    }
     if (fromNode) {
       const fs = worldToScreen(galaxyCamera, fromNode.x, fromNode.y, canvas);
-      drawGlowRing(ctx, fs.x, fs.y, (18 + 22 * (seq.totalProgress ?? 0)) * z, '#88e8ff', Math.max(1.5, 2.5 * z), 0.3 + 0.4 * (seq.progress ?? 0));
-      if (toNode && (seq.phase === 'aim' || seq.phase === 'fire' || seq.phase === 'impact')) {
+      const ringColor = seq.type === 'create' ? '#66ffaa'
+        : seq.type === 'jump' ? '#aa88ff'
+          : seq.type === 'destroy' ? '#ff4466' : '#88e8ff';
+      drawGalaxyHelioclastPulse(ctx, fs.x, fs.y, z, state.time, seq.totalProgress ?? 0, seq.type);
+      drawGlowRing(ctx, fs.x, fs.y, (18 + 28 * (seq.totalProgress ?? 0)) * z, ringColor, Math.max(1.5, 2.5 * z), 0.3 + 0.45 * (seq.progress ?? 0));
+      if (toNode && (seq.phase === 'aim' || seq.phase === 'fire' || seq.phase === 'impact' || seq.phase === 'charge')) {
         const ts = worldToScreen(galaxyCamera, toNode.x, toNode.y, canvas);
-        const intensity = seq.phase === 'aim' ? 0.4 : 1;
-        drawGalaxyNovaculaBeam(ctx, fs, ts, z, state.time, {
-          type: seq.type,
-          intensity,
-          blocked: !!seq.blocked,
-        });
+        if (seq.phase === 'charge') {
+          // Ghost aim line while charging
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.strokeStyle = seq.type === 'create' ? 'rgba(102,255,170,0.25)'
+            : seq.type === 'jump' ? 'rgba(170,136,255,0.25)'
+              : 'rgba(255,68,102,0.25)';
+          ctx.lineWidth = Math.max(2, 5 * z);
+          ctx.setLineDash([6 * z, 8 * z]);
+          ctx.beginPath();
+          ctx.moveTo(fs.x, fs.y);
+          ctx.lineTo(ts.x, ts.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+          drawGalaxyHelioclastPulse(ctx, ts.x, ts.y, z * 0.7, state.time, seq.progress ?? 0, seq.type);
+        } else {
+          const intensity = seq.phase === 'aim' ? 0.5 : 1;
+          drawGalaxyNovaculaBeam(ctx, fs, ts, z, state.time, {
+            type: seq.type,
+            intensity,
+            blocked: !!seq.blocked,
+          });
+          drawGalaxyHelioclastPulse(ctx, ts.x, ts.y, z, state.time, seq.progress ?? 0, seq.type);
+        }
+      }
+      if (seq.type === 'create' && seq.resolved && seq.resultSystemId && (seq.phase === 'impact' || seq.phase === 'aftermath')) {
+        const born = nodePos(galaxy, seq.resultSystemId);
+        if (born) {
+          const bs = worldToScreen(galaxyCamera, born.x, born.y, canvas);
+          drawGalaxyHelioclastPulse(ctx, bs.x, bs.y, z * 1.2, state.time, seq.progress ?? 1, 'create');
+          drawGlowRing(ctx, bs.x, bs.y, (50 + 40 * (seq.progress ?? 0)) * z, '#66ffaa', Math.max(2, 4 * z), 0.5);
+        }
+      }
+      if (seq.type === 'jump' && toNode && (seq.phase === 'impact' || seq.phase === 'aftermath' || seq.resolved)) {
+        const ts = worldToScreen(galaxyCamera, toNode.x, toNode.y, canvas);
+        drawGalaxyHelioclastPulse(ctx, ts.x, ts.y, z, state.time, seq.progress ?? 1, 'jump');
+        drawGlowRing(ctx, ts.x, ts.y, (36 + 24 * (seq.progress ?? 0)) * z, '#aa88ff', Math.max(2, 3 * z), 0.45);
+        if (seq.resolved) {
+          ctx.fillStyle = 'rgba(200,180,255,0.95)';
+          ctx.beginPath();
+          ctx.arc(ts.x + 10 * z, ts.y - 8 * z, Math.max(2.5, 4 * z), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      if (seq.type === 'destroy' && (seq.phase === 'impact' || seq.phase === 'aftermath') && toNode && !seq.blocked) {
+        const ts = worldToScreen(galaxyCamera, toNode.x, toNode.y, canvas);
+        drawGalaxyHelioclastPulse(ctx, ts.x, ts.y, z * 1.1, state.time, seq.progress ?? 1, 'destroy');
       }
     }
   }
@@ -2631,8 +2811,8 @@ export function drawGalaxy(
         : swAction.type === 'destroy' ? '#ff4466' : swAction.type === 'create' ? '#66ffaa' : '#aa88ff';
       drawGlowRing(ctx, ts.x, ts.y, (40 + 30 * pulse) * z, color, Math.max(2, 3 * z), 0.25 + 0.45 * pulse);
       if (swAction.type === 'jump') {
-        const from = nodePos(galaxy, cradleId);
-        if (from) {
+        const from = nodePos(galaxy, swAction.fromSystemId ?? cradleId);
+        if (from && swAction.targetSystemId !== (swAction.fromSystemId ?? cradleId)) {
           const fs = worldToScreen(galaxyCamera, from.x, from.y, canvas);
           drawGlowRing(ctx, fs.x, fs.y, (28 + 20 * pulse) * z, '#aa88ff', Math.max(1.5, 2.5 * z), 0.2 + 0.35 * pulse);
         }

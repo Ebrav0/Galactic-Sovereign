@@ -19,13 +19,13 @@ export const MISSIONS = {
   first_hero: {
     id: 'first_hero',
     name: 'First Hero Flagship',
-    description: 'Build your first hero flagship at the Superweapon cradle.',
+    description: 'Build your first hero flagship at the Helioclast shipyard.',
     objectives: [{ id: 'build_hero', label: 'Build a hero flagship' }],
   },
   superweapon_sculpt: {
     id: 'superweapon_sculpt',
     name: 'Stellar Sculptor',
-    description: 'Use the Superweapon to create a new star system.',
+    description: 'Use the Helioclast to create a new star system.',
     objectives: [{ id: 'create_star', label: 'Create a star system' }],
   },
   diplomacy_intro: {

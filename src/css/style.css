@@ -2137,6 +2137,18 @@ button {
   margin-bottom: var(--space-2);
 }
 
+.fleet-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.fleet-subtabs .btn--active {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
 .tech-web-stats strong,
 .fleet-stats strong {
   color: var(--text-secondary);

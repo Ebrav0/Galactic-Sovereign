@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 22;
+export const SAVE_VERSION = 24;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -76,6 +76,7 @@ export const STRUCTURE_BUILD_MS = {
   research_station: 28000,
   sail_foundry: 45000,
   dyson_launcher: 36000,
+  helioclast_shipyard: 52000,
 };
 
 // --- Combat hulls (Phase 2 + GDD roster) ---
@@ -110,6 +111,10 @@ export const HULL_STATS = {
     hp: 2000, dps: 42, captureForce: 2,
     cost: 0, buildMs: 0, laneSpeed: 110, healRate: 0,
   },
+  helioclast: {
+    hp: 9000, dps: 55, captureForce: 10,
+    cost: 0, buildMs: 0, laneSpeed: 42, healRate: 0,
+  },
   miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
 };
 
@@ -133,17 +138,25 @@ export const FLAGSHIP_WING_SPEC = {
 export const FLAGSHIP_WING_PATROL_RADIUS = 95;   // home-offset envelope around flagship
 export const FLAGSHIP_WING_WANDER_RADIUS = 42;   // local jitter within each craft's pocket
 export const FLAGSHIP_WING_DRAW_SCALE = 0.72;    // escort sprite size vs FLAGSHIP_RADIUS
-export const FLAGSHIP_WING_WANDER_SPEED = 2.05;  // Lissajous frequency (slightly calmer escort motion)
+export const FLAGSHIP_WING_WANDER_SPEED = 2.05;  // Lissajous frequency (escort flyabout)
 export const FLAGSHIP_WING_CATCHUP_SPEED = 1;    // keep wing locked to flagship pose (no trail lag)
 export const FLAGSHIP_WING_REPLENISH_MS = 90000;
 export const FLAGSHIP_WING_RECALL_MS = 1600;     // fly-in duration when docking to hangar
 export const FLAGSHIP_WING_LAUNCH_MS = 1400;     // fly-out duration when launching from hangar
 /** Extra combat cruise mult for wings launched from the player flagship. */
-export const FLAGSHIP_WING_COMBAT_SPEED_MULT = 1.25;
+export const FLAGSHIP_WING_COMBAT_SPEED_MULT = 1.15;
 /** Soft clear core around flagship hull for ambient wing keep-out. */
 export const FLAGSHIP_WING_HULL_CLEARANCE = 14;
 /** Outer falloff multiple of (FLAGSHIP_RADIUS + clearance) for gradual keep-out. */
 export const FLAGSHIP_WING_KEEP_SOFT_ZONE = 2.35;
+/** Combat CAP: patrol ring around the flagship while screening. */
+export const FLAGSHIP_WING_SCREEN_RADIUS = 120;
+/** Combat CAP: hard leash — break off chase and return if farther than this. */
+export const FLAGSHIP_WING_PROTECT_LEASH = 200;
+/** Peel off to engage threats inside this of the flagship. */
+export const FLAGSHIP_WING_INTERCEPT_RADIUS = 240;
+/** Prefer hostile fighters inside this (wider than general intercept). */
+export const FLAGSHIP_WING_FIGHTER_INTERCEPT_RADIUS = 300;
 
 /** Multi-battery hardpoint suite for the sovereign flagship.
  *  Muzzle coords are local draw-radius units (see flagship-morph.js); combat
@@ -159,11 +172,11 @@ export const FLAGSHIP_WEAPON_SUITE = [
 ];
 
 export const WEAPON_PROFILES = {
-  point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 3.2, antiCapital: 0.45, antiBomber: 1.35, structure: 0.35 },
-  kinetic: { label: 'Kinetic Batteries', range: 280, cooldownMs: 760, antiFighter: 0.85, antiCapital: 1.0, structure: 0.9 },
+  point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 3.6, antiCapital: 0.45, antiBomber: 1.55, structure: 0.35 },
+  kinetic: { label: 'Kinetic Batteries', range: 280, cooldownMs: 760, antiFighter: 1.45, antiCapital: 1.0, structure: 0.9 },
   torpedo: { label: 'Torpedo Bays', range: 340, cooldownMs: 1100, antiFighter: 0.25, antiCapital: 2.1, structure: 1.7 },
   beam_lance: { label: 'Beam Lance', range: 360, cooldownMs: 980, antiFighter: 0.7, antiCapital: 1.35, structure: 1.15 },
-  ion: { label: 'Ion Disruptor', range: 300, cooldownMs: 900, antiFighter: 1.25, antiCapital: 1.45, structure: 0.75, disrupt: 0.28 },
+  ion: { label: 'Ion Disruptor', range: 300, cooldownMs: 900, antiFighter: 1.35, antiCapital: 1.45, structure: 0.75, disrupt: 0.28 },
   repair: { label: 'Repair Drones', range: 230, cooldownMs: 600, antiFighter: 0, antiCapital: 0, structure: 0 },
 };
 
@@ -225,6 +238,29 @@ export const FLEET_FOLLOW_KEEP_CAP = 28;     // max celestial correction per fra
 
 // --- Flagship combat ---
 export const FLAGSHIP_HP = 2000;
+/** Helioclast siege capital — far tougher and slower than the flagship. */
+export const HELIOCLAST_HP = 9000;
+export const HELIOCLAST_LANE_SPEED = 42;
+export const HELIOCLAST_RADIUS = 38;
+export const HELIOCLAST_CAPTURE_FORCE = 10;
+export const HELIOCLAST_ID = 'helioclast';
+export const HELIOCLAST_BUILD_STAGES = 6;
+/** In-system chase speed (world units / s) — lags behind the flagship. */
+export const HELIOCLAST_SYSTEM_SPEED = 32;
+/** Local escort offset relative to flagship heading (aft-starboard). */
+export const HELIOCLAST_FOLLOW_OFFSET = Object.freeze({ x: -140, y: 95 });
+/** Timed berth assembly durations per part (ms). */
+export const HELIOCLAST_PART_BUILD_MS = Object.freeze({
+  frame: 14000,
+  power: 18000,
+  focus: 20000,
+  create: 22000,
+  destroy: 22000,
+  jump: 22000,
+  containment: 28000,
+  gate_cap: 28000,
+  sovereign_relay: 24000,
+});
 export const FLAGSHIP_DPS = 42;
 
 // --- Tactical combat ---
@@ -240,6 +276,7 @@ export const TACTICAL_TURN_RATE = 1.55;          // base turn rate rad/s
 export const TACTICAL_SEPARATION_RADIUS = 26;    // soft bubble for baseline escort
 export const TACTICAL_SEPARATION_STRENGTH = 90;  // repulsion accel at contact
 export const TACTICAL_TARGET_STICK_MS = 1200;    // sticky focus target duration
+export const TACTICAL_WING_TARGET_STICK_MS = 650; // freer retarget for dogfights / passes
 export const TACTICAL_TARGET_LEASH_MULT = 2.4;   // drop sticky if beyond range * leash
 export const TACTICAL_RECENT_THREAT_MS = 3000;   // recent damage keeps an attacker elevated
 export const TACTICAL_MOVE_ENGAGEMENT_RADIUS = 420;
@@ -267,6 +304,13 @@ export const TACTICAL_SPATIAL_CELL = 360;
 export const FIGHTER_SORTIE_REARM_MS = 4000;
 export const FIGHTER_SORTIE_RETURN_FUEL = 15;
 export const FIGHTER_SORTIE_AFTERBURNER_MULT = 3.2;
+/** Star Wars–style attack-pass feel for strike craft. */
+export const TACTICAL_WING_DRAG = 0.32;          // bleed speed slowly while coasting through a pass
+export const WING_PASS_CRUISE_THRUST = 0.9;      // keep thrusting through gun range
+export const WING_PASS_MIN_SPEED_FRAC = 0.72;    // never crawl below this fraction of maxSpeed
+export const WING_PASS_BREAK_OFFSET = 240;       // lateral sweep distance on break turn
+export const WING_PASS_STRAFE_MS = 850;          // max time holding the merge before break
+export const WING_PASS_REENGAGE_RANGE_MULT = 1.25;
 export const COMBAT_DISENGAGE_MS = 2500;
 export const FLAGSHIP_MANUAL_OVERRIDE_MS = 2000;
 export const FLAGSHIP_AUTOPILOT_BLEND_MS = 500;
@@ -274,7 +318,8 @@ export const FLAGSHIP_AUTOPILOT_BLEND_MS = 500;
 /** Hull-class motion multipliers for tactical steering + EaW formation feel. */
 export const TACTICAL_MOTION_TIERS = Object.freeze({
   wing: Object.freeze({
-    maxSpeed: 2.75, accel: 2.45, turnRate: 2.55, separation: 0.38,
+    // Fast streak + wide arcs (lower turnRate = bigger turning circle).
+    maxSpeed: 3.75, accel: 2.55, turnRate: 1.8, separation: 0.38,
     formationDiscipline: 0.05, chaseFreedom: 1.00, formationSpacingMult: 0.48,
   }),
   escort: Object.freeze({
@@ -318,6 +363,7 @@ export const TACTICAL_MOTION_HULL_TIER = Object.freeze({
   dreadnought: 'capital',
   hero_flagship: 'capital',
   flagship: 'capital',
+  helioclast: 'capital',
   light_carrier: 'carrier',
   fleet_carrier: 'carrier',
   super_carrier: 'carrier',
@@ -339,6 +385,15 @@ export const PIRATE_LANE_MIN_LEG_MS = 2200;
 export const PIRATE_SHIPS = [
   { hull: 'corvette', count: 2 },
   { hull: 'frigate', count: 1 },
+];
+
+/** Large pirate / Dev large enemy composition — always includes ≥2 carriers. */
+export const PIRATE_SHIPS_LARGE = [
+  { hull: 'corvette', count: 6 },
+  { hull: 'frigate', count: 4 },
+  { hull: 'destroyer', count: 2 },
+  { hull: 'cruiser', count: 1 },
+  { hull: 'light_carrier', count: 2 },
 ];
 
 // --- Production ---
@@ -670,25 +725,29 @@ export const DYSON_SHIELD_TECH_MULT = 1.15;
 export const DYSON_SHIELD_COOLDOWN_MS = 180000;
 export const SUPERWEAPON_CRADLE_COST = 5000;
 export const SUPERWEAPON_CRADLE_SOLARII = 10;
+/** Alias — Helioclast shipyard replaces the old cradle structure. */
+export const HELIOCLAST_SHIPYARD_COST = SUPERWEAPON_CRADLE_COST;
+export const HELIOCLAST_SHIPYARD_SOLARII = SUPERWEAPON_CRADLE_SOLARII;
 export const SUPERWEAPON_CREATE_SOLARII = 25;
 export const SUPERWEAPON_DESTROY_SOLARII = 30;
 export const SUPERWEAPON_JUMP_SOLARII = 15;
 export const SUPERWEAPON_COOLDOWN_MS = 120000;
 export const SUPERWEAPON_JUMP_COOLDOWN_MS = 90000;
-/** Deferred Novacula fire sequence timings (create/destroy). */
+/** Deferred Helioclast fire sequence timings (create/destroy) — cinematic spectacle. */
 export const SUPERWEAPON_PHASE_MS = {
-  charge: 1200,
-  aim: 700,
-  fire: 1100,
-  impact: 400,
-  aftermath: 1100,
+  charge: 2200,
+  aim: 1400,
+  fire: 1800,
+  impact: 900,
+  aftermath: 2000,
 };
+/** Jump gate punch — shorter but still readable. */
 export const SUPERWEAPON_JUMP_PHASE_MS = {
-  charge: 600,
-  aim: 400,
-  fire: 700,
-  impact: 300,
-  aftermath: 500,
+  charge: 1000,
+  aim: 700,
+  fire: 900,
+  impact: 600,
+  aftermath: 1100,
 };
 export const SUPERWEAPON_CRADLE_ORBIT_PAD = 280;
 export const HERO_FLAGSHIP_COST_CREDITS = 2000;

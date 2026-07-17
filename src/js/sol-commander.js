@@ -33,7 +33,7 @@ export const SOL_BUILD_TYPES = Object.freeze([
   'mining_complex', 'refinery', 'storage_depot', 'fighter_factory', 'drydock',
   'orbital_defense', 'planetary_shield', 'ion_battery', 'asteroid_harvester',
   'listening_post', 'lane_relay', 'blockade_fort', 'forward_base', 'supply_cache',
-  'command_post', 'dyson_foundry', 'solar_sail_launcher', 'superweapon_cradle',
+  'command_post', 'dyson_foundry', 'solar_sail_launcher', 'helioclast_shipyard', 'superweapon_cradle',
 ]);
 
 export const SOL_INSPECTION_TOOLS = Object.freeze([

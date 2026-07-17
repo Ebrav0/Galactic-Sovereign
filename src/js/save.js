@@ -118,6 +118,8 @@ function migrateSave(envelope) {
   if (e.saveVersion === 19) e = migrateV19toV20(e);
   if (e.saveVersion === 20) e = migrateV20toV21(e);
   if (e.saveVersion === 21) e = migrateV21toV22(e);
+  if (e.saveVersion === 22) e = migrateV22toV23(e);
+  if (e.saveVersion === 23) e = migrateV23toV24(e);
   return e;
 }
 
@@ -595,7 +597,7 @@ function prepareV12Galaxy(state, galaxy) {
     const dyson = system?.dyson ?? overlay?.dyson;
     const structures = system?.structures ?? overlay?.structures ?? [];
     if ((dyson?.completedShells ?? 0) > 0 || (dyson?.shellSails ?? 0) > 0
-        || structures.some((structure) => ['sail_foundry', 'dyson_launcher', 'superweapon_cradle'].includes(structure.type))) {
+        || structures.some((structure) => ['sail_foundry', 'dyson_launcher', 'helioclast_shipyard', 'superweapon_cradle'].includes(structure.type))) {
       star.protectedFromNexus = true;
     }
   }
@@ -1240,6 +1242,74 @@ function initV22State(state) {
   return state;
 }
 
+// v22 -> v23 (Helioclast siege ship stages + live-fire gate).
+function initV23State(state) {
+  const prior = state.superweapon;
+  const missingLiveFire = !prior || prior.liveFireComplete == null;
+  const legacyCalibrated = !!(
+    prior?.online
+    && prior?.installedParts?.create
+    && prior?.installedParts?.destroy
+  );
+  initV22State(state);
+  ensureSuperweapon(state);
+  if (missingLiveFire) {
+    // Legacy fully-online cradles count as calibrated.
+    state.superweapon.liveFireComplete = legacyCalibrated;
+  }
+  return state;
+}
+
+function migrateV22toV23(envelope) {
+  const state = initV23State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 23,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
+// v23 -> v24 (Helioclast shipyard + timed berth jobs).
+function initV24State(state) {
+  initV23State(state);
+  ensureSuperweapon(state);
+  if (state.superweapon.buildJob === undefined) state.superweapon.buildJob = null;
+
+  const renameYard = (system) => {
+    for (const structure of system?.structures ?? []) {
+      if (structure.type === 'superweapon_cradle') {
+        structure.type = 'helioclast_shipyard';
+      }
+    }
+  };
+
+  const galaxies = state.galaxies;
+  if (Array.isArray(galaxies)) {
+    for (const galaxy of galaxies) {
+      for (const system of Object.values(galaxy.systems ?? {})) renameYard(system);
+    }
+  } else if (galaxies && typeof galaxies === 'object') {
+    for (const galaxy of Object.values(galaxies)) {
+      for (const system of Object.values(galaxy?.systems ?? {})) renameYard(system);
+    }
+  }
+  for (const system of Object.values(state.systems ?? {})) renameYard(system);
+  return state;
+}
+
+function migrateV23toV24(envelope) {
+  const state = initV24State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 24,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // v21 -> v22 (Dyson→Novacula spine tech tree + superweapon skeleton parts).
 function migrateV21toV22(envelope) {
   const state = initV22State(envelope.state);
@@ -1280,6 +1350,8 @@ export function deserialize(envelopeJson) {
   initV20State(envelope.state);
   initV21State(envelope.state);
   initV22State(envelope.state);
+  initV23State(envelope.state);
+  initV24State(envelope.state);
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;
