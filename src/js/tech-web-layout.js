@@ -5,23 +5,26 @@
 import { derivedTier, isSpineTech, TECH_SPINE_IDS, techNode } from './tech-web.js';
 
 /**
- * Vertical categories (top → bottom). Spine stays centered.
- * More lanes = more branch-y; each lane is one horizontal row.
+ * Vertical categories (top → bottom). Spine stays centered —
+ * equal lane count above and below so the tree reads balanced.
  */
 export const TECH_LANE_ORDER = [
+  // Above spine (6)
   'mil_capital',
   'mil_carrier',
   'mil_screen',
   'mil_defense',
-  'hull_mods',
   'economy',
   'trade',
+  // Center
   'spine',
+  // Below spine (6)
+  'hull_mods',
+  'sw_modes',
   'research',
   'wormhole',
   'diplomacy',
   'flagship',
-  'sw_modes',
 ];
 
 export const TECH_LANE_LABELS = Object.freeze({
@@ -33,11 +36,11 @@ export const TECH_LANE_LABELS = Object.freeze({
   economy: 'Economy',
   trade: 'Trade',
   spine: 'Main Path',
+  sw_modes: 'Strategy',
   research: 'Research',
   wormhole: 'Wormhole',
   diplomacy: 'Diplomacy',
   flagship: 'Flagship',
-  sw_modes: 'Novacula Modes',
 });
 
 /** Fallback cluster → lane when id heuristics do not match. */
@@ -93,33 +96,31 @@ const CAPITAL_IDS = new Set([
   'mil_battleship_unlock', 'mil_battleship_siege',
   'mil_dreadnought_unlock', 'mil_dreadnought_plate',
   'mil_war_doctrine', 'mil_fleet_academy', 'mil_tri_dock',
+  'mil_capital_refit_hub', 'mil_armada_doctrine', 'war_doctrine_hub',
 ]);
 
 const CARRIER_IDS = new Set([
   'mil_light_carrier', 'mil_carrier_hangar', 'mil_fleet_carrier',
   'mil_carrier_bombers', 'mil_super_carrier', 'mil_fighter_factory',
-  'mil_carrier_command',
+  'mil_carrier_command', 'mil_carrier_package_hub',
 ]);
 
 const SCREEN_IDS = new Set([
   'mil_parallel_dock', 'mil_corvette_hardening', 'mil_patrol_cutter',
   'mil_point_defense', 'mil_healer_tech', 'mil_healer_hospital',
-  'mil_sensor_ship', 'mil_builder_ship',
+  'mil_sensor_ship', 'mil_builder_ship', 'mil_escort_screen_hub',
 ]);
 
 const DEFENSE_IDS = new Set([
   'mil_drydock', 'mil_orbital_defense', 'mil_shield_generator',
   'mil_ion_battery', 'mil_missile_silo_network', 'mil_gravitic_interdiction',
-  'mil_orbital_sensor_arrays',
-]);
-
-const SW_MODE_IDS = new Set([
-  'sw_create_star', 'sw_destroy_star', 'sw_jump_gate',
+  'mil_orbital_sensor_arrays', 'mil_fortress_doctrine',
 ]);
 
 const HULL_MOD_IDS = new Set([
   'fs_hull_frame', 'fs_hull_drives', 'fs_hull_arsenal',
   'fs_hull_command', 'fs_hull_sovereign',
+  'fs_mobile_shipyard', 'fs_jump_charge', 'fs_diplomacy_aura', 'fs_sovereignty_doctrine',
 ]);
 
 export function laneForNode(node) {
@@ -131,7 +132,6 @@ export function laneForNode(node) {
   if (SCREEN_IDS.has(id)) return 'mil_screen';
   if (DEFENSE_IDS.has(id)) return 'mil_defense';
   if (HULL_MOD_IDS.has(id) || /^fs_hull_/.test(id)) return 'hull_mods';
-  if (SW_MODE_IDS.has(id)) return 'sw_modes';
   if (node.cluster === 'military') {
     if (/carrier|hangar|bomber|fighter/.test(id)) return 'mil_carrier';
     if (/defense|shield|silo|interdiction|drydock|ion|sensor_array/.test(id)) return 'mil_defense';

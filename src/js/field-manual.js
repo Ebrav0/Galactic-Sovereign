@@ -82,8 +82,12 @@ export const FIELD_MANUAL_ENTRIES = Object.freeze([
   {
     id: 'heroes_superweapon',
     title: 'Hero Flagships and the Superweapon',
-    summary: 'Three completed Dyson spheres unlock the cradle, hero flagships, stellar creation and destruction, and strategic flagship jumps.',
-    steps: ['Complete three Dyson spheres.', 'Build the cradle at the Stronghold.', 'Use stellar actions carefully; shields and cooldowns provide counterplay.'],
+    summary: 'Three completed Dyson spheres unlock the Helioclast shipyard, hero flagships, stellar creation and destruction, and strategic Helioclast jumps.',
+    steps: [
+      'The main path is the longest route — every step after Surveyor needs a side-line tech.',
+      'Side lines finish into the spine: Sphere → Maturity, Industry → Capitals, War → Containment, Empire → Gate, Lattice → Live-Fire, Sovereignty + Modes → Online.',
+      'Build the shipyard, assemble construction parts, run live-fire, then go Online.',
+    ],
     targetId: 'tab-campaign',
     unlocked: (state) => state.milestones?.superweaponUnlocked === true,
   },

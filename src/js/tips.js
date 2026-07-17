@@ -20,9 +20,9 @@ export function tickContextualTips(state, toastFn) {
     maybeShowTip(state, 'diplomacy', 'Diplomacy unlocked — open the Diplomacy tab to offer treaties.', toastFn);
   }
   if (state.milestones?.superweaponUnlocked && !SHOWN.has('superweapon')) {
-    maybeShowTip(state, 'superweapon', 'Superweapon unlocked — research the cradle, then build it at your Stronghold.', toastFn);
+    maybeShowTip(state, 'superweapon', 'Helioclast unlocked — follow the main path through shipyard build, Online, then Create / Destroy / Jump modes.', toastFn);
   }
   if (state.superweapon?.online && !SHOWN.has('superweapon_online')) {
-    maybeShowTip(state, 'superweapon_online', 'Superweapon online — use the galaxy panel or Campaign tab for create/destroy/jump.', toastFn);
+    maybeShowTip(state, 'superweapon_online', 'Helioclast online — finish live-fire calibration, then manage berth assembly and escorts from Fleet → Helioclast. Strategy modes are a separate tech lane.', toastFn);
   }
 }

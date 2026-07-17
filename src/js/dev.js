@@ -5,6 +5,7 @@ import {
   SHIPYARD_COMBAT_HULLS,
   LAUNCHERS_PER_BODY_MAX,
   PIRATE_SHIPS,
+  PIRATE_SHIPS_LARGE,
   SHELL_SAILS_REQUIRED,
   RESEARCH_STATION_CAP,
 } from './constants.js';
@@ -67,6 +68,9 @@ import {
   superweaponCreate,
   superweaponDestroy,
   superweaponJump,
+  installSuperweaponPart,
+  completeHelioclastBuildJob,
+  SUPERWEAPON_PART_IDS,
 } from './superweapon.js';
 
 export const DEV_CODES = {
@@ -123,12 +127,7 @@ export const DEV_ENEMY_PRESETS = Object.freeze({
     { hull: 'frigate', count: 2 },
     { hull: 'destroyer', count: 1 },
   ]),
-  large: Object.freeze([
-    { hull: 'corvette', count: 6 },
-    { hull: 'frigate', count: 4 },
-    { hull: 'destroyer', count: 2 },
-    { hull: 'cruiser', count: 1 },
-  ]),
+  large: PIRATE_SHIPS_LARGE,
 });
 
 /** Hull Forge stage tech ids (index 0 = stage 1). */
@@ -1125,25 +1124,22 @@ export function devForceBuildSuperweaponCradle(state, systemId = null) {
   if (hasSuperweaponCradle(state, target)) {
     ensureSuperweapon(state);
     state.superweapon.cradleSystemId = target;
-    state.superweapon.online = true;
-    return ok({ skipped: true, type: 'superweapon_cradle', systemId: target });
+    return ok({ skipped: true, type: 'helioclast_shipyard', systemId: target });
   }
 
-  // Prefer real builder when possible; otherwise force-place
-  const attempt = buildSuperweaponCradle(state, target, { tutorialBypass: true });
-  if (attempt.ok) return ok({ built: 'superweapon_cradle', systemId: target });
+  const attempt = buildSuperweaponCradle(state, target, { tutorialBypass: true, instant: true });
+  if (attempt.ok) return ok({ built: 'helioclast_shipyard', systemId: target });
 
   ensureSuperweapon(state);
   const system = systemById(state, target);
   system.structures.push({
     id: allocateStructureId(),
-    type: 'superweapon_cradle',
+    type: 'helioclast_shipyard',
     bodyId: null,
     builtAtTime: state.time,
   });
   state.superweapon.cradleSystemId = target;
-  state.superweapon.online = true;
-  return ok({ built: 'superweapon_cradle', systemId: target, forced: true, bypassReason: attempt.reason });
+  return ok({ built: 'helioclast_shipyard', systemId: target, forced: true, bypassReason: attempt.reason });
 }
 
 function mapGameResult(result, fallbackCode = DEV_CODES.ACTION_FAILED) {
@@ -1167,6 +1163,122 @@ export function devSuperweaponJump(state, systemId) {
   const sysCheck = devValidateSystem(state, systemId);
   if (!sysCheck.ok) return sysCheck;
   return mapGameResult(superweaponJump(state, systemId, { immediate: true, tutorialBypass: true }));
+}
+
+export function devUnlockSuperweaponMilestone(state) {
+  setCompletedDysonsForTest(state, Math.max(3, state.milestones?.completedDysonSystems?.length ?? 0));
+  return ok({
+    superweaponUnlocked: !!state.milestones?.superweaponUnlocked,
+    completedDysons: state.milestones?.completedDysonSystems?.length ?? 0,
+  });
+}
+
+const SW_PART_TECH = Object.freeze({
+  frame: 'sw_cradle_unlock',
+  power: 'sw_cradle_power_core',
+  focus: 'sw_precision_targeting',
+  create: 'sw_create_star',
+  destroy: 'sw_destroy_star',
+  jump: 'sw_jump_gate',
+  containment: 'sw_containment_lattice',
+  gate_cap: 'sw_gate_capacitor',
+  sovereign_relay: 'sw_sovereign_relay',
+});
+
+export function devInstallAllSuperweaponParts(state) {
+  const cradle = devForceBuildSuperweaponCradle(state, state.stronghold);
+  if (!cradle.ok) return cradle;
+  ensureResearchState(state);
+  ensureSuperweapon(state);
+  const installed = [];
+  const skipped = [];
+  for (const partId of SUPERWEAPON_PART_IDS) {
+    const techId = SW_PART_TECH[partId];
+    if (techId && !isTechUnlocked(state, techId)) {
+      state.research.unlocked.push(techId);
+      applyTechEffect(state, techId);
+    }
+    if (state.superweapon.installedParts?.[partId]) {
+      skipped.push(partId);
+      continue;
+    }
+    // Bypass cost for install in order.
+    state.credits = Math.max(state.credits, 999999);
+    state.solarii = Math.max(state.solarii ?? 0, 999);
+    const res = installSuperweaponPart(state, partId, { instant: true });
+    if (res.ok) installed.push(partId);
+    else skipped.push(partId);
+  }
+  state.superweapon.online = true;
+  return ok({ installed, skipped, online: true, cradleSystemId: state.superweapon.cradleSystemId });
+}
+
+export function devSkipHelioclastPartTimer(state) {
+  ensureSuperweapon(state);
+  if (!state.superweapon.buildJob) return ok({ skipped: true, reason: 'No active berth job' });
+  return mapGameResult(completeHelioclastBuildJob(state));
+}
+
+/** Start a timed berth job for the next installable part (visible yard work). */
+export function devAssembleNextHelioclastPart(state) {
+  ensureSuperweapon(state);
+  if (state.superweapon.buildJob) {
+    return ok({
+      skipped: true,
+      reason: `Already assembling ${state.superweapon.buildJob.partId}`,
+      partId: state.superweapon.buildJob.partId,
+    });
+  }
+  if (!hasSuperweaponCradle(state, state.superweapon.cradleSystemId ?? state.stronghold)) {
+    const cradle = devForceBuildSuperweaponCradle(state, state.stronghold);
+    if (!cradle.ok) return cradle;
+  }
+  ensureResearchState(state);
+  state.credits = Math.max(state.credits, 999999);
+  state.solarii = Math.max(state.solarii ?? 0, 999);
+  for (const partId of SUPERWEAPON_PART_IDS) {
+    const techId = SW_PART_TECH[partId];
+    if (techId && !isTechUnlocked(state, techId)) {
+      state.research.unlocked.push(techId);
+      applyTechEffect(state, techId);
+    }
+    if (state.superweapon.installedParts?.[partId]) continue;
+    const res = installSuperweaponPart(state, partId, { instant: false });
+    if (res.ok) return ok({ partId, buildJob: res.buildJob, timed: true });
+  }
+  return ok({ skipped: true, reason: 'All berth parts already installed' });
+}
+
+export function devForceSuperweaponOnline(state) {
+  const parts = devInstallAllSuperweaponParts(state);
+  if (!parts.ok) return parts;
+  ensureResearchState(state);
+  for (const techId of ['sw_live_fire', 'sw_novacula_online']) {
+    if (!isTechUnlocked(state, techId)) {
+      state.research.unlocked.push(techId);
+      applyTechEffect(state, techId);
+    }
+  }
+  ensureSuperweapon(state);
+  state.superweapon.liveFireComplete = true;
+  state.superweapon.online = true;
+  state.superweapon.cooldownUntil = 0;
+  state.superweapon.jumpCooldownUntil = 0;
+  return ok({ online: true, novaculaOnline: true, helioclastOnline: true, liveFireComplete: true });
+}
+
+export function devMarkHelioclastLiveFire(state) {
+  ensureSuperweapon(state);
+  state.superweapon.liveFireComplete = true;
+  return ok({ liveFireComplete: true });
+}
+
+export function devClearSuperweaponCooldown(state) {
+  ensureSuperweapon(state);
+  state.superweapon.cooldownUntil = 0;
+  state.superweapon.jumpCooldownUntil = 0;
+  if (state.superweapon.fireSequence) state.superweapon.fireSequence = null;
+  return ok({ cleared: true });
 }
 
 export function devTeleportPirate(state, systemId, fleetIndex = 0) {
@@ -1303,6 +1415,20 @@ export function devAction(state, action, params = {}) {
       return devSetCompletedDysons(state, params.count ?? 3);
     case 'buildSuperweaponCradle':
       return devForceBuildSuperweaponCradle(state, params.systemId ?? null);
+    case 'unlockSuperweaponMilestone':
+      return devUnlockSuperweaponMilestone(state);
+    case 'installAllSuperweaponParts':
+      return devInstallAllSuperweaponParts(state);
+    case 'forceSuperweaponOnline':
+      return devForceSuperweaponOnline(state);
+    case 'markHelioclastLiveFire':
+      return devMarkHelioclastLiveFire(state);
+    case 'skipHelioclastPartTimer':
+      return devSkipHelioclastPartTimer(state);
+    case 'assembleNextHelioclastPart':
+      return devAssembleNextHelioclastPart(state);
+    case 'clearSuperweaponCooldown':
+      return devClearSuperweaponCooldown(state);
     case 'superweaponCreate':
       return devSuperweaponCreate(state, params.systemId);
     case 'superweaponDestroy':

@@ -1321,3 +1321,79 @@ Never delete prior entries.
 
 ### Verification
 - Scale helper: Mk0=1 … Mk5=1.88; `npm run build` passes.
+
+---
+
+## Session 2026-07-16 — Helioclast siege ship + cleaner tech links
+
+**Task claimed:** Turn Helioclast into a 6-stage movable siege capital with live-fire gate and Fleet sub-tab; collapse Online/Armada fan-in into doctrine hubs.
+
+### Done
+- Tech hubs: Online ≤6 prereqs via Modes / Empire / War / Lattice-Hegemony / Sovereignty hubs; Armada split into capital/carrier/escort hubs.
+- Helioclast ship entity: stages 1–6, live-fire calibration, pose/transit, flagship follow or battle-group assign, slow lane speed (42 vs fleet 100).
+- Staged wedge siege draw + beams from ship pose; combat spawn when mobile.
+- Fleet Command sub-tabs Ships / Fleets / Helioclast; Dev Mark Live-Fire; save v23 hydrate/migrate.
+
+### Verification
+- Online prereqs = 6, no tech cycles; stage 5 blocks travel until live-fire → stage 6 mobile; save roundtrip + v22→v23 migrate; `npm run build` passes.
+
+---
+
+## Session 2026-07-16 — Fix View Battle defeat toast loop
+
+**Task claimed:** Clicking View Battle flooded the screen with Battle started / Defeat toasts at 0s.
+
+### Diagnosis
+- Player-owned systems with hostiles but **no friendly combatants** still started battles.
+- View Battle promoted those empty fights to tactical; one tick later they resolved as Defeat and immediately restarted while the system stayed in view.
+
+### Done
+- `shouldBattle` now requires at least one friendly combatant (ships / flagship / hero / Helioclast / defense structures).
+- Unified Helioclast presence checks; promote refuses empty ghost fights; wipeouts with no initial friendlies ceasefire instead of defeat.
+
+### Verification
+- Empty stronghold + pirates: no battle loop; flagship + pirates: stable tactical fight; helioclast-only promote spawns the siege ship; `npm run build` passes.
+
+---
+
+## Session 2026-07-16 — Helioclast shipyard + reference siege ship
+
+**Task claimed:** Build a Helioclast shipyard first, assemble the reference wedge at the berth with timed parts, fix zoom floor, slow in-system flagship chase.
+
+### Done
+- Replaced instant cradle with drone-built `helioclast_shipyard` (save v24 migrate).
+- Timed berth `buildJob` part installs with partial silhouette layers + Fleet ETA.
+- Rewrote Canvas wedge to reference (blunt aperture bow, T-wings, spine, tower+domes); removed `Math.max(22)` zoom floor; beams from aperture.
+- In-system chase at `HELIOCLAST_SYSTEM_SPEED` instead of snap follow.
+
+### Verification
+- Instant yard → staged parts → live-fire → mobile; chase closes distance; v23 cradle migrates to shipyard; `npm run build` passes.
+
+---
+
+## Session 2026-07-16 — Detangle Helioclast tech spine
+
+**Task claimed:** Main path = construction + live-fire; strategy modes on a separate lane; cut doctrine fan-ins.
+
+### Done
+- Spine: Dyson → Frame → Power → Focus → Containment → Gate Cap → Live-Fire Protocol → Online.
+- Strategy lane (`sw_modes`): Create → Destroy → Jump → Relay → Modes Doctrine (branches from Focus).
+- Removed Online fan-in (sovereignty / empire / war / lattice hubs) and early merges into Maturity / Sector Capitals / Cradle.
+- Build stages no longer require mode parts; containment/gate install after Focus; live-fire yard test gated by `sw_live_fire`.
+
+### Verification
+- No tech cycles; Online prereqs = `sw_live_fire` only; `npm run build` passes.
+
+---
+
+## Session 2026-07-16 — Spine weaves + detangle cross-links
+
+**Task claimed:** Let certain side lines weave back into the main path for progression, and cut the spiderweb of connections.
+
+### Done
+- Weave-backs: Parallel Dock → Maturity, Trade Hub → Capitals, Research Station → Cradle (Online stays linear).
+- Trimmed long-span / multi-lane prereqs (sovereignty hub, fortress package, hero/diplomacy/wormhole flavor gates, redundant Lab II pulls).
+- Cross-lane multi-prereq nodes down substantially; lanes stay clearer within themselves.
+
+### Verification
+- No tech cycles; `npm run build` passes.

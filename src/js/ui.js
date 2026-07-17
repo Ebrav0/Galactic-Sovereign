@@ -15,6 +15,9 @@ import {
   TRADE_STATION_COST,
   RESEARCH_STATION_COST,
   RESEARCH_STATION_CAP,
+  HELIOCLAST_ID,
+  HELIOCLAST_SHIPYARD_COST,
+  HELIOCLAST_SHIPYARD_SOLARII,
 } from './constants.js';
 import {
   systemById,
@@ -88,6 +91,16 @@ import {
   superweaponDestroy,
   superweaponJump,
   superweaponSummary,
+  setHelioclastFleetMode,
+  isHelioclastMobile,
+  getHelioclastShip,
+  buildHelioclastShipyard,
+  canBuildHelioclastShipyard,
+  canSuperweaponAction,
+  takeSuperweaponResolveNotify,
+  hasHelioclastShipyard,
+  canMarkLiveFire,
+  markLiveFireComplete,
 } from './superweapon.js';
 import {
   buildHeroFlagship,
@@ -189,6 +202,31 @@ const PLANET_DOT = {
 
 function clearChildren(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+/** Unified Helioclast fire target: map selection → viewed system → optional Stronghold. */
+function getHelioclastFireTarget(ctx, state, { allowStrongholdFallback = false } = {}) {
+  const map = ctx?.getGalaxyTargetStar?.() ?? null;
+  if (map) return map;
+  const viewed = ctx?.getViewedSystemId?.() ?? null;
+  if (viewed) return viewed;
+  if (allowStrongholdFallback) return state.stronghold;
+  return null;
+}
+
+function formatSwResolveToast(note) {
+  if (!note) return null;
+  if (!note.ok) {
+    return {
+      msg: note.reason
+        ?? (note.blocked ? `${note.type} blocked` : `${note.type} failed`),
+      kind: 'error',
+    };
+  }
+  if (note.type === 'create') return { msg: 'Star created', kind: 'ok' };
+  if (note.type === 'destroy') return { msg: 'System destroyed', kind: 'ok' };
+  if (note.type === 'jump') return { msg: 'Helioclast jumped', kind: 'ok' };
+  return { msg: 'Helioclast action complete', kind: 'ok' };
 }
 
 function setProgressBar(containerId, fillId, pctId, progress, visible) {
@@ -940,12 +978,12 @@ function renderCampaignPanel(container, state, ctx = {}) {
     const skeleton = document.createElement('div');
     skeleton.className = 'panel-note';
     skeleton.textContent = sw.novaculaOnline
-      ? 'Novacula: online'
+      ? 'Helioclast: online'
       : sw.online
-        ? 'Novacula cradle: charging (modes available when installed)'
+        ? 'Helioclast shipyard: charging (modes available when assembled)'
         : sw.cradleSystemId
-          ? 'Novacula cradle: frame only — install power & focus'
-          : 'Novacula cradle: not built';
+          ? 'Helioclast berth: keel ready — assemble power & focus'
+          : 'Helioclast shipyard: not built';
     container.appendChild(skeleton);
     const partRow = document.createElement('div');
     partRow.className = 'dev-row';
@@ -972,18 +1010,30 @@ function renderCampaignPanel(container, state, ctx = {}) {
   if (sw.online) {
     const swRow = document.createElement('div');
     swRow.className = 'dev-row';
-    for (const [label, fn] of [
-      ['Create Star', () => superweaponCreate(state, state.stronghold)],
-      ['Destroy Viewed', () => superweaponDestroy(state, getViewedSystemId())],
-      ['Jump Home', () => superweaponJump(state, state.stronghold)],
+    const fireCtx = {
+      getGalaxyTargetStar: ctx.getGalaxyTargetStar,
+      getViewedSystemId: ctx.getViewedSystemId,
+    };
+    for (const [label, type, allowFallback] of [
+      ['Create Star', 'create', true],
+      ['Destroy Target', 'destroy', false],
+      ['Jump Here', 'jump', false],
     ]) {
+      const tid = getHelioclastFireTarget(fireCtx, state, { allowStrongholdFallback: allowFallback });
+      const check = tid ? canSuperweaponAction(state, type, tid) : { ok: false, reason: 'Select a target' };
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn--ghost btn--sm';
       btn.textContent = label;
+      btn.disabled = !check.ok;
+      btn.title = check.reason ?? '';
       btn.onclick = () => {
-        const res = fn();
-        toast(res.ok ? label : res.reason, res.ok ? 'ok' : 'error');
+        if (!tid) { toast('Select a target star', 'error'); return; }
+        const fn = type === 'create' ? superweaponCreate
+          : type === 'destroy' ? superweaponDestroy
+            : superweaponJump;
+        const res = fn(state, tid);
+        toast(res.ok ? (res.pending ? `${label} started…` : label) : res.reason, res.ok ? 'ok' : 'error');
       };
       swRow.appendChild(btn);
     }
@@ -1190,9 +1240,11 @@ function scoutRosterStructureSnapshot(state, selectedScoutId) {
   );
 }
 
-function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScoutId, selectedBuilderDroneId) {
+function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScoutId, selectedBuilderDroneId, fleetSubTab = 'ships') {
   const playerShips = (state.playerShips ?? []).filter((s) => s.galaxyId === state.activeGalaxyId && s.hp > 0);
+  const sw = state.superweapon;
   return JSON.stringify({
+    fleetSubTab,
     groups: battleGroupsForGalaxy(state).map((g) => ({
       id: g.id,
       ordinal: g.ordinal,
@@ -1229,6 +1281,15 @@ function fleetPanelStructureSnapshot(state, selectedBattleGroupId, selectedScout
     queuePending: empireQueueSummary(state).filter((q) => q.status === 'pending').length,
     wingHangar: state.flagship?.wing?.hangar ?? 'deployed',
     wingReady: state.flagship?.wing?.ready ?? 0,
+    helioclast: sw ? {
+      liveFire: !!sw.liveFireComplete,
+      online: !!sw.online,
+      parts: Object.keys(sw.installedParts ?? {}).sort(),
+      shipSystem: sw.ship?.systemId ?? null,
+      fleetMode: sw.ship?.fleetMode ?? 'flagship',
+      groupId: sw.ship?.battleGroupId ?? null,
+      transit: !!sw.ship?.transit,
+    } : null,
   });
 }
 
@@ -1259,7 +1320,7 @@ function updateFleetPanelLabels(state, selectedScoutId, selectedBattleGroupId, s
     hangarStatus.textContent = hangar === 'stowed' ? 'stowed in hangar'
       : hangar === 'recalling' ? 'returning to hangar'
       : hangar === 'launching' ? 'launching'
-      : 'on patrol';
+      : 'flying escort';
   }
   const hangarBtn = el('wing-hangar-btn');
   if (hangarBtn) {
@@ -1757,6 +1818,204 @@ function renderStrategicBuildButtons(container, state, systemId, planetId) {
   }
 }
 
+function renderHelioclastFleetTab(container, state, ctx) {
+  const sw = superweaponSummary(state);
+  const ship = getHelioclastShip(state);
+  const battleGroups = battleGroupsForGalaxy(state);
+  const toast = ctx.toast ?? (() => {});
+  const targetId = getHelioclastFireTarget(ctx, state, { allowStrongholdFallback: true });
+  const targetName = targetId ? (systemById(state, targetId)?.name ?? targetId) : '—';
+
+  const title = document.createElement('div');
+  title.className = 'intel-section-title';
+  title.textContent = 'Helioclast Shipyard';
+  container.appendChild(title);
+
+  const status = document.createElement('p');
+  status.className = 'panel-note';
+  const stage = sw.buildStage ?? 0;
+  const stageNames = [
+    'Empty berth — assemble keel frame',
+    'Keel frame',
+    'Power core',
+    'Focus array',
+    'Containment lattice',
+    'Gate capacitor — live-fire / Online',
+    'Focal aperture — online & mobile',
+  ];
+  const job = sw.buildProgress;
+  let statusText = `Stage ${stage}/6 · ${stageNames[stage] ?? '—'}`;
+  if (job?.partId && job.jobProgress < 1) {
+    statusText += ` · Assembling ${job.partId} (${Math.round(job.jobProgress * 100)}%, ${Math.ceil((job.remainingMs ?? 0) / 1000)}s)`;
+  }
+  statusText += (sw.liveFireComplete ? ' · Live-fire complete' : stage >= 5 ? ' · Awaiting live-fire calibration' : '')
+    + (sw.mobile ? ' · Mobile' : ' · Berth-locked');
+  status.textContent = statusText;
+  container.appendChild(status);
+
+  const checklist = document.createElement('p');
+  checklist.className = 'panel-note panel-note--muted';
+  const hasYard = !!sw.cradleSystemId || hasHelioclastShipyard(state, state.stronghold);
+  checklist.textContent = [
+    hasYard ? '✓ Yard' : '○ Yard',
+    stage >= 5 ? '✓ Construction' : '○ Construction',
+    sw.liveFireComplete ? '✓ Live-fire' : '○ Live-fire',
+    sw.novaculaOnline ? '✓ Online tech' : '○ Online tech',
+    sw.mobile ? '✓ Mobile' : '○ Mobile',
+  ].join(' · ');
+  container.appendChild(checklist);
+
+  if (!hasYard) {
+    const tip = document.createElement('p');
+    tip.className = 'panel-note';
+    tip.textContent = 'Build the Helioclast Shipyard at your Stronghold (drones assemble the berth).';
+    container.appendChild(tip);
+    const buildBtn = document.createElement('button');
+    buildBtn.type = 'button';
+    buildBtn.className = 'btn btn--primary btn--sm';
+    buildBtn.textContent = `Build Helioclast Shipyard (${HELIOCLAST_SHIPYARD_COST}¢ / ${HELIOCLAST_SHIPYARD_SOLARII} Solarii)`;
+    const can = canBuildHelioclastShipyard(state, state.stronghold);
+    buildBtn.disabled = !can.ok;
+    buildBtn.title = can.ok ? 'Queue berth construction at Stronghold' : (can.reason ?? '');
+    buildBtn.onclick = () => {
+      const res = buildHelioclastShipyard(state, state.stronghold);
+      toast(
+        res.ok
+          ? (res.instant ? 'Helioclast shipyard online' : 'Helioclast shipyard construction started')
+          : res.reason,
+        res.ok ? 'ok' : 'error',
+      );
+    };
+    container.appendChild(buildBtn);
+  }
+
+  if (ship) {
+    const loc = document.createElement('p');
+    loc.className = 'panel-note panel-note--muted';
+    loc.textContent = ship.transit
+      ? `In transit → ${ship.transit.path?.[ship.transit.path.length - 1] ?? '?'}`
+      : `At ${systemById(state, ship.systemId)?.name ?? ship.systemId ?? 'berth'}`
+        + ` · HP ${Math.floor(ship.hp)}/${Math.floor(ship.maxHp ?? ship.hp)}`
+        + ` · Mode ${ship.fleetMode === 'group' ? `fleet ${ship.battleGroupId}` : 'with flagship'}`;
+    container.appendChild(loc);
+  }
+
+  if (hasYard) {
+    const partRow = document.createElement('div');
+    partRow.className = 'dev-row';
+    for (const part of sw.partStatus ?? []) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--xs';
+      if (part.installed) {
+        btn.textContent = `✓ ${part.label}`;
+        btn.disabled = true;
+      } else if (part.assembling) {
+        btn.textContent = `… ${part.label}`;
+        btn.disabled = true;
+      } else {
+        btn.textContent = part.canInstall ? `Assemble ${part.label}` : part.label;
+        btn.disabled = !part.canInstall;
+      }
+      btn.onclick = () => {
+        const res = installSuperweaponPart(state, part.id);
+        toast(res.ok ? (res.instant ? `Installed ${part.label}` : `Assembling ${part.label}…`) : res.reason, res.ok ? 'ok' : 'error');
+      };
+      partRow.appendChild(btn);
+    }
+    container.appendChild(partRow);
+  }
+
+  if (stage >= 5 && !sw.liveFireComplete) {
+    const tip = document.createElement('p');
+    tip.className = 'panel-note';
+    const liveCheck = canMarkLiveFire(state);
+    tip.textContent = liveCheck.ok
+      ? 'Live-fire calibration ready — run the berth test (or fire Create / Destroy once).'
+      : `Live-fire locked: ${liveCheck.reason}`;
+    container.appendChild(tip);
+    if (liveCheck.ok) {
+      const calBtn = document.createElement('button');
+      calBtn.type = 'button';
+      calBtn.className = 'btn btn--primary';
+      calBtn.textContent = 'Run live-fire test';
+      calBtn.onclick = () => {
+        const res = markLiveFireComplete(state);
+        toast(res.ok ? 'Live-fire calibration complete' : res.reason, res.ok ? 'ok' : 'error');
+      };
+      container.appendChild(calBtn);
+    }
+  }
+
+  const targetNote = document.createElement('p');
+  targetNote.className = 'panel-note';
+  targetNote.textContent = `Fire target: ${targetName} (galaxy map selection preferred)`;
+  container.appendChild(targetNote);
+
+  const fireRow = document.createElement('div');
+  fireRow.className = 'dev-row';
+  const actions = [
+    ['Create', 'create', true],
+    ['Destroy', 'destroy', false],
+    ['Jump', 'jump', false],
+  ];
+  for (const [label, type, allowFallback] of actions) {
+    const tid = getHelioclastFireTarget(ctx, state, { allowStrongholdFallback: allowFallback });
+    const check = tid ? canSuperweaponAction(state, type, tid) : { ok: false, reason: 'Select a target star' };
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--sm';
+    const cost = sw.costs?.[type] ?? '?';
+    btn.textContent = `${label} (${cost}◎)`;
+    btn.disabled = !check.ok;
+    btn.title = check.ok
+      ? `${label} → ${systemById(state, tid)?.name ?? tid}`
+      : (check.reason ?? '');
+    btn.onclick = () => {
+      if (!tid) { toast('Select a target star on the galaxy map', 'error'); return; }
+      const fn = type === 'create' ? superweaponCreate
+        : type === 'destroy' ? superweaponDestroy
+          : superweaponJump;
+      const res = fn(state, tid);
+      toast(res.ok ? (res.pending ? `${label} sequence started…` : label) : res.reason, res.ok ? 'ok' : 'error');
+    };
+    fireRow.appendChild(btn);
+  }
+  container.appendChild(fireRow);
+
+  if (isHelioclastMobile(state)) {
+    const modeTitle = document.createElement('div');
+    modeTitle.className = 'intel-section-title';
+    modeTitle.textContent = 'Assignment';
+    container.appendChild(modeTitle);
+
+    const modeRow = document.createElement('div');
+    modeRow.className = 'dev-row';
+    const withFlag = document.createElement('button');
+    withFlag.type = 'button';
+    withFlag.className = 'btn btn--ghost btn--sm';
+    withFlag.textContent = 'Keep with Flagship';
+    withFlag.onclick = () => {
+      const res = setHelioclastFleetMode(state, 'flagship');
+      toast(res.ok ? 'Helioclast slowly escorts the flagship' : res.reason, res.ok ? 'ok' : 'error');
+    };
+    modeRow.appendChild(withFlag);
+
+    for (const group of battleGroups) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--xs';
+      btn.textContent = `Assign · Fleet ${group.ordinal}`;
+      btn.onclick = () => {
+        const res = setHelioclastFleetMode(state, 'group', group.id);
+        toast(res.ok ? `Assigned to Fleet ${group.ordinal}` : res.reason, res.ok ? 'ok' : 'error');
+      };
+      modeRow.appendChild(btn);
+    }
+    container.appendChild(modeRow);
+  }
+}
+
 function renderFleetPanel(container, state, ctx) {
   const {
     getSelectedScoutId,
@@ -1771,8 +2030,36 @@ function renderFleetPanel(container, state, ctx) {
     cancelBuilderDrone,
     openBuilderDronePlanner,
     doToggleWingHangar,
+    getFleetSubTab,
+    setFleetSubTab,
+    getViewedSystemId,
   } = ctx;
   clearChildren(container);
+  const subTab = getFleetSubTab?.() ?? 'ships';
+
+  const tabBar = document.createElement('div');
+  tabBar.className = 'fleet-subtabs';
+  for (const [id, label] of [
+    ['ships', 'Ships'],
+    ['fleets', 'Fleets'],
+    ['helioclast', 'Helioclast'],
+  ]) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `btn btn--ghost btn--xs${subTab === id ? ' btn--active' : ''}`;
+    btn.textContent = label;
+    btn.onclick = () => {
+      setFleetSubTab?.(id);
+    };
+    tabBar.appendChild(btn);
+  }
+  container.appendChild(tabBar);
+
+  if (subTab === 'helioclast') {
+    renderHelioclastFleetTab(container, state, ctx);
+    return;
+  }
+
   const galaxy = getGraph(state);
   const selectedScoutId = getSelectedScoutId();
   const selectedBuilderDroneId = getSelectedBuilderDroneId?.() ?? null;
@@ -1800,6 +2087,9 @@ function renderFleetPanel(container, state, ctx) {
   `;
   container.appendChild(stats);
 
+  if (subTab === 'fleets') {
+    // Fleets tab focuses on battle groups (below); skip ship roster extras.
+  } else {
   const wing = state.flagship?.wing;
   if (wing) {
     const hangar = wing.hangar ?? 'deployed';
@@ -1821,7 +2111,7 @@ function renderFleetPanel(container, state, ctx) {
     const hangarStatus = hangar === 'stowed' ? 'stowed in hangar'
       : hangar === 'recalling' ? 'returning to hangar'
       : hangar === 'launching' ? 'launching'
-      : 'on patrol';
+      : 'flying escort';
     wingSub.textContent = hangarStatus;
     wingMain.append(wingName, wingSub);
     wingRow.appendChild(wingMain);
@@ -1895,7 +2185,11 @@ function renderFleetPanel(container, state, ctx) {
     }
     container.appendChild(droneList);
   }
+  } // end ships-only extras
 
+  if (subTab === 'ships') {
+    // Ships tab: skip battle-group management (use Fleets sub-tab).
+  } else {
   const groupsTitle = document.createElement('div');
   groupsTitle.className = 'intel-section-title fleet-section-header';
   groupsTitle.textContent = 'Battle Groups';
@@ -1990,6 +2284,18 @@ function renderFleetPanel(container, state, ctx) {
       const list = document.createElement('div');
       list.className = 'list fleet-ship-list';
       for (const shipId of group.shipIds) {
+        if (shipId === HELIOCLAST_ID) {
+          const heli = getHelioclastShip(state);
+          if (!heli || heli.hp <= 0) continue;
+          const row = document.createElement('div');
+          row.className = 'list-row';
+          const main = document.createElement('span');
+          main.className = 'list-row__main';
+          main.innerHTML = `<div class="list-row__title">Helioclast</div><div class="list-row__sub">${heli.transit ? 'in transit' : systemById(state, heli.systemId)?.name ?? heli.systemId} · HP ${Math.floor(heli.hp)}</div>`;
+          row.appendChild(main);
+          list.appendChild(row);
+          continue;
+        }
         const ship = playerShips.find((s) => s.id === shipId);
         if (ship) list.appendChild(renderFleetShipRow(ship, galaxy, state));
       }
@@ -2039,6 +2345,16 @@ function renderFleetPanel(container, state, ctx) {
     block.appendChild(anchorRow);
 
     container.appendChild(block);
+  }
+  } // end fleets-only battle groups
+
+  if (subTab === 'fleets') {
+    const fleetHint = document.createElement('p');
+    fleetHint.className = 'panel-note panel-note--muted';
+    fleetHint.style.marginTop = '8px';
+    fleetHint.textContent = 'Tab+click a star to dispatch the selected fleet. Assign the Helioclast from the Helioclast tab.';
+    container.appendChild(fleetHint);
+    return;
   }
 
   const heroes = heroFlagshipsSummary(state);
@@ -2646,6 +2962,7 @@ export function initUi(ctx) {
 
   let activeBriefingId = null;
   let briefingWasPaused = null;
+  let fleetSubTab = 'ships';
 
   function closeFieldManualBriefing({ acknowledge = true } = {}) {
     const id = activeBriefingId;
@@ -3385,21 +3702,31 @@ export function initUi(ctx) {
 
   el('sw-create-btn')?.addEventListener('click', () => {
     const st = getState();
-    const anchor = getGalaxyTargetStar?.() ?? st.stronghold;
+    const anchor = getHelioclastFireTarget(
+      { getGalaxyTargetStar, getViewedSystemId },
+      st,
+      { allowStrongholdFallback: true },
+    );
     const res = superweaponCreate(st, anchor);
-    toast(res.ok ? 'Star created' : res.reason, res.ok ? 'ok' : 'error');
+    toast(res.ok ? (res.pending ? 'Create sequence started…' : 'Star created') : res.reason, res.ok ? 'ok' : 'error');
   });
   el('sw-destroy-btn')?.addEventListener('click', () => {
-    const target = getGalaxyTargetStar?.();
+    const target = getHelioclastFireTarget(
+      { getGalaxyTargetStar, getViewedSystemId },
+      getState(),
+    );
     if (!target) { toast('Click a target star on the map', 'error'); return; }
     const res = superweaponDestroy(getState(), target);
-    toast(res.ok ? 'System destroyed' : res.reason, res.ok ? 'ok' : 'error');
+    toast(res.ok ? (res.pending ? 'Destroy sequence started…' : 'System destroyed') : res.reason, res.ok ? 'ok' : 'error');
   });
   el('sw-jump-btn')?.addEventListener('click', () => {
-    const target = getGalaxyTargetStar?.();
+    const target = getHelioclastFireTarget(
+      { getGalaxyTargetStar, getViewedSystemId },
+      getState(),
+    );
     if (!target) { toast('Click a target star on the map', 'error'); return; }
     const res = superweaponJump(getState(), target);
-    toast(res.ok ? 'Jump complete' : res.reason, res.ok ? 'ok' : 'error');
+    toast(res.ok ? (res.pending ? 'Jump sequence started…' : 'Helioclast jumped') : res.reason, res.ok ? 'ok' : 'error');
   });
 
   const newGameModal = el('new-game-modal');
@@ -3639,6 +3966,11 @@ export function initUi(ctx) {
     el('hud')?.classList.toggle('hud--boot', phase !== 'playing');
 
     const state = getState();
+    const resolveNote = takeSuperweaponResolveNotify(state);
+    if (resolveNote) {
+      const formatted = formatSwResolveToast(resolveNote);
+      if (formatted) toast(formatted.msg, formatted.kind);
+    }
     const selection = getSelection();
     const view = getView();
     const viewedSystemId = getViewedSystemId();
@@ -3778,6 +4110,9 @@ export function initUi(ctx) {
           openFieldManualBriefing,
           doStartNewGame,
           tutorialAccess,
+          getGalaxyTargetStar,
+          getViewedSystemId,
+          toast,
         });
       }
     } else {
@@ -3793,6 +4128,7 @@ export function initUi(ctx) {
         getSelectedBattleGroupId?.() ?? null,
         selectedScoutId,
         selectedBuilderDroneId,
+        fleetSubTab,
       );
       if (fleetSnap !== uiSnapshots.fleetPanel) {
         uiSnapshots.fleetPanel = fleetSnap;
@@ -3809,6 +4145,14 @@ export function initUi(ctx) {
           cancelBuilderDrone,
           openBuilderDronePlanner: (systemId) => openDronePlanner(systemId, { auto: false }),
           doToggleWingHangar,
+          getFleetSubTab: () => fleetSubTab,
+          setFleetSubTab: (id) => {
+            fleetSubTab = id;
+            uiSnapshots.fleetPanel = '';
+          },
+          getViewedSystemId,
+          getGalaxyTargetStar,
+          toast,
         });
       } else {
         updateFleetPanelLabels(
@@ -3902,21 +4246,34 @@ export function initUi(ctx) {
     if (view === 'galaxy' && ms.superweaponUnlocked) {
       swGalaxyPanel?.classList.remove('hidden');
       const sw = superweaponSummary(state);
-      const targetId = getGalaxyTargetStar?.() ?? null;
+      const fireCtx = { getGalaxyTargetStar, getViewedSystemId };
+      const targetId = getHelioclastFireTarget(fireCtx, state, { allowStrongholdFallback: true });
       const targetName = targetId ? (systemById(state, targetId)?.name ?? targetId) : '—';
+      const seq = sw.fireSequence;
+      const phaseColor = seq?.type === 'create' ? '#66ffaa'
+        : seq?.type === 'jump' ? '#aa88ff'
+          : seq?.type === 'destroy' ? '#ff6688' : '#88e8ff';
+      const createCheck = targetId ? canSuperweaponAction(state, 'create', targetId) : { ok: false };
+      const destroyCheck = targetId ? canSuperweaponAction(state, 'destroy', targetId) : { ok: false };
+      const jumpCheck = targetId ? canSuperweaponAction(state, 'jump', targetId) : { ok: false };
       el('superweapon-galaxy-body').innerHTML =
         `<p class="panel-note">Target: <strong>${targetName}</strong></p>`
-        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'} · CD ${Math.ceil(sw.cooldownMs / 1000)}s`
+        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'}`
+        + ` · CD ${Math.ceil(sw.cooldownMs / 1000)}s`
+        + ` · Jump CD ${Math.ceil(sw.jumpCooldownMs / 1000)}s`
         + (sw.sovereignProtocol ? ' · Sovereign Protocol' : '')
         + `</p>`
-        + (sw.fireSequence
-          ? `<p class="panel-note">Firing: <strong>${sw.fireSequence.type}</strong> · ${sw.fireSequence.phase}`
-            + ` · ${Math.max(0, Math.ceil((sw.fireSequence.totalMs - (state.time - sw.fireSequence.startedAt)) / 1000))}s</p>`
-          : `<p class="panel-note panel-note--muted">Create ${sw.costs?.create ?? 25} / Destroy ${sw.costs?.destroy ?? 30} / Jump ${sw.costs?.jump ?? 15} Solarii</p>`);
-      const busy = !!sw.fireSequence;
-      el('sw-create-btn') && (el('sw-create-btn').disabled = busy || !sw.online);
-      el('sw-destroy-btn') && (el('sw-destroy-btn').disabled = busy || !sw.online);
-      el('sw-jump-btn') && (el('sw-jump-btn').disabled = busy || !sw.online);
+        + (seq
+          ? `<p class="panel-note" style="color:${phaseColor}">Firing: <strong>${seq.type}</strong> · ${seq.phase}`
+            + ` · ${Math.max(0, Math.ceil((seq.totalMs - (state.time - seq.startedAt)) / 1000))}s`
+            + ` · ${Math.round((seq.totalProgress ?? 0) * 100)}%</p>`
+          : `<p class="panel-note panel-note--muted">Create ${sw.costs?.create ?? 25} / Destroy ${sw.costs?.destroy ?? 30} / Jump ${sw.costs?.jump ?? 15} Solarii · Create needs adjacent anchor</p>`);
+      el('sw-create-btn') && (el('sw-create-btn').disabled = !createCheck.ok);
+      el('sw-create-btn') && (el('sw-create-btn').title = createCheck.reason ?? '');
+      el('sw-destroy-btn') && (el('sw-destroy-btn').disabled = !destroyCheck.ok);
+      el('sw-destroy-btn') && (el('sw-destroy-btn').title = destroyCheck.reason ?? '');
+      el('sw-jump-btn') && (el('sw-jump-btn').disabled = !jumpCheck.ok);
+      el('sw-jump-btn') && (el('sw-jump-btn').title = jumpCheck.reason ?? '');
     } else {
       swGalaxyPanel?.classList.add('hidden');
     }
