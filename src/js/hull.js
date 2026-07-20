@@ -367,7 +367,10 @@ function targetClass(target) {
   if (!target) return 'capital';
   if (CARRIER_WING_HULLS.includes(target.hull) || target.isWing) return 'fighter';
   if (target.isStructure || target.structureType) return 'structure';
-  if (['cruiser', 'battleship', 'dreadnought', 'light_carrier', 'fleet_carrier', 'super_carrier', 'hero_flagship', 'flagship'].includes(target.hull)) {
+  if (target.isCapital || [
+    'cruiser', 'battleship', 'dreadnought', 'light_carrier', 'fleet_carrier',
+    'super_carrier', 'hero_flagship', 'flagship', 'helioclast',
+  ].includes(target.hull)) {
     return 'capital';
   }
   return 'ship';

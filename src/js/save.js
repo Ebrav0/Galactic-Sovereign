@@ -41,7 +41,7 @@ import { createSolCommanderState } from './sol-commander.js';
 import { allTechNodes } from './tech-web.js';
 import { ensureBulkProductionState } from './bulk-production.js';
 import { ensureStrategicOrdersState } from './strategic-operations.js';
-import { ensureDiplomacy } from './diplomacy.js';
+import { ensureDiplomacy, previewProposal } from './diplomacy.js';
 import { ensureCombatSettings } from './combat-autonomy.js';
 import { createTutorialCampaignState } from './tutorial-access.js';
 
@@ -52,6 +52,8 @@ const CREDENTIAL_VALUE_RE = /\b(?:sk|sess)-[A-Za-z0-9_-]{12,}\b|\bBearer\s+[A-Za
 
 function persistenceReplacer(key, value) {
   if (CREDENTIAL_FIELD_RE.test(key)) return undefined;
+  // Tactical particles and camera cues are session-local presentation state.
+  if (key === 'fxEvents') return undefined;
   if (typeof value === 'string') return value.replace(CREDENTIAL_VALUE_RE, '[REDACTED CREDENTIAL]');
   return value;
 }
@@ -120,6 +122,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 21) e = migrateV21toV22(e);
   if (e.saveVersion === 22) e = migrateV22toV23(e);
   if (e.saveVersion === 23) e = migrateV23toV24(e);
+  if (e.saveVersion === 24) e = migrateV24toV25(e);
   return e;
 }
 
@@ -932,7 +935,8 @@ export function initV16State(state) {
   state.diplomacy = state.diplomacy && typeof state.diplomacy === 'object'
     ? state.diplomacy
     : { relations: {} };
-  state.diplomacy.version = 2;
+  state.diplomacy.version = Math.max(2, Number(state.diplomacy.version ?? 2));
+  state.diplomacy.schemaVersion = Math.max(2, Number(state.diplomacy.schemaVersion ?? state.diplomacy.version));
   state.diplomacy.relations ??= {};
   state.diplomacy.contacts ??= {};
   state.diplomacy.proposals = Array.isArray(state.diplomacy.proposals) ? state.diplomacy.proposals : [];
@@ -1310,6 +1314,53 @@ function migrateV23toV24(envelope) {
   };
 }
 
+export function initV25State(state) {
+  const diplomacy = ensureDiplomacy(state);
+  const actors = new Set(['player', ...(state.factions?.list ?? []).map((faction) => faction.id)]);
+  const validTerms = new Set([
+    'resource', 'agreement', 'system_transfer', 'tribute', 'claim', 'end_war', 'join_war',
+    'sanction', 'lift_sanction', 'favor', 'helioclast_commitment', 'credits', 'solarii', 'treaty',
+  ]);
+  for (const proposal of diplomacy.proposals) {
+    if (proposal.status !== 'pending') continue;
+    const malformed = !actors.has(proposal.from) || !actors.has(proposal.to)
+      || !Array.isArray(proposal.terms) || !proposal.terms.length
+      || proposal.terms.some((term) => !term || !validTerms.has(term.type));
+    const invalid = malformed || !previewProposal(state, proposal, { omniscient: true }).ok;
+    if (invalid) {
+      proposal.status = 'expired';
+      proposal.resolvedAt = state.time ?? 0;
+      proposal.reason = 'migration_invalid_legacy_terms';
+      proposal.migrationReason = 'The legacy proposal contained actors or terms that diplomacy v3 cannot enforce atomically.';
+    }
+  }
+  for (const agreement of diplomacy.agreements) {
+    if (agreement.status !== 'active' || agreement.expiresAt != null) continue;
+    if (agreement.type === 'ceasefire') agreement.expiresAt = agreement.startedAt + 60000;
+    if (agreement.type === 'truce') agreement.expiresAt = agreement.startedAt + 180000;
+    agreement.v3Enforceable = true;
+  }
+  for (const war of diplomacy.wars) {
+    war.escalation ??= 'limited';
+    war.escalationAt ??= war.startedAt ?? state.time ?? 0;
+    war.legitimacy ??= 50;
+  }
+  diplomacy.version = 3;
+  diplomacy.schemaVersion = 3;
+  return state;
+}
+
+function migrateV24toV25(envelope) {
+  const state = initV25State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 25,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // v21 -> v22 (Dyson→Novacula spine tech tree + superweapon skeleton parts).
 function migrateV21toV22(envelope) {
   const state = initV22State(envelope.state);
@@ -1352,6 +1403,7 @@ export function deserialize(envelopeJson) {
   initV22State(envelope.state);
   initV23State(envelope.state);
   initV24State(envelope.state);
+  initV25State(envelope.state);
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;

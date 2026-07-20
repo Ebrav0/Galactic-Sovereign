@@ -58,6 +58,7 @@ export function attachInput(canvas, ctx) {
     onCloseSidePanel,
     onGalaxyStarClick,
     onBuilderDroneDeployClick,
+    onCameraIntent,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -159,6 +160,7 @@ export function attachInput(canvas, ctx) {
   });
 
   function beginPan() {
+    onCameraIntent?.();
     dragMode = 'pan';
     dragging = true;
     canvas.classList.add('panning');
@@ -370,6 +372,7 @@ export function attachInput(canvas, ctx) {
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    onCameraIntent?.();
     const cam = activeCamera();
     const clamp = getView() === 'galaxy' ? clampGalaxyZoom : clampZoom;
     const factor = e.deltaY < 0 ? CAMERA_ZOOM_STEP : 1 / CAMERA_ZOOM_STEP;

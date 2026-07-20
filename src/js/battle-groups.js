@@ -5,6 +5,8 @@ import { findPlayerShip, orderShipTravel, playerShipStatus } from './fleets.js';
 import { findHeroFlagship } from './hero-flagships.js';
 import { shipPower } from './fleet-power.js';
 import { systemById } from './state.js';
+import { HELIOCLAST_ID } from './constants.js';
+import { getHelioclastShip, isHelioclastMobile, orderHelioclastTravel } from './superweapon.js';
 
 let nextBattleGroupId = 1;
 
@@ -157,11 +159,41 @@ export function createBattleGroup(state) {
 export function deleteBattleGroup(state, groupId) {
   const idx = ensureBattleGroups(state).findIndex((g) => g.id === groupId);
   if (idx < 0) return { ok: false, reason: 'No such fleet' };
-  ensureBattleGroups(state).splice(idx, 1);
+  const [removed] = ensureBattleGroups(state).splice(idx, 1);
+  if ((removed.shipIds ?? []).includes(HELIOCLAST_ID)) {
+    const heli = getHelioclastShip(state);
+    if (heli) {
+      heli.fleetMode = 'flagship';
+      heli.battleGroupId = null;
+    }
+  }
   return { ok: true };
 }
 
 export function assignShipToGroup(state, shipId, groupId) {
+  if (shipId === HELIOCLAST_ID) {
+    const heli = getHelioclastShip(state);
+    if (!heli || !isHelioclastMobile(state)) {
+      return { ok: false, reason: 'Helioclast is not yet mobile' };
+    }
+    if (groupId == null) {
+      removeShipFromAllGroups(state, shipId);
+      heli.fleetMode = 'flagship';
+      heli.battleGroupId = null;
+      return { ok: true, groupId: null };
+    }
+    const group = findBattleGroup(state, groupId);
+    if (!group) return { ok: false, reason: 'No such fleet' };
+    if (group.galaxyId !== state.activeGalaxyId) {
+      return { ok: false, reason: 'Fleet not in active galaxy' };
+    }
+    removeShipFromAllGroups(state, shipId, groupId);
+    if (!group.shipIds.includes(shipId)) group.shipIds.push(shipId);
+    heli.fleetMode = 'group';
+    heli.battleGroupId = group.id;
+    return { ok: true, groupId: group.id };
+  }
+
   const ship = findPlayerShip(state, shipId);
   if (!ship) return { ok: false, reason: 'No such ship' };
   if (ship.galaxyId !== state.activeGalaxyId) {
@@ -189,6 +221,11 @@ export function shipsInBattleGroup(state, groupId) {
   if (!group) return [];
   const ships = [];
   for (const shipId of group.shipIds) {
+    if (shipId === HELIOCLAST_ID) {
+      const heli = getHelioclastShip(state);
+      if (heli && heli.hp > 0 && heli.galaxyId === group.galaxyId) ships.push(heli);
+      continue;
+    }
     const ship = findPlayerShip(state, shipId);
     if (ship && ship.galaxyId === group.galaxyId && ship.hp > 0) ships.push(ship);
   }
@@ -230,8 +267,19 @@ export function pruneBattleGroups(state) {
   const liveIds = new Set(
     (state.playerShips ?? []).filter((s) => s.hp > 0).map((s) => s.id),
   );
+  if (isHelioclastMobile(state) && (getHelioclastShip(state)?.hp ?? 0) > 0) {
+    liveIds.add(HELIOCLAST_ID);
+  }
   for (const group of ensureBattleGroups(state)) {
     group.shipIds = group.shipIds.filter((id) => liveIds.has(id));
+  }
+  const heli = state.superweapon?.ship;
+  if (heli?.fleetMode === 'group') {
+    const group = findBattleGroup(state, heli.battleGroupId);
+    if (!group || !(group.shipIds ?? []).includes(HELIOCLAST_ID)) {
+      heli.fleetMode = 'flagship';
+      heli.battleGroupId = null;
+    }
   }
 }
 
@@ -249,7 +297,9 @@ export function orderBattleGroupTravel(state, groupId, targetId) {
   const reasons = [];
 
   for (const ship of ships) {
-    const res = orderShipTravel(state, ship.id, targetId);
+    const res = ship.id === HELIOCLAST_ID
+      ? orderHelioclastTravel(state, targetId)
+      : orderShipTravel(state, ship.id, targetId);
     if (res.ok) {
       dispatched++;
     } else {

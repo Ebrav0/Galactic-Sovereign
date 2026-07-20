@@ -134,6 +134,12 @@ export function autonomousTargetClass(state, battle, unit, hostiles = []) {
     return settings.fleetPriority;
   }
 
+  // Flagship hangar escorts protect the capital — fighters first, then any nearby ship.
+  if (unit?.isWing && String(unit.parentCarrierId ?? '') === 'flagship') {
+    if (hasTargetClass(hostiles, 'fighter')) return 'fighter';
+    return null;
+  }
+
   // Bombers dive capitals, then carriers — especially under carrier_strike.
   if (unit?.hull === 'bomber') {
     if (hasTargetClass(hostiles, 'capital')) return 'capital';
@@ -143,6 +149,12 @@ export function autonomousTargetClass(state, battle, unit, hostiles = []) {
 
   // Interceptors screen hostile strike craft first (bombers preferred in order pick).
   if (unit?.hull === 'interceptor' && hasTargetClass(hostiles, 'fighter')) return 'fighter';
+
+  // Generic fighters dogfight other wings when any are on the board.
+  if ((unit?.hull === 'fighter' || unit?.hull === 'heavy_fighter')
+    && hasTargetClass(hostiles, 'fighter')) {
+    return 'fighter';
+  }
 
   const preferred = doctrinePolicy(doctrine).defaultTargetClass;
   if (preferred && hasTargetClass(hostiles, preferred)) return preferred;
@@ -159,11 +171,28 @@ export function autonomousTargetOrder(state, battle, unit, hostiles = []) {
   let candidates = hostiles
     .filter((target) => target?.hp > 0 && !target.escaped && !target.recovered
       && (!targetClass || classifyCombatTarget(target) === targetClass));
-  if (unit?.hull === 'interceptor') {
+  const isFlagshipEscort = unit?.isWing && String(unit.parentCarrierId ?? '') === 'flagship';
+  if (isFlagshipEscort) {
+    candidates = candidates.slice().sort((a, b) => {
+      const aFighter = classifyCombatTarget(a) === 'fighter' ? 0 : 1;
+      const bFighter = classifyCombatTarget(b) === 'fighter' ? 0 : 1;
+      const aDist = Math.hypot(a.x - unit.x, a.y - unit.y);
+      const bDist = Math.hypot(b.x - unit.x, b.y - unit.y);
+      return aFighter - bFighter || aDist - bDist || String(a.id).localeCompare(String(b.id));
+    });
+  } else if (unit?.hull === 'interceptor') {
     candidates = candidates.slice().sort((a, b) => {
       const aBomber = a.hull === 'bomber' ? 0 : 1;
       const bBomber = b.hull === 'bomber' ? 0 : 1;
-      return aBomber - bBomber || String(a.id).localeCompare(String(b.id));
+      const aDist = Math.hypot(a.x - unit.x, a.y - unit.y);
+      const bDist = Math.hypot(b.x - unit.x, b.y - unit.y);
+      return aBomber - bBomber || aDist - bDist || String(a.id).localeCompare(String(b.id));
+    });
+  } else if (unit?.hull === 'fighter' || unit?.hull === 'heavy_fighter') {
+    candidates = candidates.slice().sort((a, b) => {
+      const aDist = Math.hypot(a.x - unit.x, a.y - unit.y);
+      const bDist = Math.hypot(b.x - unit.x, b.y - unit.y);
+      return aDist - bDist || String(a.id).localeCompare(String(b.id));
     });
   } else if (unit?.hull === 'bomber' && normalizeDoctrine(battle?.doctrine ?? state?.combatDoctrine) === 'carrier_strike') {
     candidates = candidates.slice().sort((a, b) => {

@@ -10,6 +10,115 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-20 — Dyson cinematic render-lag fix
+
+**Task claimed:** Fix the lag introduced by the mobile crackling Dyson-star visual update.
+
+### Diagnosis
+- Same-browser Canvas instrumentation measured a completed tier-8 Dyson at about 847 strokes, 587 fills, and 369 save/restore pairs per frame, versus roughly 104 strokes, 167 fills, and 63 save/restore pairs without the sphere.
+- The largest hot spot was the geodesic cage drawing every edge, energy conduit, node body, and node glow as an independent operation; collector panels and swarm craft also repeated individual context transforms.
+- Repeated `shadowBlur` kernels on every rapidly changing corona spark, main bolt, branch, and contact flash compounded the crackle cost.
+
+### Done
+- Batched geodesic struts and animated conduits into three depth groups, preserving front/back depth shading while replacing hundreds of individual strokes with six grouped passes.
+- Batched cage nodes and traveling power packets into grouped paths, reducing per-node fill and shadow operations while retaining powered node pulses.
+- Batched orbital collector panels, panel-cell dividers, and the moving collector swarm into shared depth paths instead of per-object save/rotate/fill/stroke calls.
+- Removed repeated crackle shadow kernels; layered red/orange/white bolt widths now provide the glow at much lower cost.
+- Added `output/profile_dyson_canvas.mjs` for Canvas call-count evidence and strengthened `output/verify_dyson_render_perf.mjs` with a same-browser relative budget.
+
+### Verification
+- Final Canvas profile: about 284 strokes, 211 fills, and 96 save/restore pairs per tier-8 frame — reductions of approximately 66%, 64%, and 74% from the affected build.
+- Three relative cadence trials measured tier-8 mean overhead at 6.4%, 7.9%, and 8.9%; p95 overhead was 2.0%, 2.9%, and 10.5%. The affected build's initial sample was 22.1% mean / 46.2% p95 overhead.
+- Final `output/verify_dyson_render_perf.mjs` passes its relative budget (`meanRatio=1.097`, `p95Ratio=1.105`) with zero browser errors.
+- `output/verify_dyson_cinematic.mjs`: 11/11; visually inspected tiers 5 and 8 at two animation times after batching, confirming the cage depth, mobile swarm, and crackling discharges remain intact.
+- Required web-game client completed through the live new-campaign flow with valid state snapshots and no error artifact; latest capture inspected.
+- `npm run build` passes.
+
+### Suggested next
+- Keep new late-game Canvas effects batched by shared style/depth and avoid per-entity shadow blur inside animation-frame loops.
+
+## Session 2026-07-19 — Mobile crackling Dyson star discharges
+
+**Task claimed:** Make the Dyson-contained star feel more alive, mobile, and crackly; replace the comical smooth tendrils.
+
+### Done
+- Removed the smooth quadratic plasma tendrils and circular endpoint ornaments.
+- Replaced them with tick-quantized, jagged magnetic discharges that rebuild their geometry every 46–61 ms, producing real snapping motion instead of slow curve drift.
+- Added layered red/orange/white bolt channels, two unpredictable branch forks per major discharge, sharp multi-ray cage contact flashes, and contact points that crawl between shell locations.
+- Added numerous short-lived corona sparks around the stellar limb so the star keeps crackling even between the large cage strikes.
+- Major bolts now pulse fully in and out and reattach at different angles; tier progression still controls the number and energy of active channels.
+
+### Verification
+- `output/verify_dyson_cinematic.mjs`: 11/11 across tiers 1, 3, 5, and 8, two tier-8 animation times, screenshots, and zero browser console errors.
+- Visually compared tier 5 and two tier-8 frames; discharge geometry, active bolt count, fork direction, and contact locations all change substantially between frames, with no remaining smooth tendril loops.
+- Required web-game client completed through the live new-campaign flow with valid state snapshots and no error artifact; latest capture inspected.
+- `npm run build` passes.
+
+### Suggested next
+- Optional: a subtle electrical crackle audio layer could mirror the 46–61 ms discharge cadence if sound is added later.
+
+## Session 2026-07-19 — Angry contained-star Dyson pass
+
+**Task claimed:** Give the star more oomph inside the Dyson Sphere so it feels almost angry.
+
+### Done
+- Added tier-scaled stellar fury from the first completed shell onward: an irregular double heartbeat, bruised crimson limb, fast broken magnetic storm bands, dark convection scars, hot scar seams, and radial pressure spikes.
+- Added two-to-four animated magnetic plasma lashes that grow with Dyson tier, curve out of the photosphere, and visibly ground into the cage with glowing impact rings.
+- Added expanding compression waves that make the star throb against its containment without washing out the collector silhouette.
+- Corrected the legacy Dyson star-overlay radius to use `CELESTIAL_VISUAL_SCALE`, matching the actual rendered photosphere instead of producing a smaller visible inner disk.
+- Retuned lash reach after the scale correction so the arcs land on the cage rather than overshooting it.
+
+### Verification
+- `output/verify_dyson_cinematic.mjs`: 11/11 across tiers 1, 3, 5, and 8, two late-tier animation times, screenshots, and zero browser console errors.
+- Visually inspected tier 3 and two tier-8 animation frames; the red limb and storm scars stay attached to the full photosphere, while the animated lashes strike different cage points over time.
+- Required web-game client completed through the live new-campaign flow with valid state snapshots and no error artifact; latest capture was opened and inspected.
+- `npm run build` passes.
+
+### Suggested next
+- Optional: pair the strongest late-tier heartbeat with a restrained low-frequency audio pulse if the game gains a sound pipeline.
+
+## Session 2026-07-19 — Cinematic Dyson Sphere visual overhaul
+
+**Task claimed:** Fully enhance the Dyson Sphere so it looks substantially more cinematic, complex, and sophisticated.
+
+### Done
+- Rebuilt the tiered sphere presentation around a layered stellar-engine silhouette: slow independent collector planes, segmented solar banks, energized shell tracks, a moving collector swarm, depth-cued geodesic members, and large structural spines with powered control hubs.
+- Added live energy storytelling through traveling lattice pulses, orbital halo arcs, collector-cell shimmer, node depth and brightness variation, and a denser late-tier industrial cage.
+- Added a 2.6-second shell-completion resonance with expanding shock fronts and radial discharge rays.
+- Upgraded the completed tier-eight optics with a longer anamorphic flare, fine horizontal core, vertical diffraction spike, hot central bloom, and colored lens ghosts.
+- Corrected the geodesic cage rotation to treat `DYSON_CAGE_ROTATION_SPEED` as radians per second; it now rotates slowly and cinematically instead of multiplying the speed by milliseconds.
+- Preserved the existing eight-tier progression, construction sail visuals, gameplay state, save shape, mesh LOD threshold, and render summaries.
+
+### Verification
+- `output/verify_dyson_cinematic.mjs`: 11/11 across tiers 1, 3, 5, and 8, completion resonance, later animation state, screenshot output, and zero browser console errors.
+- Visually inspected all four tier captures plus the tier-eight completion frame at a useful gameplay zoom; early tiers remain readable and the final cage stays coherent despite its deliberately dense silhouette.
+- Required web-game client completed through the live title/new-campaign flow with valid `render_game_to_text` snapshots and no error artifact.
+- `npm run build` passes (standalone, Vite client, and Sites worker generation).
+
+### Suggested next
+- Optional: add low-frequency reactor audio and a restrained screen-space rumble during shell completion if an audio pipeline is introduced.
+
+## Session 2026-07-19 — Helioclast firing UI and VFX power pass
+
+**Task claimed:** Make the superweapon firing UI much easier to use and the firing VFX substantially more powerful and visually stunning.
+
+### Done
+- Rebuilt the galaxy Helioclast panel around an explicit target lock, location / Solarii / core readouts, three visually distinct one-click firing modes, visible disabled reasons, and a five-phase sequence progress display.
+- Added a persistent animated target reticle, wider multi-layer galaxy beam with containment rails and electrical filaments, full-frame firing cinema chrome, and a mode-aware impact flash / shock front / debris effect.
+- Added the selected Helioclast target to `render_game_to_text` so automated state matches the visible map lock.
+- Preserved target name, ownership, and galaxy coordinates through the fire sequence so a destroyed star keeps an intelligible UI label and a renderable endpoint at the exact impact tick.
+
+### Verification
+- `output/verify_superweapon_ui_vfx.mjs`: 12/12 (map target acquisition, three actions, enabled-state guidance, visible phase progress, Forge mutation, hostile Annihilate flow, deleted-target impact persistence, zero console errors).
+- `output/verify_superweapon_novacula.mjs`: 13/13 (deferred timing, no early mutation, create resolution, shield block, system-view firing cinema, zero console errors).
+- `npm run build` passes; required web-game client completed with a valid `render_game_to_text` state and no error artifact.
+- Visually inspected `01-target-and-actions.png`, `02-charge.png`, `03-impact.png`, `04-annihilation-impact.png`, the system-view Novacula fire frame, and the final client capture.
+
+### Suggested next
+- Optional: add low-frequency audio/rumble cues if a sound pipeline is introduced later; the current pass is visual and interaction focused.
+
+---
+
 ## Session 2026-07-14 — Flagship interpolation boundary stutter
 
 **Task claimed:** Flagship and flagship-launched fighters still stutter after tactical interpolation was restored.
@@ -1397,3 +1506,62 @@ Never delete prior entries.
 
 ### Verification
 - No tech cycles; `npm run build` passes.
+
+---
+
+## Session 2026-07-19 — Tactical Combat 2.0 completion
+
+**Task claimed:** Preserve the existing fighter/CAP/Helioclast patch and complete cinematic flybys, impact feedback, real withdrawal, and focused combat regression coverage without changing save v24.
+
+### Implemented so far
+- Added deterministic adjacent retreat resolution, charge/interdiction/cancellation state, carrier recall, extraction-facing behavior, point-defense-only withdrawal fire, and native lane-transit dispatch for surviving flagship, ships, heroes, wings, and Helioclast.
+- Added transient bounded FX events for wing flybys, heavy impacts, and withdrawal, plus an opt-in session-local Cinema director that cancels on player camera, selection, and command intent.
+- Integrated the Helioclast tactical wedge renderer, `beam_lance` profile, focal-aperture fire origin, targetability, and battle HP synchronization.
+- Extended battle text/HUD state with withdrawal progress/blocker and cinematic camera state; added Cinema and Cancel Retreat controls.
+
+### Baseline evidence
+- Syntax checks pass on the original six-file patch and the newly extended modules.
+- Existing focused verifiers before baseline repair: combat autonomy 8/8, flagship wing 16/16, combat FX 14/14; directed combat 24/25, steering 28/29, battle groups 15/19, pacing 59.65s against the old single-fixture floor.
+
+### Final verification
+- Focused Tactical Combat 2.0 browser coverage passes 17/17: fighter flybys, CAP priority/return, Helioclast battle-group/render/fire/damage behavior, heavy impacts, retreat charge/interdiction/cancel/save-load/transit, no salvage, bounded transient FX, six dedicated screenshots, and zero console errors.
+- Repaired baselines pass: directed combat 25/25, steering 29/29, battle groups 19/19, three balanced pacing fixtures median 74.85s with no fixture below 50s and both sides firing.
+- Regression checks pass: autonomy 8/8, doctrine 9/9, orders 43/43, flagship wing 16/16, combat FX 14/14, pirate lanes 7/7, Helioclast fire sequence 13/13, web-game client smoke, all JS syntax, and production build.
+- Isolated large-battle performance passes: 150+ unit simulation p95 4.2ms (max 5.7ms); convoy-heavy median render regression 1.6% versus the same-browser baseline.
+
+---
+
+## Session 2026-07-19 — Helioclast arsenal expansion
+
+**Task claimed:** Give the Helioclast many more guns and repair its remaining capital-classification and auto-resolve edges.
+
+### Implemented
+- Replaced the generic four-mount capital loadout with seventeen independently cycling Helioclast batteries: three beam lances, four kinetic batteries, two torpedo bays, two ion arrays, and six point-defense emplacements.
+- Raised its tactical base output from 55 to 160 DPS, distributed across the mount shares, and added independent firing origins/target selection so port, starboard, prow, ion, and PD batteries can engage simultaneously.
+- Added visible hardpoints, barrels, and per-mount muzzle flashes to the dedicated wedge renderer.
+- Classified the Helioclast as a capital for incoming weapon multipliers and shield allocation, persisted offscreen auto-resolve destruction to the strategic ship, and allowed PD mounts to keep firing when withdrawal disables the general offensive target.
+
+### Verification
+- Helioclast arsenal unit contract passes 8/8; the expanded Tactical Combat 2.0 browser suite passes 20/20 with distinct multi-target/muzzle evidence, capital shields, auto-resolve destruction persistence, save/load, retreat, and zero console errors.
+- Directed combat 25/25, combat orders 43/43, combat FX 14/14, steering 29/29, battle groups 19/19, and Helioclast strategic fire sequence 13/13 pass.
+- Three balanced pacing fixtures remain at 61.25s, 76.85s, and 74.85s; large-battle simulation remains 4.5ms p95 (5.5ms max) with no sustained render regression.
+- Required web-game client smoke completed; the dedicated `helioclast-battle.png` gameplay capture was visually inspected and shows the colored hardpoints on the wedge.
+
+---
+
+## Session 2026-07-19 — Complete Diplomacy Overhaul
+
+**Task claimed:** Replace the player-only treaty ledger with deterministic actor-to-actor politics, enforceable treaties and war goals, weighted council politics, staged Helioclast containment, v25 migration, and a rebuilt command screen.
+
+### Implemented so far
+- Added diplomacy schema v3 with all unordered actor pairs, deterministic agendas/profiles, reputation, intelligence, favors, grievances, transmissions, calls-to-arms, event ingestion, and centralized revision tracking.
+- Added gradual detection/contact, combined-term utility forecasts and minimum counteroffers, atomic accepted-deal costs, real trade/open-border/defense/alliance/tribute effects, deliberate breach penalties, AI-to-AI proposals, and independent AI wallets.
+- Added limited/expanded/total war state, operational goals, legitimacy, escalation penalties, defensive calls, occupation settlement, peace leverage and demand budgets, and goal-constrained limited-war settlements.
+- Added weighted 60-second council authority/votes, delayed AI commitments, vote promises, tangible sanctions, seven resolution types, and staged Helioclast concern → inspection → sanctions → coalition → war escalation.
+- Advanced saves to v25/diplomacy v3 with v24 preservation and explicit expiry reasons for invalid legacy terms; added the v25 schema.
+- Rebuilt Diplomacy into Overview, Relations, Negotiation, Conflicts, Council, and History views with intelligence, agendas, grievances, obligations, acceptance ranges, transmissions, calls, and a two-column advanced deal builder.
+- Wired scouting, physical foreign trade, Helioclast actions, missions, field manual guidance, simulation event output, actionable `render_game_to_text`, and revision-driven UI refreshes.
+
+### Verification so far
+- `scripts/verify_diplomacy_v3.mjs` passes: four factions/ten actor pairs, contact gating, pure previews, intelligence forecast narrowing, trust gates, accepted-cost single charge, physical trade shares, AI-to-AI wallet isolation and deterministic seeds, defensive calls, breach consequences, weighted council quorum, sanction expiry, staged crisis, and v24→v25 migration/round-trip.
+- Production build passed before the final UI/testing slice; browser interaction, screenshot inspection, and the full regression build remain next.

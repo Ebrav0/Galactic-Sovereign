@@ -4,6 +4,7 @@ import { neighborsOf } from './galaxy.js';
 import { systemById, isPlayerOwned } from './state.js';
 import { getGalaxyIntel, getGraph, getSystems } from './galaxy-scope.js';
 import { structureIntelHopBonus } from './body-structures.js';
+import { detectContact } from './diplomacy.js';
 
 const listeningCoverageCache = new WeakMap();
 
@@ -60,9 +61,13 @@ export function hasIntel(state, systemId) {
 }
 
 export function gatherIntel(state, systemId) {
-  if (!systemById(state, systemId)) return false;
+  const system = systemById(state, systemId);
+  if (!system) return false;
   if (hasIntel(state, systemId)) return false;
   getGalaxyIntel(state)[systemId] = { gatheredAt: state.time };
+  if (system.owner === 'ai' && system.factionId) {
+    detectContact(state, system.factionId, { trigger: 'discovered_territory', intelligence: 25 });
+  }
   return true;
 }
 

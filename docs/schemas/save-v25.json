@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Galactic Sovereign Save v25",
+  "type": "object",
+  "required": ["saveVersion", "checksum", "savedAt", "state"],
+  "properties": {
+    "saveVersion": { "const": 25 },
+    "checksum": { "type": "string" },
+    "savedAt": { "type": "number" },
+    "state": {
+      "type": "object",
+      "required": ["diplomacy"],
+      "properties": {
+        "diplomacy": {
+          "type": "object",
+          "required": [
+            "version", "schemaVersion", "pairRelations", "profiles", "contacts",
+            "proposals", "agreements", "claims", "wars", "occupations", "council",
+            "grievances", "favors", "transmissions", "callsToArms", "history", "revision"
+          ],
+          "properties": {
+            "version": { "const": 3 },
+            "schemaVersion": { "const": 3 },
+            "pairRelations": { "type": "object" },
+            "pairModifiers": { "type": "object" },
+            "profiles": { "type": "object" },
+            "contacts": { "type": "object" },
+            "proposals": { "type": "array" },
+            "agreements": { "type": "array" },
+            "claims": { "type": "array" },
+            "wars": { "type": "array" },
+            "occupations": { "type": "array" },
+            "grievances": { "type": "array" },
+            "favors": { "type": "array" },
+            "transmissions": { "type": "array" },
+            "callsToArms": { "type": "array" },
+            "history": { "type": "array" },
+            "revision": { "type": "integer", "minimum": 0 },
+            "council": {
+              "type": "object",
+              "required": ["resolutions", "sanctions"],
+              "properties": {
+                "resolutions": { "type": "array" },
+                "sanctions": { "type": "array" }
+              },
+              "additionalProperties": true
+            },
+            "helioclastCrisis": {
+              "type": "object",
+              "required": ["stage", "level", "incidents"],
+              "properties": {
+                "stage": { "enum": ["dormant", "concern", "inspection", "sanctions", "coalition", "war"] },
+                "level": { "type": "number", "minimum": 0, "maximum": 5 },
+                "incidents": { "type": "array" }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

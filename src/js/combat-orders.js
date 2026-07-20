@@ -53,7 +53,7 @@ const FIGHTER_HULL_SET = new Set(CARRIER_WING_HULLS);
 const CARRIER_HULL_SET = new Set(['light_carrier', 'fleet_carrier', 'super_carrier']);
 const CAPITAL_HULL_SET = new Set([
   'cruiser', 'battleship', 'dreadnought', 'command_cruiser',
-  'hero_flagship', 'flagship',
+  'hero_flagship', 'flagship', 'helioclast',
 ]);
 const CONVOY_HULL_SET = new Set(['light_hauler', 'bulk_freighter', 'armored_convoy']);
 const SHIELD_FACINGS = Object.freeze(['front', 'starboard', 'aft', 'port']);

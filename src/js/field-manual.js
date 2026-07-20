@@ -65,10 +65,11 @@ export const FIELD_MANUAL_ENTRIES = Object.freeze([
   {
     id: 'diplomacy',
     title: 'Diplomacy and the Galactic Council',
-    summary: 'Claims, treaties, wars, sanctions, and council votes shape expansion once your first Dyson sphere establishes galactic legitimacy.',
-    steps: ['Open Diplomacy.', 'Review relations and claims.', 'Propose agreements or prepare for war.'],
+    summary: 'Exploration opens first contact. Intelligence narrows acceptance forecasts; a completed Dyson establishes legitimacy for advanced treaties and council politics.',
+    steps: ['Detect a major faction through scouting or a border encounter.', 'Open communications and compare known agendas, grievances, and acceptance ranges.', 'After Galactic Legitimacy, research trade, embassies, alliances, and the Council.'],
     targetId: 'tab-diplomacy',
-    unlocked: (state) => state.milestones?.diplomacyUnlocked === true,
+    unlocked: (state) => state.milestones?.diplomacyUnlocked === true
+      || Object.values(state.diplomacy?.contacts ?? {}).some((contact) => contact?.stage !== 'unknown'),
   },
   {
     id: 'wormholes',

@@ -100,6 +100,18 @@ export function emitShotFx(battle, { state, attacker, target, hit, profile } = {
   battle.shotsFiredByActor = battle.shotsFiredByActor ?? {};
   battle.shotsFiredByActor[attacker.id] = (battle.shotsFiredByActor[attacker.id] ?? 0) + 1;
   const event = pushFxEvent(battle, baseShotEvent(state, attacker, target, hit, profile));
+  const targetIsCapital = target.isCapital || [
+    'cruiser', 'battleship', 'dreadnought', 'light_carrier', 'fleet_carrier',
+    'super_carrier', 'hero_flagship', 'flagship', 'command_cruiser', 'helioclast',
+  ].includes(target.hull);
+  const heavyDamage = (hit?.hullDamage ?? 0) >= Math.max(18, (target.maxHp ?? target.hp ?? 1) * 0.035);
+  if (targetIsCapital && (heavyDamage || profile === 'torpedo' || profile === 'beam_lance')) {
+    pushFxEvent(battle, {
+      ...baseShotEvent(state, attacker, target, hit, profile),
+      kind: 'heavy_impact',
+      priority: target.hull === 'helioclast' ? 5 : 3,
+    });
+  }
   if (hit?.damageState === 'destroyed') {
     const roleKill = target.hull === 'bomber' || target.isCapital
       || ['cruiser', 'battleship', 'dreadnought', 'light_carrier', 'fleet_carrier', 'super_carrier',
@@ -125,6 +137,43 @@ export function emitShotFx(battle, { state, attacker, target, hit, profile } = {
     });
   }
   return event;
+}
+
+/** Emit one cinematic cue when a wing crosses into a new attack-pass phase. */
+export function emitWingFlybyFx(battle, { state, unit, target, phase = 'strafe' } = {}) {
+  if (!battle || !state || !unit || !target) return null;
+  return pushFxEvent(battle, {
+    kind: 'wing_flyby',
+    t: state.time,
+    profile: unit.weaponProfile ?? 'kinetic',
+    side: unit.side ?? 'player',
+    attackerId: unit.id,
+    targetId: target.id,
+    ax: unit.x,
+    ay: unit.y,
+    tx: target.x,
+    ty: target.y,
+    phase,
+    priority: unit.hull === 'bomber' ? 4 : 2,
+  });
+}
+
+/** Emit a withdrawal vector cue; simulation remains owned by combat.js. */
+export function emitWithdrawalFx(battle, { state, unit, point } = {}) {
+  if (!battle || !state || !unit || !point) return null;
+  return pushFxEvent(battle, {
+    kind: 'withdrawal',
+    t: state.time,
+    profile: 'withdrawal',
+    side: unit.side ?? 'player',
+    attackerId: unit.id,
+    targetId: null,
+    ax: unit.x,
+    ay: unit.y,
+    tx: point.x,
+    ty: point.y,
+    priority: 1,
+  });
 }
 
 /** Emit a single repair ribbon to the primary heal target. */
@@ -214,6 +263,9 @@ export function fxDurationMs(event) {
     return event.stream ? 1100 : 760;
   }
   if (event.kind === 'jump_in') return BATTLE_FX_JUMP_IN_MS;
+  if (event.kind === 'wing_flyby') return BATTLE_FX_DURATIONS.wing_flyby;
+  if (event.kind === 'heavy_impact') return BATTLE_FX_DURATIONS.heavy_impact;
+  if (event.kind === 'withdrawal') return BATTLE_FX_DURATIONS.withdrawal;
   if (event.kind === 'kill') {
     if (event.roleKill === 'capital' || event.roleKill === 'bomber') return BATTLE_FX_ROLE_KILL_MS;
     return BATTLE_FX_KILL_MS;
@@ -224,6 +276,32 @@ export function fxDurationMs(event) {
     return Math.max(120, hold);
   }
   return BATTLE_FX_DURATIONS[event.profile] ?? 160;
+}
+
+/** Highest-priority active cue for the optional tactical camera director. */
+export function cinematicCueForBattle(battle, time) {
+  const candidates = activeFxEvents(battle, time)
+    .filter((event) => event.kind === 'wing_flyby'
+      || event.kind === 'heavy_impact'
+      || event.kind === 'kill')
+    .map((event) => ({
+      event,
+      priority: event.priority ?? (event.kind === 'kill' ? 4 : event.kind === 'heavy_impact' ? 3 : 2),
+    }))
+    .sort((a, b) => b.priority - a.priority || b.event.t - a.event.t
+      || String(a.event.attackerId).localeCompare(String(b.event.attackerId)));
+  const picked = candidates[0]?.event;
+  if (!picked) return null;
+  return {
+    key: `${picked.kind}:${picked.t}:${picked.attackerId ?? ''}:${picked.targetId ?? ''}`,
+    kind: picked.kind,
+    priority: candidates[0].priority,
+    x: (picked.ax + picked.tx) * 0.5,
+    y: (picked.ay + picked.ty) * 0.5,
+    attackerId: picked.attackerId ?? null,
+    targetId: picked.targetId ?? null,
+    at: picked.t,
+  };
 }
 
 export function activeFxEvents(battle, time) {
@@ -297,6 +375,75 @@ function drawImpactTick(ctx, x, y, alpha, zoom, shield) {
   ctx.fillStyle = withAlpha(shield ? THEME.battle.shieldFlash : THEME.battle.hullSpark, alpha);
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
+}
+
+function drawHeavyImpact(ctx, x, y, age, duration, life, color, zoom, profile) {
+  const u = clamp01(age / Math.max(1, duration));
+  const radius = Math.max(10, (profile === 'torpedo' ? 34 : 24) * zoom) * (0.4 + u * 0.9);
+  const glow = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  glow.addColorStop(0, withAlpha('#ffffff', 0.85 * life));
+  glow.addColorStop(0.28, withAlpha(color, 0.62 * life));
+  glow.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = withAlpha(color, 0.72 * life);
+  ctx.lineWidth = Math.max(1, 1.7 * zoom);
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.82, 0, Math.PI * 2);
+  ctx.stroke();
+  const shards = profile === 'beam_lance' ? 4 : 7;
+  for (let i = 0; i < shards; i++) {
+    const angle = i / shards * Math.PI * 2 + age * 0.006;
+    const inner = radius * 0.35;
+    const outer = radius * (0.75 + (i % 3) * 0.14);
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(angle) * inner, y + Math.sin(angle) * inner);
+    ctx.lineTo(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer);
+    ctx.stroke();
+  }
+}
+
+function drawWingFlyby(ctx, start, end, age, duration, life, color, zoom) {
+  const u = clamp01(age / Math.max(1, duration));
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const x = start.x + dx * Math.min(1, u * 1.18);
+  const y = start.y + dy * Math.min(1, u * 1.18);
+  const trail = Math.min(len * 0.45, Math.max(30, 92 * zoom));
+  const gradient = ctx.createLinearGradient(x - ux * trail, y - uy * trail, x, y);
+  gradient.addColorStop(0, withAlpha(color, 0));
+  gradient.addColorStop(0.7, withAlpha(color, 0.28 * life));
+  gradient.addColorStop(1, withAlpha('#ffffff', 0.9 * life));
+  ctx.strokeStyle = gradient;
+  ctx.lineWidth = Math.max(1.2, 2.4 * zoom);
+  ctx.beginPath();
+  ctx.moveTo(x - ux * trail, y - uy * trail);
+  ctx.lineTo(x, y);
+  ctx.stroke();
+}
+
+function drawWithdrawal(ctx, start, end, age, duration, life, color, zoom) {
+  const u = clamp01(age / Math.max(1, duration));
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  ctx.save();
+  ctx.setLineDash([Math.max(5, 9 * zoom), Math.max(4, 7 * zoom)]);
+  ctx.lineDashOffset = -age * 0.06;
+  ctx.strokeStyle = withAlpha(color, 0.5 * life);
+  ctx.lineWidth = Math.max(1.2, 1.8 * zoom);
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(start.x + ux * Math.min(len, 240 * zoom) * (0.4 + u * 0.6), start.y + uy * Math.min(len, 240 * zoom) * (0.4 + u * 0.6));
+  ctx.stroke();
+  ctx.restore();
 }
 
 function facingAngles(facing, heading) {
@@ -607,6 +754,8 @@ export function drawCombatFx({
 
   const limit = mode === 'swarm' ? BATTLE_FX_SWARM_DRAW_LIMIT : BATTLE_FX_DRAW_LIMIT;
   const zoom = Math.max(0.35, camera?.zoom ?? 1);
+  const reducedMotion = typeof window !== 'undefined'
+    && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
   let drawn = 0;
 
   ctx.save();
@@ -651,6 +800,27 @@ export function drawCombatFx({
         zoom,
         ev.kind === 'wing_recover',
       );
+      drawn++;
+      continue;
+    }
+
+    if (ev.kind === 'wing_flyby') {
+      if (reducedMotion) drawLodPulse(ctx, start, end, life, color, zoom);
+      else drawWingFlyby(ctx, start, end, age, duration, life, color, zoom);
+      drawn++;
+      continue;
+    }
+
+    if (ev.kind === 'heavy_impact') {
+      if (reducedMotion) drawImpactTick(ctx, end.x, end.y, life, zoom, ev.profile === 'torpedo');
+      else drawHeavyImpact(ctx, end.x, end.y, age, duration, life, color, zoom, ev.profile);
+      drawn++;
+      continue;
+    }
+
+    if (ev.kind === 'withdrawal') {
+      if (reducedMotion) drawLodPulse(ctx, start, end, life, color, zoom);
+      else drawWithdrawal(ctx, start, end, age, duration, life, color, zoom);
       drawn++;
       continue;
     }

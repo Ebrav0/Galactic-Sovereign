@@ -39,8 +39,8 @@ import { requireTutorialAccess } from './tutorial-access.js';
 import {
   canAttackSystem,
   canRouteThroughSystem,
+  escalateHelioclastCrisis,
   recordSystemDestroyed,
-  triggerSuperweaponPanic,
 } from './diplomacy.js';
 import { assignGalaxyStellarCatalog } from './star-types.js';
 import { applyGraphCatalogIdentity } from './catalog-names.js';
@@ -695,12 +695,17 @@ function startFireSequence(state, type, targetSystemId) {
   if (!check.ok) return check;
 
   const timeline = phaseTimeline(type, state);
+  const targetNode = nodeById(getGraph(state), targetSystemId);
+  const targetSystem = systemById(state, targetSystemId);
   state.solarii -= check.cost;
   const resolveAt = state.time + timeline.phases.charge + timeline.phases.aim + timeline.phases.fire;
   state.superweapon.fireSequence = {
     type,
     fromSystemId: helioclastFiringSystemId(state),
     targetSystemId,
+    targetPosition: targetNode ? { x: targetNode.x, y: targetNode.y } : null,
+    targetName: targetSystem?.name ?? targetSystemId,
+    targetOwner: targetSystem?.owner ?? null,
     startedAt: state.time,
     resolveAt,
     totalMs: timeline.totalMs,
@@ -761,6 +766,7 @@ function commitCreate(state, anchorSystemId) {
   gal.systems[newId].createdBySuperweapon = true;
 
   state.superweapon.createCount = (state.superweapon.createCount ?? 0) + 1;
+  escalateHelioclastCrisis(state, { actor: 'player', systemId: newId, destructive: false });
   return { ok: true, systemId: newId, starCount: graph.stars.length };
 }
 
@@ -768,6 +774,9 @@ function commitDestroy(state, targetSystemId) {
   const gal = getActiveGalaxy(state);
   const graph = getGraph(state);
   if (!gal.systems[targetSystemId]) return { ok: false, reason: 'No such system' };
+  const targetSystem = gal.systems[targetSystemId];
+  const targetActor = targetSystem.owner === 'player' ? 'player' : targetSystem.factionId ?? targetSystem.owner;
+  const inhabited = (targetSystem.bodies ?? []).some((body) => body.type === 'habitable');
   const attack = canAttackSystem(state, targetSystemId, 'player', { galaxyId: state.activeGalaxyId });
   if (!attack.ok) return attack;
 
@@ -780,7 +789,10 @@ function commitDestroy(state, targetSystemId) {
   delete gal.systems[targetSystemId];
   graph.stars = graph.stars.filter((s) => s.id !== targetSystemId);
   graph.lanes = graph.lanes.filter(([a, b]) => a !== targetSystemId && b !== targetSystemId);
-  triggerSuperweaponPanic(state);
+  escalateHelioclastCrisis(state, {
+    actor: 'player', target: targetActor, systemId: targetSystemId, destructive: true,
+    foreignOrInhabited: targetActor !== 'player' || inhabited,
+  });
   return { ok: true, systemId: targetSystemId, starCount: graph.stars.length };
 }
 
@@ -899,6 +911,7 @@ function resolveFireSequence(state, seq) {
     state.superweapon.lastAction = {
       type: 'destroy',
       targetSystemId: seq.targetSystemId,
+      targetPosition: seq.targetPosition,
       at: state.time,
       blocked: false,
     };

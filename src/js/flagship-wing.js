@@ -1,4 +1,4 @@
-// Ambient flagship fighter wing — wander/follow poses (deterministic from time).
+// Ambient flagship fighter wing — protective screen poses (deterministic from time).
 
 import {
   FLAGSHIP_WING_SPEC,
@@ -175,6 +175,10 @@ function softClearFlagshipHull(pose, x, y, swirlSign = 1) {
   return { x: px, y: py };
 }
 
+/**
+ * Ambient Lissajous patrol pocket around the flagship — escorts keep flying about
+ * while remaining in the protective envelope.
+ */
 function craftLocalPose(i, n, tSec, outerR) {
   const seed = hash01(i * 97 + 13);
   const seedB = hash01(i * 191 + 41);
@@ -248,7 +252,7 @@ function headingFromDelta(dx, dy, fallback = 0) {
 /**
  * Deterministic escort poses around the flagship. Hidden during lane/wormhole transit
  * and while fully stowed in the hangar.
- * Nose faces wander + flagship velocity (analytical) so keep-out never doubles work/jitter.
+ * Peacetime: fly Lissajous patrols in the escort envelope.
  * @returns {Array<{ id, hull, x, y, heading, index }>}
  */
 export function flagshipWingPoses(state, accumulatorMs = 0, homeOverride = null) {
@@ -291,7 +295,6 @@ export function flagshipWingPoses(state, accumulatorMs = 0, homeOverride = null)
 
     if (hangar === 'deployed') {
       const now = resolveDeployedWorldPose(state, system, pose, local, time, bodyCache);
-      // Analytical motion heading (wander + flagship cruise) — stable across frames.
       const lookDt = 0.05;
       const lookLocal = craftLocalPose(i, n, localT + lookDt, outerR);
       const heading = headingFromDelta(

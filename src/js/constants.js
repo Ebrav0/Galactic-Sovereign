@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 24;
+export const SAVE_VERSION = 25;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -112,7 +112,7 @@ export const HULL_STATS = {
     cost: 0, buildMs: 0, laneSpeed: 110, healRate: 0,
   },
   helioclast: {
-    hp: 9000, dps: 55, captureForce: 10,
+    hp: 9000, dps: 160, captureForce: 10,
     cost: 0, buildMs: 0, laneSpeed: 42, healRate: 0,
   },
   miner: { hp: 160, dps: 0, captureForce: 0, cost: 240, buildMs: 30000, laneSpeed: 90, healRate: 0 },
@@ -170,6 +170,27 @@ export const FLAGSHIP_WEAPON_SUITE = [
   { id: 'pd_grid_aft', profile: 'point_defense', hardpoint: 'aft_pd', muzzle: { x: -0.85, y: 0.787 } },
   { id: 'ion_array', profile: 'ion', hardpoint: 'dorsal', muzzle: { x: -0.15, y: 0 } },
 ];
+
+/** Seventeen independently cycling batteries distributed across the Helioclast wedge. */
+export const HELIOCLAST_WEAPON_SUITE = Object.freeze([
+  { id: 'focal_lance', profile: 'beam_lance', hardpoint: 'prow', share: 0.22, muzzle: { x: 1.55, y: 0 } },
+  { id: 'beam_port', profile: 'beam_lance', hardpoint: 'port', share: 0.07, muzzle: { x: 0.72, y: -0.58 } },
+  { id: 'beam_starboard', profile: 'beam_lance', hardpoint: 'starboard', share: 0.07, muzzle: { x: 0.72, y: 0.58 } },
+  { id: 'kinetic_port_fore', profile: 'kinetic', hardpoint: 'port', share: 0.07, muzzle: { x: 0.28, y: -0.96 } },
+  { id: 'kinetic_port_aft', profile: 'kinetic', hardpoint: 'port', share: 0.07, muzzle: { x: -0.48, y: -1.03 } },
+  { id: 'kinetic_starboard_fore', profile: 'kinetic', hardpoint: 'starboard', share: 0.07, muzzle: { x: 0.28, y: 0.96 } },
+  { id: 'kinetic_starboard_aft', profile: 'kinetic', hardpoint: 'starboard', share: 0.07, muzzle: { x: -0.48, y: 1.03 } },
+  { id: 'torpedo_port', profile: 'torpedo', hardpoint: 'port', share: 0.07, muzzle: { x: 0.92, y: -0.82 } },
+  { id: 'torpedo_starboard', profile: 'torpedo', hardpoint: 'starboard', share: 0.07, muzzle: { x: 0.92, y: 0.82 } },
+  { id: 'ion_port', profile: 'ion', hardpoint: 'dorsal_port', share: 0.05, muzzle: { x: -0.02, y: -0.34 } },
+  { id: 'ion_starboard', profile: 'ion', hardpoint: 'dorsal_starboard', share: 0.05, muzzle: { x: -0.02, y: 0.34 } },
+  { id: 'pd_port_fore', profile: 'point_defense', hardpoint: 'fore_pd', share: 0.02, muzzle: { x: 1.02, y: -0.34 } },
+  { id: 'pd_starboard_fore', profile: 'point_defense', hardpoint: 'fore_pd', share: 0.02, muzzle: { x: 1.02, y: 0.34 } },
+  { id: 'pd_port_mid', profile: 'point_defense', hardpoint: 'dorsal', share: 0.02, muzzle: { x: -0.12, y: -1.12 } },
+  { id: 'pd_starboard_mid', profile: 'point_defense', hardpoint: 'dorsal', share: 0.02, muzzle: { x: -0.12, y: 1.12 } },
+  { id: 'pd_port_aft', profile: 'point_defense', hardpoint: 'aft_pd', share: 0.02, muzzle: { x: -1.34, y: -0.72 } },
+  { id: 'pd_starboard_aft', profile: 'point_defense', hardpoint: 'aft_pd', share: 0.02, muzzle: { x: -1.34, y: 0.72 } },
+]);
 
 export const WEAPON_PROFILES = {
   point_defense: { label: 'Point Defense', range: 190, cooldownMs: 320, antiFighter: 3.6, antiCapital: 0.45, antiBomber: 1.55, structure: 0.35 },
@@ -312,6 +333,10 @@ export const WING_PASS_BREAK_OFFSET = 240;       // lateral sweep distance on br
 export const WING_PASS_STRAFE_MS = 850;          // max time holding the merge before break
 export const WING_PASS_REENGAGE_RANGE_MULT = 1.25;
 export const COMBAT_DISENGAGE_MS = 2500;
+export const TACTICAL_RETREAT_CHARGE_MS = 1500;
+export const TACTICAL_CINEMA_CUE_MS = 780;
+export const TACTICAL_CINEMA_COOLDOWN_MS = 1400;
+export const TACTICAL_CINEMA_CANCEL_MS = 2500;
 export const FLAGSHIP_MANUAL_OVERRIDE_MS = 2000;
 export const FLAGSHIP_AUTOPILOT_BLEND_MS = 500;
 
@@ -805,6 +830,9 @@ export const BATTLE_FX_DURATIONS = {
   kill: 320,
   lod_pulse: 140,
   jump_in: 900,
+  wing_flyby: 520,
+  heavy_impact: 460,
+  withdrawal: 760,
 };
 export const STAR_BLOOM_SCALE = 1.0;           // bloom FBO resolution fraction (full res avoids blocky upscale)
 export const STAR_BLOOM_THRESHOLD = 0.38;      // luminance threshold for HDR bloom

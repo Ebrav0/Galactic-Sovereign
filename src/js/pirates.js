@@ -10,6 +10,7 @@ import {
   PIRATE_LANE_SPEED,
   PIRATE_LANE_MIN_LEG_MS,
   PIRATE_SHIPS,
+  PIRATE_SHIPS_LARGE,
   TICK_MS,
 } from './constants.js';
 import { createRng, hashSeed, isPlayerOwned, systemById } from './state.js';
@@ -43,10 +44,9 @@ function rimStarIds(galaxy, strongholdId) {
   return scored.slice(0, rimCount).map((s) => s.id);
 }
 
-function buildFleetShips(seed, fleetId) {
+function buildFleetShips(seed, fleetId, composition = PIRATE_SHIPS) {
   const ships = [];
-  const rng = pirateRng(seed, fleetId, 'ships');
-  for (const entry of PIRATE_SHIPS) {
+  for (const entry of composition) {
     for (let i = 0; i < entry.count; i++) {
       ships.push(createShipInstance(`ps-${nextPirateShipId++}`, entry.hull));
     }
@@ -90,12 +90,16 @@ export function spawnPirateFleets(state) {
       systemId = rim[Math.floor(rng() * rim.length)];
     }
     used.add(systemId);
+    // First rim fleet is the large carrier group (≥2 light carriers); others stay small.
+    const size = i === 0 ? 'large' : 'small';
+    const composition = size === 'large' ? PIRATE_SHIPS_LARGE : PIRATE_SHIPS;
     fleets.push({
       id: fleetId,
       galaxyId: state.activeGalaxyId,
       systemId,
       transit: null,
-      ships: buildFleetShips(seed, fleetId),
+      size,
+      ships: buildFleetShips(seed, fleetId, composition),
       wanderCooldownMs: Math.floor(rng() * PIRATE_WANDER_MS),
       intent: { type: 'wander', targetSystemId: null },
     });
@@ -288,10 +292,11 @@ export function pirateFleetTransitMarkersForGalaxy(state) {
   return out;
 }
 
-function scheduleRespawn(state, fleetId) {
+function scheduleRespawn(state, fleetId, size = 'small') {
   state.pirates.pendingRespawn = state.pirates.pendingRespawn ?? [];
   state.pirates.pendingRespawn.push({
     fleetId,
+    size: size === 'large' ? 'large' : 'small',
     respawnAt: state.time + PIRATE_RESPAWN_MS,
   });
 }
@@ -301,13 +306,15 @@ function respawnFleet(state, pending) {
   const rim = rimStarIds(getGraph(state), state.stronghold);
   const rng = createRng(hashSeed(seed, `respawn:${pending.fleetId}:${state.time}`));
   const systemId = rim[Math.floor(rng() * rim.length)];
-  nextPirateShipId = 1;
+  const size = pending.size === 'large' ? 'large' : 'small';
+  const composition = size === 'large' ? PIRATE_SHIPS_LARGE : PIRATE_SHIPS;
   return {
     id: pending.fleetId,
     galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
-    ships: buildFleetShips(seed, pending.fleetId),
+    size,
+    ships: buildFleetShips(seed, pending.fleetId, composition),
     wanderCooldownMs: PIRATE_WANDER_MS,
     intent: { type: 'wander', targetSystemId: null },
   };
@@ -410,7 +417,7 @@ export function tickPirates(state, onArrive) {
     if (!fleet.systemId || fleet.ships.every((s) => s.hp <= 0)) {
       if (fleet.ships.every((s) => s.hp <= 0)) {
         state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleet.id);
-        scheduleRespawn(state, fleet.id);
+        scheduleRespawn(state, fleet.id, fleet.size);
       }
       continue;
     }
@@ -435,7 +442,7 @@ export function removePirateShip(state, fleetId, shipId) {
   if (ship) ship.hp = 0;
   if (fleet.ships.every((s) => s.hp <= 0)) {
     state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleetId);
-    scheduleRespawn(state, fleetId);
+    scheduleRespawn(state, fleetId, fleet.size);
   }
 }
 

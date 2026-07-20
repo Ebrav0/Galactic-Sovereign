@@ -154,17 +154,40 @@
         </div>
       </div>
 
-      <div id="superweapon-galaxy-panel" class="panel hidden">
-        <div class="panel__header">
-          <span class="panel__title">Helioclast</span>
+      <div id="superweapon-galaxy-panel" class="panel panel--superweapon hidden">
+        <div class="panel__header sw-panel__header">
+          <span class="sw-panel__sigil" aria-hidden="true"></span>
+          <span class="panel__title">Helioclast Command</span>
+          <span id="sw-panel-status" class="sw-panel__status">Standby</span>
         </div>
-        <div class="panel__body" id="superweapon-galaxy-body">
+        <div class="panel__body sw-panel__body" id="superweapon-galaxy-body" aria-live="polite">
           <p class="panel-note">Select a target star on the map, then act.</p>
         </div>
-        <div class="panel__footer panel__actions">
-          <button id="sw-create-btn" type="button" class="btn btn--primary btn--block">Create Star (adjacent anchor)</button>
-          <button id="sw-destroy-btn" type="button" class="btn btn--primary btn--block">Destroy Target</button>
-          <button id="sw-jump-btn" type="button" class="btn btn--primary btn--block">Jump Helioclast Here</button>
+        <div class="panel__footer sw-actions" aria-label="Helioclast firing modes">
+          <button id="sw-create-btn" type="button" class="sw-action sw-action--create">
+            <span class="sw-action__icon" aria-hidden="true">✦</span>
+            <span class="sw-action__copy">
+              <span class="sw-action__title">Forge Star</span>
+              <span class="sw-action__detail">Create beside the selected anchor</span>
+            </span>
+            <span class="sw-action__cost">—</span>
+          </button>
+          <button id="sw-destroy-btn" type="button" class="sw-action sw-action--destroy">
+            <span class="sw-action__icon" aria-hidden="true">◆</span>
+            <span class="sw-action__copy">
+              <span class="sw-action__title">Annihilate</span>
+              <span class="sw-action__detail">Erase the selected hostile system</span>
+            </span>
+            <span class="sw-action__cost">—</span>
+          </button>
+          <button id="sw-jump-btn" type="button" class="sw-action sw-action--jump">
+            <span class="sw-action__icon" aria-hidden="true">⌁</span>
+            <span class="sw-action__copy">
+              <span class="sw-action__title">Gate Jump</span>
+              <span class="sw-action__detail">Relocate to the selected star</span>
+            </span>
+            <span class="sw-action__cost">—</span>
+          </button>
         </div>
       </div>
 
@@ -338,6 +361,7 @@
           <span id="combat-hud-hostile" class="combat-hud__count combat-hud__count--hostile">0</span>
         </div>
         <div class="combat-hud__chrome">
+          <button id="combat-hud-cinema" type="button" class="btn btn--ghost btn--xs" aria-pressed="false">Cinema: Off</button>
           <button id="combat-hud-pause" type="button" class="btn btn--ghost btn--xs">Pause</button>
           <button id="combat-hud-galaxy" type="button" class="btn btn--ghost btn--xs">Galaxy (M)</button>
         </div>

@@ -116,6 +116,8 @@ import {
   setBattleStance,
   checkBattleTrigger,
   setCombatDoctrine,
+  cancelTacticalRetreat,
+  resolveRetreatDestination,
 } from './combat.js';
 import {
   analyzeFleetMix,
@@ -151,6 +153,10 @@ import {
   galaxyPerfSummary,
   follow,
   updateFollowCamera,
+  updateCombatCinemaCamera,
+  setCombatCinemaEnabled,
+  cancelCombatCinema,
+  combatCinemaState,
   snapCameraTo,
   camera,
   galaxyCamera,
@@ -242,11 +248,15 @@ import {
   concludePeace,
   createClaim,
   declareWar,
+  endAgreement,
   establishContact,
   offerTreaty,
   previewProposal,
+  resolveCouncilResolution,
   respondToProposal,
+  settleDiplomaticTradeDelivery,
   setRelation,
+  actionableDiplomacySummary,
   diplomacySummary,
   submitProposal,
 } from './diplomacy.js';
@@ -374,6 +384,7 @@ function pruneCombatSelection() {
 }
 
 function doSelectCombatUnit(unitId, { additive = false } = {}) {
+  cancelCombatCinema();
   const battle = getBattleState(state, viewedSystemId);
   if (!battle?.active || battle.mode !== 'tactical') return [];
   const unit = battle.units?.find((entry) => String(entry.id) === String(unitId) && entry.hp > 0);
@@ -395,12 +406,14 @@ function doSelectCombatUnit(unitId, { additive = false } = {}) {
 }
 
 function doClearCombatSelection() {
+  cancelCombatCinema();
   combatSelectionIds = [];
   pruneCombatSelection();
   return combatSelectionIds;
 }
 
 function doSetCombatSelection(ids = []) {
+  cancelCombatCinema();
   const battle = getBattleState(state, viewedSystemId);
   if (!battle?.active || battle.mode !== 'tactical') {
     combatSelectionIds = [];
@@ -417,6 +430,7 @@ function doSetCombatSelection(ids = []) {
 }
 
 function doSelectCombatUnitsInWorldRect(minX, minY, maxX, maxY, { additive = false } = {}) {
+  cancelCombatCinema();
   const battle = getBattleState(state, viewedSystemId);
   if (!battle?.active || battle.mode !== 'tactical') return combatSelectionIds;
   const left = Math.min(minX, maxX);
@@ -488,6 +502,7 @@ function doSetCombatCommandMode(mode = null) {
     return { ok: false, reason: 'Unknown combat command mode' };
   }
   if (next != null) {
+    cancelCombatCinema();
     pruneCombatSelection();
     if (!combatSelectionIds.length) {
       toast('Select ships first', 'error');
@@ -741,7 +756,10 @@ function doFlagshipInput(x, y) {
     return;
   }
   setFlagshipInput(x, y, state.time);
-  if (x !== 0 || y !== 0) follow.enabled = true;
+  if (x !== 0 || y !== 0) {
+    cancelCombatCinema();
+    follow.enabled = true;
+  }
 }
 
 function doToggleOrbit() {
@@ -1139,6 +1157,7 @@ function doFollowConvoy(convoyId) {
 }
 
 function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
+  cancelCombatCinema();
   const access = tutorialGuard('tactical_combat');
   if (!access.ok) return access;
   const group = groupId ? battleGroupsForGalaxy(state).find((entry) => entry.id === groupId) : null;
@@ -1157,6 +1176,15 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
   if (battle.advancedTactics !== true && order?.type !== 'emergency_retreat') {
     return { ok: false, reason: 'Enable Command Assist to issue individual orders' };
   }
+  let retreatDestinationId = order?.destinationId ?? null;
+  if (order?.type === 'emergency_retreat' && !retreatDestinationId) {
+    const retreat = resolveRetreatDestination(state, systemId);
+    if (!retreat.ok) {
+      toast(retreat.reason, 'error');
+      return retreat;
+    }
+    retreatDestinationId = retreat.destinationId;
+  }
   const allPlayerUnits = battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0);
   const liveIds = new Set(allPlayerUnits.map((unit) => String(unit.id)));
   let subjectIds;
@@ -1171,6 +1199,7 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
   }
   const canonical = {
     ...order,
+    destinationId: retreatDestinationId ?? order?.destinationId ?? null,
     side: 'player',
     groupId: group?.id ?? null,
     subjectIds,
@@ -1190,6 +1219,17 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
   if (result.ok) toast(`Order #${result.order.sequence}: ${result.order.type.replaceAll('_', ' ')}`, 'ok');
   else toast(result.reason, 'error');
   return result;
+}
+
+function doCancelTacticalRetreat() {
+  const result = cancelTacticalRetreat(state, viewedSystemId);
+  if (result.ok) toast('Withdrawal cancelled', 'ok');
+  else toast(result.reason, 'error');
+  return result;
+}
+
+function doSetCombatCinema(enabled) {
+  return setCombatCinemaEnabled(enabled);
 }
 
 function doSetCombatDoctrine(doctrine) {
@@ -1358,6 +1398,9 @@ const { updateUi, closeSidePanel } = initUi({
   combatFocus: doCombatFocus,
   getCombatCommandMode: () => combatCommandMode,
   setCombatCommandMode: doSetCombatCommandMode,
+  cancelTacticalRetreat: doCancelTacticalRetreat,
+  getCombatCinemaState: () => combatCinemaState(state),
+  setCombatCinema: doSetCombatCinema,
   combatUiActive,
   followConvoy: doFollowConvoy,
   getBootPhase,
@@ -1380,6 +1423,7 @@ attachInput(canvas, {
   onCombatClearSelection: doClearCombatSelection,
   onCombatMarqueeSelect: doSelectCombatUnitsInWorldRect,
   onCombatMarquee: doSetCombatMarquee,
+  onCameraIntent: cancelCombatCinema,
   combatUiActive,
   onCloseSidePanel: closeSidePanel,
   onTogglePause: doTogglePause,
@@ -1561,6 +1605,14 @@ function frame(now) {
       toast(`${ev.convoyId} intercepted${ev.destroyed ? ' and destroyed' : ''}`, 'error');
     }
   }
+  for (const ev of tickEvents.diplomacyEvents ?? []) {
+    if (ev.type === 'proposal_accepted') toast('A diplomatic proposal was accepted', 'ok');
+    if (ev.type === 'proposal_countered') toast('A counteroffer has arrived in Diplomacy', 'info');
+    if (ev.type === 'proposal_rejected') toast('A diplomatic proposal was rejected', 'error');
+    if (ev.type === 'call_to_arms_accepted') toast('An ally answered a defensive call', 'ok');
+    if (ev.type === 'call_to_arms_refused') toast('A defensive call was refused', 'error');
+    if (ev.type === 'council_resolution_resolved') toast(`Council resolution ${ev.passed ? 'passed' : 'failed'}`, ev.passed ? 'ok' : 'error');
+  }
   for (const cap of tickEvents.captures ?? []) {
     if (!cap?.captured) continue;
     const name = systemById(state, cap.captured)?.name ?? cap.captured;
@@ -1634,9 +1686,11 @@ function frame(now) {
       selectedScoutId,
       selectedBattleGroupId,
       tutorialFocus?.view === 'galaxy' ? tutorialFocus.systemId : null,
+      galaxyTargetStarId,
     );
   } else {
     markTutorialSystemViewed(state);
+    updateCombatCinemaCamera(state, viewedSystemId, dt);
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator, combatOverlayForRender());
   }
@@ -1942,6 +1996,7 @@ window.render_game_to_text = () => {
           weaponProfile: unit.weaponProfile,
           weaponArcRadians: Math.round(weaponArcRadians(unit.weaponProfile) * 1000) / 1000,
           weaponTargetId: unit.weaponTargetId ?? null,
+          wingPassPhase: unit.isWing ? (unit.passPhase ?? null) : null,
           recentThreat: unit.lastAttackerId == null ? null : {
             attackerId: unit.lastAttackerId,
             damagedAt: unit.lastDamagedAt ?? null,
@@ -1951,6 +2006,7 @@ window.render_game_to_text = () => {
           destroyerAa: unit.aaBattery ? {
             unlocked: true,
             targetId: unit.aaBattery.targetId ?? null,
+            lastTargetId: unit.aaBattery.lastTargetId ?? null,
             cooldownMs: Math.round(unit.aaBattery.cooldownMs ?? 0),
             damageShare: unit.aaBattery.damageShare,
             firingArcRadians: Math.PI * 2,
@@ -1969,6 +2025,7 @@ window.render_game_to_text = () => {
         fleetPriority: summary?.fleetPriority ?? ensureCombatSettings(state).fleetPriority,
         advancedTactics: summary?.advancedTactics ?? ensureCombatSettings(state).advancedTactics,
         flagshipControl: flagshipControlStatus(state),
+        cinematicCamera: combatCinemaState(state),
         autonomy: summary?.autonomy ?? null,
         selectionIds: [...combatSelectionIds],
         focusTargetId: summary?.focusTargetId ?? null,
@@ -2109,10 +2166,13 @@ window.render_game_to_text = () => {
       ? dysonVisualSummary(state, viewedSystemId, viewedSystem.star.radius, camera.zoom)
       : null,
     milestones: milestonesSummary(state),
-    diplomacy: diplomacySummary(state),
+    diplomacy: actionableDiplomacySummary(state),
     bulkProduction: bulkProductionSummary(state),
     strategicOrders: strategicOrdersSummary(state),
-    superweapon: superweaponSummary(state),
+    superweapon: {
+      ...superweaponSummary(state),
+      selectedTargetSystemId: galaxyTargetStarId,
+    },
     heroFlagships: heroFlagshipsSummary(state),
     campaign: campaignSummary(state),
     missions: missionsSummary(state),
@@ -2255,6 +2315,11 @@ window.__combatFocus = (targetId) => doCombatFocus(targetId);
 window.__combatMove = (x, y) => doCombatMove({ x, y });
 window.__setCombatCommandMode = (mode) => doSetCombatCommandMode(mode);
 window.__getCombatCommandMode = () => combatCommandMode;
+window.__setCombatCinema = (enabled) => doSetCombatCinema(enabled);
+window.__getCombatCinemaState = () => combatCinemaState(state);
+window.__cancelTacticalRetreat = () => doCancelTacticalRetreat();
+window.__resolveRetreatDestination = (systemId = null) =>
+  resolveRetreatDestination(state, systemId ?? viewedSystemId);
 window.__getLogistics = () => JSON.parse(JSON.stringify(ensureLogisticsState(state)));
 window.__listTradeNexuses = () => discoverTradeNexuses(state);
 window.__registerExportDepot = (systemId, opts = {}) =>
@@ -2481,6 +2546,12 @@ window.__createClaim = (factionIdOrInput, systemId = null, options = {}) =>
   createClaim(state, factionIdOrInput, systemId, options);
 window.__castCouncilVote = (resolutionId, voterId, vote) =>
   castCouncilVote(state, resolutionId, voterId, vote);
+window.__resolveCouncilResolution = (resolutionId, options = {}) =>
+  resolveCouncilResolution(state, resolutionId, options);
+window.__endDiplomaticAgreement = (agreementId, options = {}) =>
+  endAgreement(state, agreementId, options);
+window.__settleDiplomaticTradeDelivery = (input = {}) =>
+  settleDiplomaticTradeDelivery(state, input);
 window.__bulkProductionSummary = (orderId = null) => bulkProductionSummary(state, orderId);
 window.__productionProducts = () => listProductionProducts(state);
 window.__previewBulkProductionOrder = (input = {}) => previewBulkProductionOrder(state, input);

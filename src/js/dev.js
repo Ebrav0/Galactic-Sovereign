@@ -1123,6 +1123,13 @@ export function devForceBuildSuperweaponCradle(state, systemId = null) {
 
   if (hasSuperweaponCradle(state, target)) {
     ensureSuperweapon(state);
+    const existingYard = systemById(state, target)?.structures?.find((structure) => (
+      structure.type === 'helioclast_shipyard' || structure.type === 'superweapon_cradle'
+    ));
+    if (existingYard && existingYard.builtAtTime == null) {
+      existingYard.builtAtTime = state.time;
+      existingYard.operational = true;
+    }
     state.superweapon.cradleSystemId = target;
     return ok({ skipped: true, type: 'helioclast_shipyard', systemId: target });
   }

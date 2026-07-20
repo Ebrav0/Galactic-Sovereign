@@ -1,7 +1,11 @@
 // Helioclast siege capital — reference wedge (Canvas 2D).
 // Zoom contract: screen size = HELIOCLAST_RADIUS * cameraZoom (no min-pixel floor).
 
-import { HELIOCLAST_RADIUS, SUPERWEAPON_CRADLE_ORBIT_PAD } from './constants.js';
+import {
+  HELIOCLAST_RADIUS,
+  HELIOCLAST_WEAPON_SUITE,
+  SUPERWEAPON_CRADLE_ORBIT_PAD,
+} from './constants.js';
 import { hexToRgba } from './theme.js';
 
 /**
@@ -215,9 +219,69 @@ export function drawHelioclastShip(ctx, x, y, scale, time = 0, opts = {}) {
 
   // Stage 6 — lit aperture core + full greebles
   drawLayer(6, () => drawFocalAperture(ctx, base, time, charge, firing, phase, lod));
+  drawLayer(6, () => drawHelioclastWeaponBatteries(ctx, base, time, opts.weaponMounts, lod));
 
   if (stage < 6) drawScaffoldHints(ctx, base, stage, time, partial);
 
+  ctx.restore();
+}
+
+function mountLocalBearing(hardpoint) {
+  if (hardpoint === 'port') return -Math.PI / 2;
+  if (hardpoint === 'starboard') return Math.PI / 2;
+  if (hardpoint === 'aft_pd') return Math.PI;
+  return 0;
+}
+
+function drawHelioclastWeaponBatteries(ctx, base, time, weaponMounts, lod) {
+  const liveById = new Map((weaponMounts ?? []).map((mount) => [mount.id, mount]));
+  const colors = {
+    beam_lance: '#8de8ff',
+    kinetic: '#ffc168',
+    torpedo: '#ff765f',
+    ion: '#bba0ff',
+    point_defense: '#69d9ff',
+  };
+  ctx.save();
+  for (const blueprint of HELIOCLAST_WEAPON_SUITE) {
+    const mount = liveById.get(blueprint.id) ?? blueprint;
+    const x = blueprint.muzzle.x * base;
+    const y = blueprint.muzzle.y * base;
+    const bearing = mountLocalBearing(blueprint.hardpoint);
+    const color = colors[blueprint.profile] ?? '#dce8f6';
+    const firedAge = time - (mount.lastFiredAt ?? -Infinity);
+    const firingNow = firedAge >= 0 && firedAge <= 180;
+    const size = blueprint.profile === 'beam_lance' ? 0.105
+      : blueprint.profile === 'torpedo' ? 0.085
+        : blueprint.profile === 'point_defense' ? 0.055 : 0.072;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(bearing);
+    ctx.fillStyle = '#1b2430';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(0.35, base * 0.018);
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(0.7, base * size), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (lod || firingNow) {
+      ctx.strokeStyle = firingNow ? '#ffffff' : color;
+      ctx.lineWidth = Math.max(0.45, base * (blueprint.profile === 'point_defense' ? 0.025 : 0.035));
+      ctx.beginPath();
+      ctx.moveTo(base * size * 0.45, 0);
+      ctx.lineTo(base * (size + (blueprint.profile === 'beam_lance' ? 0.19 : 0.12)), 0);
+      ctx.stroke();
+    }
+    if (firingNow) {
+      const flash = 1 - firedAge / 180;
+      ctx.fillStyle = hexToRgba(color, 0.28 + flash * 0.62);
+      ctx.beginPath();
+      ctx.arc(base * (size + 0.15), 0, Math.max(1, base * (0.06 + flash * 0.1)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
   ctx.restore();
 }
 
@@ -518,8 +582,27 @@ export function helioclastApertureWorld(shipX, shipY, heading) {
   };
 }
 
+/** World-space firing origin for one tactical Helioclast battery. */
+export function helioclastWeaponMountWorld(shipX, shipY, heading, mount) {
+  const muzzle = mount?.muzzle ?? { x: 0, y: 0 };
+  const localX = HELIOCLAST_RADIUS * muzzle.x;
+  const localY = HELIOCLAST_RADIUS * muzzle.y;
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  return {
+    x: shipX + localX * cos - localY * sin,
+    y: shipY + localX * sin + localY * cos,
+  };
+}
+
 /** Palette helper for fire types. */
 function swPalette(type) {
+  if (type === 'target') {
+    return {
+      primary: '#72e7ff', secondary: '#b8f5ff', hot: '#ffffff',
+      rgb: { a: '114,231,255', b: '190,246,255', c: '255,255,255' },
+    };
+  }
   if (type === 'create') {
     return {
       primary: '#66ffaa', secondary: '#a8ffd4', hot: '#ffffff',
@@ -1006,10 +1089,17 @@ export function drawGalaxyNovaculaBeam(ctx, from, to, zoom, time, opts = {}) {
   const nx = -dy / len;
   const ny = dx / len;
 
-  // Soft corridor bloom
-  ctx.strokeStyle = `rgba(${a}, ${0.2 * intensity})`;
-  ctx.lineWidth = Math.max(10, 22 * zoom) * intensity;
+  // Massive ionized corridor. The broadest pass makes the shot read at every galaxy zoom.
+  ctx.strokeStyle = `rgba(${a}, ${0.09 * intensity})`;
+  ctx.lineWidth = Math.max(34, 82 * zoom) * intensity;
   ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(mid.x, mid.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(${a}, ${0.2 * intensity})`;
+  ctx.lineWidth = Math.max(16, 38 * zoom) * intensity;
   ctx.beginPath();
   ctx.moveTo(from.x, from.y);
   ctx.lineTo(mid.x, mid.y);
@@ -1021,6 +1111,36 @@ export function drawGalaxyNovaculaBeam(ctx, from, to, zoom, time, opts = {}) {
   ctx.moveTo(from.x, from.y);
   ctx.lineTo(mid.x, mid.y);
   ctx.stroke();
+
+  // Counter-rotating containment rails and electrical filaments sell impossible power.
+  const railOffset = Math.max(5, 11 * zoom) * intensity;
+  for (const side of [-1, 1]) {
+    ctx.strokeStyle = `rgba(${b}, ${0.34 * intensity})`;
+    ctx.lineWidth = Math.max(1, 2 * zoom);
+    ctx.beginPath();
+    ctx.moveTo(from.x + nx * railOffset * side, from.y + ny * railOffset * side);
+    ctx.lineTo(mid.x + nx * railOffset * side, mid.y + ny * railOffset * side);
+    ctx.stroke();
+  }
+  for (let filament = 0; filament < 3; filament++) {
+    ctx.strokeStyle = filament === 1
+      ? `rgba(${c}, ${0.66 * intensity})`
+      : `rgba(${a}, ${0.45 * intensity})`;
+    ctx.lineWidth = Math.max(0.8, (1.4 + filament * 0.35) * zoom);
+    ctx.beginPath();
+    const steps = 30;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const envelope = Math.sin(t * Math.PI);
+      const wave = Math.sin(t * Math.PI * (7 + filament) + time / (32 + filament * 11))
+        * Math.max(3, 8 * zoom) * envelope;
+      const px = from.x + (mid.x - from.x) * t + nx * wave;
+      const py = from.y + (mid.y - from.y) * t + ny * wave;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
 
   ctx.strokeStyle = `rgba(${c}, ${0.95 * intensity})`;
   ctx.lineWidth = Math.max(1.6, 3.5 * zoom) * intensity;
@@ -1068,6 +1188,138 @@ export function drawGalaxyNovaculaBeam(ctx, from, to, zoom, time, opts = {}) {
     }
   }
 
+  ctx.restore();
+}
+
+/** Persistent map-space lock brackets for the currently selected Helioclast target. */
+export function drawGalaxyHelioclastTargetLock(ctx, x, y, zoom, time, opts = {}) {
+  const type = opts.type ?? 'target';
+  const active = !!opts.active;
+  const pal = swPalette(type);
+  const pulse = 0.86 + Math.sin(time / 115) * 0.14;
+  const base = Math.max(21, 38 * zoom) * (active ? 1.08 : 1);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(x, y);
+
+  for (let ring = 0; ring < 2; ring++) {
+    const radius = base * (1 + ring * 0.42);
+    const rotation = time / (900 + ring * 350) * (ring ? -1 : 1);
+    ctx.strokeStyle = hexToRgba(ring ? pal.secondary : pal.primary, (active ? 0.82 : 0.56) * pulse);
+    ctx.lineWidth = Math.max(1.2, (2.3 - ring * 0.5) * zoom);
+    for (let segment = 0; segment < 4; segment++) {
+      const start = rotation + segment * Math.PI / 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius, start, start + Math.PI * 0.29);
+      ctx.stroke();
+    }
+  }
+
+  ctx.rotate(-time / 1300);
+  ctx.strokeStyle = hexToRgba(pal.hot, active ? 0.92 : 0.62);
+  ctx.lineWidth = Math.max(1, 1.5 * zoom);
+  for (let i = 0; i < 4; i++) {
+    ctx.rotate(Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(base * 1.15, -base * 0.18);
+    ctx.lineTo(base * 1.5, 0);
+    ctx.lineTo(base * 1.15, base * 0.18);
+    ctx.stroke();
+  }
+  ctx.fillStyle = hexToRgba(pal.hot, 0.55 + (active ? 0.3 : 0.1) * pulse);
+  ctx.fillRect(-1, -base * 1.8, 2, base * 0.48);
+  ctx.fillRect(-1, base * 1.32, 2, base * 0.48);
+  ctx.fillRect(-base * 1.8, -1, base * 0.48, 2);
+  ctx.fillRect(base * 1.32, -1, base * 0.48, 2);
+  ctx.restore();
+}
+
+/** Full-scale galaxy impact: flash, shock front, debris/rays, and mode-specific collapse. */
+export function drawGalaxyHelioclastImpact(ctx, canvas, x, y, zoom, time, progress, type = 'destroy', opts = {}) {
+  const pal = swPalette(opts.blocked ? 'target' : type);
+  const p = Math.min(1, Math.max(0, progress));
+  const eased = 1 - ((1 - p) ** 3);
+  const base = Math.max(46, 96 * zoom);
+  const flash = Math.max(0, 1 - p * 4.5);
+  ctx.save();
+
+  if (flash > 0) {
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = hexToRgba(pal.hot, flash * (opts.blocked ? 0.12 : 0.22));
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.globalCompositeOperation = 'lighter';
+  const bloomRadius = base * (1.4 + eased * 2.8);
+  const bloom = ctx.createRadialGradient(x, y, 0, x, y, bloomRadius);
+  bloom.addColorStop(0, hexToRgba(pal.hot, 0.96 - p * 0.24));
+  bloom.addColorStop(0.09, hexToRgba(pal.primary, 0.88 - p * 0.28));
+  bloom.addColorStop(0.35, hexToRgba(pal.secondary, 0.38 * (1 - p * 0.35)));
+  bloom.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = bloom;
+  ctx.beginPath();
+  ctx.arc(x, y, bloomRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  for (let ring = 0; ring < 4; ring++) {
+    const rr = base * (0.5 + eased * (1.5 + ring * 0.52));
+    ctx.strokeStyle = hexToRgba(ring === 0 ? pal.hot : pal.primary, (0.82 - ring * 0.14) * (1 - p * 0.38));
+    ctx.lineWidth = Math.max(1.4, (5 - ring * 0.8) * zoom);
+    ctx.beginPath();
+    ctx.arc(x, y, rr, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  const rayCount = opts.blocked ? 14 : 28;
+  for (let i = 0; i < rayCount; i++) {
+    const angle = (i / rayCount) * Math.PI * 2 + Math.sin(i * 7.31) * 0.08;
+    const variance = 0.72 + ((i * 37) % 11) / 20;
+    const inner = base * (0.22 + p * 0.22);
+    const outer = base * (0.9 + eased * 3.4) * variance;
+    ctx.strokeStyle = hexToRgba(i % 3 ? pal.primary : pal.hot, (0.76 - p * 0.42) * variance);
+    ctx.lineWidth = Math.max(0.8, (i % 4 === 0 ? 2.8 : 1.35) * zoom);
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(angle) * inner, y + Math.sin(angle) * inner);
+    ctx.lineTo(x + Math.cos(angle) * outer, y + Math.sin(angle) * outer);
+    ctx.stroke();
+  }
+
+  if (opts.blocked) {
+    ctx.strokeStyle = 'rgba(132, 239, 255, 0.94)';
+    ctx.lineWidth = Math.max(2, 4 * zoom);
+    for (let layer = 0; layer < 3; layer++) {
+      const radius = base * (0.8 + layer * 0.28 + eased * 0.22);
+      ctx.beginPath();
+      for (let side = 0; side < 6; side++) {
+        const angle = -Math.PI / 2 + side * Math.PI / 3;
+        const px = x + Math.cos(angle) * radius;
+        const py = y + Math.sin(angle) * radius;
+        if (side === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+  } else if (type === 'destroy') {
+    const core = base * Math.max(0.08, 0.55 - p * 0.36);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.45 + p * 0.45})`;
+    ctx.beginPath();
+    ctx.arc(x, y, core, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(pal.hot, 0.9);
+    ctx.lineWidth = Math.max(1.5, 3.5 * zoom);
+    ctx.stroke();
+  } else if (type === 'jump') {
+    ctx.globalCompositeOperation = 'lighter';
+    for (let iris = 0; iris < 4; iris++) {
+      ctx.strokeStyle = hexToRgba(iris % 2 ? pal.hot : pal.primary, 0.72 - iris * 0.1);
+      ctx.lineWidth = Math.max(1.3, (4 - iris * 0.55) * zoom);
+      ctx.beginPath();
+      ctx.ellipse(x, y, base * (0.65 + iris * 0.22), base * (0.2 + iris * 0.07), time / 300 + iris * 0.35, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 

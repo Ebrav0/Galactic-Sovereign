@@ -12,12 +12,15 @@ import {
   AGREEMENT_OPEN_BORDERS,
   AGREEMENT_TRADE,
   AGREEMENT_TRUCE,
+  CONTACT_CONTACTED,
+  CONTACT_DETECTED,
   CONTACT_ESTABLISHED,
   CONTACT_UNKNOWN,
   PROPOSAL_ACCEPTED,
   PROPOSAL_PENDING,
   WAR_GOAL_TYPES,
   castCouncilVote,
+  councilAuthority,
   createClaim,
   declareWar,
   diplomaticLeverage,
@@ -26,11 +29,12 @@ import {
   previewProposal,
   proposeCouncilResolution,
   respondToProposal,
+  respondToCallToArms,
   submitProposal,
   withdrawClaim,
 } from './diplomacy.js';
 
-const PANEL_VERSION = 1;
+const PANEL_VERSION = 2;
 const PLAYER_ID = 'player';
 const panelInstances = new WeakMap();
 const TREATY_ACTIONS = Object.freeze([
@@ -41,6 +45,7 @@ const TREATY_ACTIONS = Object.freeze([
   [AGREEMENT_DEFENSE, 'Mutual Defense'],
   [AGREEMENT_ALLIANCE, 'Alliance'],
 ]);
+const DIPLOMACY_VIEWS = Object.freeze(['overview', 'relations', 'negotiation', 'conflicts', 'council', 'history']);
 
 function finite(value, fallback = 0) {
   const number = Number(value);
@@ -109,6 +114,19 @@ function makeSelect(id, options) {
     select.appendChild(option);
   }
   return select;
+}
+
+function makeNumberInput(id, placeholder = '0', step = '1') {
+  const input = element('input');
+  input.type = 'number';
+  input.min = '0';
+  input.step = step;
+  input.placeholder = placeholder;
+  input.id = id;
+  input.dataset.testid = id;
+  input.dataset.focusKey = id;
+  input.dataset.diplomacyField = id;
+  return input;
 }
 
 function makeCard(title, options = {}) {
@@ -180,7 +198,9 @@ export function diplomacyPanelSnapshot(state) {
   ]);
   return {
     version: PANEL_VERSION,
-    unlocked: !!state?.milestones?.diplomacyUnlocked,
+    revision: Math.max(0, Math.floor(finite(diplomacy.revision))),
+    unlocked: !!state?.milestones?.diplomacyUnlocked
+      || Object.values(diplomacy.contacts ?? {}).some((contact) => contact?.stage !== CONTACT_UNKNOWN),
     panicUntil: finite(diplomacy.panicUntil),
     playerPower: {
       creditsBand: Math.floor(finite(state?.credits) / 100),
@@ -196,7 +216,7 @@ export function diplomacyPanelSnapshot(state) {
       creditsBand: Math.floor(finite(faction.credits) / 100),
       solariiBand: Math.floor(finite(faction.solarii) / 5),
       ships: asArray(state?.aiShips).filter((ship) => ship.factionId === faction.id).length,
-      contact: compactRecord(diplomacy.contacts?.[faction.id], ['stage', 'firstContactAt', 'establishedAt']),
+      contact: compactRecord(diplomacy.contacts?.[faction.id], ['stage', 'firstContactAt', 'establishedAt', 'intelligence']),
       relation: compactRecord(diplomacy.relations?.[faction.id], ['status', 'baseMetrics', 'metrics', 'treaties']),
       modifiers: asArray(diplomacy.modifiers?.[faction.id]).map((entry) => compactRecord(entry, [
         'id', 'source', 'label', 'opinion', 'trust', 'fear', 'respect', 'expiresAt',
@@ -225,6 +245,10 @@ export function diplomacyPanelSnapshot(state) {
         'id', 'target', 'status', 'startedAt', 'expiresAt',
       ])),
     },
+    grievances: asArray(diplomacy.grievances).map((entry) => compactRecord(entry, ['id', 'aggrieved', 'against', 'label', 'severity', 'status', 'expiresAt'])),
+    favors: asArray(diplomacy.favors).map((entry) => compactRecord(entry, ['id', 'debtor', 'creditor', 'value', 'purpose', 'status'])),
+    transmissions: asArray(diplomacy.transmissions).slice(-20).map((entry) => compactRecord(entry, ['id', 'from', 'to', 'subject', 'kind', 'createdAt', 'read', 'status'])),
+    callsToArms: asArray(diplomacy.callsToArms).map((entry) => compactRecord(entry, ['id', 'warId', 'caller', 'ally', 'status', 'expiresAt'])),
     history: asArray(diplomacy.history).slice(-20).map((entry) => compactRecord(entry, [
       'id', 'type', 'at', 'factionId', 'proposalId', 'warId', 'reason',
     ])),
@@ -262,6 +286,15 @@ function systemName(state, systemId) {
     if (system || star) return system?.name ?? star?.name ?? systemId;
   }
   return systemId;
+}
+
+function systemActor(state, systemId) {
+  for (const galaxy of Object.values(state?.galaxies ?? {})) {
+    const system = galaxy?.systems?.[systemId] ?? galaxy?.abstract?.systemOverlays?.[systemId];
+    if (!system) continue;
+    return system.owner === 'player' ? PLAYER_ID : system.factionId ?? system.owner ?? null;
+  }
+  return null;
 }
 
 function notify(instance, message, kind = '') {
@@ -313,6 +346,7 @@ function captureControls(root) {
 }
 
 function restoreControls(root, captured) {
+  const restored = [];
   for (const control of root.querySelectorAll('[data-diplomacy-field]')) {
     const saved = captured.values.get(control.dataset.diplomacyField);
     if (!saved) continue;
@@ -320,7 +354,9 @@ function restoreControls(root, captured) {
       control.value = saved.value;
     }
     if ('checked' in control) control.checked = saved.checked;
+    restored.push(control);
   }
+  for (const control of restored) control.dispatchEvent(new Event('input', { bubbles: true }));
   if (!captured.focusKey) return;
   const target = [...root.querySelectorAll('[data-focus-key], [id]')]
     .find((node) => (node.dataset.focusKey ?? node.id) === captured.focusKey);
@@ -379,7 +415,12 @@ function renderRelationshipCard(instance, faction, leverage) {
   card.appendChild(element(
     'p',
     'panel-note panel-note--muted',
-    `Contact: ${labelize(contact.stage)} · Strategic leverage: ${signed(leverage.value)} · ${faction.sanctioned ? 'Council sanctioned' : 'No active sanction'}`,
+    `Contact: ${labelize(contact.stage)} · Intelligence: ${Math.round(finite(contact.intelligence))}% · Strategic leverage: ${signed(leverage.value)} · ${faction.sanctioned ? 'Council sanctioned' : 'No active sanction'}`,
+  ));
+  const profile = instance.model?.summary?.profiles?.[faction.id];
+  if (profile) card.appendChild(element(
+    'p', 'panel-note',
+    `Known agenda: ${asArray(profile.priorities).slice(0, 3).map(labelize).join(', ') || labelize(profile.personality)} · Reliability ${Math.round(finite(profile.reliability) * 100)}%`,
   ));
 
   const metrics = element('div', 'command-metrics');
@@ -398,14 +439,15 @@ function renderRelationshipCard(instance, faction, leverage) {
 
   if (contact.stage !== CONTACT_ESTABLISHED) {
     const actions = element('div', 'command-actions');
-    const contactButton = makeButton('diplomacy-contact-button', 'Establish Contact', 'primary');
+    const contactButton = makeButton('diplomacy-contact-button', contact.stage === CONTACT_UNKNOWN ? 'Detection Required' : 'Open Communications', 'primary');
+    contactButton.disabled = contact.stage === CONTACT_UNKNOWN;
     contactButton.addEventListener('click', () => safeAction(
       instance,
       () => establishContact(instance.state, faction.id, {
-        stage: CONTACT_ESTABLISHED,
+        stage: contact.stage === CONTACT_DETECTED ? CONTACT_CONTACTED : CONTACT_ESTABLISHED,
         trigger: 'player_command',
       }),
-      () => `Formal contact established with ${faction.name}`,
+      () => `Communications advanced with ${faction.name}`,
     ));
     actions.appendChild(contactButton);
     card.appendChild(actions);
@@ -424,6 +466,15 @@ function renderRelationshipCard(instance, faction, leverage) {
     appendLedgerRow(ledger, modifier.label ?? labelize(modifier.source), changes || 'Neutral');
   }
   card.appendChild(ledger);
+  const grievances = asArray(instance.model?.summary?.grievances).filter((entry) => (
+    entry.status === 'active' && entry.aggrieved === faction.id && entry.against === PLAYER_ID
+  ));
+  if (grievances.length) {
+    const grievanceLedger = element('div', 'command-ledger');
+    grievanceLedger.appendChild(element('strong', '', 'Active grievances'));
+    for (const grievance of grievances) appendLedgerRow(grievanceLedger, grievance.label ?? labelize(grievance.type), `Severity ${Math.round(finite(grievance.severity))}`);
+    card.appendChild(grievanceLedger);
+  }
   return card;
 }
 
@@ -505,6 +556,114 @@ function renderNegotiationsCard(instance, faction, viewState) {
     proposals.appendChild(row);
   }
   card.appendChild(proposals);
+  return card;
+}
+
+function renderDealBuilderCard(instance, faction, viewState) {
+  const card = makeCard('Advanced Deal Builder', { id: 'diplomacy-deal-builder', wide: true });
+  card.appendChild(element('p', 'panel-note panel-note--muted', 'Combine concessions and demands. Previewing is read-only; accepted terms settle atomically.'));
+  const columns = element('div', 'diplomacy-deal-columns');
+  const offer = element('section', 'diplomacy-deal-column');
+  const demand = element('section', 'diplomacy-deal-column');
+  offer.appendChild(element('h4', '', 'We offer'));
+  demand.appendChild(element('h4', '', 'We demand'));
+  const fields = {};
+  const addNumber = (column, id, label, step = '1') => {
+    const wrapper = element('label');
+    fields[id] = makeNumberInput(id, '0', step);
+    wrapper.append(element('span', '', label), fields[id]);
+    column.appendChild(wrapper);
+  };
+  addNumber(offer, 'diplomacy-offer-credits', 'Credits');
+  addNumber(offer, 'diplomacy-offer-solarii', 'Solarii', '0.25');
+  addNumber(demand, 'diplomacy-demand-credits', 'Credits');
+  addNumber(demand, 'diplomacy-demand-solarii', 'Solarii', '0.25');
+  addNumber(demand, 'diplomacy-demand-tribute', 'Tribute Credits / minute');
+  const selected = selectedSystemId(instance);
+  const owner = systemActor(instance.state, selected);
+  const checkField = (column, id, label, disabled = false) => {
+    const wrapper = element('label', 'diplomacy-check');
+    const input = element('input');
+    input.type = 'checkbox';
+    input.id = id;
+    input.dataset.testid = id;
+    input.dataset.focusKey = id;
+    input.dataset.diplomacyField = id;
+    input.disabled = disabled;
+    fields[id] = input;
+    wrapper.append(input, element('span', '', label));
+    column.appendChild(wrapper);
+  };
+  checkField(offer, 'diplomacy-offer-system', `Selected system: ${systemName(instance.state, selected)}`, !selected || owner !== PLAYER_ID);
+  checkField(offer, 'diplomacy-offer-favor', 'A favor owed to them');
+  checkField(demand, 'diplomacy-demand-system', `Selected system: ${systemName(instance.state, selected)}`, !selected || owner !== faction.id);
+  checkField(demand, 'diplomacy-demand-favor', 'A favor owed to us');
+  checkField(demand, 'diplomacy-demand-helioclast', 'Helioclast non-use commitment');
+  columns.append(offer, demand);
+  card.appendChild(columns);
+
+  const clauses = element('fieldset', 'diplomacy-deal-clauses');
+  clauses.appendChild(element('legend', '', 'Shared treaty clauses'));
+  for (const [type, label] of TREATY_ACTIONS) checkField(clauses, `diplomacy-clause-${type}`, label);
+  card.appendChild(clauses);
+  const forecast = element('p', 'panel-note');
+  forecast.id = 'diplomacy-deal-forecast';
+  forecast.dataset.testid = forecast.id;
+  forecast.textContent = 'Add at least one term to calculate a forecast.';
+  card.appendChild(forecast);
+
+  const buildInput = () => {
+    const terms = [];
+    const transfer = (id, resource, from, to) => {
+      const amount = Math.max(0, finite(fields[id]?.value));
+      if (amount > 0) terms.push({ type: 'resource', resource, amount, from, to });
+    };
+    transfer('diplomacy-offer-credits', 'credits', PLAYER_ID, faction.id);
+    transfer('diplomacy-offer-solarii', 'solarii', PLAYER_ID, faction.id);
+    transfer('diplomacy-demand-credits', 'credits', faction.id, PLAYER_ID);
+    transfer('diplomacy-demand-solarii', 'solarii', faction.id, PLAYER_ID);
+    if (fields['diplomacy-offer-system'].checked) terms.push({ type: 'system_transfer', systemId: selected, galaxyId: instance.state.activeGalaxyId, from: PLAYER_ID, to: faction.id });
+    if (fields['diplomacy-demand-system'].checked) terms.push({ type: 'system_transfer', systemId: selected, galaxyId: instance.state.activeGalaxyId, from: faction.id, to: PLAYER_ID });
+    if (fields['diplomacy-offer-favor'].checked) terms.push({ type: 'favor', debtor: PLAYER_ID, creditor: faction.id, value: 25 });
+    if (fields['diplomacy-demand-favor'].checked) terms.push({ type: 'favor', debtor: faction.id, creditor: PLAYER_ID, value: 25 });
+    const tribute = Math.max(0, finite(fields['diplomacy-demand-tribute'].value));
+    if (tribute > 0) terms.push({ type: 'tribute', payer: faction.id, payee: PLAYER_ID, creditsPerMinute: tribute, durationMs: 300000 });
+    if (fields['diplomacy-demand-helioclast'].checked) terms.push({ type: 'helioclast_commitment', actor: faction.id, commitment: 'non_use', durationMs: 300000 });
+    for (const [type] of TREATY_ACTIONS) if (fields[`diplomacy-clause-${type}`].checked) {
+      terms.push({ type: 'agreement', agreementType: type, parties: [PLAYER_ID, faction.id],
+        durationMs: type === AGREEMENT_CEASEFIRE ? 60000 : type === AGREEMENT_TRUCE ? 180000 : null });
+    }
+    return { from: PLAYER_ID, to: faction.id, message: 'Advanced diplomatic package', terms };
+  };
+  const updateForecast = () => {
+    const input = buildInput();
+    if (!input.terms.length) {
+      forecast.textContent = 'Add at least one term to calculate a forecast.';
+      return null;
+    }
+    const preview = previewProposal(viewState, input);
+    forecast.textContent = preview.ok
+      ? `Acceptance ${signed(preview.scoreRange[0])} to ${signed(preview.scoreRange[1])} · threshold ${signed(preview.threshold)} · admin ${preview.administrativeCost.credits} Credits / ${preview.administrativeCost.solarii} Solarii · ${preview.hardBlock ?? preview.reasons.map((reason) => reason.label).join(', ')}`
+      : preview.errors.join('; ');
+    forecast.className = `panel-note ${preview.acceptable ? 'command-score--positive' : preview.hardBlock ? 'command-score--negative' : ''}`;
+    return preview;
+  };
+  for (const control of Object.values(fields)) control.addEventListener('input', updateForecast);
+  const actions = element('div', 'command-actions');
+  const previewButton = makeButton('diplomacy-deal-preview', 'Preview Deal');
+  const submitButton = makeButton('diplomacy-deal-submit', 'Send Deal', 'primary');
+  previewButton.addEventListener('click', updateForecast);
+  submitButton.addEventListener('click', () => {
+    const input = buildInput();
+    if (!input.terms.length) {
+      notify(instance, 'Add at least one offer, demand, or treaty clause', 'error');
+      return;
+    }
+    safeAction(instance, () => submitProposal(instance.state, input, { autoResolve: true }),
+      (result) => treatyOutcomeMessage(result, 'Advanced deal', faction.name));
+  });
+  actions.append(previewButton, submitButton);
+  card.appendChild(actions);
   return card;
 }
 
@@ -679,11 +838,22 @@ function renderCouncilCard(instance, faction, summary) {
       ? `${faction.name} is under an active council sanction.`
       : `Open a council vote to sanction ${faction.name}.`,
   ));
+  const authority = element('div', 'command-metrics');
+  authority.append(
+    metric('Our authority', councilAuthority(instance.model.viewState, PLAYER_ID), 'diplomacy-council-player-authority'),
+    metric(`${faction.name} authority`, councilAuthority(instance.model.viewState, faction.id), 'diplomacy-council-faction-authority'),
+  );
+  card.appendChild(authority);
   const councilActions = element('div', 'command-actions');
-  const resolutionType = activeSanction ? 'repeal_sanction' : 'sanction';
+  const resolutionSelect = makeSelect('diplomacy-council-resolution-type', [
+    ['sanction', 'Sanctions'], ['repeal_sanction', 'Sanction Repeal'], ['condemnation', 'Condemnation'],
+    ['trade_embargo', 'Trade Embargo'], ['emergency_coalition', 'Emergency Coalition'],
+    ['collective_defense', 'Collective Defense'], ['helioclast_inspection', 'Helioclast Inspection'],
+  ]);
+  resolutionSelect.value = activeSanction ? 'repeal_sanction' : 'sanction';
   const propose = makeButton(
     'diplomacy-council-sanction',
-    activeSanction ? 'Propose Sanction Repeal' : 'Propose Sanction',
+    'Open Council Vote',
     'primary',
   );
   propose.addEventListener('click', () => safeAction(
@@ -691,12 +861,12 @@ function renderCouncilCard(instance, faction, summary) {
     () => proposeCouncilResolution(instance.state, {
       proposer: PLAYER_ID,
       target: faction.id,
-      type: resolutionType,
+      type: resolutionSelect.value,
       reason: activeSanction ? 'Diplomatic normalization' : 'Threat to galactic stability',
     }),
-    () => `Council ${labelize(resolutionType)} vote opened`,
+    () => `Council ${labelize(resolutionSelect.value)} vote opened`,
   ));
-  councilActions.appendChild(propose);
+  councilActions.append(resolutionSelect, propose);
   card.appendChild(councilActions);
 
   const resolutions = element('div', 'command-ledger');
@@ -727,6 +897,42 @@ function renderCouncilCard(instance, faction, summary) {
     resolutions.appendChild(row);
   }
   card.appendChild(resolutions);
+  return card;
+}
+
+function renderOverviewCard(instance, faction, summary) {
+  const card = makeCard('Current Diplomatic Situation', { id: 'diplomacy-overview-card', wide: true });
+  const activeAgreements = asArray(faction.agreements);
+  const activeGrievances = asArray(summary.grievances).filter((entry) => entry.status === 'active'
+    && [entry.aggrieved, entry.against].includes(PLAYER_ID) && [entry.aggrieved, entry.against].includes(faction.id));
+  const metrics = element('div', 'command-metrics');
+  metrics.append(
+    metric('Stance', labelize(faction.status), 'diplomacy-overview-stance'),
+    metric('Obligations', activeAgreements.length, 'diplomacy-overview-obligations'),
+    metric('Grievances', activeGrievances.length, 'diplomacy-overview-grievances'),
+    metric('Unread comms', asArray(summary.transmissions).filter((entry) => !entry.read
+      && [entry.from, entry.to].includes(faction.id)).length, 'diplomacy-overview-comms'),
+  );
+  card.appendChild(metrics);
+  const calls = asArray(summary.callsToArms).filter((entry) => entry.status === 'pending' && entry.ally === PLAYER_ID);
+  for (const call of calls) {
+    const row = element('div', 'command-ledger__row');
+    const actions = element('div', 'command-actions');
+    const accept = makeButton(`diplomacy-call-${call.id}-accept`, 'Join Defense', 'primary');
+    const refuse = makeButton(`diplomacy-call-${call.id}-refuse`, 'Refuse');
+    accept.addEventListener('click', () => safeAction(instance,
+      () => respondToCallToArms(instance.state, call.id, true, PLAYER_ID), 'Defensive call honored'));
+    refuse.addEventListener('click', () => safeAction(instance,
+      () => respondToCallToArms(instance.state, call.id, false, PLAYER_ID), 'Defensive call refused; treaty consequences applied'));
+    actions.append(accept, refuse);
+    row.append(element('strong', '', `Call to arms from ${call.caller}`), actions);
+    card.appendChild(row);
+  }
+  const transmissions = element('div', 'command-ledger');
+  const relevant = asArray(summary.transmissions).filter((entry) => [entry.from, entry.to].includes(faction.id)).slice(-8).reverse();
+  if (!relevant.length) appendEmpty(transmissions, 'No transmissions from this faction.');
+  for (const entry of relevant) appendLedgerRow(transmissions, entry.subject ?? labelize(entry.kind), `T+${Math.round(finite(entry.createdAt) / 1000)}s`);
+  card.appendChild(transmissions);
   return card;
 }
 
@@ -794,7 +1000,7 @@ function refresh(instance) {
     locked.appendChild(element(
       'p',
       'empty-state',
-      'Complete a Dyson sphere (Shell #8) to unlock formal negotiations, claims, war goals, and the Galactic Council.',
+      'Detect a major faction through exploration, intercepted ships, or a border encounter to open diplomacy.',
     ));
     instance.refs.grid.appendChild(locked);
     restoreControls(instance.root, captured);
@@ -810,13 +1016,19 @@ function refresh(instance) {
   }
 
   const leverage = diplomaticLeverage(viewState, PLAYER_ID, faction.id);
-  instance.refs.grid.append(
+  for (const button of instance.refs.viewButtons) button.classList.toggle('is-active', button.dataset.diplomacyView === instance.activeView);
+  if (instance.activeView === 'overview') instance.refs.grid.append(
+    renderOverviewCard(instance, faction, summary),
     renderRelationshipCard(instance, faction, leverage),
-    renderNegotiationsCard(instance, faction, viewState),
-    renderWarCard(instance, faction, summary),
-    renderCouncilCard(instance, faction, summary),
-    renderHistoryCard(instance.state, summary),
   );
+  if (instance.activeView === 'relations') instance.refs.grid.append(renderRelationshipCard(instance, faction, leverage));
+  if (instance.activeView === 'negotiation') instance.refs.grid.append(
+    renderNegotiationsCard(instance, faction, viewState),
+    renderDealBuilderCard(instance, faction, viewState),
+  );
+  if (instance.activeView === 'conflicts') instance.refs.grid.append(renderWarCard(instance, faction, summary));
+  if (instance.activeView === 'council') instance.refs.grid.append(renderCouncilCard(instance, faction, summary));
+  if (instance.activeView === 'history') instance.refs.grid.append(renderHistoryCard(instance.state, summary));
   restoreControls(instance.root, captured);
   return summary;
 }
@@ -845,13 +1057,21 @@ function buildPanel(container, state, options) {
   const selectorLabel = element('label');
   selectorLabel.append(element('span', '', 'Foreign polity'), factionSelect);
   selectorForm.appendChild(selectorLabel);
+  const viewNav = element('nav', 'diplomacy-view-tabs');
+  viewNav.setAttribute('aria-label', 'Diplomacy views');
+  const viewButtons = DIPLOMACY_VIEWS.map((viewId) => {
+    const button = makeButton(`diplomacy-view-${viewId}`, labelize(viewId));
+    button.dataset.diplomacyView = viewId;
+    viewNav.appendChild(button);
+    return button;
+  });
   const live = element('p', 'panel-note panel-note--muted');
   live.id = 'diplomacy-action-status';
   live.dataset.testid = live.id;
   live.setAttribute('role', 'status');
   live.setAttribute('aria-live', 'polite');
   const grid = element('div', 'command-screen__grid');
-  root.append(header, selectorForm, live, grid);
+  root.append(header, selectorForm, viewNav, live, grid);
   container.appendChild(root);
 
   const instance = {
@@ -860,11 +1080,15 @@ function buildPanel(container, state, options) {
     state,
     options,
     selectedFactionId: container.dataset.diplomacyFactionId ?? null,
+    activeView: DIPLOMACY_VIEWS.includes(container.dataset.diplomacyView)
+      ? container.dataset.diplomacyView
+      : 'overview',
     model: null,
     refs: {
       factionSelect,
       live,
       grid,
+      viewButtons,
       globalFactions: factionsMetric.querySelector('strong'),
       globalAgreements: agreementsMetric.querySelector('strong'),
       globalWars: warsMetric.querySelector('strong'),
@@ -876,6 +1100,11 @@ function buildPanel(container, state, options) {
   factionSelect.addEventListener('change', () => {
     instance.selectedFactionId = factionSelect.value;
     container.dataset.diplomacyFactionId = factionSelect.value;
+    instance.refresh();
+  });
+  for (const button of viewButtons) button.addEventListener('click', () => {
+    instance.activeView = button.dataset.diplomacyView;
+    container.dataset.diplomacyView = instance.activeView;
     instance.refresh();
   });
   return instance;
@@ -898,4 +1127,3 @@ export function renderDiplomacyCommandScreen(container, state, options = {}) {
   instance.refresh();
   return instance;
 }
-

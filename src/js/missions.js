@@ -30,9 +30,19 @@ export const MISSIONS = {
   },
   diplomacy_intro: {
     id: 'diplomacy_intro',
-    name: 'Diplomatic Contact',
-    description: 'Establish a trade treaty with an AI faction.',
-    objectives: [{ id: 'trade_treaty', label: 'Sign a trade treaty' }],
+    name: 'First Contact',
+    description: 'Detect a sovereign power, establish communications, and send a negotiated proposal.',
+    objectives: [
+      { id: 'detect_faction', label: 'Detect a major faction' },
+      { id: 'open_channel', label: 'Open a communications channel' },
+      { id: 'send_proposal', label: 'Send a diplomatic proposal' },
+    ],
+  },
+  diplomatic_legitimacy: {
+    id: 'diplomatic_legitimacy',
+    name: 'Galactic Legitimacy',
+    description: 'After completing a Dyson sphere, establish an enforceable trade charter.',
+    objectives: [{ id: 'trade_treaty', label: 'Sign a trade treaty after Galactic Legitimacy' }],
   },
   final_dominion: {
     id: 'final_dominion',

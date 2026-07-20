@@ -189,6 +189,12 @@ const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
 
 const el = (id) => document.getElementById(id);
 
+function escapeMarkup(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[char]));
+}
+
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: orbit star/planet/moon · F: follow · drag: pan · M: galaxy map',
   galaxy: 'Click star: travel · Fleet tab: select builder, then Shift+click · Ctrl/Cmd+click: quick drone deploy · Tab+click: fleet · Shift+click: scout · double-click: view · M: system',
@@ -207,7 +213,7 @@ function clearChildren(node) {
 /** Unified Helioclast fire target: map selection → viewed system → optional Stronghold. */
 function getHelioclastFireTarget(ctx, state, { allowStrongholdFallback = false } = {}) {
   const map = ctx?.getGalaxyTargetStar?.() ?? null;
-  if (map) return map;
+  if (map && systemById(state, map)) return map;
   const viewed = ctx?.getViewedSystemId?.() ?? null;
   if (viewed) return viewed;
   if (allowStrongholdFallback) return state.stronghold;
@@ -227,6 +233,29 @@ function formatSwResolveToast(note) {
   if (note.type === 'destroy') return { msg: 'System destroyed', kind: 'ok' };
   if (note.type === 'jump') return { msg: 'Helioclast jumped', kind: 'ok' };
   return { msg: 'Helioclast action complete', kind: 'ok' };
+}
+
+const SW_ACTION_COPY = {
+  create: { ready: 'Create beside the selected anchor' },
+  destroy: { ready: 'Erase the selected hostile system' },
+  jump: { ready: 'Relocate to the selected star' },
+};
+
+function updateSuperweaponActionButton(type, check, cost, sequence) {
+  const button = el(`sw-${type}-btn`);
+  if (!button) return;
+  const active = sequence?.type === type;
+  const detail = active
+    ? `${String(sequence.phase ?? 'charging').replaceAll('_', ' ')} · ${Math.round((sequence.totalProgress ?? 0) * 100)}%`
+    : check.ok ? SW_ACTION_COPY[type].ready : (check.reason ?? 'Unavailable');
+  button.disabled = !check.ok;
+  button.classList.toggle('is-firing', active);
+  button.title = detail;
+  button.setAttribute('aria-label', `${type} mode, ${cost} Solarii. ${detail}`);
+  const detailEl = button.querySelector('.sw-action__detail');
+  const costEl = button.querySelector('.sw-action__cost');
+  if (detailEl) detailEl.textContent = detail;
+  if (costEl) costEl.textContent = active ? 'LIVE' : `${cost} ◈`;
 }
 
 function setProgressBar(containerId, fillId, pctId, progress, visible) {
@@ -734,6 +763,9 @@ function renderCombatHud(state, battle, systemName, ctx) {
     getCombatSelection,
     getCombatCommandMode,
     setCombatCommandMode,
+    cancelTacticalRetreat,
+    getCombatCinemaState,
+    setCombatCinema,
     doTogglePause,
     doToggleView,
   } = ctx;
@@ -753,6 +785,18 @@ function renderCombatHud(state, battle, systemName, ctx) {
   const fleetPriority = battle.fleetPriority ?? state.combatSettings?.fleetPriority ?? 'auto';
   const advancedTactics = battle.advancedTactics ?? state.combatSettings?.advancedTactics ?? false;
   const flagshipControl = getFlagshipControlStatus?.() ?? { mode: 'auto' };
+  const retreatOrder = activeFleetOrders(battle, 'player').filter((o) => o.type === 'emergency_retreat').at(-1);
+  const retreatChargeMs = Math.max(1, battle.retreatChargeMs ?? 1500);
+  const retreatElapsedMs = battle.retreatStartedAt == null
+    ? 0
+    : Math.max(0, (state.time ?? 0) - battle.retreatStartedAt);
+  const withdrawalActive = !!retreatOrder;
+  const retreat = withdrawalActive ? {
+    destinationId: battle.retreatDestinationId ?? retreatOrder.destinationId ?? null,
+    progress: battle.retreatBlockedBy ? 0 : Math.min(1, retreatElapsedMs / retreatChargeMs),
+    blocker: battle.retreatBlockedBy ?? null,
+  } : null;
+  const cinema = getCombatCinemaState?.() ?? { enabled: false, active: false };
 
   el('combat-hud')?.classList.toggle('combat-hud--advanced', advancedTactics);
   const controlEl = el('combat-hud-control');
@@ -778,7 +822,9 @@ function renderCombatHud(state, battle, systemName, ctx) {
   if (hostileEl) hostileEl.textContent = String(hostiles.length);
   if (formationEl) formationEl.textContent = `Formation: ${formationOrder?.formation ?? '—'}`;
   if (focusEl) {
-    focusEl.textContent = commandMode
+    focusEl.textContent = withdrawalActive
+      ? `Withdrawal ${retreat.destinationId ?? 'pending'} · ${Math.round((retreat.progress ?? 0) * 100)}%${retreat.blocker ? ` · ${retreat.blocker.replaceAll('_', ' ')}` : ''}`
+      : commandMode
       ? `${commandMode === 'move' ? 'Move' : 'Attack'} armed · click a valid ${commandMode === 'move' ? 'location' : 'hostile'} · Esc cancels`
       : (focusUnit
         ? `Focus: ${focusUnit.hull?.replaceAll('_', ' ') ?? focusUnit.id}`
@@ -918,6 +964,7 @@ function renderCombatHud(state, battle, systemName, ctx) {
   const attackBtn = el('combat-hud-attack');
   const holdBtn = el('combat-hud-hold');
   const retreatBtn = el('combat-hud-retreat');
+  const cinemaBtn = el('combat-hud-cinema');
   const pauseBtn = el('combat-hud-pause');
   const galaxyBtn = el('combat-hud-galaxy');
   if (moveBtn) {
@@ -934,13 +981,21 @@ function renderCombatHud(state, battle, systemName, ctx) {
     holdBtn.onclick = () => issueTacticalOrder?.({ type: 'hold', subjectIds });
     holdBtn.dataset.bound = '1';
   }
-  if (retreatBtn && !retreatBtn.dataset.bound) {
-    retreatBtn.onclick = () => issueTacticalOrder?.({
-      type: 'emergency_retreat',
-      point: { x: -1500, y: 0 },
-      subjectIds: fleetSubjectIds,
-    });
-    retreatBtn.dataset.bound = '1';
+  if (retreatBtn) {
+    retreatBtn.textContent = withdrawalActive ? 'Cancel Retreat' : 'Retreat';
+    retreatBtn.classList.toggle('btn--active', withdrawalActive);
+    retreatBtn.onclick = () => withdrawalActive
+      ? cancelTacticalRetreat?.()
+      : issueTacticalOrder?.({ type: 'emergency_retreat', subjectIds: fleetSubjectIds });
+  }
+  if (cinemaBtn) {
+    cinemaBtn.textContent = cinema.enabled ? 'Cinema: On' : 'Cinema: Off';
+    cinemaBtn.setAttribute('aria-pressed', cinema.enabled ? 'true' : 'false');
+    cinemaBtn.classList.toggle('btn--active', cinema.enabled);
+    cinemaBtn.title = cinema.active
+      ? `Tracking ${cinema.kind?.replaceAll('_', ' ') ?? 'battle cue'}`
+      : 'Briefly tracks strafes, heavy impacts, kills, and Helioclast fire';
+    cinemaBtn.onclick = () => setCombatCinema?.(!cinema.enabled);
   }
   if (pauseBtn && !pauseBtn.dataset.bound) {
     pauseBtn.onclick = () => doTogglePause?.();
@@ -2954,6 +3009,9 @@ export function initUi(ctx) {
     combatFocus,
     getCombatCommandMode,
     setCombatCommandMode,
+    cancelTacticalRetreat,
+    getCombatCinemaState,
+    setCombatCinema,
     combatUiActive,
     followConvoy,
     getBootPhase,
@@ -4054,12 +4112,18 @@ export function initUi(ctx) {
     }
     if (sidePanel === 'diplomacy') {
       diploScreen?.classList.remove('hidden');
-      const diploSnap = JSON.stringify(diplomacyPanelSnapshot(state));
+      const diplomacyState = diplomacyPanelSnapshot(state);
+      const diploSnap = JSON.stringify({
+        version: diplomacyState.version,
+        revision: diplomacyState.revision,
+        unlocked: diplomacyState.unlocked,
+        tech: diplomacyState.tech,
+      });
       const diplomacyMounted = !!diploScreen?.querySelector('#diplomacy-command-screen');
       // Diplomacy actions refresh their own mounted screen. Holding the live
       // command DOM stable between actions prevents background relationship
       // ticks from detaching buttons while the player is trying to click them.
-      if (!diplomacyMounted) {
+      if (!diplomacyMounted || (diploSnap !== uiSnapshots.diplomacyPanel && !uiPointerActive)) {
         uiSnapshots.diplomacyPanel = diploSnap;
         renderDiplomacyCommandScreen(el('diplomacy-screen-body'), state, {
           getGalaxyTargetStar,
@@ -4201,6 +4265,9 @@ export function initUi(ctx) {
         getCombatSelection,
         getCombatCommandMode,
         setCombatCommandMode,
+        cancelTacticalRetreat,
+        getCombatCinemaState,
+        setCombatCinema,
         doTogglePause,
         doToggleView,
       });
@@ -4246,34 +4313,57 @@ export function initUi(ctx) {
     if (view === 'galaxy' && ms.superweaponUnlocked) {
       swGalaxyPanel?.classList.remove('hidden');
       const sw = superweaponSummary(state);
+      const seq = sw.fireSequence;
       const fireCtx = { getGalaxyTargetStar, getViewedSystemId };
       const targetId = getHelioclastFireTarget(fireCtx, state, { allowStrongholdFallback: true });
-      const targetName = targetId ? (systemById(state, targetId)?.name ?? targetId) : '—';
-      const seq = sw.fireSequence;
-      const phaseColor = seq?.type === 'create' ? '#66ffaa'
-        : seq?.type === 'jump' ? '#aa88ff'
-          : seq?.type === 'destroy' ? '#ff6688' : '#88e8ff';
+      const displayTargetId = seq?.targetSystemId ?? targetId;
+      const targetSystem = targetId ? systemById(state, targetId) : null;
+      const targetName = seq?.targetName ?? (targetId ? (targetSystem?.name ?? targetId) : 'No target selected');
+      const targetOwnerId = seq?.targetOwner ?? targetSystem?.owner;
+      const targetOwner = targetOwnerId === 'player' ? 'Sovereign territory'
+        : targetOwnerId === 'ai' ? 'Hostile territory'
+          : (targetSystem || seq) ? 'Unclaimed system' : 'Click any star to acquire target';
+      const firingSystemId = sw.fireSequence?.fromSystemId ?? sw.ship?.systemId ?? sw.cradleSystemId;
+      const firingSystemName = firingSystemId
+        ? (systemById(state, firingSystemId)?.name ?? firingSystemId)
+        : (sw.ship?.transit ? 'In transit' : 'Berth');
       const createCheck = targetId ? canSuperweaponAction(state, 'create', targetId) : { ok: false };
       const destroyCheck = targetId ? canSuperweaponAction(state, 'destroy', targetId) : { ok: false };
       const jumpCheck = targetId ? canSuperweaponAction(state, 'jump', targetId) : { ok: false };
+      const statusEl = el('sw-panel-status');
+      if (statusEl) {
+        statusEl.textContent = seq
+          ? String(seq.phase ?? 'firing').replaceAll('_', ' ')
+          : sw.online ? (sw.cooldownMs > 0 ? `CD ${Math.ceil(sw.cooldownMs / 1000)}s` : 'Weapons free') : 'Offline';
+        statusEl.classList.toggle('is-firing', !!seq);
+        statusEl.classList.toggle('is-offline', !sw.online);
+      }
+      const phaseOrder = ['charge', 'aim', 'fire', 'impact', 'aftermath'];
+      const phaseIndex = seq ? phaseOrder.indexOf(seq.phase) : -1;
+      const remainingMs = seq
+        ? Math.max(0, seq.totalMs - (state.time - seq.startedAt))
+        : 0;
+      const sequenceMarkup = seq
+        ? `<div class="sw-sequence sw-sequence--${escapeMarkup(seq.type)}">`
+          + `<div class="sw-sequence__top"><span class="sw-sequence__title">${escapeMarkup(seq.type)} sequence · ${escapeMarkup(seq.phase)}</span>`
+          + `<span class="sw-sequence__eta">${(remainingMs / 1000).toFixed(1)}s</span></div>`
+          + `<div class="sw-sequence__track" role="progressbar" aria-label="Firing sequence" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round((seq.totalProgress ?? 0) * 100)}">`
+          + `<div class="sw-sequence__fill" style="width:${Math.round((seq.totalProgress ?? 0) * 100)}%"></div></div>`
+          + `<div class="sw-sequence__phases">${phaseOrder.map((phase, index) => `<span class="sw-sequence__phase${index < phaseIndex ? ' is-complete' : ''}${index === phaseIndex ? ' is-active' : ''}">${phase}</span>`).join('')}</div>`
+          + `</div>`
+        : `<p class="sw-guide"><strong>1.</strong> Click a star &nbsp;→&nbsp; <strong>2.</strong> Choose an effect</p>`;
       el('superweapon-galaxy-body').innerHTML =
-        `<p class="panel-note">Target: <strong>${targetName}</strong></p>`
-        + `<p class="panel-note">Online: ${sw.online ? 'yes' : 'no'}`
-        + ` · CD ${Math.ceil(sw.cooldownMs / 1000)}s`
-        + ` · Jump CD ${Math.ceil(sw.jumpCooldownMs / 1000)}s`
-        + (sw.sovereignProtocol ? ' · Sovereign Protocol' : '')
-        + `</p>`
-        + (seq
-          ? `<p class="panel-note" style="color:${phaseColor}">Firing: <strong>${seq.type}</strong> · ${seq.phase}`
-            + ` · ${Math.max(0, Math.ceil((seq.totalMs - (state.time - seq.startedAt)) / 1000))}s`
-            + ` · ${Math.round((seq.totalProgress ?? 0) * 100)}%</p>`
-          : `<p class="panel-note panel-note--muted">Create ${sw.costs?.create ?? 25} / Destroy ${sw.costs?.destroy ?? 30} / Jump ${sw.costs?.jump ?? 15} Solarii · Create needs adjacent anchor</p>`);
-      el('sw-create-btn') && (el('sw-create-btn').disabled = !createCheck.ok);
-      el('sw-create-btn') && (el('sw-create-btn').title = createCheck.reason ?? '');
-      el('sw-destroy-btn') && (el('sw-destroy-btn').disabled = !destroyCheck.ok);
-      el('sw-destroy-btn') && (el('sw-destroy-btn').title = destroyCheck.reason ?? '');
-      el('sw-jump-btn') && (el('sw-jump-btn').disabled = !jumpCheck.ok);
-      el('sw-jump-btn') && (el('sw-jump-btn').title = jumpCheck.reason ?? '');
+        `<div class="sw-target"><span class="sw-target__eyebrow">Target lock</span>`
+        + `<strong class="sw-target__name">${escapeMarkup(targetName)}</strong>`
+        + `<span class="sw-target__meta">${escapeMarkup(targetOwner)} · ${escapeMarkup(displayTargetId ?? 'awaiting target')}</span></div>`
+        + `<div class="sw-readouts">`
+        + `<div class="sw-readout"><span class="sw-readout__label">Helioclast</span><strong class="sw-readout__value">${escapeMarkup(firingSystemName)}</strong></div>`
+        + `<div class="sw-readout"><span class="sw-readout__label">Solarii</span><strong class="sw-readout__value">${Math.floor(state.solarii ?? 0)} ◈</strong></div>`
+        + `<div class="sw-readout"><span class="sw-readout__label">Core</span><strong class="sw-readout__value">${sw.online ? (sw.cooldownMs > 0 ? `${Math.ceil(sw.cooldownMs / 1000)}s CD` : 'Ready') : 'Offline'}</strong></div>`
+        + `</div>${sequenceMarkup}`;
+      updateSuperweaponActionButton('create', createCheck, sw.costs?.create ?? 25, seq);
+      updateSuperweaponActionButton('destroy', destroyCheck, sw.costs?.destroy ?? 30, seq);
+      updateSuperweaponActionButton('jump', jumpCheck, sw.costs?.jump ?? 15, seq);
     } else {
       swGalaxyPanel?.classList.add('hidden');
     }

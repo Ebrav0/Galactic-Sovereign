@@ -41,7 +41,14 @@ import {
   structureDispatchIntervalMultiplier,
   structureNexusDeliveryMultiplier,
 } from './body-structures.js';
-import { canRouteThroughSystem } from './diplomacy.js';
+import {
+  AGREEMENT_ALLIANCE,
+  AGREEMENT_TRADE,
+  canRouteThroughSystem,
+  hasAgreement,
+  recordDiplomaticEvent,
+  settleDiplomaticTradeDelivery,
+} from './diplomacy.js';
 import { techEffects } from './tech-web.js';
 import { factionTechContext } from './ai-tech.js';
 
@@ -418,12 +425,16 @@ export function routeEtaMs(graph, path, options = {}) {
   return eta;
 }
 
-export function nexusAcceptsCargo(system, ownerId = 'player') {
+export function nexusAcceptsCargo(system, ownerId = 'player', state = null) {
   if (system?.star?.kind !== 'trade_nexus') return false;
   if (system.tradeNexus?.blockedOwners?.includes?.(ownerId)) return false;
-  if (ownerId !== 'player') return system.tradeNexus?.openAccess !== false;
+  const systemActor = system.owner === 'player' ? 'player' : system.factionId ?? null;
+  const treatyAccess = state && systemActor && systemActor !== ownerId
+    && (hasAgreement(state, systemActor, AGREEMENT_TRADE, ownerId)
+      || hasAgreement(state, systemActor, AGREEMENT_ALLIANCE, ownerId));
+  if (ownerId !== 'player') return treatyAccess || system.tradeNexus?.openAccess !== false;
   if (system.tradeNexus?.acceptsPlayerTrade === false) return false;
-  if (system.owner === 'ai' && system.tradeNexus?.allied !== true) return false;
+  if (system.owner === 'ai' && system.tradeNexus?.allied !== true && !treatyAccess) return false;
   return true;
 }
 
@@ -440,7 +451,7 @@ export function discoverTradeNexuses(state, galaxyId = state.activeGalaxyId, own
       systemId: system.id,
       name: system.name,
       owner: system.owner,
-      available: nexusAcceptsCargo(system, ownerId),
+      available: nexusAcceptsCargo(system, ownerId, state),
     }))
     .sort((a, b) => a.systemId.localeCompare(b.systemId));
 }
@@ -1135,6 +1146,12 @@ export function interceptConvoy(state, convoyId, options = {}) {
     logistics.stats.interceptionsRepelled += 1;
     const event = { type: 'convoy_interception_repelled', at: now, convoyId, threatStrength: threat, defense };
     recordEvent(logistics, event, config);
+    if (options.attackerId && options.attackerId !== (convoy.ownerId ?? 'player')) {
+      recordDiplomaticEvent(state, {
+        type: 'convoy_intercepted', actor: options.attackerId,
+        target: convoy.ownerId ?? 'player', severity: 0.35,
+      });
+    }
     return { ok: true, destroyed: false, repelled: true, convoy, event };
   }
 
@@ -1165,6 +1182,13 @@ export function interceptConvoy(state, convoyId, options = {}) {
     lostCargo, remainingCargo: normalizeCargo(convoy.manifest),
   };
   recordEvent(logistics, event, config);
+  if (options.attackerId && options.attackerId !== (convoy.ownerId ?? 'player')) {
+    recordDiplomaticEvent(state, {
+      type: 'convoy_intercepted', actor: options.attackerId,
+      target: convoy.ownerId ?? 'player',
+      severity: Math.max(0.5, cargoTotal(lostCargo) / 100),
+    });
+  }
   return { ok: true, destroyed, repelled: false, lostCargo, convoy, event };
 }
 
@@ -1172,6 +1196,7 @@ function nexusStillAvailable(state, convoy) {
   return nexusAcceptsCargo(
     getSystems(state, convoy.galaxyId)[convoy.destinationSystemId],
     convoy.ownerId ?? 'player',
+    state,
   );
 }
 
@@ -1191,7 +1216,13 @@ function deliverConvoy(state, convoy, config) {
       })
       * techEffects(techState).nexusDeliveryValueMult,
   ) || 1);
-  const credits = roundCargo(cargoCreditValue(convoy.manifest, config.cargoValues) * deliveryMultiplier);
+  const baseCredits = roundCargo(cargoCreditValue(convoy.manifest, config.cargoValues) * deliveryMultiplier);
+  const destination = getSystems(state, convoy.galaxyId)[convoy.destinationSystemId];
+  const destinationActor = destination?.owner === 'player' ? 'player' : destination?.factionId ?? null;
+  const diplomaticTrade = destinationActor && destinationActor !== ownerId
+    ? settleDiplomaticTradeDelivery(state, { from: ownerId, to: destinationActor, baseValue: baseCredits })
+    : null;
+  const credits = roundCargo(diplomaticTrade?.ok ? diplomaticTrade.value : baseCredits);
   if (ownerId === 'player') {
     state.credits = (Number(state.credits) || 0) + credits;
   } else {
@@ -1234,7 +1265,7 @@ function tickOneConvoy(state, convoy, config, events) {
     if (['blockade', 'no_destination', 'closed_borders'].includes(convoy.pauseReason)) {
       const location = convoyAtRouteNode(convoy, now);
       const system = location.ok ? getSystems(state, convoy.galaxyId)[location.systemId] : null;
-      if (location.ok && nexusAcceptsCargo(system, convoy.ownerId ?? 'player')) {
+      if (location.ok && nexusAcceptsCargo(system, convoy.ownerId ?? 'player', state)) {
         convoy.destinationSystemId = location.systemId;
         events.push(deliverConvoy(state, convoy, config));
       } else {

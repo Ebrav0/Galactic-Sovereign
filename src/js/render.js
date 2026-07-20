@@ -13,10 +13,14 @@ import {
   SHUTTLE_SIZE,
   SAIL_SHUTTLE_SIZE,
   FLAGSHIP_RADIUS,
+  HELIOCLAST_RADIUS,
   CAPTURE_HOLD_MS,
   BATTLE_RENDER_LOD_UNITS,
   BATTLE_RENDER_SWARM_UNITS,
   CELESTIAL_VISUAL_SCALE,
+  TACTICAL_CINEMA_CUE_MS,
+  TACTICAL_CINEMA_COOLDOWN_MS,
+  TACTICAL_CINEMA_CANCEL_MS,
 } from './constants.js';
 import { drawStar, drawPlanet, drawMoon, drawBlackHole, drawStarOverlays } from './celestial-render.js';
 import {
@@ -33,6 +37,7 @@ import { drawDysonLensFlare } from './dyson-megastructure-render.js';
 import {
   drawSuperweaponCradle,
   drawHelioclastShipyard,
+  drawHelioclastShip,
   drawNovaculaBeam,
   cradleWorldPose,
   drawGalaxyNovaculaBeam,
@@ -43,6 +48,8 @@ import {
   drawHelioclastJumpIris,
   drawHelioclastCinemaOverlay,
   drawGalaxyHelioclastPulse,
+  drawGalaxyHelioclastTargetLock,
+  drawGalaxyHelioclastImpact,
 } from './superweapon-render.js';
 import {
   fireSequenceStatus,
@@ -124,13 +131,14 @@ import {
   drawScoutSprite,
   drawShuttleSprite,
   drawFleetMarker,
+  drawShipStatusBars,
   unitShieldTotals,
 } from './ship-sprites.js';
 import { fleetMarkersForGalaxy, fleetTransitLaneKeys, fleetTransitMarkersForGalaxy } from './battle-groups.js';
 import { ambientShipPose, ambientPiratePose, buildKeepOutBodyCache, starKeepOutOuterRadius } from './ship-motion.js';
 import { fleetFollowHome } from './battle-groups.js';
 import { builderDroneTransitPositions, builderDroneBuildPose } from './builder-drones.js';
-import { drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
+import { cinematicCueForBattle, drawCombatFx, hitFeedbackByTarget } from './combat-fx.js';
 import { activeFleetOrders, weaponArcRadians, weaponMountBearing } from './combat-orders.js';
 import { combatDisplayPose } from './combat-steering.js';
 import {
@@ -199,6 +207,7 @@ export function screenToWorld(cam, sx, sy, canvas) {
 
 export function updateFollowCamera(state, viewedSystemId, dtMs, accumulatorMs = 0) {
   const f = state.flagship;
+  if (combatCinemaEnabled && state.time < combatCinemaDirector.activeUntil) return;
   if (!follow.enabled || f.transit || f.systemId !== viewedSystemId) return;
   const pose = getFlagshipDisplayPose(state, accumulatorMs);
   const k = 1 - Math.exp(-CAMERA_FOLLOW_RATE * (dtMs / 1000));
@@ -209,6 +218,70 @@ export function updateFollowCamera(state, viewedSystemId, dtMs, accumulatorMs = 
 export function snapCameraTo(x, y) {
   camera.x = x;
   camera.y = y;
+}
+
+let combatCinemaEnabled = false;
+const combatCinemaDirector = {
+  activeUntil: 0,
+  suspendedUntilReal: 0,
+  lastCueAt: -Infinity,
+  lastCueKey: null,
+  cue: null,
+};
+
+export function setCombatCinemaEnabled(enabled) {
+  combatCinemaEnabled = !!enabled;
+  if (!combatCinemaEnabled) {
+    combatCinemaDirector.activeUntil = 0;
+    combatCinemaDirector.cue = null;
+  }
+  return combatCinemaState();
+}
+
+export function cancelCombatCinema() {
+  combatCinemaDirector.activeUntil = 0;
+  combatCinemaDirector.cue = null;
+  combatCinemaDirector.suspendedUntilReal = performance.now() + TACTICAL_CINEMA_CANCEL_MS;
+}
+
+export function combatCinemaState(state = null) {
+  return {
+    enabled: combatCinemaEnabled,
+    active: !!(combatCinemaEnabled && state && state.time < combatCinemaDirector.activeUntil),
+    cue: combatCinemaDirector.cue?.kind ?? null,
+    targetIds: combatCinemaDirector.cue
+      ? [combatCinemaDirector.cue.attackerId, combatCinemaDirector.cue.targetId].filter(Boolean)
+      : [],
+  };
+}
+
+export function updateCombatCinemaCamera(state, systemId, dtMs) {
+  if (!combatCinemaEnabled || performance.now() < combatCinemaDirector.suspendedUntilReal) return false;
+  const battle = getBattleState(state, systemId);
+  if (!battle?.active || battle.mode !== 'tactical') {
+    combatCinemaDirector.activeUntil = 0;
+    combatCinemaDirector.cue = null;
+    return false;
+  }
+  const cue = cinematicCueForBattle(battle, state.time);
+  if (cue && cue.key !== combatCinemaDirector.lastCueKey
+      && state.time - combatCinemaDirector.lastCueAt >= TACTICAL_CINEMA_COOLDOWN_MS) {
+    combatCinemaDirector.lastCueKey = cue.key;
+    combatCinemaDirector.lastCueAt = state.time;
+    combatCinemaDirector.activeUntil = state.time + TACTICAL_CINEMA_CUE_MS;
+    combatCinemaDirector.cue = cue;
+  }
+  if (!combatCinemaDirector.cue || state.time >= combatCinemaDirector.activeUntil) return false;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+  const followRate = reducedMotion ? 2.8 : 5.5;
+  const k = 1 - Math.exp(-followRate * Math.max(0, dtMs) / 1000);
+  camera.x += (combatCinemaDirector.cue.x - camera.x) * k;
+  camera.y += (combatCinemaDirector.cue.y - camera.y) * k;
+  if (!reducedMotion) {
+    const targetZoom = Math.max(0.45, Math.min(0.82, camera.zoom));
+    camera.zoom += (targetZoom - camera.zoom) * Math.min(0.18, k);
+  }
+  return true;
 }
 
 let starfield = null;
@@ -1007,6 +1080,11 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
   const flagshipDisplayPose = f.systemId === systemId && !f.transit
     ? getFlagshipDisplayPose(state, accumulatorMs)
     : null;
+  const tacticalBattleOwnsFlagship = activeBattle?.active
+    && activeBattle.mode === 'tactical'
+    && activeBattle.units?.some((unit) => (
+      unit.side === 'player' && unit.hull === 'flagship' && unit.hp > 0
+    ));
 
   const activeConstructionJobs = (state.constructionJobs ?? []).filter(
     (job) => job.galaxyId === state.activeGalaxyId
@@ -1050,7 +1128,9 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
 
   drawBuilderDroneConstruction(ctx, state, system, canvas, z, t);
 
-  if (f.systemId === systemId && !f.transit && flagshipDisplayPose) {
+  // Tactical battles render the flagship from the combat unit list. Do not
+  // also draw the ambient strategic flagship or its attached wing here.
+  if (!tacticalBattleOwnsFlagship && f.systemId === systemId && !f.transit && flagshipDisplayPose) {
     const orbitVisual = getFlagshipOrbitVisual(state, t);
     if (orbitVisual) {
       const os = worldToScreen(camera, orbitVisual.cx, orbitVisual.cy, canvas);
@@ -1703,6 +1783,29 @@ function drawCombatMoveOrders(ctx, battle, selectionIds, canvas, z, poseById = n
   }
 }
 
+function drawWingAfterburnerStreak(ctx, p, unit, heading, z, mode, reducedMotion) {
+  if (reducedMotion || mode === 'swarm' || !unit.isWing) return;
+  const phase = unit.passPhase ?? unit.sortiePhase;
+  if (!unit._wingAfterburner && !['approach', 'break', 'reengage', 'return_to_cap', 'return'].includes(phase)) return;
+  const speed = Math.hypot(unit.vx ?? 0, unit.vy ?? 0);
+  const length = Math.max(9, Math.min(48, 12 + speed * 0.11)) * z * (unit._wingAfterburner ? 1.3 : 1);
+  const bx = -Math.cos(heading);
+  const by = -Math.sin(heading);
+  const px = -by;
+  const py = bx;
+  ctx.save();
+  ctx.strokeStyle = unit.side === 'enemy' ? 'rgba(255, 132, 92, 0.68)' : 'rgba(100, 215, 255, 0.72)';
+  ctx.lineWidth = Math.max(0.7, 1.25 * z);
+  ctx.lineCap = 'round';
+  for (const offset of [-2.2, 2.2]) {
+    ctx.beginPath();
+    ctx.moveTo(p.x + px * offset * z, p.y + py * offset * z);
+    ctx.lineTo(p.x + bx * length + px * offset * z, p.y + by * length + py * offset * z);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawCombatLayer(
   ctx,
   state,
@@ -1742,6 +1845,7 @@ function drawCombatLayer(
   if (battle?.active && battle.units?.length) {
     const liveCount = battle.units.reduce((n, unit) => n + (unit.hp > 0 ? 1 : 0), 0);
     const mode = combatRenderMode(liveCount, z);
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
     const poseById = new Map();
     const headingById = new Map();
     for (const unit of battle.units) {
@@ -1785,10 +1889,13 @@ function drawCombatLayer(
       const selected = selectionIds.has(String(unit.id));
       const isFocus = focusUnit && String(unit.id) === String(focusUnit.id);
       const fb = feedback.get(unit.id);
-      const shipR = (unit.isWing || unit.hull === 'fighter' || unit.hull === 'interceptor'
-        || unit.hull === 'heavy_fighter' || unit.hull === 'bomber')
-        ? wingBaseR
-        : baseR;
+      const isHelioclast = unit.hull === 'helioclast';
+      const shipR = isHelioclast
+        ? Math.max(4, HELIOCLAST_RADIUS * z)
+        : (unit.isWing || unit.hull === 'fighter' || unit.hull === 'interceptor'
+          || unit.hull === 'heavy_fighter' || unit.hull === 'bomber')
+          ? wingBaseR
+          : baseR;
       if (selected) {
         ctx.save();
         ctx.strokeStyle = 'rgba(111, 214, 255, 0.95)';
@@ -1812,17 +1919,38 @@ function drawCombatLayer(
         ctx.setLineDash([]);
         ctx.restore();
       }
-      drawCombatShipSprite(ctx, p.x, p.y, unit.hull, shipR, {
-        heading: pose.heading,
-        side: unit.side,
-        hp: unit.hp,
-        maxHp: unit.maxHp,
-        ...unitShieldTotals(unit),
-        showHp: mode !== 'swarm',
-        alwaysShowBars: true,
-        ...hullSpriteVisualOpts(state, unit.hull, unit.side),
-        hardpointFireAt: unit.hull === 'flagship' ? (unit.hardpointFireAt ?? null) : null,
-      }, mode);
+      const shields = unitShieldTotals(unit);
+      drawWingAfterburnerStreak(ctx, p, unit, pose.heading, z, mode, reducedMotion);
+      if (isHelioclast) {
+        drawHelioclastShip(ctx, p.x, p.y, z, time, {
+          stage: 6,
+          heading: pose.heading,
+          mobile: true,
+          weaponMounts: unit.weaponMounts,
+          plumeStrength: Math.hypot(unit.vx ?? 0, unit.vy ?? 0) > 2 ? 0.9 : 0.35,
+          phase: unit.cooldownMs > 700 ? 'fire' : 'idle',
+        });
+        if (mode !== 'swarm') {
+          drawShipStatusBars(ctx, p.x, p.y, shipR, {
+            hp: unit.hp,
+            maxHp: unit.maxHp,
+            ...shields,
+            alwaysShow: true,
+          });
+        }
+      } else {
+        drawCombatShipSprite(ctx, p.x, p.y, unit.hull, shipR, {
+          heading: pose.heading,
+          side: unit.side,
+          hp: unit.hp,
+          maxHp: unit.maxHp,
+          ...shields,
+          showHp: mode !== 'swarm',
+          alwaysShowBars: true,
+          ...hullSpriteVisualOpts(state, unit.hull, unit.side),
+          hardpointFireAt: unit.hull === 'flagship' ? (unit.hardpointFireAt ?? null) : null,
+        }, mode);
+      }
       if (mode !== 'swarm' && fb) drawHitFeedbackOverlay(ctx, p.x, p.y, shipR, unit, fb, z);
       if (selected && focusScreen && unit.side === 'player') {
         ctx.save();
@@ -2095,6 +2223,7 @@ export function drawGalaxy(
   selectedScoutId = null,
   selectedBattleGroupId = null,
   tutorialTargetSystemId = null,
+  superweaponTargetSystemId = null,
 ) {
   const drawStartedAt = performance.now();
   const canvas = ctx.canvas;
@@ -2725,12 +2854,20 @@ export function drawGalaxy(
 
   const seq = fireSequenceStatus(state);
   const cradleId = state.superweapon?.cradleSystemId ?? state.stronghold;
+  const lockedTarget = nodePos(galaxy, seq?.targetSystemId ?? superweaponTargetSystemId);
+  if (state.milestones?.superweaponUnlocked && lockedTarget) {
+    const lockScreen = worldToScreen(galaxyCamera, lockedTarget.x, lockedTarget.y, canvas);
+    drawGalaxyHelioclastTargetLock(ctx, lockScreen.x, lockScreen.y, z, state.time, {
+      type: seq?.type ?? 'target',
+      active: !!seq,
+    });
+  }
   if (seq && ['charge', 'aim', 'fire', 'impact', 'aftermath'].includes(seq.phase)) {
     const fromNode = nodePos(galaxy, seq.fromSystemId ?? cradleId);
     const toId = seq.resultSystemId && seq.resolved && seq.type === 'create'
       ? seq.resultSystemId
       : seq.targetSystemId;
-    const toNode = nodePos(galaxy, toId);
+    const toNode = nodePos(galaxy, toId) ?? seq.targetPosition ?? null;
     // Ease galaxy camera toward the fire corridor during aim/fire.
     if (fromNode && (seq.phase === 'aim' || seq.phase === 'fire' || seq.phase === 'impact')) {
       const midX = toNode ? (fromNode.x + toNode.x) * 0.5 : fromNode.x;
@@ -2772,6 +2909,19 @@ export function drawGalaxy(
             blocked: !!seq.blocked,
           });
           drawGalaxyHelioclastPulse(ctx, ts.x, ts.y, z, state.time, seq.progress ?? 0, seq.type);
+          if (seq.phase === 'impact') {
+            drawGalaxyHelioclastImpact(
+              ctx,
+              canvas,
+              ts.x,
+              ts.y,
+              z,
+              state.time,
+              seq.progress ?? 0,
+              seq.type,
+              { blocked: !!seq.blocked },
+            );
+          }
         }
       }
       if (seq.type === 'create' && seq.resolved && seq.resultSystemId && (seq.phase === 'impact' || seq.phase === 'aftermath')) {
@@ -2802,7 +2952,7 @@ export function drawGalaxy(
 
   const swAction = state.superweapon?.lastAction;
   if (swAction && state.time - swAction.at < 4000) {
-    const target = nodePos(galaxy, swAction.targetSystemId);
+    const target = nodePos(galaxy, swAction.targetSystemId) ?? swAction.targetPosition ?? null;
     if (target) {
       const ts = worldToScreen(galaxyCamera, target.x, target.y, canvas);
       const pulse = 1 - (state.time - swAction.at) / 4000;
@@ -2839,6 +2989,15 @@ export function drawGalaxy(
       ctx.stroke();
       ctx.restore();
     }
+  }
+
+  if (seq && ['charge', 'aim', 'fire', 'impact', 'aftermath'].includes(seq.phase)) {
+    drawHelioclastCinemaOverlay(ctx, canvas, state.time, {
+      type: seq.type,
+      phase: seq.phase,
+      progress: seq.progress ?? 0,
+      totalProgress: seq.totalProgress ?? 0,
+    });
   }
 
   lastGalaxyPerf = {

@@ -128,6 +128,10 @@ function drawStatusBars(ctx, x, y, r, {
   drawTrack(hpPct, hpPct > 0.35 ? THEME.accentGreen : THEME.danger);
 }
 
+export function drawShipStatusBars(ctx, x, y, r, opts = {}) {
+  drawStatusBars(ctx, x, y, r, opts);
+}
+
 function drawHpBar(ctx, x, y, r, hp, maxHp) {
   drawStatusBars(ctx, x, y, r, { hp, maxHp, alwaysShow: false });
 }
