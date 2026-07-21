@@ -57,6 +57,9 @@ export function attachInput(canvas, ctx) {
     onToggleOrbit,
     onCloseSidePanel,
     onGalaxyStarClick,
+    getHelioclastTargetingMode,
+    onHelioclastTarget,
+    onHelioclastCancelTargeting,
     onBuilderDroneDeployClick,
     onCameraIntent,
   } = ctx;
@@ -100,6 +103,11 @@ export function attachInput(canvas, ctx) {
         e.preventDefault();
         onCombatCancelCommand?.();
         canvas.classList.remove('combat-command-move', 'combat-command-attack');
+        return;
+      }
+      if (getHelioclastTargetingMode?.()) {
+        e.preventDefault();
+        onHelioclastCancelTargeting?.();
         return;
       }
       if (onCloseSidePanel) onCloseSidePanel();
@@ -253,6 +261,7 @@ export function attachInput(canvas, ctx) {
       const commandMode = getCombatCommandMode?.();
       canvas.classList.toggle('combat-command-move', commandMode === 'move');
       canvas.classList.toggle('combat-command-attack', commandMode === 'attack');
+      canvas.classList.toggle('helioclast-targeting', getView() === 'galaxy' && !!getHelioclastTargetingMode?.());
     }
   });
 
@@ -306,6 +315,13 @@ export function attachInput(canvas, ctx) {
       return;
     }
 
+    const targetingMode = getHelioclastTargetingMode?.();
+    if (targetingMode) {
+      const targetStarId = hitTestStar(getState(), w.x, w.y);
+      if (targetStarId) onHelioclastTarget?.(targetStarId, targetingMode);
+      return;
+    }
+
     // Galaxy: fleet/scout clicks take priority over star click.
     const fleetHit = hitTestFleetMarker(getState(), w.x, w.y);
     if (fleetHit && !e.shiftKey && !(e.ctrlKey || e.metaKey) && !(e.altKey || tabHeld)) {
@@ -353,7 +369,7 @@ export function attachInput(canvas, ctx) {
       id: starId,
       timer: setTimeout(() => {
         pendingStarClick = null;
-        onStarTravel(starId);
+        if (!getHelioclastTargetingMode?.()) onStarTravel(starId);
       }, DOUBLE_CLICK_MS),
     };
   });

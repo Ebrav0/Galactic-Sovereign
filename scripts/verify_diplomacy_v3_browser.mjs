@@ -45,6 +45,14 @@ try {
     ['Overview', 'Relations', 'Negotiation', 'Conflicts', 'Council', 'History']);
 
   await page.click('#diplomacy-view-negotiation');
+  for (const selector of [
+    '#diplomacy-offer-credits', '#diplomacy-offer-solarii', '#diplomacy-offer-reparations',
+    '#diplomacy-offer-tribute', '#diplomacy-offer-system', '#diplomacy-offer-claim',
+    '#diplomacy-offer-favor', '#diplomacy-offer-war', '#diplomacy-demand-credits',
+    '#diplomacy-demand-solarii', '#diplomacy-demand-reparations', '#diplomacy-demand-tribute',
+    '#diplomacy-demand-system', '#diplomacy-demand-claim', '#diplomacy-demand-favor',
+    '#diplomacy-demand-helioclast', '#diplomacy-demand-war', '#diplomacy-demand-sanction-target',
+  ]) assert.equal(await page.locator(selector).count(), 1, `advanced builder exposes ${selector}`);
   await page.click('#diplomacy-proposal-trade');
   await page.waitForFunction((factionId) => window.__diplomacySummary().agreements
     .some((entry) => entry.status === 'active' && entry.type === 'trade' && entry.parties.includes(factionId)), setup.factionId);
@@ -81,12 +89,21 @@ try {
 
   await page.click('#diplomacy-view-negotiation');
   await page.fill('#diplomacy-offer-credits', '1500');
+  await page.fill('#diplomacy-offer-reparations', '100');
+  await page.fill('#diplomacy-offer-tribute', '10');
+  await page.click('#diplomacy-offer-claim');
   await page.click('#diplomacy-clause-open_borders');
   await page.click('#diplomacy-deal-preview');
   assert.match(await page.locator('#diplomacy-deal-forecast').innerText(), /Acceptance/);
   await page.click('#diplomacy-deal-submit');
   await page.waitForFunction((factionId) => window.__diplomacySummary().agreements
     .some((entry) => entry.status === 'active' && entry.type === 'open_borders' && entry.parties.includes(factionId)), setup.factionId);
+  assert.ok(await page.evaluate((factionId) => {
+    const state = window.getGameState();
+    return state.diplomacy.agreements.some((entry) => entry.status === 'active' && entry.type === 'tribute'
+      && entry.terms.payer === 'player' && entry.terms.payee === factionId)
+      && state.diplomacy.claims.some((entry) => entry.status === 'active' && entry.claimant === factionId);
+  }, setup.factionId), 'combined deal applies reparations, tribute, claim recognition, and treaty clauses atomically');
   await page.screenshot({ path: fileURLToPath(new URL('negotiation.png', outputDir)), fullPage: true });
   console.log('browser stage: advanced deal');
 

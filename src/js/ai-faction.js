@@ -1077,11 +1077,6 @@ export function aiCaptureSystem(state, systemId, factionId = null) {
     clearProgress();
     return false;
   }
-  if (system.owner === 'ai' && system.factionId
-    && aiCombatPresence(state, systemId, system.factionId) > 0) {
-    clearProgress();
-    return false;
-  }
   const factions = factionId
     ? [aiFactionById(state, factionId)].filter(Boolean)
     : state.factions.list;
@@ -1097,6 +1092,16 @@ export function aiCaptureSystem(state, systemId, factionId = null) {
   if (!winner) {
     clearProgress();
     return false;
+  }
+  if (system.owner === 'ai' && system.factionId) {
+    const war = getActiveWar(state, [winner.faction.id, system.factionId]);
+    const defendingSide = war
+      ? (war.attackers.includes(system.factionId) ? war.attackers : war.defenders)
+      : [system.factionId];
+    if (defendingSide.some((actorId) => aiCombatPresence(state, systemId, actorId) > 0)) {
+      clearProgress();
+      return false;
+    }
   }
   state.aiCaptureProgress ??= {};
   const progressId = `${winner.faction.id}:${state.activeGalaxyId}:${systemId}`;
@@ -1226,7 +1231,11 @@ function resolveAiRivalBattle(state, systemId) {
     }))
     .sort((a, b) => b.power - a.power || a.faction.id.localeCompare(b.faction.id));
   const attacker = attackers[0];
-  const defenderShips = aiShipsInSystem(state, systemId, defenderId);
+  const war = attacker ? getActiveWar(state, [attacker.faction.id, defenderId]) : null;
+  const defendingSide = war
+    ? (war.attackers.includes(defenderId) ? war.attackers : war.defenders)
+    : [defenderId];
+  const defenderShips = defendingSide.flatMap((actorId) => aiShipsInSystem(state, systemId, actorId));
   if (!attacker || !defenderShips.length) return null;
 
   state.aiFactionBattleTicks ??= {};
@@ -1236,12 +1245,11 @@ function resolveAiRivalBattle(state, systemId) {
   state.aiFactionBattleTicks[battleKey] = second;
 
   const attackerShips = aiShipsInSystem(state, systemId, attacker.faction.id);
-  const defenderPower = aiFleetPowerInSystem(state, systemId, defenderId);
+  const defenderPower = defenderShips.reduce((total, ship) => total + Math.max(0, ship.hp), 0);
   const attackerLosses = applyAbstractFleetDamage(attackerShips, Math.max(1, defenderPower * 0.06));
   const defenderLosses = applyAbstractFleetDamage(defenderShips, Math.max(1, attacker.power * 0.06));
   const attackerSurvives = attackerShips.some((ship) => ship.hp > 0);
   const defenderSurvives = defenderShips.some((ship) => ship.hp > 0);
-  const war = getActiveWar(state, [attacker.faction.id, defenderId]);
   if (war && attackerSurvives !== defenderSurvives) {
     const winner = attackerSurvives ? attacker.faction.id : defenderId;
     const loser = attackerSurvives ? defenderId : attacker.faction.id;
@@ -1261,6 +1269,37 @@ function resolveAiRivalBattle(state, systemId) {
     attacker: attacker.faction.id, defender: defenderId,
     attackerLosses, defenderLosses,
   };
+}
+
+function aiDispatchDefensiveSupport(state, faction) {
+  const calls = (state.diplomacy?.callsToArms ?? [])
+    .filter((call) => call.status === 'accepted' && call.ally === faction.id)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  for (const call of calls) {
+    const war = getActiveWar(state, call.warId);
+    if (!war) continue;
+    const threatened = getSystems(state) && Object.values(getSystems(state))
+      .filter((system) => {
+        const controller = system.owner === 'player' ? 'player' : system.factionId;
+        if (controller !== call.caller) return false;
+        const enemyPresent = aiCombatPresence(state, system.id, call.aggressor) > 0;
+        const enemyBorder = neighborsOf(getGraph(state), system.id).some((neighborId) => {
+          const neighbor = systemById(state, neighborId);
+          return neighbor?.owner === 'player'
+            ? call.aggressor === 'player'
+            : neighbor?.owner === 'ai' && neighbor.factionId === call.aggressor;
+        });
+        return enemyPresent || enemyBorder;
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (!threatened?.length) continue;
+    for (const from of aiOwnedSystems(state, faction.id).sort((a, b) => a.id.localeCompare(b.id))) {
+      const ships = aiShipsInSystem(state, from.id, faction.id);
+      if (!ships.length || from.id === threatened[0].id) continue;
+      return orderAiShipTravel(state, ships[0], threatened[0].id).ok;
+    }
+  }
+  return false;
 }
 
 function aiDispatchToRivalBorder(state, faction, rng) {
@@ -1337,7 +1376,8 @@ export function tickAiFaction(state) {
       });
     }
 
-    if (!aiDispatchToNeutral(state, faction, rng)
+    if (!aiDispatchDefensiveSupport(state, faction)
+      && !aiDispatchToNeutral(state, faction, rng)
       && !aiDispatchToRivalBorder(state, faction, rng)) {
       aiDispatchToPlayerBorder(state, faction, rng);
     }

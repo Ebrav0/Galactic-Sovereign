@@ -1315,10 +1315,12 @@ function migrateV23toV24(envelope) {
 }
 
 export function initV25State(state) {
+  const legacySchemaVersion = Number(state.diplomacy?.schemaVersion ?? state.diplomacy?.version ?? 0);
+  const legacyProfileIds = new Set(Object.keys(state.diplomacy?.profiles ?? {}));
   const diplomacy = ensureDiplomacy(state);
   const actors = new Set(['player', ...(state.factions?.list ?? []).map((faction) => faction.id)]);
   const validTerms = new Set([
-    'resource', 'agreement', 'system_transfer', 'tribute', 'claim', 'end_war', 'join_war',
+    'resource', 'agreement', 'system_transfer', 'tribute', 'reparations', 'claim', 'end_war', 'join_war',
     'sanction', 'lift_sanction', 'favor', 'helioclast_commitment', 'credits', 'solarii', 'treaty',
   ]);
   for (const proposal of diplomacy.proposals) {
@@ -1344,6 +1346,44 @@ export function initV25State(state) {
     war.escalation ??= 'limited';
     war.escalationAt ??= war.startedAt ?? state.time ?? 0;
     war.legitimacy ??= 50;
+  }
+  if (legacySchemaVersion < 3) {
+    const systems = Object.entries(state.galaxies ?? {}).flatMap(([galaxyId, galaxy]) => (
+      Object.values(galaxy.systems ?? {}).map((system) => ({ galaxyId, system }))
+    ));
+    const knownSystemIds = new Set(Object.values(state.galaxies ?? {}).flatMap((galaxy) => (
+      Object.keys(galaxy.intel ?? {})
+    )));
+    const actors = ['player', ...(state.factions?.list ?? []).map((faction) => faction.id)];
+    for (const actorId of actors) {
+      const controlled = systems.filter(({ system }) => (
+        actorId === 'player'
+          ? system.owner === 'player'
+          : system.owner === 'ai' && system.factionId === actorId
+      ));
+      const dysons = controlled.filter(({ system }) => (
+        system.dyson?.complete || Number(system.dyson?.completedShells ?? 0) >= 8
+      )).length;
+      const embassies = controlled.reduce((count, { system }) => count + (system.structures ?? [])
+        .filter((structure) => structure.type === 'embassy_complex' && !structure.construction).length, 0);
+      const personality = actorId === 'player' ? 'player'
+        : state.factions?.list?.find((faction) => faction.id === actorId)?.personality;
+      const personalityBase = { player: 0, expansionist: -5, economic: 5, megastructure: 8, wormhole: 2 }[personality] ?? 0;
+      if (!legacyProfileIds.has(actorId)) {
+        diplomacy.profiles[actorId].reputation = Math.max(-100, Math.min(100,
+          personalityBase + Math.min(10, Math.floor(controlled.length / 5)) + dysons * 5 + Math.min(6, embassies * 2),
+        ));
+      }
+      if (actorId !== 'player') {
+        const owned = controlled.length;
+        const known = controlled.filter(({ system }) => knownSystemIds.has(system.id)).length;
+        const contact = diplomacy.contacts[actorId];
+        const stageBase = { unknown: 0, detected: 20, contacted: 30, established: 50 }[contact?.stage] ?? 0;
+        if (contact) contact.intelligence = Math.max(contact.intelligence ?? 0,
+          Math.min(100, stageBase + (owned ? Math.round(known / owned * 35) : 0) + Math.min(15, embassies * 5)));
+      }
+    }
+    diplomacy.migrationV25Derived = true;
   }
   diplomacy.version = 3;
   diplomacy.schemaVersion = 3;

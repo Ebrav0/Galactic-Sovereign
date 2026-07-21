@@ -619,7 +619,8 @@ export function fireSequenceStatus(state) {
   return { ...seq, ...info };
 }
 
-function canStartAction(state, type, targetSystemId) {
+/** Readiness check used before the player chooses a map target. */
+export function canArmSuperweaponAction(state, type) {
   ensureSuperweapon(state);
   refreshSuperweaponOnline(state);
   if (!state.superweapon.online) {
@@ -633,27 +634,12 @@ function canStartAction(state, type, targetSystemId) {
       return { ok: false, reason: 'Assemble Genesis Skeleton on the berth' };
     }
     if (onCooldown(state)) return { ok: false, reason: 'Superweapon on cooldown' };
-    if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid anchor system' };
-    const fromId = helioclastFiringSystemId(state);
-    const graph = getGraph(state);
-    if (targetSystemId !== fromId && !neighborsOf(graph, fromId).includes(targetSystemId)) {
-      return {
-        ok: false,
-        reason: 'Create anchor must be the firing system or a lane-adjacent star',
-      };
-    }
   } else if (type === 'destroy') {
     if (!isTechUnlocked(state, 'sw_destroy_star')) return { ok: false, reason: 'Research Annihilation Skeleton first' };
     if (!hasSuperweaponPart(state, 'destroy')) {
       return { ok: false, reason: 'Assemble Annihilation Skeleton on the berth' };
     }
-    if (targetSystemId === state.stronghold || targetSystemId === BLACK_HOLE_ID) {
-      return { ok: false, reason: 'Cannot destroy the Stronghold or galactic core' };
-    }
     if (onCooldown(state)) return { ok: false, reason: 'Superweapon on cooldown' };
-    if (!getSystems(state)[targetSystemId]) return { ok: false, reason: 'No such system' };
-    const attack = canAttackSystem(state, targetSystemId, 'player', { galaxyId: state.activeGalaxyId });
-    if (!attack.ok) return attack;
   } else if (type === 'jump') {
     if (!isTechUnlocked(state, 'sw_jump_gate')) return { ok: false, reason: 'Research Jump Skeleton first' };
     if (!hasSuperweaponPart(state, 'jump')) {
@@ -663,19 +649,10 @@ function canStartAction(state, type, targetSystemId) {
       return { ok: false, reason: 'Helioclast must complete live-fire and go mobile before Jump' };
     }
     if (onCooldown(state, 'jumpCooldownUntil')) return { ok: false, reason: 'Jump on cooldown' };
-    if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid target star' };
     const ship = getHelioclastShip(state);
-    if (ship?.systemId === targetSystemId && !ship?.transit) {
-      return { ok: false, reason: 'Helioclast is already at that star' };
-    }
     if (ship?.systemId && state.systemBattles?.[ship.systemId]?.active) {
       return { ok: false, reason: 'Cannot jump while the Helioclast is in combat' };
     }
-    const transit = canRouteThroughSystem(state, targetSystemId, 'player', {
-      galaxyId: state.activeGalaxyId,
-      allowHostile: true,
-    });
-    if (!transit.ok) return transit;
   } else {
     return { ok: false, reason: 'Unknown action' };
   }
@@ -683,6 +660,40 @@ function canStartAction(state, type, targetSystemId) {
   const cost = solariiCostFor(type, state);
   if ((state.solarii ?? 0) < cost) return { ok: false, reason: `Need ${cost} Solarii` };
   return { ok: true, cost };
+}
+
+function canStartAction(state, type, targetSystemId) {
+  const armed = canArmSuperweaponAction(state, type);
+  if (!armed.ok) return armed;
+
+  if (type === 'create') {
+    if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid anchor system' };
+    const fromId = helioclastFiringSystemId(state);
+    const graph = getGraph(state);
+    if (targetSystemId !== fromId && !neighborsOf(graph, fromId).includes(targetSystemId)) {
+      return { ok: false, reason: 'Create anchor must be the firing system or a lane-adjacent star' };
+    }
+  } else if (type === 'destroy') {
+    if (targetSystemId === state.stronghold || targetSystemId === BLACK_HOLE_ID) {
+      return { ok: false, reason: 'Cannot destroy the Stronghold or galactic core' };
+    }
+    if (!getSystems(state)[targetSystemId]) return { ok: false, reason: 'No such system' };
+    const attack = canAttackSystem(state, targetSystemId, 'player', { galaxyId: state.activeGalaxyId });
+    if (!attack.ok) return attack;
+  } else if (type === 'jump') {
+    if (!nodeById(getGraph(state), targetSystemId)) return { ok: false, reason: 'Invalid target star' };
+    const ship = getHelioclastShip(state);
+    if (ship?.systemId === targetSystemId && !ship?.transit) {
+      return { ok: false, reason: 'Helioclast is already at that star' };
+    }
+    const transit = canRouteThroughSystem(state, targetSystemId, 'player', {
+      galaxyId: state.activeGalaxyId,
+      allowHostile: true,
+    });
+    if (!transit.ok) return transit;
+  }
+
+  return armed;
 }
 
 /** Public readiness check for UI (costs, parts, adjacency, cooldowns). */

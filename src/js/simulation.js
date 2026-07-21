@@ -16,7 +16,7 @@ import { tickTrade } from './trade.js';
 import { tickResearch } from './research.js';
 import { dispatchEmpireQueue } from './empire-queue.js';
 import { tickAiFaction } from './ai-faction.js';
-import { tickAiShips } from './ai-ships.js';
+import { aiShipFactionId, tickAiShips } from './ai-ships.js';
 import { tickDrones } from './drones.js';
 import { recordDiplomaticEvent, tickDiplomacy } from './diplomacy.js';
 import { tickSuperweapon } from './superweapon.js';
@@ -31,8 +31,25 @@ import { syncFlagshipAnchoredFleets } from './battle-groups.js';
 import { tickBulkProduction } from './bulk-production.js';
 import { tickBulkDeliveries } from './production-delivery.js';
 import { tickIntegratedStrategicOperations } from './strategic-integration.js';
+import { systemById } from './state.js';
 
-function handleArrival(state, systemId) {
+function handleArrival(state, systemId, actorId = null) {
+  const system = systemById(state, systemId);
+  const controller = system?.owner === 'player' ? 'player'
+    : system?.owner === 'ai' ? system.factionId : null;
+  if (actorId && controller && actorId !== controller) {
+    const detectedFaction = actorId === 'player' ? controller : controller === 'player' ? actorId : null;
+    if (detectedFaction && detectedFaction !== 'player') recordDiplomaticEvent(state, {
+      type: 'contact_detected',
+      target: detectedFaction,
+      trigger: actorId === 'player' ? 'border_encounter' : 'intercepted_ship',
+      intelligence: 30,
+    });
+    recordDiplomaticEvent(state, {
+      type: 'border_friction', actor: actorId, target: controller,
+      systemId, severity: 0.5,
+    });
+  }
   onForcesArrive(state, systemId);
 }
 
@@ -67,8 +84,8 @@ function tickOnce(state) {
   tickAiFaction(state);
   tickHeroFlagships(state);
   const scoutArrivals = tickScouts(state);
-  const shipArrivals = tickPlayerShips(state, (destId) => handleArrival(state, destId));
-  const aiArrivals = tickAiShips(state, (destId) => handleArrival(state, destId));
+  const shipArrivals = tickPlayerShips(state, (destId) => handleArrival(state, destId, 'player'));
+  const aiArrivals = tickAiShips(state, (destId, ship) => handleArrival(state, destId, aiShipFactionId(state, ship)));
   const pirateArrivals = tickPirates(state, (destId) => handleArrival(state, destId));
   const pirateInterdictions = tickPirateInterdictions(state, (destId) => handleArrival(state, destId));
   if (!state.flagship.wormholeTransit) tickFlagship(state);

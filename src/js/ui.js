@@ -80,6 +80,10 @@ import {
   tutorialGraduated,
 } from './profile.js';
 import {
+  academyUnlocked,
+  tutorialSessionOverrideEnabled,
+} from './tutorial-access.js';
+import {
   FIELD_MANUAL_ENTRIES,
   fieldManualEntry,
   newlyUnlockedBriefings,
@@ -97,6 +101,7 @@ import {
   buildHelioclastShipyard,
   canBuildHelioclastShipyard,
   canSuperweaponAction,
+  canArmSuperweaponAction,
   takeSuperweaponResolveNotify,
   hasHelioclastShipyard,
   canMarkLiveFire,
@@ -197,7 +202,7 @@ function escapeMarkup(value) {
 
 const HINTS = {
   system: 'WASD / arrows: fly flagship · O: orbit star/planet/moon · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Click star: travel · Fleet tab: select builder, then Shift+click · Ctrl/Cmd+click: quick drone deploy · Tab+click: fleet · Shift+click: scout · double-click: view · M: system',
+  galaxy: 'Helioclast: choose command, then star · Click star: travel · Ctrl/Cmd+click: drone · Tab+click: fleet · Shift+click: scout · double-click: view · M: system',
 };
 
 const PLANET_DOT = {
@@ -241,21 +246,24 @@ const SW_ACTION_COPY = {
   jump: { ready: 'Relocate to the selected star' },
 };
 
-function updateSuperweaponActionButton(type, check, cost, sequence) {
+function updateSuperweaponActionButton(type, check, cost, sequence, targetingMode = null) {
   const button = el(`sw-${type}-btn`);
   if (!button) return;
   const active = sequence?.type === type;
+  const targeting = !sequence && targetingMode === type;
   const detail = active
     ? `${String(sequence.phase ?? 'charging').replaceAll('_', ' ')} · ${Math.round((sequence.totalProgress ?? 0) * 100)}%`
-    : check.ok ? SW_ACTION_COPY[type].ready : (check.reason ?? 'Unavailable');
+    : targeting ? 'Click a destination star · Esc to cancel'
+      : check.ok ? SW_ACTION_COPY[type].ready : (check.reason ?? 'Unavailable');
   button.disabled = !check.ok;
   button.classList.toggle('is-firing', active);
+  button.classList.toggle('is-targeting', targeting);
   button.title = detail;
   button.setAttribute('aria-label', `${type} mode, ${cost} Solarii. ${detail}`);
   const detailEl = button.querySelector('.sw-action__detail');
   const costEl = button.querySelector('.sw-action__cost');
   if (detailEl) detailEl.textContent = detail;
-  if (costEl) costEl.textContent = active ? 'LIVE' : `${cost} ◈`;
+  if (costEl) costEl.textContent = active ? 'LIVE' : targeting ? 'ARMED' : `${cost} ◈`;
 }
 
 function setProgressBar(containerId, fillId, pctId, progress, visible) {
@@ -2995,6 +3003,8 @@ export function initUi(ctx) {
     doEnterWormhole,
     doBuildWormholeAnchor,
     getGalaxyTargetStar,
+    getHelioclastTargetingMode,
+    setHelioclastTargetingMode,
     doStartNewGame,
     doFocusTutorial,
     doBeginTutorialGraduation,
@@ -3764,52 +3774,106 @@ export function initUi(ctx) {
   });
 
   el('sw-create-btn')?.addEventListener('click', () => {
-    const st = getState();
-    const anchor = getHelioclastFireTarget(
-      { getGalaxyTargetStar, getViewedSystemId },
-      st,
-      { allowStrongholdFallback: true },
-    );
-    const res = superweaponCreate(st, anchor);
-    toast(res.ok ? (res.pending ? 'Create sequence started…' : 'Star created') : res.reason, res.ok ? 'ok' : 'error');
+    setHelioclastTargetingMode?.('create');
   });
   el('sw-destroy-btn')?.addEventListener('click', () => {
-    const target = getHelioclastFireTarget(
-      { getGalaxyTargetStar, getViewedSystemId },
-      getState(),
-    );
-    if (!target) { toast('Click a target star on the map', 'error'); return; }
-    const res = superweaponDestroy(getState(), target);
-    toast(res.ok ? (res.pending ? 'Destroy sequence started…' : 'System destroyed') : res.reason, res.ok ? 'ok' : 'error');
+    setHelioclastTargetingMode?.('destroy');
   });
   el('sw-jump-btn')?.addEventListener('click', () => {
-    const target = getHelioclastFireTarget(
-      { getGalaxyTargetStar, getViewedSystemId },
-      getState(),
-    );
-    if (!target) { toast('Click a target star on the map', 'error'); return; }
-    const res = superweaponJump(getState(), target);
-    toast(res.ok ? (res.pending ? 'Jump sequence started…' : 'Helioclast jumped') : res.reason, res.ok ? 'ok' : 'error');
+    setHelioclastTargetingMode?.('jump');
   });
 
   const newGameModal = el('new-game-modal');
   const newGameBackdrop = el('new-game-modal-backdrop');
   const titleScreen = el('title-screen');
 
+  function getSelectedPlayMode() {
+    return newGameModal?.dataset.selectedMode || 'sandbox';
+  }
+
+  function setSelectedPlayMode(mode) {
+    if (!newGameModal) return;
+    newGameModal.dataset.selectedMode = mode;
+    const picker = el('new-game-mode-picker');
+    picker?.querySelectorAll('.mode-picker__option').forEach((button) => {
+      const active = button.dataset.mode === mode;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    syncNewGameFields();
+  }
+
+  function syncNewGameFields() {
+    const flow = newGameModal?.dataset.flow || 'custom';
+    const mode = getSelectedPlayMode();
+    const showPicker = flow === 'custom';
+    const showVictory = flow === 'graduation'
+      || flow === 'campaign'
+      || (flow === 'custom' && mode === 'campaign');
+    const showDifficulty = flow !== 'tutorial' && mode !== 'tutorial';
+    el('new-game-mode-picker')?.classList.toggle('hidden', !showPicker);
+    el('new-game-victory-field')?.classList.toggle('hidden', !showVictory);
+    el('new-game-difficulty-field')?.classList.toggle('hidden', !showDifficulty);
+
+    const start = el('new-game-start-btn');
+    if (!start) return;
+    if (flow === 'graduation') start.textContent = 'Continue Campaign';
+    else if (flow === 'missions' || mode === 'mission') start.textContent = 'Begin Missions';
+    else if (flow === 'sandbox' || mode === 'sandbox') start.textContent = 'Begin Sandbox';
+    else if (mode === 'tutorial') start.textContent = 'Begin Tutorial';
+    else start.textContent = 'Begin Campaign';
+  }
+
   function configureNewGameModal(flow = 'custom') {
     const graduation = flow === 'graduation';
     newGameModal.dataset.flow = flow;
     const title = el('new-game-modal-title');
     const note = el('new-game-modal-note');
-    const start = el('new-game-sandbox-btn');
-    if (title) title.textContent = graduation ? 'Academy Graduation' : 'Custom Campaign';
-    if (note) note.textContent = graduation
-      ? 'Choose the victory condition and rival difficulty for this continuing empire.'
-      : 'Choose how to begin your reign.';
-    if (start) start.textContent = graduation ? 'Continue Campaign' : 'Sandbox';
-    el('new-game-tutorial-btn')?.classList.toggle('hidden', graduation);
-    el('new-game-missions-btn')?.classList.toggle('hidden', graduation);
+    const copy = {
+      custom: {
+        title: 'New Game',
+        note: 'Pick a mode, then set rivals and victory conditions.',
+        mode: 'sandbox',
+      },
+      campaign: {
+        title: 'Campaign',
+        note: 'Choose a victory goal and rival difficulty.',
+        mode: 'campaign',
+      },
+      missions: {
+        title: 'Missions',
+        note: 'Launch scenario challenges against rival empires.',
+        mode: 'mission',
+      },
+      sandbox: {
+        title: 'Sandbox',
+        note: 'Free play with no victory conditions.',
+        mode: 'sandbox',
+      },
+      graduation: {
+        title: 'Academy Graduation',
+        note: 'Choose the victory condition and rival difficulty for this continuing empire.',
+        mode: 'campaign',
+      },
+    }[flow] || {
+      title: 'New Game',
+      note: 'Choose how to begin your reign.',
+      mode: 'sandbox',
+    };
+
+    if (title) title.textContent = copy.title;
+    if (note) note.textContent = copy.note;
+    if (flow === 'campaign' || flow === 'graduation') {
+      const victory = el('new-game-victory');
+      if (victory && (victory.value === 'sandbox' || !victory.value)) victory.value = 'dominion';
+    }
+    if (flow === 'sandbox') {
+      const victory = el('new-game-victory');
+      if (victory) victory.value = 'sandbox';
+    }
+    setSelectedPlayMode(copy.mode);
     el('close-new-game-btn')?.classList.toggle('hidden', graduation);
+    syncNewGameFields();
   }
 
   function openNewGameModal(flow = 'custom') {
@@ -3830,19 +3894,32 @@ export function initUi(ctx) {
   }
 
   function refreshTitleTutorialAccess() {
-    const graduated = tutorialGraduated();
+    const unlocked = academyUnlocked(tutorialGraduated());
+    const modes = el('title-screen')?.querySelector('.title-screen__modes');
+    modes?.classList.toggle('hidden', !unlocked);
     const titleLocks = [
-      ['title-custom-campaign-btn', 'Custom Campaign'],
+      ['title-custom-campaign-btn', 'Campaign'],
       ['title-missions-btn', 'Missions'],
       ['title-sandbox-btn', 'Sandbox'],
     ];
     for (const [id, label] of titleLocks) {
       const button = el(id);
       if (!button) continue;
-      button.disabled = !graduated;
-      button.setAttribute('aria-disabled', String(!graduated));
-      button.classList.toggle('tutorial-locked', !graduated);
-      button.title = graduated ? `Open ${label}` : `Complete the Academy tutorial to unlock ${label}`;
+      button.disabled = !unlocked;
+      button.setAttribute('aria-disabled', String(!unlocked));
+      button.classList.toggle('tutorial-locked', !unlocked);
+      button.title = unlocked
+        ? `Open ${label}`
+        : `Complete the Academy tutorial to unlock ${label}`;
+    }
+    const newBtn = el('title-new-campaign-btn');
+    if (newBtn) {
+      newBtn.textContent = unlocked ? 'New Game' : 'Begin Academy';
+      if (tutorialSessionOverrideEnabled() && !tutorialGraduated()) {
+        newBtn.title = 'Academy bypass active (Dev Panel)';
+      } else {
+        newBtn.removeAttribute('title');
+      }
     }
   }
   function showTitleScreen() {
@@ -3851,29 +3928,23 @@ export function initUi(ctx) {
     getState().paused = true;
   }
 
-  el('title-new-campaign-btn')?.addEventListener('click', async () => {
+  async function openLockedMode(flow, label) {
     await loadProfile();
-    if (tutorialGraduated()) openNewGameModal('custom');
-    else doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
-  });
-  el('title-custom-campaign-btn')?.addEventListener('click', async () => {
-    await loadProfile();
-    if (!tutorialGraduated()) {
-      toast('Complete the Academy tutorial to unlock Custom Campaign', 'error');
+    if (!academyUnlocked(tutorialGraduated())) {
+      toast(`Complete the Academy tutorial to unlock ${label}`, 'error');
       return;
     }
-    openNewGameModal('custom');
-  });
-  for (const id of ['title-missions-btn', 'title-sandbox-btn']) {
-    el(id)?.addEventListener('click', async () => {
-      await loadProfile();
-      if (!tutorialGraduated()) {
-        toast('Complete the Academy tutorial to unlock this campaign mode', 'error');
-        return;
-      }
-      openNewGameModal('custom');
-    });
+    openNewGameModal(flow);
   }
+
+  el('title-new-campaign-btn')?.addEventListener('click', async () => {
+    await loadProfile();
+    if (academyUnlocked(tutorialGraduated())) openNewGameModal('custom');
+    else doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+  });
+  el('title-custom-campaign-btn')?.addEventListener('click', () => openLockedMode('campaign', 'Campaign'));
+  el('title-missions-btn')?.addEventListener('click', () => openLockedMode('missions', 'Missions'));
+  el('title-sandbox-btn')?.addEventListener('click', () => openLockedMode('sandbox', 'Sandbox'));
   el('title-continue-btn')?.addEventListener('click', async () => {
     titleScreen?.classList.add('hidden');
     setBootPhase?.('playing');
@@ -3886,21 +3957,38 @@ export function initUi(ctx) {
   });
 
   readSlot('autosave').then((res) => {
-    const btn = el('title-continue-btn');
-    if (res.ok) btn?.classList.remove('hidden');
-    else btn?.classList.add('hidden');
+    const continueBtn = el('title-continue-btn');
+    const newBtn = el('title-new-campaign-btn');
+    if (res.ok) {
+      continueBtn?.classList.remove('hidden');
+      newBtn?.classList.remove('btn--primary');
+      newBtn?.classList.add('btn--ghost');
+    } else {
+      continueBtn?.classList.add('hidden');
+      newBtn?.classList.add('btn--primary');
+      newBtn?.classList.remove('btn--ghost');
+    }
   });
 
   refreshTitleTutorialAccess();
   showTitleScreen();
   loadProfile().then(refreshTitleTutorialAccess);
   window.addEventListener('gs-profile-changed', refreshTitleTutorialAccess);
+  window.addEventListener('gs-tutorial-override-changed', refreshTitleTutorialAccess);
   el('close-new-game-btn')?.addEventListener('click', closeNewGameModal);
   newGameBackdrop?.addEventListener('click', closeNewGameModal);
-  el('new-game-sandbox-btn')?.addEventListener('click', () => {
+  el('new-game-mode-picker')?.addEventListener('click', (event) => {
+    const option = event.target?.closest?.('.mode-picker__option');
+    if (!option || newGameModal?.dataset.flow !== 'custom') return;
+    setSelectedPlayMode(option.dataset.mode || 'sandbox');
+  });
+  el('new-game-start-btn')?.addEventListener('click', () => {
+    const flow = newGameModal?.dataset.flow || 'custom';
+    const mode = getSelectedPlayMode();
     const vt = el('new-game-victory')?.value ?? 'sandbox';
     const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
-    if (newGameModal?.dataset.flow === 'graduation') {
+
+    if (flow === 'graduation') {
       const result = doCompleteTutorialGraduation?.({ victoryType: vt, aiDifficulty });
       if (result?.ok) {
         newGameModal.dataset.flow = 'custom';
@@ -3911,18 +3999,27 @@ export function initUi(ctx) {
       } else toast(result?.reason ?? 'Could not continue campaign', 'error');
       return;
     }
+
+    if (mode === 'tutorial' || flow === 'tutorial') {
+      doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', aiDifficulty });
+      closeNewGameModal();
+      return;
+    }
+    if (mode === 'mission' || flow === 'missions') {
+      if (!academyUnlocked(tutorialGraduated())) {
+        toast('Complete the Academy tutorial to unlock Missions', 'error');
+        return;
+      }
+      doStartNewGame?.({ mode: 'mission', victoryType: 'dominion', aiDifficulty });
+      closeNewGameModal();
+      return;
+    }
+    if (mode === 'sandbox' || flow === 'sandbox') {
+      doStartNewGame?.({ mode: 'sandbox', victoryType: 'sandbox', aiDifficulty });
+      closeNewGameModal();
+      return;
+    }
     doStartNewGame?.({ mode: 'sandbox', victoryType: vt, aiDifficulty });
-    closeNewGameModal();
-  });
-  el('new-game-tutorial-btn')?.addEventListener('click', () => {
-    const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
-    doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', aiDifficulty });
-    closeNewGameModal();
-  });
-  el('new-game-missions-btn')?.addEventListener('click', () => {
-    if (!tutorialGraduated()) { toast('Complete the Academy tutorial to unlock Missions', 'error'); return; }
-    const aiDifficulty = el('new-game-ai-difficulty')?.value ?? 'normal';
-    doStartNewGame?.({ mode: 'mission', victoryType: 'dominion', aiDifficulty });
     closeNewGameModal();
   });
 
@@ -4320,22 +4417,28 @@ export function initUi(ctx) {
       swGalaxyPanel?.classList.remove('hidden');
       const sw = superweaponSummary(state);
       const seq = sw.fireSequence;
+      const targetingMode = getHelioclastTargetingMode?.() ?? null;
       const fireCtx = { getGalaxyTargetStar, getViewedSystemId };
-      const targetId = getHelioclastFireTarget(fireCtx, state, { allowStrongholdFallback: true });
+      const targetId = targetingMode
+        ? null
+        : getHelioclastFireTarget(fireCtx, state, { allowStrongholdFallback: true });
       const displayTargetId = seq?.targetSystemId ?? targetId;
       const targetSystem = targetId ? systemById(state, targetId) : null;
-      const targetName = seq?.targetName ?? (targetId ? (targetSystem?.name ?? targetId) : 'No target selected');
+      const targetName = seq?.targetName ?? (targetId
+        ? (targetSystem?.name ?? targetId)
+        : targetingMode ? 'Choose a star on the map' : 'No target selected');
       const targetOwnerId = seq?.targetOwner ?? targetSystem?.owner;
       const targetOwner = targetOwnerId === 'player' ? 'Sovereign territory'
         : targetOwnerId === 'ai' ? 'Hostile territory'
-          : (targetSystem || seq) ? 'Unclaimed system' : 'Click any star to acquire target';
+          : (targetSystem || seq) ? 'Unclaimed system'
+            : targetingMode ? `${targetingMode} targeting active` : 'Choose an effect to begin';
       const firingSystemId = sw.fireSequence?.fromSystemId ?? sw.ship?.systemId ?? sw.cradleSystemId;
       const firingSystemName = firingSystemId
         ? (systemById(state, firingSystemId)?.name ?? firingSystemId)
         : (sw.ship?.transit ? 'In transit' : 'Berth');
-      const createCheck = targetId ? canSuperweaponAction(state, 'create', targetId) : { ok: false };
-      const destroyCheck = targetId ? canSuperweaponAction(state, 'destroy', targetId) : { ok: false };
-      const jumpCheck = targetId ? canSuperweaponAction(state, 'jump', targetId) : { ok: false };
+      const createCheck = canArmSuperweaponAction(state, 'create');
+      const destroyCheck = canArmSuperweaponAction(state, 'destroy');
+      const jumpCheck = canArmSuperweaponAction(state, 'jump');
       const statusEl = el('sw-panel-status');
       if (statusEl) {
         statusEl.textContent = seq
@@ -4357,7 +4460,9 @@ export function initUi(ctx) {
           + `<div class="sw-sequence__fill" style="width:${Math.round((seq.totalProgress ?? 0) * 100)}%"></div></div>`
           + `<div class="sw-sequence__phases">${phaseOrder.map((phase, index) => `<span class="sw-sequence__phase${index < phaseIndex ? ' is-complete' : ''}${index === phaseIndex ? ' is-active' : ''}">${phase}</span>`).join('')}</div>`
           + `</div>`
-        : `<p class="sw-guide"><strong>1.</strong> Click a star &nbsp;→&nbsp; <strong>2.</strong> Choose an effect</p>`;
+        : targetingMode
+          ? `<p class="sw-guide sw-guide--targeting"><strong>${escapeMarkup(targetingMode)}</strong> armed · click a star to execute · Esc cancels</p>`
+          : `<p class="sw-guide"><strong>1.</strong> Choose an effect &nbsp;→&nbsp; <strong>2.</strong> Click its destination</p>`;
       el('superweapon-galaxy-body').innerHTML =
         `<div class="sw-target"><span class="sw-target__eyebrow">Target lock</span>`
         + `<strong class="sw-target__name">${escapeMarkup(targetName)}</strong>`
@@ -4367,9 +4472,9 @@ export function initUi(ctx) {
         + `<div class="sw-readout"><span class="sw-readout__label">Solarii</span><strong class="sw-readout__value">${Math.floor(state.solarii ?? 0)} ◈</strong></div>`
         + `<div class="sw-readout"><span class="sw-readout__label">Core</span><strong class="sw-readout__value">${sw.online ? (sw.cooldownMs > 0 ? `${Math.ceil(sw.cooldownMs / 1000)}s CD` : 'Ready') : 'Offline'}</strong></div>`
         + `</div>${sequenceMarkup}`;
-      updateSuperweaponActionButton('create', createCheck, sw.costs?.create ?? 25, seq);
-      updateSuperweaponActionButton('destroy', destroyCheck, sw.costs?.destroy ?? 30, seq);
-      updateSuperweaponActionButton('jump', jumpCheck, sw.costs?.jump ?? 15, seq);
+      updateSuperweaponActionButton('create', createCheck, sw.costs?.create ?? 25, seq, targetingMode);
+      updateSuperweaponActionButton('destroy', destroyCheck, sw.costs?.destroy ?? 30, seq, targetingMode);
+      updateSuperweaponActionButton('jump', jumpCheck, sw.costs?.jump ?? 15, seq, targetingMode);
     } else {
       swGalaxyPanel?.classList.add('hidden');
     }

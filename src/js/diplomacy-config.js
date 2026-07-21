@@ -20,11 +20,13 @@ export const DIPLOMACY_CONFIG = Object.freeze({
   sanctionTradeMultiplier: 0.7,
   sanctionAuthorityMultiplier: 0.75,
   sanctionAcceptancePenalty: 15,
-  expandedWarAfterMs: 60000,
-  totalWarAfterMs: 180000,
-  expandedWarReputationCost: 10,
-  totalWarReputationCost: 25,
-  expandedWarExhaustionCost: 5,
+  war: Object.freeze({
+    expandedAfterMs: 60000,
+    totalAfterMs: 180000,
+    expandedReputation: -10,
+    totalReputation: -25,
+    expandedExhaustion: 5,
+  }),
   breach: Object.freeze({
     trust: -30,
     opinion: -20,

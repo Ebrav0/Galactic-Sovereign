@@ -13,6 +13,7 @@ import {
   CONTACT_DETECTED,
   DIPLOMACY_SCHEMA_VERSION,
   addActorRelationshipModifier,
+  addGrievance,
   castCouncilVote,
   councilAuthority,
   createAgreement,
@@ -22,9 +23,11 @@ import {
   diplomaticRevision,
   endAgreement,
   ensureDiplomacy,
+  escalateWar,
   escalateHelioclastCrisis,
   getActorRelation,
   peaceLeverage,
+  concludePeace,
   previewProposal,
   proposeCouncilResolution,
   resolveCouncilResolution,
@@ -140,6 +143,7 @@ const war = declareWar(state, { attacker: first.id, defender: second.id, goals: 
 assert.equal(war.ok, true);
 const call = state.diplomacy.callsToArms.find((entry) => entry.warId === war.war.id && entry.ally === third.id);
 assert.ok(call, 'defensive agreements issue mandatory calls-to-arms');
+assert.ok(Number.isFinite(call.expiresAt) && call.expiresAt > state.time, 'defensive calls have a finite response deadline');
 assert.equal(respondToCallToArms(state, call.id, true, third.id).accepted, true);
 assert.ok(war.war.defenders.includes(third.id));
 
@@ -150,6 +154,14 @@ assert.equal(state.diplomacy.profiles[second.id].reputation, reputationBefore - 
 assert.ok(state.diplomacy.grievances.some((entry) => entry.aggrieved === third.id && entry.against === second.id));
 
 assert.ok(peaceLeverage(state, war.war.id, second.id) >= 0);
+const coalitionPeace = concludePeace(state, war.war.id, {
+  proposer: second.id,
+  force: true,
+  truceMs: 180000,
+});
+assert.equal(coalitionPeace.ok, true, 'multi-party defensive wars conclude atomically');
+assert.equal(coalitionPeace.truces.length, 2, 'peace creates an enforceable truce across every opposing pair');
+assert.equal(war.war.status, 'ended');
 assert.ok(councilAuthority(state, 'player') >= 1 && councilAuthority(state, 'player') <= 12);
 const resolution = proposeCouncilResolution(state, {
   proposer: 'player', target: first.id, type: 'sanction', votingDurationMs: 1000,
@@ -173,6 +185,67 @@ assert.ok(crisis1.crisis.level >= 1);
 const crisis2 = escalateHelioclastCrisis(state, { actor: 'player', destructive: true, foreignOrInhabited: true });
 assert.ok(crisis2.crisis.level >= 4, 'destructive use accelerates directly to coalition containment');
 
+const ultimatumState = game(4422);
+const ultimatumAttacker = ultimatumState.factions.list.find((entry) => entry.personality === 'expansionist');
+const ultimatumDefender = ultimatumState.factions.list.find((entry) => entry.id !== ultimatumAttacker.id);
+addActorRelationshipModifier(ultimatumState, ultimatumAttacker.id, ultimatumDefender.id, {
+  source: 'verification_hostility', opinion: -100, trust: -100,
+});
+addGrievance(ultimatumState, {
+  aggrieved: ultimatumAttacker.id, against: ultimatumDefender.id,
+  type: 'verification', severity: 90,
+});
+ultimatumState.time = 10000;
+const ultimatumEvents = tickDiplomacy(ultimatumState);
+assert.ok(ultimatumEvents.some((entry) => entry.type === 'ai_ultimatum'));
+assert.ok(ultimatumState.diplomacy.proposals.some((entry) => (
+  entry.ultimatum && entry.from === ultimatumAttacker.id && entry.to === ultimatumDefender.id
+)), 'hostile AI issues an enforceable ultimatum before declaring a limited war');
+
+const betrayalState = game(9912);
+const betrayer = betrayalState.factions.list[0];
+const betrayed = betrayalState.factions.list[1];
+const vulnerableTreaty = createAgreement(betrayalState, {
+  type: AGREEMENT_TRADE, parties: [betrayer.id, betrayed.id],
+}, { bypassTech: true }).agreement;
+betrayalState.diplomacy.profiles[betrayer.id].reliability = 0.25;
+addActorRelationshipModifier(betrayalState, betrayer.id, betrayed.id, {
+  source: 'betrayal_pressure', opinion: -100, trust: -100,
+});
+addGrievance(betrayalState, {
+  aggrieved: betrayer.id, against: betrayed.id,
+  type: 'strategic_pressure', severity: 100,
+});
+let betrayalObserved = false;
+for (let window = 1; window <= 40 && vulnerableTreaty.status === 'active'; window++) {
+  betrayalState.time = window * 10000;
+  betrayalObserved ||= tickDiplomacy(betrayalState).some((entry) => entry.type === 'ai_treaty_betrayal');
+}
+assert.equal(betrayalObserved, true, 'low-reliability AI can deliberately betray under strategic pressure');
+assert.equal(vulnerableTreaty.status, 'ended');
+assert.ok(betrayalState.diplomacy.grievances.some((entry) => (
+  entry.type === 'treaty_breach' && entry.aggrieved === betrayed.id
+)), 'AI betrayal uses the same breach consequences as the player');
+
+const escalationState = game(7711);
+escalationState.research.unlocked.push('dip_galactic_council');
+const escalationActors = escalationState.factions.list.slice(0, 2);
+const escalationWar = declareWar(escalationState, {
+  attacker: escalationActors[0].id,
+  defender: escalationActors[1].id,
+  force: true,
+}).war;
+const reputationAtDeclaration = escalationState.diplomacy.profiles[escalationActors[0].id].reputation;
+escalationState.time = 60000;
+assert.equal(escalateWar(escalationState, escalationWar.id, 'expanded', { actor: escalationActors[0].id }).ok, true);
+assert.equal(escalationState.diplomacy.profiles[escalationActors[0].id].reputation, reputationAtDeclaration - 10);
+escalationState.time = 180000;
+assert.equal(escalateWar(escalationState, escalationWar.id, 'total', { actor: escalationActors[0].id }).ok, true);
+assert.equal(escalationState.diplomacy.profiles[escalationActors[0].id].reputation, reputationAtDeclaration - 35);
+assert.ok(escalationState.diplomacy.council.resolutions.some((entry) => (
+  entry.type === 'emergency_coalition' && entry.target === escalationActors[0].id
+)), 'total war triggers a council emergency');
+
 const rivalWarState = game(8801);
 const rivalAttacker = rivalWarState.factions.list[0];
 const rivalDefender = rivalWarState.factions.list[1];
@@ -180,7 +253,10 @@ const rivalTarget = Object.values(rivalWarState.galaxies[rivalWarState.activeGal
   .find((system) => system.owner === 'ai' && system.factionId === rivalDefender.id);
 assert.ok(rivalTarget, 'rival defender owns a target system');
 rivalWarState.aiShips = [];
-const assaultShip = spawnAiShip(rivalWarState, rivalTarget.id, 'dreadnought', null, { factionId: rivalAttacker.id });
+const assaultFleet = Array.from({ length: 5 }, () => (
+  spawnAiShip(rivalWarState, rivalTarget.id, 'dreadnought', null, { factionId: rivalAttacker.id })
+));
+const assaultShip = assaultFleet[0];
 const defenseShip = spawnAiShip(rivalWarState, rivalTarget.id, 'corvette', null, { factionId: rivalDefender.id });
 assert.ok(assaultShip && defenseShip);
 defenseShip.hp = Math.min(defenseShip.hp, 20);
@@ -191,7 +267,7 @@ const rivalWar = declareWar(rivalWarState, {
   force: true,
 });
 assert.equal(rivalWar.ok, true);
-for (let step = 0; step < 400 && rivalTarget.factionId !== rivalAttacker.id; step++) {
+for (let step = 0; step < 800 && rivalTarget.factionId !== rivalAttacker.id; step++) {
   rivalWarState.time += 100;
   tickAiFaction(rivalWarState);
 }
@@ -219,6 +295,7 @@ const legacyJson = JSON.stringify(legacyState);
 const migrated = deserialize(JSON.stringify({ saveVersion: 24, checksum: crc32(legacyJson), savedAt: 1, state: legacyState }));
 assert.equal(migrated.ok, true);
 assert.equal(migrated.state.diplomacy.schemaVersion, 3);
+assert.equal(migrated.state.diplomacy.migrationV25Derived, true, 'v24 migration derives v3 intelligence and reputation');
 assert.equal(migrated.state.diplomacy.proposals.find((entry) => entry.id === 'legacy-invalid').reason, 'migration_invalid_legacy_terms');
 assert.ok(migrated.state.diplomacy.wars.length >= state.diplomacy.wars.length, 'active wars survive migration');
 assert.ok(migrated.state.diplomacy.agreements.length >= state.diplomacy.agreements.length, 'agreements survive migration');

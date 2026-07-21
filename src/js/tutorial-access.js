@@ -73,11 +73,21 @@ let sessionOverrideAll = false;
 
 export function setTutorialSessionOverride(enabled) {
   sessionOverrideAll = enabled === true;
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('gs-tutorial-override-changed', {
+      detail: { enabled: sessionOverrideAll },
+    }));
+  }
   return sessionOverrideAll;
 }
 
 export function tutorialSessionOverrideEnabled() {
   return sessionOverrideAll;
+}
+
+/** Title-menu and campaign-mode unlock: graduated profile or active session bypass. */
+export function academyUnlocked(graduated = false) {
+  return sessionOverrideAll || graduated === true;
 }
 
 export function tutorialStepIndex(stepId) {

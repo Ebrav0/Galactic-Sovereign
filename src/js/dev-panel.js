@@ -182,11 +182,13 @@ export function initDevPanel(ctx) {
   bindClick('dev-tutorial-override', () => {
     setTutorialSessionOverride(true);
     setStatus({ ok: true, details: { tutorialOverride: true } });
+    toast('Academy bypass on — title modes unlocked for this session', 'ok');
     updateDevPanel(true);
   });
   bindClick('dev-tutorial-relock', () => {
     setTutorialSessionOverride(false);
     setStatus({ ok: true, details: { tutorialOverride: false } });
+    toast('Academy bypass off', 'ok');
     updateDevPanel(true);
   });
   bindClick('dev-tutorial-reset', () => {
@@ -225,12 +227,14 @@ export function initDevPanel(ctx) {
           code: 'TUTORIAL_GRADUATE',
           reason: result?.reason ?? 'Could not mark graduated',
         });
+        toast(result?.reason ?? 'Could not mark graduated', 'error');
         return;
       }
       setStatus({
         ok: true,
         details: { profile: 'graduated', at: result.profile?.tutorialGraduatedAt ?? null },
       });
+      toast('Academy marked graduated — campaign modes unlocked', 'ok');
       updateDevPanel(true);
     } catch (error) {
       setStatus({
@@ -238,6 +242,7 @@ export function initDevPanel(ctx) {
         code: 'TUTORIAL_GRADUATE',
         reason: String(error?.message ?? error),
       });
+      toast(String(error?.message ?? error), 'error');
     }
   });
   bindClick('dev-tutorial-clear-profile', async () => {
@@ -249,9 +254,11 @@ export function initDevPanel(ctx) {
           code: 'TUTORIAL_CLEAR',
           reason: result?.reason ?? 'Could not clear profile',
         });
+        toast(result?.reason ?? 'Could not clear profile', 'error');
         return;
       }
       setStatus({ ok: true, details: { profile: 'cleared' } });
+      toast('Academy profile cleared', 'ok');
       updateDevPanel(true);
     } catch (error) {
       setStatus({
@@ -259,6 +266,7 @@ export function initDevPanel(ctx) {
         code: 'TUTORIAL_CLEAR',
         reason: String(error?.message ?? error),
       });
+      toast(String(error?.message ?? error), 'error');
     }
   });
 

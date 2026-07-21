@@ -440,6 +440,9 @@ export function ensureDiplomacy(state) {
   diplomacy.ai.lastProposalAt = diplomacy.ai.lastProposalAt && typeof diplomacy.ai.lastProposalAt === 'object'
     ? diplomacy.ai.lastProposalAt
     : {};
+  diplomacy.ai.ultimatumAt = diplomacy.ai.ultimatumAt && typeof diplomacy.ai.ultimatumAt === 'object'
+    ? diplomacy.ai.ultimatumAt
+    : {};
   diplomacy.council = diplomacy.council && typeof diplomacy.council === 'object'
     ? diplomacy.council
     : {};
@@ -463,6 +466,7 @@ export function ensureDiplomacy(state) {
     from: entry.from ?? PLAYER_ID,
     to: entry.to ?? entry.factionId ?? null,
     terms: asArray(entry.terms),
+    ultimatum: !!entry.ultimatum,
     status: entry.status ?? PROPOSAL_PENDING,
     createdAt: Math.max(0, finite(entry.createdAt)),
     expiresAt: Math.max(0, finite(entry.expiresAt, finite(entry.createdAt) + PROPOSAL_LIFETIME_MS)),
@@ -626,9 +630,14 @@ function recordHistory(state, type, details = {}) {
   const entry = { id: nextId(state, 'history'), type, at: now(state), ...clone(details) };
   diplomacy.history.push(entry);
   if (diplomacy.history.length > 400) diplomacy.history.splice(0, diplomacy.history.length - 400);
+  touchDiplomacy(state, diplomacy);
+  return entry;
+}
+
+function touchDiplomacy(state, diplomacy = ensureDiplomacy(state)) {
   diplomacy.revision = Math.max(0, Math.floor(finite(diplomacy.revision))) + 1;
   if (state.strategicOrders) state.strategicOrders.diplomacyRevision = diplomacy.revision;
-  return entry;
+  return diplomacy.revision;
 }
 
 export function diplomaticRevision(state) {
@@ -1387,7 +1396,14 @@ export function createClaim(state, factionIdOrInput, systemId = null, options = 
     createdAt: now(state),
     source: input.source ?? 'manual',
   };
+  const competing = ensureDiplomacy(state).claims.filter((entry) => (
+    entry.status === 'active' && entry.systemId === input.systemId && entry.claimant !== input.claimant
+  ));
   ensureDiplomacy(state).claims.push(claim);
+  for (const rival of competing) recordDiplomaticEvent(state, {
+    type: 'border_friction', actor: input.claimant, target: rival.claimant,
+    systemId: input.systemId, severity: 1.5,
+  });
   if (input.target !== PLAYER_ID) establishContact(state, input.target, { stage: CONTACT_CONTACTED, trigger: 'claim' });
   recordHistory(state, 'claim_created', { claim });
   return { ok: true, claim };
@@ -1507,6 +1523,18 @@ export function declareWar(state, factionIdOrInput, options = {}) {
   }
   if (legitimacy < 50) adjustActorReputation(state, attacker, -15, 'unjustified_war');
   issueDefensiveCalls(state, war, defender, attacker);
+  if (parties.includes(PLAYER_ID)) {
+    const counterpart = parties.find((actorId) => actorId !== PLAYER_ID);
+    addTransmission(state, {
+      from: counterpart,
+      to: PLAYER_ID,
+      kind: 'threat',
+      subject: input.ultimatum ? 'Ultimatum failed — hostilities begin' : 'Formal declaration of war',
+      body: `War has begun at ${war.escalation} escalation. Declared goals: ${war.goals.map((goal) => goal.type.replaceAll('_', ' ')).join(', ')}.`,
+      tone: 'hostile',
+      relatedId: war.id,
+    });
+  }
   recordHistory(state, 'war_declared', { war });
   return { ok: true, war };
 }
@@ -1564,8 +1592,14 @@ export function recordWarEvent(state, warIdOrFaction, event = {}) {
     }
   }
   if (event.type?.startsWith('battle')) {
-    const factionId = relationFactionFromParties(war.parties);
-    if (factionId) recordBattleDiplomacy(state, factionId, actor === PLAYER_ID && actorDelta >= 0 ? 'victory' : 'defeat', Math.max(0.5, Math.abs(actorDelta) / 10));
+    const opponents = war.attackers.includes(actor) ? war.defenders : war.attackers;
+    for (const opponent of opponents) recordDiplomaticEvent(state, {
+      type: 'battle_victory',
+      actor: event.type === 'battle_defeat' ? opponent : actor,
+      target: event.type === 'battle_defeat' ? actor : opponent,
+      severity: Math.max(0.5, Math.abs(actorDelta) / 10),
+      systemId: event.systemId,
+    });
   }
   recordHistory(state, 'war_event', { warId: war.id, event: entry });
   return { ok: true, war, event: entry };
@@ -1594,6 +1628,19 @@ export function escalateWar(state, warIdOrFaction, level, options = {}) {
   adjustActorReputation(state, actor, level === 'expanded'
     ? DIPLOMACY_CONFIG.war.expandedReputation
     : DIPLOMACY_CONFIG.war.totalReputation, `war_${level}`);
+  if (level === 'total' && isTechUnlocked(state, 'dip_galactic_council')) {
+    const proposer = actorIds(state).filter((actorId) => actorId !== actor).sort()[0];
+    if (proposer && !ensureDiplomacy(state).council.resolutions.some((resolution) => (
+      resolution.status === 'voting' && resolution.type === 'emergency_coalition' && resolution.target === actor
+    ))) {
+      proposeCouncilResolution(state, {
+        proposer,
+        target: actor,
+        type: 'emergency_coalition',
+        reason: `Emergency session after ${actor} escalated to total war`,
+      });
+    }
+  }
   recordHistory(state, 'war_escalated', { warId: war.id, actor, level, majorIncident });
   return { ok: true, war };
 }
@@ -1821,7 +1868,7 @@ export function issueDefensiveCalls(state, warIdOrWar, defendedActor = null, agg
       aggressor: attacker,
       status: 'pending',
       createdAt: now(state),
-      expiresAt: now(state) + DIPLOMACY_CONFIG.proposalExpiryMs,
+      expiresAt: now(state) + DIPLOMACY_CONFIG.proposalLifetimeMs,
     };
     diplomacy.callsToArms.push(call);
     created.push(call);
@@ -1936,20 +1983,31 @@ export function concludePeace(state, factionIdOrWar, terms = {}) {
     });
     if (!ended.ok) throw new Error(ended.reason);
     const factionId = relationFactionFromParties(war.parties);
-    const truce = createAgreement(state, {
-      type: AGREEMENT_TRUCE,
-      parties: war.parties,
-      durationMs: terms.truceMs ?? DEFAULT_PEACE_TRUCE_MS,
-      terms: { peaceWarId: war.id },
-    }, { bypassTech: true });
-    if (!truce.ok) throw new Error(truce.reason);
+    const truceResults = [];
+    for (const attacker of war.attackers) {
+      for (const defender of war.defenders) {
+        if (attacker === defender) continue;
+        const truce = createAgreement(state, {
+          type: AGREEMENT_TRUCE,
+          parties: [attacker, defender],
+          durationMs: terms.truceMs ?? DEFAULT_PEACE_TRUCE_MS,
+          terms: { peaceWarId: war.id },
+        }, { bypassTech: true });
+        if (!truce.ok) throw new Error(truce.reason);
+        truceResults.push(truce.agreement);
+      }
+    }
+    const truce = truceResults.find((agreement) => agreement.parties.includes(proposer)) ?? truceResults[0];
+    if (!truce) throw new Error('Peace settlement could not establish cross-side truces');
     let tribute = null;
     if (terms.tribute) {
+      const payer = terms.tribute.payer ?? terms.tribute.from;
+      const payee = terms.tribute.payee ?? terms.tribute.to;
       tribute = createAgreement(state, {
         type: AGREEMENT_TRIBUTE,
-        parties: war.parties,
+        parties: [payer, payee],
         durationMs: terms.tribute.durationMs ?? 300000,
-        terms: terms.tribute,
+        terms: { ...terms.tribute, payer, payee },
       }, { bypassTech: true });
       if (!tribute.ok) throw new Error(tribute.reason);
     }
@@ -1985,8 +2043,20 @@ export function concludePeace(state, factionIdOrWar, terms = {}) {
         if (claim.claimant === opponent && claim.target === proposer) withdrawClaim(state, claim.id, { reason: 'border_security_peace' });
       }
     }
+    if (war.parties.includes(PLAYER_ID)) {
+      const counterpart = war.parties.find((actorId) => actorId !== PLAYER_ID);
+      addTransmission(state, {
+        from: counterpart ?? proposer,
+        to: PLAYER_ID,
+        kind: 'peace',
+        subject: 'Peace settlement ratified',
+        body: `The war has ended. Cross-side truces will remain enforceable for ${Math.round((terms.truceMs ?? DEFAULT_PEACE_TRUCE_MS) / 1000)} seconds.`,
+        tone: 'formal',
+        relatedId: war.id,
+      });
+    }
     recordHistory(state, 'peace_concluded', { warId: war.id, factionId, cededSystemIds, reparations, tributeId: tribute?.agreement?.id ?? null });
-    return { ok: true, war: ended.war, truce: truce.agreement, tribute: tribute?.agreement ?? null };
+    return { ok: true, war: ended.war, truce, truces: truceResults, tribute: tribute?.agreement ?? null };
   } catch (error) {
     restoreAtomicState(state, snapshot);
     return { ok: false, reason: error?.message ?? 'Peace terms could not be applied atomically' };
@@ -2078,6 +2148,12 @@ function normalizeProposalTerm(term, proposal) {
     source.payer ??= proposal.from;
     source.payee ??= proposal.to;
   }
+  if (source.type === 'reparations') {
+    source.from ??= proposal.from;
+    source.to ??= proposal.to;
+    source.credits = Math.max(0, finite(source.credits));
+    source.solarii = Math.max(0, finite(source.solarii));
+  }
   if (source.type === 'favor') {
     source.debtor ??= proposal.to;
     source.creditor ??= proposal.from;
@@ -2096,6 +2172,7 @@ function normalizeProposalInput(input) {
     from: input?.from ?? PLAYER_ID,
     to: input?.to ?? input?.factionId,
     message: input?.message ?? '',
+    ultimatum: !!input?.ultimatum,
     terms: [],
   };
   proposal.terms = asArray(input?.terms).map((term) => normalizeProposalTerm(term, proposal));
@@ -2130,6 +2207,11 @@ function validateProposalTerms(state, proposal) {
     } else if (term.type === 'tribute') {
       if (!actorExists(state, term.payer) || !actorExists(state, term.payee) || term.payer === term.payee) errors.push(`${prefix}: invalid tribute parties`);
       if (finite(term.creditsPerMinute) <= 0 && finite(term.solariiPerMinute) <= 0) errors.push(`${prefix}: tribute has no value`);
+    } else if (term.type === 'reparations') {
+      if (!actorExists(state, term.from) || !actorExists(state, term.to) || term.from === term.to) errors.push(`${prefix}: invalid reparations parties`);
+      if (finite(term.credits) <= 0 && finite(term.solarii) <= 0) errors.push(`${prefix}: reparations have no value`);
+      if (finite(walletForActor(state, term.from)?.credits) < finite(term.credits)) errors.push(`${prefix}: ${term.from} lacks Credits`);
+      if (finite(walletForActor(state, term.from)?.solarii) < finite(term.solarii)) errors.push(`${prefix}: ${term.from} lacks Solarii`);
     } else if (term.type === 'claim') {
       if (!term.systemId || !actorExists(state, term.target ?? proposal.to)) errors.push(`${prefix}: invalid claim`);
     } else if (term.type === 'end_war') {
@@ -2139,6 +2221,7 @@ function validateProposalTerms(state, proposal) {
       if (!war || war.status !== 'active' || !actorExists(state, term.actor ?? proposal.to)) errors.push(`${prefix}: invalid war participation`);
     } else if (term.type === 'sanction' || term.type === 'lift_sanction') {
       if (!actorExists(state, term.target)) errors.push(`${prefix}: unknown sanction target`);
+      if (term.actor && !actorExists(state, term.actor)) errors.push(`${prefix}: unknown sanctioning actor`);
     } else if (term.type === 'favor') {
       if (!actorExists(state, term.debtor) || !actorExists(state, term.creditor) || term.debtor === term.creditor) {
         errors.push(`${prefix}: invalid favor actors`);
@@ -2277,6 +2360,10 @@ function termAcceptanceValue(state, term, recipient, personality, proposal) {
     const durationMinutes = Math.max(1, finite(term.durationMs, 300000) / 60000);
     const value = durationMinutes * (finite(term.creditsPerMinute) * 0.01 + finite(term.solariiPerMinute) * 4);
     return round2(value * (term.payee === recipient ? 1 : term.payer === recipient ? -1 : 0));
+  }
+  if (term.type === 'reparations') {
+    const value = finite(term.credits) * 0.01 + finite(term.solarii) * 4;
+    return round2(value * (term.to === recipient ? 1 : term.from === recipient ? -1 : 0));
   }
   if (term.type === 'claim') return (term.claimant ?? proposal.from) === recipient ? 5 : -8;
   if (term.type === 'end_war') {
@@ -2558,6 +2645,15 @@ function applyProposalTerm(state, proposal, term) {
     if (!result.ok) throw new Error(result.reason);
     return;
   }
+  if (term.type === 'reparations') {
+    if (finite(term.credits) > 0) transferResources(state, term.from, term.to, 'credits', term.credits);
+    if (finite(term.solarii) > 0) transferResources(state, term.from, term.to, 'solarii', term.solarii);
+    addActorRelationshipModifier(state, term.to, term.from, {
+      source: 'reparations', label: 'Paid reparations', opinion: 4, trust: 3, respect: 2,
+      durationMs: 300000,
+    });
+    return;
+  }
   if (term.type === 'claim') {
     const result = createClaim(state, {
       claimant: term.claimant ?? proposal.from,
@@ -2590,11 +2686,21 @@ function applyProposalTerm(state, proposal, term) {
     const side = term.side === 'attacker' ? war.attackers : war.defenders;
     if (!side.includes(actor)) side.push(actor);
     if (!war.parties.includes(actor)) war.parties.push(actor);
+    war.scoreByActor[actor] ??= 0;
+    war.exhaustion[actor] ??= 0;
     war.parties.sort();
+    const beneficiary = side.find((actorId) => actorId !== actor) ?? proposal.from;
+    if (beneficiary && beneficiary !== actor) recordDiplomaticEvent(state, {
+      type: 'aid_honored', actor, target: beneficiary, warId: war.id,
+    });
     return;
   }
   if (term.type === 'sanction') {
-    applySanction(state, term.target, { durationMs: term.durationMs, issuer: proposal.from });
+    applySanction(state, term.target, {
+      durationMs: term.durationMs,
+      issuer: term.issuer ?? term.actor ?? proposal.from,
+      supporters: term.actor ? [term.actor] : [],
+    });
     return;
   }
   if (term.type === 'lift_sanction') {
@@ -2742,6 +2848,7 @@ export function submitProposal(state, input, options = {}) {
     createdAt: now(state),
     expiresAt: now(state) + Math.max(1000, finite(options.lifetimeMs, PROPOSAL_LIFETIME_MS)),
     parentProposalId: options.parentProposalId ?? null,
+    ultimatum: normalized.ultimatum,
     previewAtCreation: {
       score: preview.score,
       modifiers: preview.modifiers,
@@ -2756,8 +2863,8 @@ export function submitProposal(state, input, options = {}) {
     addTransmission(state, {
       from: proposal.from,
       to: proposal.to,
-      kind: 'proposal',
-      subject: proposal.message || 'Diplomatic proposal',
+      kind: proposal.ultimatum ? 'ultimatum' : proposal.parentProposalId ? 'counter' : 'proposal',
+      subject: proposal.message || (proposal.parentProposalId ? 'Diplomatic counteroffer' : 'Diplomatic proposal'),
       body: `A ${proposal.terms.map((term) => term.type === 'agreement' ? term.agreementType : term.type).join(' + ')} proposal awaits resolution.`,
       tone: actorPersonality(state, proposal.from),
       relatedId: proposal.id,
@@ -2803,6 +2910,18 @@ export function respondToProposal(state, proposalId, decision, options = {}) {
     proposal.resolvedAt = now(state);
     proposal.acceptedBy = actor;
     proposal.finalScore = preview.score;
+    if ([proposal.from, proposal.to].includes(PLAYER_ID)) {
+      const counterpart = proposal.from === PLAYER_ID ? proposal.to : proposal.from;
+      addTransmission(state, {
+        from: counterpart,
+        to: PLAYER_ID,
+        kind: 'proposal_accepted',
+        subject: 'Agreement accepted',
+        body: 'The negotiated package has been ratified and all enforceable terms are now active.',
+        tone: 'formal',
+        relatedId: proposal.id,
+      });
+    }
     recordHistory(state, 'proposal_accepted', { proposalId, actor, score: preview.score });
     return { ok: true, proposal, preview, applied };
   }
@@ -2811,6 +2930,18 @@ export function respondToProposal(state, proposalId, decision, options = {}) {
     proposal.resolvedAt = now(state);
     proposal.rejectedBy = actor;
     proposal.reason = options.reason ?? null;
+    if ([proposal.from, proposal.to].includes(PLAYER_ID)) {
+      const counterpart = proposal.from === PLAYER_ID ? proposal.to : proposal.from;
+      addTransmission(state, {
+        from: counterpart,
+        to: PLAYER_ID,
+        kind: 'proposal_rejected',
+        subject: 'Proposal rejected',
+        body: proposal.reason || 'The terms conflict with our strategic interests.',
+        tone: 'firm',
+        relatedId: proposal.id,
+      });
+    }
     recordHistory(state, 'proposal_rejected', { proposalId, actor, reason: proposal.reason });
     return { ok: true, proposal };
   }
@@ -2866,6 +2997,15 @@ export function proposeCouncilResolution(state, input = {}) {
     reason: input.reason ?? null,
   };
   ensureDiplomacy(state).council.resolutions.push(resolution);
+  addTransmission(state, {
+    from: proposer,
+    to: PLAYER_ID,
+    kind: 'council_position',
+    subject: `Council motion: ${input.type.replaceAll('_', ' ')}`,
+    body: `${proposer} has opened a weighted vote concerning ${input.target}. Ballots close in ${Math.round((resolution.votingEndsAt - now(state)) / 1000)} seconds.`,
+    tone: 'formal',
+    relatedId: resolution.id,
+  });
   recordHistory(state, 'council_resolution_proposed', { resolution });
   return { ok: true, resolution };
 }
@@ -3048,6 +3188,15 @@ export function resolveCouncilResolution(state, resolutionId, options = {}) {
     crisis.inspectionDemandedAt = now(state);
     crisis.inspectionResolutionId = resolution.id;
   }
+  addTransmission(state, {
+    from: 'council',
+    to: PLAYER_ID,
+    kind: 'council_result',
+    subject: `Council motion ${resolution.passed ? 'passed' : 'failed'}`,
+    body: `${resolution.type.replaceAll('_', ' ')} concerning ${resolution.target}: ${resolution.tally.yes} authority for, ${resolution.tally.no} against.`,
+    tone: 'formal',
+    relatedId: resolution.id,
+  });
   recordHistory(state, 'council_resolution_resolved', { resolution });
   return { ok: true, resolution };
 }
@@ -3252,6 +3401,15 @@ function processTribute(state, agreement, elapsedMs) {
   if (credits > 0) transferResources(state, payer, payee, 'credits', credits);
   if (solarii > 0) transferResources(state, payer, payee, 'solarii', solarii);
   agreement.lastPaidAt = now(state);
+  if (now(state) - finite(agreement.lastComplianceAt) >= 60000) {
+    agreement.lastComplianceAt = now(state);
+    recordDiplomaticEvent(state, {
+      type: 'promise_honored', actor: payer, target: payee, severity: 0.5,
+      agreementId: agreement.id,
+    });
+  } else {
+    touchDiplomacy(state);
+  }
   return credits || solarii ? { type: 'tribute_paid', agreementId: agreement.id, credits, solarii } : null;
 }
 
@@ -3264,6 +3422,15 @@ function deterministicAiTerms(state, from, to) {
     return [{ type: 'end_war', warId: war.id, cededSystemIds: [], truceMs: DEFAULT_PEACE_TRUCE_MS }];
   }
   if (war) return null;
+  const commonThreat = actorIds(state).filter((actorId) => actorId !== from && actorId !== to)
+    .find((actorId) => diplomaticLeverage(state, actorId, from).value >= 10
+      && getActorRelationshipBreakdown(state, from, actorId).metrics.opinion <= -20
+      && getActorRelationshipBreakdown(state, to, actorId).metrics.opinion <= -20);
+  if (commonThreat && relationship.trust >= DIPLOMACY_CONFIG.defenseTrustGate
+      && !activeAgreementRecords(state, AGREEMENT_DEFENSE, [from, to]).length) {
+    return [{ type: 'agreement', agreementType: AGREEMENT_DEFENSE,
+      terms: { strategicThreat: commonThreat } }];
+  }
   if (profile.personality === 'economic' && !activeAgreementRecords(state, AGREEMENT_TRADE, [from, to]).length) {
     return [{ type: 'agreement', agreementType: AGREEMENT_TRADE }];
   }
@@ -3331,14 +3498,69 @@ function processAiWarDecisions(state, events) {
       const relationship = getActorRelationshipBreakdown(state, attacker, defender);
       if (relationship.metrics.opinion > -55 && relationship.grievanceSeverity < 60) continue;
       if (diplomaticLeverage(state, attacker, defender).value < -10) continue;
-      const target = controlledSystemRefs(state, defender)[0];
+      const target = controlledSystemRefs(state, defender)
+        .map((entry) => ({ ...entry, value: systemNegotiationValue(state, entry) }))
+        .sort((left, right) => right.value - left.value
+          || `${left.galaxyId}:${left.systemId}`.localeCompare(`${right.galaxyId}:${right.systemId}`))[0];
       if (!target) continue;
       let claim = listClaims(state, { activeOnly: true, systemId: target.systemId })
         .find((entry) => entry.claimant === attacker && entry.target === defender);
       if (!claim) claim = createClaim(state, { claimant: attacker, target: defender, ...target, source: 'ai_strategy' }).claim;
+      const ultimatumKey = pairKey(attacker, defender);
+      const ultimatum = ensureDiplomacy(state).proposals
+        .filter((proposal) => proposal.ultimatum && proposal.from === attacker && proposal.to === defender)
+        .sort((left, right) => right.createdAt - left.createdAt)[0];
+      if (!ultimatum) {
+        const demand = submitProposal(state, {
+          from: attacker,
+          to: defender,
+          ultimatum: true,
+          message: `Ultimatum: recognize our claim on ${target.systemId} and pay tribute`,
+          terms: [
+            { type: 'claim', claimant: attacker, target: defender, systemId: target.systemId, galaxyId: target.galaxyId },
+            { type: 'tribute', payer: defender, payee: attacker, creditsPerMinute: 25, durationMs: 180000 },
+          ],
+        }, { lifetimeMs: 20000 });
+        ensureDiplomacy(state).ai.ultimatumAt[ultimatumKey] = now(state);
+        if (demand.ok) events.push({ type: 'ai_ultimatum', attacker, defender, proposalId: demand.proposal.id });
+        continue;
+      }
+      if ([PROPOSAL_PENDING, PROPOSAL_ACCEPTED].includes(ultimatum.status)) continue;
+      if (ultimatum.status === PROPOSAL_COUNTERED) {
+        const counter = ensureDiplomacy(state).proposals.find((proposal) => proposal.id === ultimatum.counterProposalId);
+        if (counter && [PROPOSAL_PENDING, PROPOSAL_ACCEPTED].includes(counter.status)) continue;
+      }
       const declaration = declareWar(state, { attacker, defender,
-        goals: [{ type: 'claimed_conquest', systemIds: [target.systemId] }] });
+        goals: [{ type: 'claimed_conquest', systemIds: [target.systemId] }], ultimatum: true });
       if (declaration.ok) events.push({ type: 'ai_war_declared', attacker, defender, warId: declaration.war.id, claimId: claim?.id });
+      break;
+    }
+  }
+}
+
+function processAiBreachDecisions(state, events) {
+  const diplomacy = ensureDiplomacy(state);
+  const strategicWindow = Math.floor(now(state) / Math.max(1, DIPLOMACY_CONFIG.strategicTickMs));
+  for (const agreement of activeAgreementRecords(state).sort((a, b) => a.id.localeCompare(b.id))) {
+    if ([AGREEMENT_CEASEFIRE, AGREEMENT_TRUCE].includes(agreement.type)) continue;
+    for (const actor of [...agreement.parties].sort()) {
+      if (actor === PLAYER_ID) continue;
+      const counterpart = agreement.parties.find((party) => party !== actor);
+      const profile = actorProfile(state, actor);
+      const relationship = getActorRelationshipBreakdown(state, actor, counterpart);
+      const pressure = Math.max(0, diplomaticLeverage(state, counterpart, actor).value)
+        + relationship.grievanceSeverity * 0.35 + Math.max(0, -relationship.metrics.trust) * 0.2;
+      const betrayalChance = clamp((1 - profile.reliability) * 18 + pressure - 25, 0, 45);
+      const roll = stableHash(`${state.meta?.seed ?? 1}:${agreement.id}:${actor}:${strategicWindow}`) % 100;
+      if (roll >= betrayalChance) continue;
+      const ended = endAgreement(state, agreement.id, {
+        reason: 'strategic_betrayal', breachedBy: actor,
+        severity: [AGREEMENT_DEFENSE, AGREEMENT_ALLIANCE].includes(agreement.type) ? 2 : 1,
+      });
+      if (ended.ok) events.push({
+        type: 'ai_treaty_betrayal', agreementId: agreement.id,
+        actor, target: counterpart,
+      });
       break;
     }
   }
@@ -3395,6 +3617,7 @@ export function tickDiplomacy(state) {
   const elapsedMs = Math.max(DIPLOMACY_TICK_INTERVAL_MS, at - diplomacy.lastTickAt);
   diplomacy.lastTickAt = at;
   const events = [];
+  let softMutation = false;
   for (const proposal of diplomacy.proposals) {
     if (proposal.status === PROPOSAL_PENDING && at >= proposal.expiresAt) {
       proposal.status = PROPOSAL_EXPIRED;
@@ -3426,10 +3649,14 @@ export function tickDiplomacy(state) {
       if (modifier.permanent || modifier.expiresAt == null) continue;
       for (const metric of METRIC_KEYS) {
         const value = finite(modifier[metric]);
-        modifier[metric] = Math.sign(value) * Math.max(0, Math.abs(value) - decay);
+        const decayed = Math.sign(value) * Math.max(0, Math.abs(value) - decay);
+        if (decayed !== value) softMutation = true;
+        modifier[metric] = decayed;
       }
     }
-    diplomacy.pairModifiers[key] = records.filter((modifier) => modifier.expiresAt == null || at < modifier.expiresAt);
+    const activeRecords = records.filter((modifier) => modifier.expiresAt == null || at < modifier.expiresAt);
+    if (activeRecords.length !== records.length) softMutation = true;
+    diplomacy.pairModifiers[key] = activeRecords;
   }
   for (const faction of factionList(state)) {
     const key = pairKey(PLAYER_ID, faction.id);
@@ -3445,7 +3672,12 @@ export function tickDiplomacy(state) {
   }
   for (const war of diplomacy.wars.filter((entry) => activeAt(entry, at))) {
     const elapsedMinutes = Math.max(0, at - finite(war.lastExhaustionAt, at)) / 60000;
-    for (const actorId of war.parties) war.exhaustion[actorId] = clamp(finite(war.exhaustion[actorId]) + elapsedMinutes * 2, 0, 100);
+    for (const actorId of war.parties) {
+      const previous = finite(war.exhaustion[actorId]);
+      const next = clamp(previous + elapsedMinutes * 2, 0, 100);
+      if (next !== previous) softMutation = true;
+      war.exhaustion[actorId] = next;
+    }
     war.lastExhaustionAt = at;
   }
   for (const resolution of diplomacy.council.resolutions) {
@@ -3462,8 +3694,10 @@ export function tickDiplomacy(state) {
   if (at - diplomacy.lastStrategicTickAt >= DIPLOMACY_CONFIG.strategicTickMs) {
     diplomacy.lastStrategicTickAt = at;
     processAiProposals(state, events);
+    processAiBreachDecisions(state, events);
     processAiWarDecisions(state, events);
   }
+  if (softMutation) touchDiplomacy(state, diplomacy);
   return events;
 }
 

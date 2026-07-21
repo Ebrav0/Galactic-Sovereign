@@ -373,7 +373,9 @@ function proposalTermLabel(term) {
   if (term.type === 'resource') return `${finite(term.amount).toLocaleString()} ${labelize(term.resource)}`;
   if (term.type === 'system_transfer') return `Transfer ${term.systemId}`;
   if (term.type === 'tribute') return 'Tribute agreement';
+  if (term.type === 'reparations') return `${finite(term.credits)} Credits / ${finite(term.solarii)} Solarii reparations`;
   if (term.type === 'claim') return `Recognize claim on ${term.systemId}`;
+  if (term.type === 'join_war') return `Join ${term.warId}`;
   if (term.type === 'sanction') return `Sanction ${term.target}`;
   return labelize(term.type);
 }
@@ -576,8 +578,11 @@ function renderDealBuilderCard(instance, faction, viewState) {
   };
   addNumber(offer, 'diplomacy-offer-credits', 'Credits');
   addNumber(offer, 'diplomacy-offer-solarii', 'Solarii', '0.25');
+  addNumber(offer, 'diplomacy-offer-reparations', 'Reparations Credits');
+  addNumber(offer, 'diplomacy-offer-tribute', 'Tribute Credits / minute');
   addNumber(demand, 'diplomacy-demand-credits', 'Credits');
   addNumber(demand, 'diplomacy-demand-solarii', 'Solarii', '0.25');
+  addNumber(demand, 'diplomacy-demand-reparations', 'Reparations Credits');
   addNumber(demand, 'diplomacy-demand-tribute', 'Tribute Credits / minute');
   const selected = selectedSystemId(instance);
   const owner = systemActor(instance.state, selected);
@@ -595,10 +600,25 @@ function renderDealBuilderCard(instance, faction, viewState) {
     column.appendChild(wrapper);
   };
   checkField(offer, 'diplomacy-offer-system', `Selected system: ${systemName(instance.state, selected)}`, !selected || owner !== PLAYER_ID);
+  checkField(offer, 'diplomacy-offer-claim', 'Recognize their claim on selected system', !selected || owner !== PLAYER_ID);
   checkField(offer, 'diplomacy-offer-favor', 'A favor owed to them');
   checkField(demand, 'diplomacy-demand-system', `Selected system: ${systemName(instance.state, selected)}`, !selected || owner !== faction.id);
+  checkField(demand, 'diplomacy-demand-claim', 'Recognize our claim on selected system', !selected || owner !== faction.id);
   checkField(demand, 'diplomacy-demand-favor', 'A favor owed to us');
   checkField(demand, 'diplomacy-demand-helioclast', 'Helioclast non-use commitment');
+  const activeWars = asArray(instance.state.diplomacy?.wars).filter((war) => war.status === 'active');
+  const playerWar = activeWars.find((war) => war.parties.includes(PLAYER_ID) && !war.parties.includes(faction.id));
+  const factionWar = activeWars.find((war) => war.parties.includes(faction.id) && !war.parties.includes(PLAYER_ID));
+  checkField(offer, 'diplomacy-offer-war', factionWar ? `Join their war: ${factionWar.id}` : 'Join their active war', !factionWar);
+  checkField(demand, 'diplomacy-demand-war', playerWar ? `Join our war: ${playerWar.id}` : 'Join our active war', !playerWar);
+  const sanctionTargets = [['', 'No sanction demand'], ...asArray(instance.state.factions?.list)
+    .filter((candidate) => candidate.id !== faction.id)
+    .map((candidate) => [candidate.id, `Sanction ${candidate.name}`])];
+  const sanctionTarget = makeSelect('diplomacy-demand-sanction-target', sanctionTargets);
+  const sanctionLabel = element('label');
+  sanctionLabel.append(element('span', '', 'Council / bilateral sanction'), sanctionTarget);
+  fields[sanctionTarget.id] = sanctionTarget;
+  demand.appendChild(sanctionLabel);
   columns.append(offer, demand);
   card.appendChild(columns);
 
@@ -622,13 +642,33 @@ function renderDealBuilderCard(instance, faction, viewState) {
     transfer('diplomacy-offer-solarii', 'solarii', PLAYER_ID, faction.id);
     transfer('diplomacy-demand-credits', 'credits', faction.id, PLAYER_ID);
     transfer('diplomacy-demand-solarii', 'solarii', faction.id, PLAYER_ID);
+    const offerReparations = Math.max(0, finite(fields['diplomacy-offer-reparations'].value));
+    if (offerReparations > 0) terms.push({ type: 'reparations', from: PLAYER_ID, to: faction.id, credits: offerReparations, solarii: 0 });
+    const demandReparations = Math.max(0, finite(fields['diplomacy-demand-reparations'].value));
+    if (demandReparations > 0) terms.push({ type: 'reparations', from: faction.id, to: PLAYER_ID, credits: demandReparations, solarii: 0 });
     if (fields['diplomacy-offer-system'].checked) terms.push({ type: 'system_transfer', systemId: selected, galaxyId: instance.state.activeGalaxyId, from: PLAYER_ID, to: faction.id });
     if (fields['diplomacy-demand-system'].checked) terms.push({ type: 'system_transfer', systemId: selected, galaxyId: instance.state.activeGalaxyId, from: faction.id, to: PLAYER_ID });
+    if (fields['diplomacy-offer-claim'].checked) terms.push({ type: 'claim', claimant: faction.id, target: PLAYER_ID, systemId: selected, galaxyId: instance.state.activeGalaxyId });
+    if (fields['diplomacy-demand-claim'].checked) terms.push({ type: 'claim', claimant: PLAYER_ID, target: faction.id, systemId: selected, galaxyId: instance.state.activeGalaxyId });
     if (fields['diplomacy-offer-favor'].checked) terms.push({ type: 'favor', debtor: PLAYER_ID, creditor: faction.id, value: 25 });
     if (fields['diplomacy-demand-favor'].checked) terms.push({ type: 'favor', debtor: faction.id, creditor: PLAYER_ID, value: 25 });
+    const offeredTribute = Math.max(0, finite(fields['diplomacy-offer-tribute'].value));
+    if (offeredTribute > 0) terms.push({ type: 'tribute', payer: PLAYER_ID, payee: faction.id, creditsPerMinute: offeredTribute, durationMs: 300000 });
     const tribute = Math.max(0, finite(fields['diplomacy-demand-tribute'].value));
     if (tribute > 0) terms.push({ type: 'tribute', payer: faction.id, payee: PLAYER_ID, creditsPerMinute: tribute, durationMs: 300000 });
     if (fields['diplomacy-demand-helioclast'].checked) terms.push({ type: 'helioclast_commitment', actor: faction.id, commitment: 'non_use', durationMs: 300000 });
+    if (fields['diplomacy-offer-war'].checked && factionWar) terms.push({
+      type: 'join_war', warId: factionWar.id, actor: PLAYER_ID,
+      side: factionWar.attackers.includes(faction.id) ? 'attacker' : 'defender',
+    });
+    if (fields['diplomacy-demand-war'].checked && playerWar) terms.push({
+      type: 'join_war', warId: playerWar.id, actor: faction.id,
+      side: playerWar.attackers.includes(PLAYER_ID) ? 'attacker' : 'defender',
+    });
+    if (fields['diplomacy-demand-sanction-target'].value) terms.push({
+      type: 'sanction', actor: faction.id, issuer: faction.id,
+      target: fields['diplomacy-demand-sanction-target'].value, durationMs: 300000,
+    });
     for (const [type] of TREATY_ACTIONS) if (fields[`diplomacy-clause-${type}`].checked) {
       terms.push({ type: 'agreement', agreementType: type, parties: [PLAYER_ID, faction.id],
         durationMs: type === AGREEMENT_CEASEFIRE ? 60000 : type === AGREEMENT_TRUCE ? 180000 : null });
