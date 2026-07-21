@@ -10,6 +10,178 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-20 — System jump SFX + richer intro audio
+
+**Task claimed:** Add audio when jumping between systems, and enhance the warp intro sequence.
+
+### Done
+- Layered `navigation.warp_depart` / `navigation.warp_arrive` cues for flagship lane jumps; wormhole depart keeps `navigation.wormhole`.
+- Audio director tracks flagship transit edges (including same-click course-set via sync flush) so depart/arrive fire reliably.
+- Intro phases now sit on a soft `intro.bed` under awakening/ignition, switch to a stronger tunnel loop for breach/translation, and use thicker layered one-shots through arrival.
+
+### Verification
+- `node output/verify_travel_intro_audio.mjs http://127.0.0.1:5173/` passes intro phase cues/beds and system jump depart/arrive.
+
+### Next TODOs
+- Optional: distinct scout/fleet jump variants at lower gain than the flagship jump.
+
+---
+
+## Session 2026-07-20 — Flagship engine audio
+
+**Task claimed:** Add engine audio for the flagship.
+
+### Done
+- Added `flagship.engine` looping cue (Kenney `spaceEngineLarge_*`) on the world bus.
+- Exposed `flagshipEngineStatus()` from live drive magnitude + speed for presentation.
+- Audio director keeps an idle reactor bed in system view and spools gain/playback rate with thrust and speed; stops in galaxy view, transit, title, and warp intro.
+- Loop mixer now updates playback rate live when the same cue stays active.
+
+### Verification
+- `node output/verify_flagship_engine_audio.mjs http://127.0.0.1:5173/` passes: idle loop, thrust intensity ramps to 1, galaxy view silences the engine bed.
+
+### Next TODOs
+- Optional: softer lane-transit engine bed on the galaxy map.
+- Optional: stereo pan engine slightly with camera offset from the flagship.
+
+---
+
+## Session 2026-07-20 — Title + wormhole intro SFX
+
+**Task claimed:** Add sound effects for the title screen system backdrop and the wormhole/warp intro cinematic.
+
+### Done
+- Title screen loops `ambience.title` (dark Mixkit drone / suspense bed) after audio unlock.
+- Warp intro drives phase-synced cues: `intro.awakening` → `ignition` → `breach` → looping `intro.translation` → `intro.arrival`.
+- Audio director treats live `intro.active` as cinematic mode so boot-phase blips around campaign start cannot leave title ambience stuck on.
+- Hardened async loop starts so a cancelled title loop cannot finish decoding and restart during the intro.
+- Added `output/verify_title_intro_audio.mjs` covering title ambience plus every intro phase cue.
+
+### Verification
+- `node output/verify_title_intro_audio.mjs http://127.0.0.1:5173/` passes: title ambience active, title loop stops in warp, all five intro cues fire, translation loops.
+
+### Next TODOs
+- Optional: dedicated Mixkit cinematic whoosh one-shot at translation entry (loop already covers the bed).
+- Optional: regenerate standalone bundle so ZIP builds include the intro cue map.
+
+---
+
+## Session 2026-07-20 — Flagship missing in tactical combat
+
+**Task claimed:** Flagship disappears when combat starts.
+
+### Done
+- Root cause: combat units mark the flagship `hideSprite: true` (piloted ambient sprite owns the visual), but system render also skipped the ambient flagship whenever a living flagship unit existed in the tactical battle — so nothing drew it.
+- Ambient flagship draw is suppressed only when the combat layer will actually paint the flagship (`!hideSprite`).
+
+### Verification
+- `output/verify_combat_ui.mjs`: 23/23, including new hideSprite ownership checks.
+- `output/verify_flagship_wing.mjs`: 16/16.
+
+---
+
+## Session 2026-07-20 — Modern sci-fi SFX remap
+
+**Task claimed:** Replace the retro Kenney digital palette with cleaner modern sci-fi sounds.
+
+### Done
+- Imported Mixkit sci-fi / UI / ambience cues (`src/public/audio/sfx/mixkit/`) under the Mixkit Sound Effects License.
+- Imported rubberduck 60 CC0 Sci-Fi SFX for long ambient beds (`sfx/rubberduck/`).
+- Remapped the runtime catalog so UI, notifications, navigation, weapons, Dyson, Helioclast, and ambience no longer use Kenney Digital arcade tones.
+- Kept Kenney sci-fi / impact layers for physical combat hits, thrusters, and explosions.
+- Updated `SOURCES.md` and `CUE_MAP.md`.
+
+### Verification
+- Catalog path check: 160 file references, 0 missing.
+- `node output/verify_audio_system.mjs http://127.0.0.1:5173/` passes with Mixkit/rubberduck cues starting and ambience looping; zero page/console errors.
+
+### Next TODOs
+- Optional: prune unused Kenney digital assets from shipping builds if size becomes a concern.
+- Optional: replace remaining Kenney laserLarge layers once a stronger beam pack is sourced.
+
+---
+
+## Session 2026-07-20 — Audio playback reliability
+
+**Task claimed:** Diagnose why sound was not audible while the tab was active and restore reliable playback.
+
+### Done
+- Prefer MP3 then OGG when decoding cues so Safari/WebKit can play the catalog (150 companion MP3s under `src/public/audio/`).
+- Resume the AudioContext on every play/loop start and after tab focus returns, instead of failing silently when suspended.
+- Raise default ambience bus/cue gains, surface decode/play errors in the Audio Console, and add an **Audio Console** button on the title screen.
+- Relax Electron autoplay policy so the mixer can start after the first real input.
+
+### Verification
+- `node output/verify_audio_system.mjs http://127.0.0.1:5173/` passes: context unlocks, cues start, ambience loop stays active, mute suppresses voices, settings persist, zero page/console errors.
+
+### Next TODOs
+- Optional: regenerate the standalone bundle so ZIP/`main.standalone.js` launches pick up the mixer changes without a Vite rebuild.
+
+---
+
+## Session 2026-07-20 — Runtime audio mixer and gameplay SFX
+
+**Task claimed:** Make the pulled sound-effect library audible in the game and verify that the effects really play.
+
+### Done
+- Added a native Web Audio mixer with lazy first-gesture unlock, on-demand decoding, five mix buses, a 36-voice ceiling, stereo placement, cooldowns, cinematic layering, and persistent device-local settings.
+- Added an Audio Console with master/interface/combat/world/ambience levels, mute, reduced dynamic range, live engine status, and interface/combat/Helioclast signal tests.
+- Routed semantic cues for buttons and notifications, pause/resume, system/galaxy transitions, fleet and wormhole travel, combat weapon profiles, shield/hull hits, fighter launches, kills, Dyson launch/completion/crackle/heartbeat, and the full Helioclast charge/aim/fire/impact sequence.
+- Added low-gain command, system, and Dyson ambient loops plus a bounded diagnostic ledger exposed through `render_game_to_text` and focused test hooks.
+- Converted the source-candidate cue map into the implemented runtime cue map; all runtime file paths resolve inside the canonical CC0 library.
+
+### Verification
+- `output/verify_audio_system.mjs` passes in Chromium: the context begins uninitialized, unlocks on a real click, decodes 28 selected buffers, starts every UI/combat/Dyson/wormhole/Helioclast test layer, keeps system ambience active, suppresses muted voices, persists mixer settings across reload, and reports zero load, page, or console errors.
+- Required web-game client completed the live 14-second campaign intro into active gameplay; text state confirms `AudioContext: running`, warp departure/arrival voices, and the active system ambience loop. Both cinematic and gameplay captures were visually inspected.
+- `ffprobe` decodes all 416 OGG effects (341 seconds total) with zero failures; the production build includes representative interface and combat assets under `dist/audio/`.
+- `output/verify_helioclast_arsenal_unit.mjs`: 8/8; `output/verify_dyson_cinematic.mjs`: 11/11 with zero browser errors.
+- JS syntax checks, focused diff checks, catalog-path validation (38 cues, 243 file references, zero missing), and `npm run build` pass.
+
+### Suggested next
+- Tune individual gains and cooldowns from playtest feedback; the logical cue catalog makes those mix changes independent of gameplay code.
+
+## Session 2026-07-20 — Helioclast command-first galaxy targeting
+
+**Task claimed:** Let the player choose a Helioclast command first, then click its destination on the galaxy map, without making the flagship or Helioclast travel before remote fire.
+
+### Diagnosis
+- Helioclast destruction was already mechanically remote, but an ordinary target-selection click also scheduled the flagship's normal travel order after the map's 300 ms double-click window. The UI's old target-first wording made that input collision look like a weapon range requirement.
+
+### Done
+- Reversed the galaxy command flow: Forge Star, Annihilate, and Gate Jump now arm a targeting mode; the next star click is consumed by that command and never falls through to flagship, scout, fleet, or drone travel.
+- Added a target-independent readiness check so a command can be armed before choosing a valid destination while preserving tech, assembly, cooldown, combat, route, authorization, resource, and target-specific restrictions.
+- Added a pulsing mode-colored `ARMED` state, crosshair map cursor, explicit destination prompt, Escape cancellation, invalid-target retry behavior, and targeting mode in `render_game_to_text`.
+- Kept the intended distinction between effects: Annihilate fires remotely across the galaxy, Forge Star still requires a valid firing-system/adjacent anchor, and Gate Jump alone relocates the Helioclast.
+
+### Verification
+- `output/verify_superweapon_ui_vfx.mjs`: 15/15 across command arming, physical map targeting, no unintended flagship transit, Forge resolution, remote Annihilate, Gate Jump moving only the Helioclast, UI/text-state parity, and zero console errors.
+- `output/verify_superweapon_novacula.mjs`: 13/13 for deferred sequences, impacts, shield block, cinema, and zero console errors.
+- Visually inspected the armed Forge Star galaxy state; target prompt, pulsing selected card, `ARMED` badge, and command guidance are visible and legible.
+- Required web-game client completed through the live campaign flow with valid state snapshots and no error artifact; latest capture inspected.
+- JS syntax checks, focused diff check, and `npm run build` pass.
+
+### Suggested next
+- If desired, add a distinct map-space hover reticle that previews target validity before clicking; invalid targets currently explain the rule after selection and keep the mode armed for retry.
+
+## Session 2026-07-20 — Licensed SFX source library
+
+**Task claimed:** Pull the sound effects proposed for Galactic Sovereign into the repository.
+
+### Done
+- Imported 416 individual OGG effects from five official Kenney packs: Sci-fi Sounds, Interface Sounds, UI Audio, Impact Sounds, and Digital Audio.
+- Kept the original CC0 license beside every pack and added source URLs, import counts, and a logical cue map for UI, navigation, combat, Dyson, Helioclast, and ambience events.
+- Placed the canonical static library under `src/public/audio/` so the repo's `root: 'src'` Vite configuration copies it into production and serves it at `/audio/`.
+- Excluded the two combined pack preview tracks; no individual sound effects were omitted from the five source packs.
+
+### Verification
+- `ffprobe` decoded all 416 OGG files successfully with zero failures.
+- `npm run build` passes and produces all 416 effects under `dist/audio/`.
+- Live development and isolated production-preview requests return `200` with `Content-Type: audio/ogg` for representative files.
+- Required web-game client completed against the production preview with valid tutorial warp-intro state, no error artifact, and an inspected cinematic capture.
+
+### Suggested next
+- Implement the logical cue catalog and Web Audio mixer against `src/public/audio/CUE_MAP.md`; select and layer variants rather than shipping every raw source as an eager preload.
+
 ## Session 2026-07-20 — Dyson cinematic render-lag fix
 
 **Task claimed:** Fix the lag introduced by the mobile crackling Dyson-star visual update.
@@ -1513,7 +1685,7 @@ Never delete prior entries.
 
 **Task claimed:** Preserve the existing fighter/CAP/Helioclast patch and complete cinematic flybys, impact feedback, real withdrawal, and focused combat regression coverage without changing save v24.
 
-### Implemented so far
+### Implemented
 - Added deterministic adjacent retreat resolution, charge/interdiction/cancellation state, carrier recall, extraction-facing behavior, point-defense-only withdrawal fire, and native lane-transit dispatch for surviving flagship, ships, heroes, wings, and Helioclast.
 - Added transient bounded FX events for wing flybys, heavy impacts, and withdrawal, plus an opt-in session-local Cinema director that cancels on player camera, selection, and command intent.
 - Integrated the Helioclast tactical wedge renderer, `beam_lance` profile, focal-aperture fire origin, targetability, and battle HP synchronization.
@@ -1556,12 +1728,16 @@ Never delete prior entries.
 ### Implemented so far
 - Added diplomacy schema v3 with all unordered actor pairs, deterministic agendas/profiles, reputation, intelligence, favors, grievances, transmissions, calls-to-arms, event ingestion, and centralized revision tracking.
 - Added gradual detection/contact, combined-term utility forecasts and minimum counteroffers, atomic accepted-deal costs, real trade/open-border/defense/alliance/tribute effects, deliberate breach penalties, AI-to-AI proposals, and independent AI wallets.
+- Added the complete offer/demand vocabulary for Credits, Solarii, systems, claims, reparations, tribute, ceasefires, truces, trade, borders, defense, alliances, war participation, sanctions, favors, and Helioclast commitments.
 - Added limited/expanded/total war state, operational goals, legitimacy, escalation penalties, defensive calls, occupation settlement, peace leverage and demand budgets, and goal-constrained limited-war settlements.
+- Added AI ultimatums, strategic treaty breaches, rival fleet dispatch, offscreen actor-to-actor attrition/occupation, alliance support, and pairwise settlements for multi-party wars.
 - Added weighted 60-second council authority/votes, delayed AI commitments, vote promises, tangible sanctions, seven resolution types, and staged Helioclast concern → inspection → sanctions → coalition → war escalation.
 - Advanced saves to v25/diplomacy v3 with v24 preservation and explicit expiry reasons for invalid legacy terms; added the v25 schema.
 - Rebuilt Diplomacy into Overview, Relations, Negotiation, Conflicts, Council, and History views with intelligence, agendas, grievances, obligations, acceptance ranges, transmissions, calls, and a two-column advanced deal builder.
 - Wired scouting, physical foreign trade, Helioclast actions, missions, field manual guidance, simulation event output, actionable `render_game_to_text`, and revision-driven UI refreshes.
 
-### Verification so far
-- `scripts/verify_diplomacy_v3.mjs` passes: four factions/ten actor pairs, contact gating, pure previews, intelligence forecast narrowing, trust gates, accepted-cost single charge, physical trade shares, AI-to-AI wallet isolation and deterministic seeds, defensive calls, breach consequences, weighted council quorum, sanction expiry, staged crisis, and v24→v25 migration/round-trip.
-- Production build passed before the final UI/testing slice; browser interaction, screenshot inspection, and the full regression build remain next.
+### Final verification
+- `scripts/verify_diplomacy_v3.mjs` passes: four factions/ten actor pairs, contact gating, pure previews, intelligence forecast narrowing, trust gates, accepted-cost single charge, physical trade shares, AI-to-AI wallet isolation and deterministic seeds, ultimatums/betrayals/physical wars, defensive calls, multi-party peace, breach consequences, weighted council quorum, sanction expiry, staged crisis, total-war emergency, and v24→v25 migration/round-trip.
+- In-app Playwright passes the full first-contact → quick proposal → counteroffer → advanced combined deal → trade benefit → breach → war → peace → council-vote journey. All six command views render, `render_game_to_text` reports actionable v25 state, the inspected Negotiation/Council captures are legible, and the browser reports zero console errors.
+- Helioclast browser regression passes with the live simulation unpaused: star creation waits for impact, raises Concern, and an eight-shell Dyson defense blocks destruction. Save/text state remains v25 with zero browser errors.
+- Cross-system regressions pass: v16 integration 23/23, logistics 30/30, combat autonomy 8/8, and campaign 19/19. Production `npm run build` passes; the only build note is the existing chunk-size advisory.

@@ -720,6 +720,19 @@ export function skipWarpIntro() {
 
 /** Deterministic introspection for browser verification and accessible UI mirrors. */
 export function warpIntroState(now = performance.now()) {
+  if (!active && debugElapsed == null) {
+    return {
+      active: false,
+      elapsedMs: 0,
+      progress: 0,
+      phase: null,
+      phaseLabel: null,
+      skipReady: false,
+      skipRequested: false,
+      reducedMotion,
+      campaign: { ...campaignContext },
+    };
+  }
   const rawElapsed = introElapsed(now);
   const elapsed = reducedMotion ? rawElapsed * (TOTAL_MS / REDUCED_TOTAL_MS) : rawElapsed;
   const phase = phaseForElapsed(elapsed);

@@ -4,6 +4,9 @@ const fs = require('fs');
 const fsp = fs.promises;
 const crypto = require('crypto');
 
+// Allow the mixer to start after the first real input without Chromium blocking playback.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
 // Slot whitelist enforced here — never trust the renderer.

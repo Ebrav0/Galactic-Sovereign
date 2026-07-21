@@ -61,7 +61,7 @@ import {
   shipyardBuildProgress,
   activeCombatQueues,
 } from './production.js';
-import { setFlagshipInput, flagshipControlStatus, orderTravel, transitStatus, transitEtaMs, toggleFlagshipOrbit, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
+import { setFlagshipInput, flagshipControlStatus, flagshipEngineStatus, orderTravel, transitStatus, transitEtaMs, toggleFlagshipOrbit, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
 import {
   orderScoutTravel,
   scoutEtaMs,
@@ -229,6 +229,7 @@ import {
   superweaponDestroy,
   superweaponJump,
   superweaponSummary,
+  canArmSuperweaponAction,
   completeDysonShellForTest,
   resetSuperweaponIds,
   fireSequenceStatus,
@@ -345,6 +346,10 @@ import {
   createOfflineSolAdvice,
   validateSolCommand,
 } from './sol-commander.js';
+import { AUDIO_CATALOG, AUDIO_PRELOAD_CUES } from './audio-catalog.js';
+import { createAudioEngine } from './audio-engine.js';
+import { createAudioDirector } from './audio-director.js';
+import { initAudioUi } from './audio-ui.js';
 
 let state = createNewGame(DEFAULT_SEED);
 loadProfile();
@@ -361,10 +366,15 @@ let selectedScoutId = null;
 let selectedBattleGroupId = null;
 let selectedBuilderDroneId = null;
 let galaxyTargetStarId = null;
+let helioclastTargetingMode = null;
 let followedConvoyId = null;
 let combatSelectionIds = [];
 let combatCommandMode = null;
 let combatMarquee = null;
+
+const audioEngine = createAudioEngine(AUDIO_CATALOG);
+const audioDirector = createAudioDirector(audioEngine);
+initAudioUi(audioEngine, { preloadCues: AUDIO_PRELOAD_CUES });
 
 const COMBAT_SELECTION_CAP = 24;
 
@@ -656,6 +666,7 @@ function doTogglePause() {
     return { ok: false, reason: 'Attack order required' };
   }
   togglePaused(state);
+  audioEngine.playCue(state.paused ? 'ui.pause' : 'ui.resume');
   markTutorialTimeToggled(state);
   tryAdvanceTutorial(state);
   return { ok: true, paused: state.paused };
@@ -814,11 +825,57 @@ function doOrderTravel(targetId) {
       }
     }
     syncFlagshipAnchoredFleets(state);
+    // Flush travel audio on the same click (depart) instead of waiting a frame.
+    audioDirector.syncFrame({
+      state,
+      view,
+      viewedSystemId,
+      phase: getBootPhase(),
+      now: performance.now(),
+      cameraX: camera.x,
+    });
     const dest = systemById(state, targetId);
     toast(`Course set: ${dest.name} — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
   } else {
     toast(res.reason, 'error');
   }
+  return res;
+}
+
+function setHelioclastTargetingMode(mode) {
+  if (mode == null) {
+    helioclastTargetingMode = null;
+    toast('Helioclast targeting cancelled');
+    return { ok: true, mode: null };
+  }
+  const check = canArmSuperweaponAction(state, mode);
+  if (!check.ok) {
+    toast(check.reason, 'error');
+    return check;
+  }
+  helioclastTargetingMode = mode;
+  galaxyTargetStarId = null;
+  const label = mode === 'create' ? 'Forge Star' : mode === 'destroy' ? 'Annihilate' : 'Gate Jump';
+  toast(`${label} armed — click a destination star`, 'ok');
+  return { ok: true, mode };
+}
+
+function doHelioclastTarget(targetId, requestedMode = helioclastTargetingMode) {
+  const mode = requestedMode ?? helioclastTargetingMode;
+  if (!mode) return { ok: false, reason: 'No Helioclast command armed' };
+  galaxyTargetStarId = targetId;
+  const action = mode === 'create' ? superweaponCreate
+    : mode === 'destroy' ? superweaponDestroy
+      : superweaponJump;
+  const res = action(state, targetId);
+  if (!res.ok) {
+    toast(res.reason, 'error');
+    return res;
+  }
+  helioclastTargetingMode = null;
+  const targetName = systemById(state, targetId)?.name ?? targetId;
+  const label = mode === 'create' ? 'Forge Star' : mode === 'destroy' ? 'Annihilate' : 'Gate Jump';
+  toast(`${label} sequence started on ${targetName}`, 'ok');
   return res;
 }
 
@@ -976,7 +1033,10 @@ function doEnterWormhole(opts = {}) {
   const access = tutorialGuard('wormholes');
   if (!access.ok) return access;
   const res = orderWormholeTravel(state, opts);
-  if (res.ok) toast(`Wormhole transit — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
+  if (res.ok) {
+    toast(`Wormhole transit — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
+    audioEngine.playCue('navigation.wormhole', { force: true });
+  }
   else toast(res.reason, 'error');
   return res;
 }
@@ -1015,6 +1075,7 @@ function doImportState(newState) {
   selectedScoutId = null;
   selectedBattleGroupId = null;
   selectedBuilderDroneId = null;
+  helioclastTargetingMode = null;
   viewedSystemId = newState.flagship.systemId ?? newState.stronghold;
   lastFlagshipSystemId = newState.flagship.systemId;
   follow.enabled = true;
@@ -1051,6 +1112,7 @@ function doImportState(newState) {
   setBootPhase(BOOT_PHASE.PLAYING);
   state.paused = false;
   combatSelectionIds = [];
+  audioDirector.reset();
   document.getElementById('title-screen')?.classList.add('hidden');
 }
 
@@ -1379,6 +1441,8 @@ const { updateUi, closeSidePanel } = initUi({
   },
   cancelBuilderDrone: doCancelBuilderDrone,
   getGalaxyTargetStar: () => galaxyTargetStarId,
+  getHelioclastTargetingMode: () => helioclastTargetingMode,
+  setHelioclastTargetingMode,
   doStartNewGame: (opts) => doStartNewGame(opts),
   doFocusTutorial,
   doBeginTutorialGraduation,
@@ -1439,6 +1503,9 @@ attachInput(canvas, {
   onFollowRequest: () => { follow.enabled = true; },
   onToggleOrbit: doToggleOrbit,
   onGalaxyStarClick: (starId) => { galaxyTargetStarId = starId; },
+  getHelioclastTargetingMode: () => helioclastTargetingMode,
+  onHelioclastTarget: doHelioclastTarget,
+  onHelioclastCancelTargeting: () => setHelioclastTargetingMode(null),
   onBuilderDroneDeployClick: doDeployBuilderDrone,
 });
 
@@ -1509,6 +1576,7 @@ function frame(now) {
   if (phase === BOOT_PHASE.TITLE) {
     drawTitleBackground(ctx2d, canvas, now);
     updateUi();
+    audioDirector.syncFrame({ state, view, viewedSystemId, phase, now, cameraX: camera.x });
     requestAnimationFrame(frame);
     return;
   }
@@ -1516,6 +1584,15 @@ function frame(now) {
   if (phase === BOOT_PHASE.WARP_INTRO) {
     drawWarpIntro(ctx2d, canvas, now);
     updateUi();
+    audioDirector.syncFrame({
+      state,
+      view,
+      viewedSystemId,
+      phase,
+      intro: warpIntroState(now),
+      now,
+      cameraX: camera.x,
+    });
     requestAnimationFrame(frame);
     return;
   }
@@ -1662,6 +1739,7 @@ function frame(now) {
 
   checkFlagshipArrival();
   ensureSelectedScout();
+  audioDirector.syncFrame({ state, view, viewedSystemId, phase, tickEvents, now, cameraX: camera.x });
 
   if (!state.paused && now - lastAutosave >= AUTOSAVE_INTERVAL_MS) {
     lastAutosave = now;
@@ -1718,6 +1796,15 @@ window.advanceTime = (ms) => {
   for (const ready of events.prodReady ?? []) {
     if (ready.scoutId) selectedScoutId = ready.scoutId;
   }
+  audioDirector.syncFrame({
+    state,
+    view,
+    viewedSystemId,
+    phase: getBootPhase(),
+    tickEvents: events,
+    now: performance.now(),
+    cameraX: camera.x,
+  });
   return events;
 };
 
@@ -1763,6 +1850,7 @@ window.render_game_to_text = () => {
     saveVersion: SAVE_VERSION,
     time: state.time,
     paused: state.paused,
+    audio: audioEngine.snapshot(true),
     aiDifficulty: state.aiDifficulty ?? 'normal',
     credits: state.credits,
     solarii: state.solarii ?? 0,
@@ -1823,6 +1911,7 @@ window.render_game_to_text = () => {
       } : null,
       atCore: f.systemId === BLACK_HOLE_ID && !f.transit && !f.wormholeTransit,
       canEnterWormhole: canEnterWormhole(state).ok,
+      engine: flagshipEngineStatus(state),
       weapons: ensureFlagshipWeapons(state).map((w) => ({
         id: w.id,
         profile: w.profile,
@@ -2172,6 +2261,7 @@ window.render_game_to_text = () => {
     superweapon: {
       ...superweaponSummary(state),
       selectedTargetSystemId: galaxyTargetStarId,
+      targetingMode: helioclastTargetingMode,
     },
     heroFlagships: heroFlagshipsSummary(state),
     campaign: campaignSummary(state),
@@ -2199,6 +2289,23 @@ window.render_game_to_text = () => {
 };
 
 window.getGameState = () => state;
+
+window.__audioDebugSnapshot = () => audioEngine.snapshot();
+window.__audioUnlock = () => audioEngine.unlock();
+window.__playAudioCue = (cueId, opts = {}) => audioEngine.playCue(cueId, { ...opts, force: true });
+window.__setAudioSettings = (patch = {}) => audioEngine.setSettings(patch);
+window.__syncAudioForTest = (events = {}) => {
+  audioDirector.syncFrame({
+    state,
+    view,
+    viewedSystemId,
+    phase: getBootPhase(),
+    tickEvents: events,
+    now: performance.now(),
+    cameraX: camera.x,
+  });
+  return audioEngine.snapshot();
+};
 
 window.__selectPlanet = (id) => { selection = id; };
 window.__buildOutpost = (id) => doBuildOutpost(id);
@@ -2345,6 +2452,7 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   seedAiFaction(state, state.homeGalaxyId);
   resetContextualTips();
   galaxyTargetStarId = state.stronghold;
+  helioclastTargetingMode = null;
   if (opts.victoryType) setVictoryType(state, opts.victoryType, opts.mode ?? 'sandbox');
   if (opts.mode === 'tutorial') initTutorial(state, { replay: opts.replay === true });
   document.getElementById('new-game-modal')?.classList.add('hidden');
@@ -2525,6 +2633,9 @@ window.__superweaponJump = (starId, opts) => superweaponJump(state, starId ?? st
 window.__superweaponCreateDeferred = (anchorId) => superweaponCreate(state, anchorId ?? state.stronghold, { immediate: false });
 window.__superweaponDestroyDeferred = (systemId) => superweaponDestroy(state, systemId, { immediate: false });
 window.__superweaponJumpDeferred = (starId) => superweaponJump(state, starId ?? state.stronghold, { immediate: false });
+window.__armHelioclastCommand = (mode) => setHelioclastTargetingMode(mode);
+window.__targetHelioclastCommand = (systemId) => doHelioclastTarget(systemId);
+window.__getHelioclastTargetingMode = () => helioclastTargetingMode;
 window.__fireSequenceStatus = () => fireSequenceStatus(state);
 window.__flagshipWeapons = () => ensureFlagshipWeapons(state);
 window.__flagshipWing = () => flagshipWingSummary(state);

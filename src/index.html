@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic Sovereign</title>
+  <link rel="icon" href="data:," />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -109,6 +110,10 @@
         <button id="pause-btn" type="button" class="btn btn--ghost btn--sm">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 3h3v10H4V3zm5 0h3v10H9V3z"/></svg>
           <span class="btn-label">Pause</span>
+        </button>
+        <button id="audio-settings-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Open audio settings">
+          <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10l-4-3H2V6zm9.2-.8a4 4 0 010 5.6l-1-1a2.6 2.6 0 000-3.6l1-1zm2-2a6.8 6.8 0 010 9.6l-1-1a5.4 5.4 0 000-7.6l1-1z"/></svg>
+          <span class="btn-label">Audio</span>
         </button>
         <button id="save-menu-btn" type="button" class="btn btn--primary btn--sm" aria-label="Open save menu">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h8l2 2v10H3V2zm1 1v10h8V4h-2V3H4zm2 0h4v2H6V3zm0 4h4v4H6V7z"/></svg>
@@ -414,19 +419,85 @@
             <h1 class="title-screen__title">Galactic Sovereign</h1>
             <p class="title-screen__tagline">Forge your empire across the stars</p>
           </div>
-          <div class="title-screen__actions">
-            <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">New Campaign</button>
-            <button id="title-custom-campaign-btn" type="button" class="btn btn--ghost btn--block">Custom Campaign</button>
-            <button id="title-missions-btn" type="button" class="btn btn--ghost btn--block">Missions</button>
-            <button id="title-sandbox-btn" type="button" class="btn btn--ghost btn--block">Sandbox</button>
-            <button id="title-continue-btn" type="button" class="btn btn--ghost btn--block hidden">Continue</button>
-            <button id="title-load-btn" type="button" class="btn btn--ghost btn--block">Load Game</button>
+          <div class="title-screen__menu">
+            <div class="title-screen__primary">
+              <button id="title-continue-btn" type="button" class="btn btn--primary btn--block hidden">Continue</button>
+              <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">Begin Academy</button>
+            </div>
+            <div class="title-screen__modes" aria-label="Game modes">
+              <p class="title-screen__section-label">Game Modes</p>
+              <div class="title-screen__mode-grid">
+                <button id="title-custom-campaign-btn" type="button" class="title-mode-card">
+                  <span class="title-mode-card__name">Campaign</span>
+                  <span class="title-mode-card__desc">Victory goals &amp; rivals</span>
+                </button>
+                <button id="title-missions-btn" type="button" class="title-mode-card">
+                  <span class="title-mode-card__name">Missions</span>
+                  <span class="title-mode-card__desc">Scenario challenges</span>
+                </button>
+                <button id="title-sandbox-btn" type="button" class="title-mode-card">
+                  <span class="title-mode-card__name">Sandbox</span>
+                  <span class="title-mode-card__desc">Free play</span>
+                </button>
+              </div>
+            </div>
+            <div class="title-screen__utilities">
+              <button id="title-load-btn" type="button" class="btn btn--ghost">Load Game</button>
+              <button id="title-audio-btn" type="button" class="btn btn--ghost">Settings</button>
+            </div>
           </div>
         </div>
         <div class="title-screen__bar title-screen__bar--bottom" aria-hidden="true"></div>
       </div>
 
       <div id="save-menu-backdrop" class="modal-backdrop hidden"></div>
+      <div id="audio-settings-backdrop" class="modal-backdrop hidden"></div>
+      <div id="audio-settings-panel" class="panel panel--modal audio-settings hidden" role="dialog" aria-modal="true" aria-labelledby="audio-settings-title">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title" id="audio-settings-title">Settings</span>
+          <span class="panel__trace" aria-hidden="true"></span>
+          <button id="audio-settings-close" type="button" class="btn btn--ghost btn--xs">Close</button>
+        </div>
+        <div class="panel__body audio-settings__body">
+          <p id="audio-settings-status" class="audio-settings__status" aria-live="polite">Audio unlocks on your next click or keypress</p>
+          <section class="settings-section" aria-labelledby="settings-volume-label">
+            <h3 id="settings-volume-label" class="settings-section__title">Volume</h3>
+            <div class="audio-settings__mix" aria-label="Volume mixer">
+              <label for="audio-master-volume">Master</label>
+              <input id="audio-master-volume" type="range" min="0" max="100" step="1" value="80" />
+              <output id="audio-master-volume-value" for="audio-master-volume">80%</output>
+              <label for="audio-ui-volume">Interface</label>
+              <input id="audio-ui-volume" type="range" min="0" max="100" step="1" value="72" />
+              <output id="audio-ui-volume-value" for="audio-ui-volume">72%</output>
+              <label for="audio-combat-volume">Combat</label>
+              <input id="audio-combat-volume" type="range" min="0" max="100" step="1" value="78" />
+              <output id="audio-combat-volume-value" for="audio-combat-volume">78%</output>
+              <label for="audio-world-volume">World</label>
+              <input id="audio-world-volume" type="range" min="0" max="100" step="1" value="76" />
+              <output id="audio-world-volume-value" for="audio-world-volume">76%</output>
+              <label for="audio-ambience-volume">Ambience</label>
+              <input id="audio-ambience-volume" type="range" min="0" max="100" step="1" value="62" />
+              <output id="audio-ambience-volume-value" for="audio-ambience-volume">62%</output>
+            </div>
+          </section>
+          <section class="settings-section" aria-labelledby="settings-prefs-label">
+            <h3 id="settings-prefs-label" class="settings-section__title">Preferences</h3>
+            <div class="audio-settings__toggles">
+              <label><input id="audio-muted" type="checkbox" /> Mute all audio</label>
+              <label><input id="audio-reduced-dynamics" type="checkbox" /> Reduced dynamic range</label>
+            </div>
+          </section>
+          <section class="settings-section" aria-labelledby="settings-test-label">
+            <h3 id="settings-test-label" class="settings-section__title">Signal Test</h3>
+            <div class="audio-settings__tests">
+              <button id="audio-test-ui" type="button" class="btn btn--ghost btn--sm">Interface</button>
+              <button id="audio-test-combat" type="button" class="btn btn--ghost btn--sm">Combat</button>
+              <button id="audio-test-cinematic" type="button" class="btn btn--primary btn--sm">Helioclast</button>
+            </div>
+          </section>
+        </div>
+      </div>
       <div id="new-game-modal-backdrop" class="modal-backdrop hidden"></div>
       <div id="drone-planner-backdrop" class="modal-backdrop hidden"></div>
       <div id="drone-planner" class="panel panel--modal panel--drone-planner hidden" role="dialog" aria-modal="true" aria-labelledby="drone-planner-title">
@@ -450,36 +521,58 @@
           <button id="drone-planner-confirm" type="button" class="btn btn--primary btn--block">Confirm Construction Plan</button>
         </div>
       </div>
-      <div id="new-game-modal" class="panel panel--modal hidden">
+      <div id="new-game-modal" class="panel panel--modal panel--new-game hidden" role="dialog" aria-modal="true" aria-labelledby="new-game-modal-title">
         <div class="panel__header">
-          <span class="panel__title" id="new-game-modal-title">Custom Campaign</span>
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title" id="new-game-modal-title">New Game</span>
+          <span class="panel__trace" aria-hidden="true"></span>
         </div>
-        <div class="panel__body">
-          <p class="panel-note" id="new-game-modal-note">Choose how to begin your reign.</p>
-          <label class="panel-note">Victory goal</label>
-          <select id="new-game-victory" class="btn btn--ghost btn--block">
-            <option value="sandbox">Sandbox (no victory)</option>
-            <option value="dominion">Dominion (35% systems)</option>
-            <option value="megastructure">Megastructure (3 Dysons + Helioclast)</option>
-            <option value="annihilation">Annihilation (eliminate AI)</option>
-            <option value="economic">Economic (50k cr + 50 Solarii)</option>
-            <option value="sculptor">Sculptor (3 superweapon actions)</option>
-          </select>
-          <label class="panel-note" style="display:block;margin-top:10px">Rival difficulty</label>
-          <select id="new-game-ai-difficulty" class="btn btn--ghost btn--block">
-            <option value="easy">Easy — 0.8× income, 1.2× research/build time</option>
-            <option value="normal" selected>Normal — equal rates</option>
-            <option value="hard">Hard — 1.2× income, 0.85× research/build time</option>
-            <option value="sovereign">Sovereign — 1.4× income, 0.7× research/build time</option>
-          </select>
-          <div class="panel__actions panel__actions--stack" style="margin-top:12px">
-            <button id="new-game-sandbox-btn" type="button" class="btn btn--primary btn--block">Sandbox</button>
-            <button id="new-game-tutorial-btn" type="button" class="btn btn--ghost btn--block">Guided Tutorial</button>
-            <button id="new-game-missions-btn" type="button" class="btn btn--ghost btn--block">Missions</button>
+        <div class="panel__body new-game-body">
+          <p class="panel-note" id="new-game-modal-note">Pick a mode, then set rivals and victory conditions.</p>
+          <div id="new-game-mode-picker" class="mode-picker" role="radiogroup" aria-label="Play mode">
+            <button type="button" class="mode-picker__option is-active" data-mode="sandbox" id="new-game-pick-sandbox" aria-pressed="true">
+              <span class="mode-picker__name">Sandbox</span>
+              <span class="mode-picker__desc">Open play, no victory</span>
+            </button>
+            <button type="button" class="mode-picker__option" data-mode="campaign" id="new-game-pick-campaign" aria-pressed="false">
+              <span class="mode-picker__name">Campaign</span>
+              <span class="mode-picker__desc">Pursue a victory goal</span>
+            </button>
+            <button type="button" class="mode-picker__option" data-mode="mission" id="new-game-pick-missions" aria-pressed="false">
+              <span class="mode-picker__name">Missions</span>
+              <span class="mode-picker__desc">Scenario challenges</span>
+            </button>
+            <button type="button" class="mode-picker__option" data-mode="tutorial" id="new-game-pick-tutorial" aria-pressed="false">
+              <span class="mode-picker__name">Tutorial</span>
+              <span class="mode-picker__desc">Academy training</span>
+            </button>
+          </div>
+          <div class="menu-form">
+            <div id="new-game-victory-field" class="menu-field">
+              <label for="new-game-victory">Victory goal</label>
+              <select id="new-game-victory" class="menu-select">
+                <option value="sandbox">Sandbox (no victory)</option>
+                <option value="dominion">Dominion (35% systems)</option>
+                <option value="megastructure">Megastructure (3 Dysons + Helioclast)</option>
+                <option value="annihilation">Annihilation (eliminate AI)</option>
+                <option value="economic">Economic (50k cr + 50 Solarii)</option>
+                <option value="sculptor">Sculptor (3 superweapon actions)</option>
+              </select>
+            </div>
+            <div id="new-game-difficulty-field" class="menu-field">
+              <label for="new-game-ai-difficulty">Rival difficulty</label>
+              <select id="new-game-ai-difficulty" class="menu-select">
+                <option value="easy">Easy — softer rivals</option>
+                <option value="normal" selected>Normal — equal rates</option>
+                <option value="hard">Hard — stronger rivals</option>
+                <option value="sovereign">Sovereign — elite rivals</option>
+              </select>
+            </div>
           </div>
         </div>
-        <div class="panel__footer save-menu-actions">
-          <button id="close-new-game-btn" type="button" class="btn btn--ghost btn--sm">Cancel</button>
+        <div class="panel__footer new-game-footer">
+          <button id="close-new-game-btn" type="button" class="btn btn--ghost">Back</button>
+          <button id="new-game-start-btn" type="button" class="btn btn--primary">Begin</button>
         </div>
       </div>
       <div id="field-manual-backdrop" class="modal-backdrop hidden"></div>
@@ -539,8 +632,8 @@
             <summary class="dev-section__title">Tutorial Controls</summary>
             <div class="dev-section__body">
               <div class="dev-row">
-                <button id="dev-tutorial-override" type="button" class="btn btn--ghost btn--sm">Override Locks</button>
-                <button id="dev-tutorial-relock" type="button" class="btn btn--ghost btn--sm">Relock</button>
+                <button id="dev-tutorial-override" type="button" class="btn btn--ghost btn--sm">Bypass Academy</button>
+                <button id="dev-tutorial-relock" type="button" class="btn btn--ghost btn--sm">Clear Bypass</button>
                 <button id="dev-tutorial-reset" type="button" class="btn btn--ghost btn--sm">Reset Tutorial</button>
               </div>
               <div class="dev-row">

@@ -1080,11 +1080,16 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
   const flagshipDisplayPose = f.systemId === systemId && !f.transit
     ? getFlagshipDisplayPose(state, accumulatorMs)
     : null;
-  const tacticalBattleOwnsFlagship = activeBattle?.active
-    && activeBattle.mode === 'tactical'
-    && activeBattle.units?.some((unit) => (
+  // Tactical battles usually render ships from the combat unit list. The
+  // piloted flagship is special: its combat unit keeps hideSprite=true so the
+  // ambient / player-controlled sprite remains the only visual. Only suppress
+  // that ambient draw when combat itself will paint the flagship.
+  const tacticalFlagshipUnit = activeBattle?.active && activeBattle.mode === 'tactical'
+    ? activeBattle.units?.find((unit) => (
       unit.side === 'player' && unit.hull === 'flagship' && unit.hp > 0
-    ));
+    ))
+    : null;
+  const tacticalBattleOwnsFlagship = !!(tacticalFlagshipUnit && !tacticalFlagshipUnit.hideSprite);
 
   const activeConstructionJobs = (state.constructionJobs ?? []).filter(
     (job) => job.galaxyId === state.activeGalaxyId

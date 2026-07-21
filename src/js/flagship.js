@@ -43,6 +43,8 @@ import {
 const input = { x: 0, y: 0 };
 let manualOverrideUntil = 0;
 let autopilotBlendUntil = 0;
+/** Last applied drive magnitude (0–1) for engine audio; not serialized. */
+let lastDriveMag = 0;
 
 // Previous-tick pose for render-time extrapolation between 20 Hz physics steps.
 const prev = { x: 0, y: 0, heading: 0 };
@@ -121,6 +123,21 @@ export function setFlagshipInput(x, y, nowMs = 0) {
 
 export function getFlagshipInput() {
   return { x: input.x, y: input.y };
+}
+
+/** Live engine telemetry for presentation (audio); not part of the save model. */
+export function flagshipEngineStatus(state) {
+  const f = state?.flagship;
+  if (!f || (f.hp ?? 1) <= 0 || f.transit || f.wormholeTransit) {
+    return { audible: false, thrust: 0, speed: 0, intensity: 0 };
+  }
+  const speedMult = Math.max(0.5, techEffects(state).flagshipSpeedMult ?? 1);
+  const maxSpeed = FLAGSHIP_MAX_SPEED * speedMult;
+  const speed = Math.min(1, Math.hypot(f.vx ?? 0, f.vy ?? 0) / Math.max(1, maxSpeed));
+  const thrust = Math.max(0, Math.min(1, lastDriveMag));
+  // Thrust leads; coasting/orbit still hums from speed so the bed never dies mid-flight.
+  const intensity = Math.min(1, Math.max(thrust, speed * 0.7));
+  return { audible: true, thrust, speed, intensity };
 }
 
 export function flagshipControlStatus(state) {
@@ -444,10 +461,14 @@ function applyFlagshipKeepOut(state) {
 
 export function tickFlagship(state) {
   const f = state.flagship;
-  if (f.wormholeTransit) return;
+  if (f.wormholeTransit) {
+    lastDriveMag = 0;
+    return;
+  }
   ensureOrbitField(f);
   if (!f.transit) syncPrevPose(f);
   if (f.transit) {
+    lastDriveMag = 0;
     const galaxy = getGraph(state);
     const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, LANE_SPEED, LANE_MIN_LEG_MS);
     advanceTransit(
@@ -483,6 +504,7 @@ export function tickFlagship(state) {
     f.combatIntent = 'manual_override';
   }
   const thrusting = Math.hypot(driveX, driveY) > 1e-6;
+  lastDriveMag = thrusting ? Math.min(1, Math.hypot(driveX, driveY)) : 0;
   if (f.orbit) {
     if (thrusting) {
       clearOrbit(f);
