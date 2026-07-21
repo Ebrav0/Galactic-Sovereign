@@ -27,12 +27,15 @@ export function resetScoutIds(state) {
   nextScoutId = max + 1;
 }
 
-export function spawnScout(state, systemId) {
+export function spawnScout(state, systemId, opts = {}) {
   const scout = {
     id: `scout-${nextScoutId++}`,
     galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
+    // Co-op: queuing pilot owns the scout; null = shared team asset.
+    ownerPlayerId: opts.ownerPlayerId ?? null,
+    grantedControllers: [],
   };
   state.scouts.push(scout);
   return scout;

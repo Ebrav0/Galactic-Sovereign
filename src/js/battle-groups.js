@@ -3,6 +3,7 @@
 import { getGraph } from './galaxy-scope.js';
 import { findPlayerShip, orderShipTravel, playerShipStatus } from './fleets.js';
 import { findHeroFlagship } from './hero-flagships.js';
+import { getPlayerFlagship } from './flagship.js';
 import { shipPower } from './fleet-power.js';
 import { systemById } from './state.js';
 import { HELIOCLAST_ID } from './constants.js';
@@ -55,8 +56,10 @@ export function battleGroupForShip(state, shipId) {
 
 /**
  * In-system follow home for a player ship.
- * Hero-anchored fleets stick to their hero; everyone else co-located with the
- * player flagship forms on the flagship. Returns null → use station orbit.
+ * Hero-anchored fleets stick to their hero. Flagship-anchored groups (and
+ * owner-stamped ships) escort that pilot's flagship so co-op screens agree —
+ * alpha's ships follow alpha, beta's follow beta.
+ * Returns null → use station orbit.
  */
 export function fleetFollowHome(state, ship, systemId = ship?.systemId) {
   if (!ship || ship.hp <= 0 || ship.transit) return null;
@@ -87,14 +90,24 @@ export function fleetFollowHome(state, ship, systemId = ship?.systemId) {
     return null;
   }
 
-  const flagship = state.flagship;
+  /** @type {string | null} */
+  let pilotId = null;
+  if (group?.anchorFlagship) {
+    pilotId = group.anchorPilotId ?? group.ownerPlayerId ?? null;
+  }
+  if (!pilotId && ship.ownerPlayerId) pilotId = ship.ownerPlayerId;
+
+  let flagship = pilotId ? getPlayerFlagship(state, pilotId) : null;
+  // Solo / unowned team ships: escort the bound primary flagship.
+  if (!flagship && !pilotId) flagship = state.flagship ?? null;
   if (
     flagship
     && !flagship.transit
     && !flagship.wormholeTransit
     && flagship.systemId === sid
-    && flagship.galaxyId === galaxyId
+    && (flagship.galaxyId == null || flagship.galaxyId === galaxyId)
   ) {
+    const homePilot = flagship.pilotId ?? pilotId ?? 'solo';
     return {
       x: Number(flagship.x) || 0,
       y: Number(flagship.y) || 0,
@@ -102,7 +115,8 @@ export function fleetFollowHome(state, ship, systemId = ship?.systemId) {
       vx: Number(flagship.vx) || 0,
       vy: Number(flagship.vy) || 0,
       kind: 'flagship',
-      homeId: 'flagship',
+      homeId: `flagship:${homePilot}`,
+      pilotId: homePilot,
     };
   }
   return null;
@@ -141,7 +155,7 @@ function removeShipFromAllGroups(state, shipId, exceptGroupId = null) {
   }
 }
 
-export function createBattleGroup(state) {
+export function createBattleGroup(state, opts = {}) {
   const groups = ensureBattleGroups(state);
   const ordinal = nextFleetOrdinal(state);
   const group = {
@@ -151,6 +165,11 @@ export function createBattleGroup(state) {
     shipIds: [],
     anchorHeroId: null,
     anchorFlagship: false,
+    /** Co-op: which pilot's flagship this fleet escorts when anchorFlagship. */
+    anchorPilotId: null,
+    // Co-op: creating pilot owns the fleet; null = shared team asset.
+    ownerPlayerId: opts.ownerPlayerId ?? null,
+    grantedControllers: [],
   };
   groups.push(group);
   return group;
@@ -334,7 +353,7 @@ export function setBattleGroupHeroAnchor(state, groupId, heroId) {
   return { ok: true, groupId, anchorHeroId: heroId };
 }
 
-/** Attach or detach a battle group from the player's own flagship. */
+/** Attach or detach a battle group from a pilot's flagship (issuer's in co-op). */
 export function setBattleGroupFlagshipAnchor(state, groupId, anchored = true) {
   const group = findBattleGroup(state, groupId);
   if (!group) return { ok: false, reason: 'No such fleet' };
@@ -343,11 +362,17 @@ export function setBattleGroupFlagshipAnchor(state, groupId, anchored = true) {
     return { ok: false, reason: 'Player flagship is not in this galaxy' };
   }
   group.anchorFlagship = !!anchored;
-  if (group.anchorFlagship) group.anchorHeroId = null;
+  if (group.anchorFlagship) {
+    group.anchorHeroId = null;
+    group.anchorPilotId = flagship?.pilotId ?? group.ownerPlayerId ?? null;
+  } else {
+    group.anchorPilotId = null;
+  }
   return {
     ok: true,
     groupId,
     anchorFlagship: group.anchorFlagship,
+    anchorPilotId: group.anchorPilotId,
   };
 }
 
@@ -432,21 +457,24 @@ export function autoAssignShipsToFleets(state, options = {}) {
 }
 
 /**
- * Keep flagship-anchored fleets converging on the flagship's current course.
+ * Keep flagship-anchored fleets converging on their pilot's current course.
  * The existing anchored-combat rules keep the fleet tactically attached while
  * slower hulls are still travelling. Wormhole arrival carries the anchored
  * group across galaxies as one command formation.
  */
 export function syncFlagshipAnchoredFleets(state) {
-  const flagship = state.flagship;
-  if (!flagship) return [];
-  const targetId = flagship.transit?.path?.[flagship.transit.path.length - 1]
-    ?? flagship.systemId
-    ?? null;
   const events = [];
 
   for (const group of ensureBattleGroups(state).filter((entry) => entry.anchorFlagship)) {
+    const pilotId = group.anchorPilotId ?? group.ownerPlayerId ?? state.flagship?.pilotId ?? null;
+    const flagship = (pilotId ? getPlayerFlagship(state, pilotId) : null) ?? state.flagship;
+    if (!flagship) continue;
     if (flagship.wormholeTransit) continue;
+
+    const targetId = flagship.transit?.path?.[flagship.transit.path.length - 1]
+      ?? flagship.systemId
+      ?? null;
+
     if (group.galaxyId !== flagship.galaxyId) {
       group.galaxyId = flagship.galaxyId;
       for (const shipId of group.shipIds) {

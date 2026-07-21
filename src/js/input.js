@@ -62,6 +62,7 @@ export function attachInput(canvas, ctx) {
     onHelioclastCancelTargeting,
     onBuilderDroneDeployClick,
     onCameraIntent,
+    onMapPing,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -119,6 +120,9 @@ export function attachInput(canvas, ctx) {
     } else if (e.code === 'KeyO') {
       e.preventDefault();
       onToggleOrbit();
+    } else if (e.code === 'KeyP') {
+      e.preventDefault();
+      onMapPing?.({ source: 'hotkey' });
     }
   });
 
@@ -379,11 +383,19 @@ export function attachInput(canvas, ctx) {
   });
 
   canvas.addEventListener('contextmenu', (e) => {
-    if (!combatUiActive?.()) return;
-    e.preventDefault();
-    const w = screenToWorld(camera, e.clientX, e.clientY, canvas);
-    const unit = hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y);
-    onCombatContextCommand?.(w, unit);
+    if (combatUiActive?.()) {
+      e.preventDefault();
+      const w = screenToWorld(camera, e.clientX, e.clientY, canvas);
+      const unit = hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y);
+      onCombatContextCommand?.(w, unit);
+      return;
+    }
+    if (onMapPing) {
+      e.preventDefault();
+      const cam = activeCamera();
+      const w = screenToWorld(cam, e.clientX, e.clientY, canvas);
+      onMapPing({ source: 'context', x: w.x, y: w.y, clientX: e.clientX, clientY: e.clientY });
+    }
   });
 
   canvas.addEventListener('wheel', (e) => {

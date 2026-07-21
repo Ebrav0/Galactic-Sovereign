@@ -136,12 +136,12 @@ export function canQueueHull(state, shipyardId, systemId, hull) {
   return canQueueHullType(state, shipyardId, systemId, hull);
 }
 
-export function queueScout(state, shipyardId, systemId) {
-  return queueHull(state, shipyardId, systemId, 'scout');
+export function queueScout(state, shipyardId, systemId, opts = {}) {
+  return queueHull(state, shipyardId, systemId, 'scout', opts);
 }
 
 /** Local shipyard queue — test/regression hook only (Phase 5). */
-export function queueHull(state, shipyardId, systemId, hull) {
+export function queueHull(state, shipyardId, systemId, hull, opts = {}) {
   const tutorial = requireTutorialAccess(state, hull === 'scout' ? 'scout_queue' : 'combat_ship_queue');
   if (!tutorial.ok) return tutorial;
   const check = canQueueHull(state, shipyardId, systemId, hull);
@@ -155,6 +155,8 @@ export function queueHull(state, shipyardId, systemId, hull) {
     startedAt: state.time,
     durationMs: check.buildMs,
     queueItemId: null,
+    // Co-op: completed hull is owned by whoever queued it (null = team asset).
+    ownerPlayerId: opts.ownerPlayerId ?? null,
   });
   return { ok: true, hull };
 }
@@ -207,7 +209,7 @@ export function tickProduction(state) {
           if (queueItem?.bulkOrderId) recordBulkShipCompletion(state, completion, null, spawned.drone ?? null);
           completed.push(completion);
         } else if (hull === 'scout') {
-          const scout = spawnScout(state, system.id);
+          const scout = spawnScout(state, system.id, { ownerPlayerId: build.ownerPlayerId ?? null });
           const completion = {
             systemId: system.id,
             hull,
@@ -219,7 +221,9 @@ export function tickProduction(state) {
           if (queueItem?.bulkOrderId) recordBulkShipCompletion(state, completion);
           completed.push(completion);
         } else {
-          const ship = spawnPlayerShip(state, system.id, hull, structure.bodyId);
+          const ship = spawnPlayerShip(state, system.id, hull, structure.bodyId, {
+            ownerPlayerId: build.ownerPlayerId ?? null,
+          });
           const startingVeterancy = structureEffectValue(
             state,
             system.id,

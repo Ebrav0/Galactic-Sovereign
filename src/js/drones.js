@@ -19,10 +19,17 @@ import {
   isStructureActive,
 } from './state.js';
 import { allocateStructureId } from './economy.js';
-import { flagshipInSystem, flagshipPresentForDrones } from './flagship-presence.js';
+import { flagshipInSystem, flagshipSystemsPresentForDrones } from './flagship-presence.js';
 import { isTechUnlocked } from './tech-web.js';
 import { ensureDyson } from './state.js';
 import { refreshSystemStructureCombatFields } from './body-structures.js';
+
+/** Issuing pilot for a new construction job (co-op: rebound state.flagship). */
+function issuingPilotId(state, opts = {}) {
+  return opts.ownerPlayerId
+    ?? state.flagship?.pilotId
+    ?? null;
+}
 
 let nextJobId = 1;
 let nextDroneId = 1;
@@ -155,18 +162,23 @@ function unassignDroneFromJob(state, droneId) {
   drone.missionStartedAt = null;
 }
 
-function pauseJobsInSystem(state, systemId) {
-  for (const job of state.constructionJobs) {
-    if (job.systemId !== systemId || job.galaxyId !== state.activeGalaxyId) continue;
-    if (job.status === 'active' || job.status === 'queued') job.status = 'paused';
-  }
+function pauseJob(job) {
+  if (job.status === 'active' || job.status === 'queued') job.status = 'paused';
 }
 
-function resumeJobsInSystem(state, systemId) {
-  for (const job of state.constructionJobs) {
-    if (job.systemId !== systemId || job.galaxyId !== state.activeGalaxyId) continue;
-    if (job.status === 'paused') job.status = 'queued';
-  }
+function resumeJob(job) {
+  if (job.status === 'paused') job.status = 'queued';
+}
+
+/**
+ * True when construction can advance in the job's system.
+ * Co-op shared empire: any allied pilot present in-system keeps work moving.
+ * Owner attribution remains on the job for visuals / completion events.
+ */
+function jobOwnerPresent(state, job) {
+  if (!job?.systemId) return false;
+  // Any present player flagship may advance shared-empire construction.
+  return flagshipInSystem(state, job.systemId, null);
 }
 
 function assignDronesToJobs(state, systemId) {
@@ -249,6 +261,7 @@ function completeStructureJob(state, job) {
   refreshSystemStructureCombatFields(state, job.systemId);
 
   job.status = 'complete';
+  job.completedAt = state.time;
   for (const droneId of job.assignedDroneIds ?? []) {
     unassignDroneFromJob(state, droneId);
   }
@@ -272,8 +285,8 @@ export function queueStructureUpgradeJob(state, opts) {
     targetMaxHp = null,
     hpRatio = 1,
   } = opts;
-  if (!flagshipInSystem(state, systemId)) {
-    return { ok: false, reason: 'Flagship must be in this system to direct upgrades' };
+  if (!flagshipInSystem(state, systemId, null)) {
+    return { ok: false, reason: 'A flagship must be in this system to direct upgrades' };
   }
   if (state.credits < creditCost) return { ok: false, reason: `Need ${creditCost} credits` };
   const structure = findStructure(state, systemId, structureId);
@@ -300,6 +313,7 @@ export function queueStructureUpgradeJob(state, opts) {
     upgradeToLevel: targetLevel,
     targetMaxHp,
     hpRatio,
+    ownerPlayerId: issuingPilotId(state, opts),
   });
   syncDronesForSystem(state, systemId);
   assignDronesToJobs(state, systemId);
@@ -319,8 +333,8 @@ export function queueConstructionJob(state, opts) {
     extraStructureFields = {},
   } = opts;
 
-  if (!flagshipInSystem(state, systemId)) {
-    return { ok: false, reason: 'Flagship must be in this system to direct construction' };
+  if (!flagshipInSystem(state, systemId, null)) {
+    return { ok: false, reason: 'A flagship must be in this system to direct construction' };
   }
   if (state.credits < creditCost) {
     return { ok: false, reason: `Need ${creditCost} credits` };
@@ -365,6 +379,7 @@ export function queueConstructionJob(state, opts) {
     orderedAt: state.time,
     orbitIndex: orbitIndex ?? null,
     launcherIndex: launcherIndex ?? null,
+    ownerPlayerId: issuingPilotId(state, opts),
   });
 
   syncDronesForSystem(state, systemId);
@@ -383,32 +398,40 @@ export function constructionProgressForStructure(structure, time) {
 export function tickDrones(state) {
   ensureArrays(state);
   const completions = [];
-  const flagshipSystem = flagshipPresentForDrones(state);
+  const presentSystems = flagshipSystemsPresentForDrones(state)
+    .filter((systemId) => isPlayerOwned(state, systemId));
+  const presentSet = new Set(presentSystems);
 
-  if (flagshipSystem && isPlayerOwned(state, flagshipSystem)) {
-    syncDronesForSystem(state, flagshipSystem);
-    resumeJobsInSystem(state, flagshipSystem);
-    assignDronesToJobs(state, flagshipSystem);
+  // Per-job: only the issuing pilot's presence keeps their build running.
+  for (const job of state.constructionJobs) {
+    if (job.galaxyId !== state.activeGalaxyId) continue;
+    if (job.status === 'complete' || job.status === 'failed') continue;
+    if (jobOwnerPresent(state, job)) resumeJob(job);
+    else pauseJob(job);
+  }
 
-    const speed = surveyorSpeedBonus(state);
-    for (const job of state.constructionJobs) {
-      if (job.systemId !== flagshipSystem || job.galaxyId !== state.activeGalaxyId) continue;
-      if (job.status !== 'active') continue;
+  for (const systemId of presentSystems) {
+    syncDronesForSystem(state, systemId);
+    assignDronesToJobs(state, systemId);
+  }
 
-      let assignedCount = job.assignedDroneIds?.length ?? 0;
-      if (assignedCount > 0) {
-        job.workDoneMs += DRONE_WORK_PER_TICK * assignedCount * speed;
-      }
-      if (job.workDoneMs >= job.workRequiredMs) {
-        const event = completeStructureJob(state, job);
-        if (event) completions.push(event);
-      }
+  const speed = surveyorSpeedBonus(state);
+  for (const job of state.constructionJobs) {
+    if (job.galaxyId !== state.activeGalaxyId) continue;
+    if (job.status !== 'active') continue;
+    if (!jobOwnerPresent(state, job)) continue;
+    if (!presentSet.has(job.systemId)) {
+      syncDronesForSystem(state, job.systemId);
+      assignDronesToJobs(state, job.systemId);
     }
-  } else {
-    for (const job of state.constructionJobs) {
-      if (job.status === 'active' || job.status === 'queued') {
-        if (job.systemId) pauseJobsInSystem(state, job.systemId);
-      }
+
+    const assignedCount = job.assignedDroneIds?.length ?? 0;
+    if (assignedCount > 0) {
+      job.workDoneMs += DRONE_WORK_PER_TICK * assignedCount * speed;
+    }
+    if (job.workDoneMs >= job.workRequiredMs) {
+      const event = completeStructureJob(state, job);
+      if (event) completions.push(event);
     }
   }
 
@@ -427,6 +450,139 @@ export function droneSummaryForSystem(state, systemId) {
     active,
     idle: drones.length - active,
   };
+}
+
+/** Compact construction job list for co-op summaries (~10 Hz). */
+export function constructionJobsSummary(state) {
+  ensureArrays(state);
+  const now = state.time ?? 0;
+  const out = [];
+  for (const job of state.constructionJobs) {
+    if (job.status === 'failed') continue;
+    if (job.status === 'complete') {
+      const doneAt = job.completedAt ?? job.orderedAt ?? 0;
+      if (now - doneAt > 30000) continue; // keep briefly so clients can finalize
+    }
+    out.push({
+      id: job.id,
+      galaxyId: job.galaxyId ?? null,
+      systemId: job.systemId,
+      structureId: job.structureId,
+      structureType: job.structureType,
+      bodyId: job.bodyId ?? null,
+      status: job.status,
+      workDoneMs: job.workDoneMs ?? 0,
+      workRequiredMs: job.workRequiredMs ?? 1,
+      ownerPlayerId: job.ownerPlayerId ?? null,
+      assigned: job.assignedDroneIds?.length ?? 0,
+      upgradeToLevel: job.upgradeToLevel ?? null,
+      orbitIndex: job.orbitIndex ?? null,
+      launcherIndex: job.launcherIndex ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Apply host construction job progress on a co-op client.
+ * Progress bars use workDoneMs; completions finalize the local structure copy.
+ */
+export function applyConstructionJobsSummary(state, jobs) {
+  if (!Array.isArray(jobs)) return;
+  ensureArrays(state);
+  for (const snap of jobs) {
+    if (!snap?.id) continue;
+    let job = state.constructionJobs.find((j) => j.id === snap.id);
+    if (!job) {
+      job = {
+        id: snap.id,
+        galaxyId: snap.galaxyId ?? state.activeGalaxyId,
+        systemId: snap.systemId,
+        structureType: snap.structureType,
+        bodyId: snap.bodyId ?? null,
+        structureId: snap.structureId,
+        creditCost: 0,
+        workRequiredMs: snap.workRequiredMs ?? 1,
+        workDoneMs: 0,
+        assignedDroneIds: [],
+        status: snap.status ?? 'queued',
+        orderedAt: state.time,
+        ownerPlayerId: snap.ownerPlayerId ?? null,
+        upgradeToLevel: snap.upgradeToLevel ?? null,
+        orbitIndex: snap.orbitIndex ?? null,
+        launcherIndex: snap.launcherIndex ?? null,
+      };
+      state.constructionJobs.push(job);
+    }
+
+    // Materialize a local structure shell so progress/completion have something
+    // to attach to before the next full snapshot arrives.
+    if (snap.structureId && snap.systemId && snap.status !== 'complete') {
+      const system = systemById(state, snap.systemId, snap.galaxyId ?? state.activeGalaxyId);
+      if (system) {
+        if (!Array.isArray(system.structures)) system.structures = [];
+        let structure = system.structures.find((s) => s.id === snap.structureId);
+        if (!structure) {
+          structure = {
+            id: snap.structureId,
+            type: snap.structureType,
+            bodyId: snap.bodyId ?? null,
+            builtAtTime: null,
+            construction: {
+              jobId: snap.id,
+              durationMs: snap.workRequiredMs ?? 1,
+              startedAt: state.time,
+            },
+          };
+          if (snap.orbitIndex != null) structure.orbitIndex = snap.orbitIndex;
+          if (snap.launcherIndex != null) structure.launcherIndex = snap.launcherIndex;
+          system.structures.push(structure);
+        } else if (!structure.construction) {
+          structure.construction = {
+            jobId: snap.id,
+            durationMs: snap.workRequiredMs ?? 1,
+            startedAt: state.time,
+          };
+        }
+      }
+    }
+
+    const wasComplete = job.status === 'complete';
+    job.status = snap.status ?? job.status;
+    job.workDoneMs = snap.workDoneMs ?? job.workDoneMs;
+    job.workRequiredMs = snap.workRequiredMs ?? job.workRequiredMs;
+    job.ownerPlayerId = snap.ownerPlayerId ?? job.ownerPlayerId ?? null;
+    job.systemId = snap.systemId ?? job.systemId;
+    job.structureId = snap.structureId ?? job.structureId;
+    job.structureType = snap.structureType ?? job.structureType;
+    job.bodyId = snap.bodyId ?? job.bodyId ?? null;
+    if (snap.upgradeToLevel != null) job.upgradeToLevel = snap.upgradeToLevel;
+    if (typeof snap.assigned === 'number') {
+      while ((job.assignedDroneIds?.length ?? 0) < snap.assigned) {
+        if (!job.assignedDroneIds) job.assignedDroneIds = [];
+        job.assignedDroneIds.push(`remote-${job.id}-${job.assignedDroneIds.length}`);
+      }
+      if (job.assignedDroneIds?.length > snap.assigned) {
+        job.assignedDroneIds.length = snap.assigned;
+      }
+    }
+
+    const shouldComplete = job.status === 'complete'
+      || (job.workRequiredMs > 0 && job.workDoneMs >= job.workRequiredMs);
+    if (shouldComplete && !wasComplete) {
+      job.status = 'complete';
+      const structure = findStructure(state, job.systemId, job.structureId, job.galaxyId);
+      if (structure?.construction) {
+        completeStructureJob(state, job);
+      } else if (structure && !structure.builtAtTime) {
+        // Structure arrived without a construction block — still finalize.
+        structure.construction = { jobId: job.id, durationMs: job.workRequiredMs, startedAt: state.time };
+        completeStructureJob(state, job);
+      } else {
+        job.completedAt = state.time;
+      }
+    }
+  }
 }
 
 export function requiresBuilderTech(structureType) {

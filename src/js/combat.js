@@ -66,7 +66,7 @@ import {
 import { heroInSystem, heroesInSystem, orderHeroTravel } from './hero-flagships.js';
 import { getHelioclastShip, isHelioclastMobile, orderHelioclastTravel } from './superweapon.js';
 import { helioclastApertureWorld, helioclastWeaponMountWorld } from './superweapon-render.js';
-import { orderTravel as orderFlagshipTravel } from './flagship.js';
+import { ensurePlayerFlagships, getPlayerFlagship, orderTravel as orderFlagshipTravel } from './flagship.js';
 import { shellRepairBonus } from './dyson.js';
 import { supplyCacheRepairMultiplier } from './strategic-structures.js';
 import { pruneBattleGroups } from './battle-groups.js';
@@ -261,9 +261,67 @@ function seededEntryVector(seed, systemId, time) {
 }
 
 function flagshipInSystem(state, systemId) {
+  for (const f of ensurePlayerFlagships(state)) {
+    if (
+      f.galaxyId === state.activeGalaxyId
+      && f.systemId === systemId
+      && !f.transit
+      && !f.wormholeTransit
+    ) {
+      return true;
+    }
+  }
   const f = state.flagship;
-  return f.galaxyId === state.activeGalaxyId
-    && f.systemId === systemId && !f.transit && !f.wormholeTransit;
+  return !!(
+    f
+    && f.galaxyId === state.activeGalaxyId
+    && f.systemId === systemId
+    && !f.transit
+    && !f.wormholeTransit
+  );
+}
+
+function playerFlagshipsInSystem(state, systemId) {
+  const out = [];
+  for (const f of ensurePlayerFlagships(state)) {
+    if (
+      f.galaxyId === state.activeGalaxyId
+      && f.systemId === systemId
+      && !f.transit
+      && !f.wormholeTransit
+      && (f.hp ?? 1) > 0
+    ) {
+      out.push(f);
+    }
+  }
+  if (out.length === 0 && state.flagship && flagshipInSystem(state, systemId)) {
+    out.push(state.flagship);
+  }
+  return out;
+}
+
+function createPilotFlagshipCombatUnit(state, flagship) {
+  const maxHp = flagship?.maxHp ?? flagshipMaxHpForState(state);
+  const prev = state.flagship;
+  state.flagship = flagship;
+  let suite = [];
+  try {
+    suite = ensureFlagshipWeapons(state).map((w) => ({ ...w, cooldownMs: w.cooldownMs ?? 0 }));
+  } finally {
+    state.flagship = prev;
+  }
+  const pilotId = flagship?.pilotId ?? 'solo';
+  return {
+    id: `flagship:${pilotId}`,
+    hull: 'flagship',
+    hp: flagship?.hp ?? maxHp,
+    maxHp,
+    weaponProfile: 'beam_lance',
+    weapons: suite,
+    hardpointFireAt: {},
+    pilotId,
+    hideSprite: true,
+  };
 }
 
 function tacticalAnchorInSystem(state, systemId) {
@@ -401,6 +459,18 @@ function playerForcesInSystem(state, systemId) {
     ...playerCombatShipsAtSystem(state, systemId),
     ...anchoredCombatShipsAtSystem(state, systemId),
   ];
+  // Heroes fight as capital units alongside fleet ships.
+  for (const hero of heroesInSystem(state, systemId)) {
+    if ((hero.hp ?? 0) <= 0) continue;
+    ships.push({
+      id: hero.id,
+      hull: hero.hull ?? 'hero_flagship',
+      hp: hero.hp,
+      maxHp: hero.maxHp ?? hero.hp,
+      isHero: true,
+      ownerPlayerId: hero.ownerPlayerId ?? null,
+    });
+  }
   const hasFlagship = flagshipInSystem(state, systemId);
   return { ships, hasFlagship };
 }
@@ -572,14 +642,13 @@ function collectAllyShips(state, systemId) {
     }
   }
   if (hasFlagship) {
-    const unit = createFlagshipCombatUnit(state);
-    const maxHp = state.flagship?.maxHp ?? flagshipMaxHpForState(state);
-    out.push({
-      ...unit,
-      hp: state.flagship?.hp ?? state.systemBattles[systemId]?.flagshipHp ?? unit.hp,
-      maxHp,
-      side: 'player',
-    });
+    for (const flagship of playerFlagshipsInSystem(state, systemId)) {
+      const unit = createPilotFlagshipCombatUnit(state, flagship);
+      out.push({
+        ...unit,
+        side: 'player',
+      });
+    }
   }
   if (helioclastInSystem(state, systemId)) {
     const heli = getHelioclastShip(state);
@@ -803,17 +872,19 @@ function syncTacticalReinforcements(state, systemId, battle) {
     if (ship.isStructure || ship.isConvoy) continue;
     let unit;
     if (ship.hull === 'flagship') {
-      const f = state.flagship;
-      const safe = softKeepOut(state, system, f.x, f.y);
+      const pilotId = ship.pilotId ?? String(ship.id).replace(/^flagship:/, '');
+      const f = getPlayerFlagship(state, pilotId) ?? state.flagship;
+      const safe = softKeepOut(state, system, f?.x ?? 0, f?.y ?? 0);
       unit = {
         ...ship,
         x: safe.x,
         y: safe.y,
-        heading: f.heading ?? 0,
+        heading: f?.heading ?? 0,
         cooldownMs: 0,
-        weapons: (ship.weapons ?? createFlagshipCombatUnit(state).weapons).map((w) => ({ ...w })),
+        weapons: (ship.weapons ?? createPilotFlagshipCombatUnit(state, f).weapons).map((w) => ({ ...w })),
         hardpointFireAt: {},
         hideSprite: true,
+        pilotId: f?.pilotId ?? pilotId,
       };
     } else {
       const safe = softKeepOut(state, system, ship.x ?? 0, ship.y ?? 0);
@@ -906,17 +977,21 @@ function initTacticalUnits(state, systemId, battle) {
   for (const ship of allies) {
     let unit = null;
     if (ship.hull === 'flagship') {
-      const f = state.flagship;
-      const safe = softKeepOut(state, system, f.x, f.y);
+      const pilotId = ship.pilotId ?? String(ship.id).replace(/^flagship:/, '') ?? null;
+      const f = (pilotId && getPlayerFlagship(state, pilotId))
+        ?? playerFlagshipsInSystem(state, systemId).find((entry) => entry.pilotId === pilotId)
+        ?? state.flagship;
+      const safe = softKeepOut(state, system, f?.x ?? 0, f?.y ?? 0);
       unit = {
         ...ship,
         x: safe.x,
         y: safe.y,
-        heading: f.heading ?? 0,
+        heading: f?.heading ?? 0,
         cooldownMs: 0,
-        weapons: (ship.weapons ?? createFlagshipCombatUnit(state).weapons).map((w) => ({ ...w })),
+        weapons: (ship.weapons ?? createPilotFlagshipCombatUnit(state, f).weapons).map((w) => ({ ...w })),
         hardpointFireAt: {},
         hideSprite: true, // piloted sprite owns the visual
+        pilotId: f?.pilotId ?? pilotId,
       };
     } else if (ship.isStructure) {
       const angle = (combatIdx / Math.max(1, combatAllies.length + 2)) * Math.PI * 2;
@@ -1208,11 +1283,19 @@ function applyCasualtiesToState(state, systemId, battle, options = {}) {
         );
       });
     }
-    const flagshipUnit = battle.units.find((u) => u.hull === 'flagship');
-    if (flagshipUnit) {
-      battle.flagshipHp = Math.max(0, flagshipUnit.hp);
-      state.flagship.hp = battle.flagshipHp;
-      state.flagship.maxHp = state.flagship.maxHp ?? flagshipMaxHpForState(state);
+    const flagshipUnits = battle.units.filter((u) => u.hull === 'flagship');
+    for (const flagshipUnit of flagshipUnits) {
+      const pilotId = flagshipUnit.pilotId
+        ?? String(flagshipUnit.id).replace(/^flagship:/, '');
+      const target = getPlayerFlagship(state, pilotId) ?? (
+        flagshipUnits.length === 1 ? state.flagship : null
+      );
+      if (!target) continue;
+      target.hp = Math.max(0, flagshipUnit.hp);
+      target.maxHp = target.maxHp ?? flagshipUnit.maxHp ?? flagshipMaxHpForState(state);
+      if (target === state.flagship || target.pilotId === state.flagship?.pilotId) {
+        battle.flagshipHp = Math.max(0, flagshipUnit.hp);
+      }
     }
 
     for (const [carrierId, launched] of Object.entries(battle.wingLaunches ?? {})) {
@@ -2311,25 +2394,29 @@ function tickTacticalBattle(state, systemId, battle) {
       unit.moveAnchorArrived = false;
     }
 
-    // Piloted flagship: sync pose, never AI-steer (still fires below).
+    // Piloted flagship: sync pose from that pilot's capital, never AI-steer (still fires below).
     if (unit.hull === 'flagship') {
       flagshipSkipIds.add(unit.id);
-      if (state.flagship && !state.flagship.transit && !state.flagship.wormholeTransit) {
-        unit.x = state.flagship.x;
-        unit.y = state.flagship.y;
-        unit.heading = state.flagship.heading ?? unit.heading;
-        unit.vx = state.flagship.vx ?? 0;
-        unit.vy = state.flagship.vy ?? 0;
+      const pilotId = unit.pilotId ?? String(unit.id).replace(/^flagship:/, '');
+      const flagship = getPlayerFlagship(state, pilotId) ?? (
+        String(unit.id) === 'flagship' ? state.flagship : null
+      );
+      if (flagship && !flagship.transit && !flagship.wormholeTransit) {
+        unit.x = flagship.x;
+        unit.y = flagship.y;
+        unit.heading = flagship.heading ?? unit.heading;
+        unit.vx = flagship.vx ?? 0;
+        unit.vy = flagship.vy ?? 0;
       }
-      if (withdrawing && battle.retreatPoint && state.flagship) {
+      if (withdrawing && battle.retreatPoint && flagship) {
         const angle = Math.atan2(battle.retreatPoint.y - unit.y, battle.retreatPoint.x - unit.x);
         const speed = Math.max(35, Math.hypot(unit.vx ?? 0, unit.vy ?? 0));
         unit.heading = angle;
         unit.vx = Math.cos(angle) * speed;
         unit.vy = Math.sin(angle) * speed;
-        state.flagship.heading = angle;
-        state.flagship.vx = unit.vx;
-        state.flagship.vy = unit.vy;
+        flagship.heading = angle;
+        flagship.vx = unit.vx;
+        flagship.vy = unit.vy;
       }
     }
 
@@ -3036,6 +3123,11 @@ export function checkBattleTrigger(state, systemId) {
 function combatCandidateSystemIds(state) {
   const ids = new Set(Object.keys(state.systemBattles ?? {}));
 
+  for (const f of ensurePlayerFlagships(state)) {
+    if (f.galaxyId === state.activeGalaxyId && f.systemId && !f.transit && !f.wormholeTransit) {
+      ids.add(f.systemId);
+    }
+  }
   if (state.flagship?.galaxyId === state.activeGalaxyId && state.flagship.systemId) {
     ids.add(state.flagship.systemId);
   }

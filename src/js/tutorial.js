@@ -375,14 +375,28 @@ export function completeTutorialGraduation(state, { victoryType = 'sandbox', aiD
   return { ok: true, victoryType, aiDifficulty };
 }
 
+/** Dev / skip path: end Academy immediately and leave a free sandbox run. */
+export function forceGraduateTutorial(state, { victoryType = 'sandbox', aiDifficulty = null } = {}) {
+  const tutorial = tutorialState(state);
+  tutorial.completedStepIds = [...TUTORIAL_STEP_IDS];
+  tutorial.currentStepId = 'graduation';
+  tutorial.status = 'complete';
+  tutorial.graduationPending = false;
+  tutorial.completedAt = state.time;
+  tutorial.replay = false;
+  state.campaign.mode = 'sandbox';
+  state.campaign.tutorialCompletedAt = state.time;
+  state.campaign.victoryType = victoryType;
+  state.campaign.defeated = false;
+  state.campaign.won = false;
+  if (aiDifficulty) state.aiDifficulty = aiDifficulty;
+  return { ok: true, mode: 'sandbox', victoryType };
+}
+
 export function finishTutorial(state, { skipped = false, allowReplayExit = false } = {}) {
   if (skipped && !allowReplayExit) return { ok: false, reason: 'Tutorial graduation is required' };
   if (skipped) {
-    state.campaign.mode = 'sandbox';
-    const tutorial = tutorialState(state);
-    tutorial.status = 'inactive';
-    tutorial.graduationPending = false;
-    return { ok: true, skipped: true };
+    return forceGraduateTutorial(state);
   }
   return beginTutorialGraduation(state);
 }

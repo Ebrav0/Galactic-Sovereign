@@ -52,6 +52,22 @@ export function milestonesSummary(state) {
   };
 }
 
+export function unlockMilestonesForTest(state, {
+  diplomacy = true,
+  superweapon = true,
+  solarii = true,
+} = {}) {
+  ensureMilestones(state);
+  if (diplomacy) state.milestones.diplomacyUnlocked = true;
+  if (superweapon) state.milestones.superweaponUnlocked = true;
+  if (solarii || diplomacy || superweapon) state.solariiUnlocked = true;
+  return {
+    diplomacyUnlocked: state.milestones.diplomacyUnlocked,
+    superweaponUnlocked: state.milestones.superweaponUnlocked,
+    solariiUnlocked: state.solariiUnlocked === true,
+  };
+}
+
 /** Test hook: force N completed dysons on distinct player systems. */
 export function setCompletedDysonsForTest(state, count) {
   const systems = Object.values(state.galaxies?.[state.activeGalaxyId]?.systems ?? {});

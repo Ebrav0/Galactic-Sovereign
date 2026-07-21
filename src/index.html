@@ -34,9 +34,23 @@
           <div class="brand-sub">
             <span id="system-name" class="system-name">—</span>
             <span id="stronghold-badge" class="badge badge--gold hidden">Stronghold</span>
+            <span id="coop-banner" class="badge badge--coop hidden" role="button" tabindex="0" title="Open co-op roster">CO-OP</span>
+            <div id="coop-roster" class="coop-roster hidden" data-testid="coop-roster" hidden>
+              <div class="coop-roster__head">
+                <strong>Co-op roster</strong>
+                <button type="button" class="btn btn--ghost btn--xs" id="coop-roster-close" aria-label="Close">×</button>
+              </div>
+              <ul id="coop-roster-list" class="coop-roster__list"></ul>
+              <div class="coop-roster__actions">
+                <button type="button" class="btn btn--ghost btn--xs" id="coop-copy-invite">Copy invite URL</button>
+                <button type="button" class="btn btn--ghost btn--xs" id="coop-leave-btn">Leave co-op</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      <div id="coop-request-toast" class="coop-request-toast hidden" data-testid="coop-request-toast" hidden></div>
 
       <div class="hud-header__resources hud-group">
         <div class="chip chip--gold">
@@ -410,40 +424,113 @@
     <div id="hud-overlays">
       <div id="tutorial-coach" class="tutorial-coach hidden" aria-live="polite" aria-label="Tutorial tip"></div>
       <div id="title-screen" class="title-screen">
+        <div class="title-screen__vignette" aria-hidden="true"></div>
         <div class="title-screen__bar title-screen__bar--top" aria-hidden="true"></div>
         <div class="title-screen__center">
-          <div class="title-screen__brand">
+          <div class="title-screen__brand title-screen__enter" style="--enter-delay: 0ms">
             <div class="brand-sigil title-screen__sigil" aria-hidden="true">
               <svg viewBox="0 0 32 32"><path fill="currentColor" d="M16 1 30 9v14L16 31 2 23V9L16 1zm0 4.6L6 11.3v9.4l10 5.7 10-5.7v-9.4L16 5.6zM16 10a6 6 0 110 12 6 6 0 010-12zm0 3.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z"/></svg>
             </div>
             <h1 class="title-screen__title">Galactic Sovereign</h1>
             <p class="title-screen__tagline">Forge your empire across the stars</p>
           </div>
-          <div class="title-screen__menu">
-            <div class="title-screen__primary">
-              <button id="title-continue-btn" type="button" class="btn btn--primary btn--block hidden">Continue</button>
-              <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">Begin Academy</button>
-            </div>
-            <div class="title-screen__modes" aria-label="Game modes">
-              <p class="title-screen__section-label">Game Modes</p>
-              <div class="title-screen__mode-grid">
-                <button id="title-custom-campaign-btn" type="button" class="title-mode-card">
-                  <span class="title-mode-card__name">Campaign</span>
-                  <span class="title-mode-card__desc">Victory goals &amp; rivals</span>
+
+          <div class="title-screen__frame title-screen__enter" style="--enter-delay: 120ms">
+            <span class="title-frame__tick title-frame__tick--tl" aria-hidden="true"></span>
+            <span class="title-frame__tick title-frame__tick--tr" aria-hidden="true"></span>
+            <span class="title-frame__tick title-frame__tick--bl" aria-hidden="true"></span>
+            <span class="title-frame__tick title-frame__tick--br" aria-hidden="true"></span>
+            <div class="title-screen__sheen" aria-hidden="true"></div>
+
+            <div id="title-root" class="title-panel" data-title-panel="root">
+              <div class="title-doors" role="group" aria-label="Play modes">
+                <button id="title-singleplayer-door" type="button" class="title-door title-door--solo">
+                  <span class="title-door__seam" aria-hidden="true"></span>
+                  <span class="title-door__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none"><path d="M4 18V6l8-3 8 3v12l-8 3-8-3z" stroke="currentColor" stroke-width="1.4"/><path d="M12 8v11M8 10.5l4 1.5 4-1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+                  </span>
+                  <span class="title-door__eyebrow">Solo Ops</span>
+                  <span class="title-door__label">Single Player</span>
+                  <span class="title-door__desc">Academy, campaigns &amp; free play</span>
                 </button>
-                <button id="title-missions-btn" type="button" class="title-mode-card">
-                  <span class="title-mode-card__name">Missions</span>
-                  <span class="title-mode-card__desc">Scenario challenges</span>
-                </button>
-                <button id="title-sandbox-btn" type="button" class="title-mode-card">
-                  <span class="title-mode-card__name">Sandbox</span>
-                  <span class="title-mode-card__desc">Free play</span>
+                <button id="title-multiplayer-door" type="button" class="title-door title-door--multi">
+                  <span class="title-door__seam" aria-hidden="true"></span>
+                  <span class="title-door__glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none"><circle cx="7" cy="12" r="2.2" stroke="currentColor" stroke-width="1.4"/><circle cx="17" cy="8" r="2.2" stroke="currentColor" stroke-width="1.4"/><circle cx="17" cy="16" r="2.2" stroke="currentColor" stroke-width="1.4"/><path d="M9.1 11.2 14.8 8.7M9.1 12.8l5.7 3.1" stroke="currentColor" stroke-width="1.2"/></svg>
+                  </span>
+                  <span class="title-door__eyebrow">Fleet Uplink</span>
+                  <span class="title-door__label">Multiplayer</span>
+                  <span class="title-door__desc">Shared empire co-op sessions</span>
                 </button>
               </div>
+              <div class="title-screen__utilities title-screen__utilities--root">
+                <button id="title-audio-btn" type="button" class="btn btn--ghost">Settings</button>
+              </div>
             </div>
-            <div class="title-screen__utilities">
-              <button id="title-load-btn" type="button" class="btn btn--ghost">Load Game</button>
-              <button id="title-audio-btn" type="button" class="btn btn--ghost">Settings</button>
+
+            <div id="title-singleplayer" class="title-panel hidden" data-title-panel="single" aria-hidden="true" hidden>
+              <button type="button" class="title-back" data-title-back="root">← Command</button>
+              <p class="title-screen__section-label">Solo Operations</p>
+              <div class="title-screen__primary">
+                <button id="title-continue-btn" type="button" class="btn btn--primary btn--block hidden">Continue</button>
+                <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">Begin Academy</button>
+              </div>
+              <div class="title-screen__modes" aria-label="Game modes">
+                <p class="title-screen__section-label">Game Modes</p>
+                <div class="title-screen__mode-grid">
+                  <button id="title-custom-campaign-btn" type="button" class="title-mode-card">
+                    <span class="title-mode-card__name">Campaign</span>
+                    <span class="title-mode-card__desc">Victory goals &amp; rivals</span>
+                  </button>
+                  <button id="title-missions-btn" type="button" class="title-mode-card">
+                    <span class="title-mode-card__name">Missions</span>
+                    <span class="title-mode-card__desc">Scenario challenges</span>
+                  </button>
+                  <button id="title-sandbox-btn" type="button" class="title-mode-card">
+                    <span class="title-mode-card__name">Sandbox</span>
+                    <span class="title-mode-card__desc">Free play</span>
+                  </button>
+                </div>
+              </div>
+              <div class="title-screen__utilities">
+                <button id="title-load-btn" type="button" class="btn btn--ghost">Load Game</button>
+              </div>
+            </div>
+
+            <div id="title-multiplayer" class="title-panel hidden" data-title-panel="multi" aria-hidden="true" hidden>
+              <button type="button" class="title-back" data-title-back="root">← Command</button>
+              <p class="title-screen__section-label">Fleet Uplink</p>
+              <div id="title-mp-servers" class="title-mp-servers">
+                <button id="title-mp-server-card" type="button" class="title-server-card" data-server="testing">
+                  <span class="title-server-card__rail" aria-hidden="true"></span>
+                  <span class="title-server-card__top">
+                    <span class="title-server-card__status" id="title-mp-status-pip" data-status="unknown" title="Host status"></span>
+                    <span class="title-server-card__name">Shared Empire</span>
+                    <span class="title-server-card__badge">Testing</span>
+                  </span>
+                  <span class="title-server-card__endpoint" id="title-mp-endpoint">—</span>
+                  <span class="title-server-card__desc">Join anytime while the host is online</span>
+                </button>
+                <p class="title-mp-footnote">Custom &amp; public servers coming later</p>
+              </div>
+              <div id="title-mp-clearance" class="title-mp-clearance hidden" aria-hidden="true" hidden>
+                <p class="title-screen__section-label">Pilot Clearance</p>
+                <form id="title-mp-join-form" class="title-clearance-form" autocomplete="off">
+                  <label class="title-clearance-field" for="title-mp-callsign">
+                    <span>Callsign</span>
+                    <input id="title-mp-callsign" name="callsign" type="text" maxlength="32" required placeholder="Pilot designation" spellcheck="false" />
+                  </label>
+                  <label class="title-clearance-field" for="title-mp-password">
+                    <span>Access Code</span>
+                    <input id="title-mp-password" name="password" type="password" maxlength="64" placeholder="Optional" autocomplete="off" />
+                  </label>
+                  <p id="title-mp-join-status" class="title-clearance-status" aria-live="polite"></p>
+                  <div class="title-clearance-actions">
+                    <button type="button" class="title-back title-back--inline" data-title-back="multi">← Servers</button>
+                    <button id="title-mp-join-btn" type="submit" class="btn btn--primary">Request Docking</button>
+                  </div>
+                </form>
+              </div>
             </div>
           </div>
         </div>
@@ -613,6 +700,7 @@
         <div class="pause-overlay__center">
           <span class="pause-overlay__title">Paused</span>
           <span class="pause-overlay__sub">Simulation suspended — press Space to resume</span>
+          <button id="pause-return-title-btn" type="button" class="btn btn--ghost pause-overlay__return">Return to Title</button>
         </div>
         <div class="pause-overlay__bar pause-overlay__bar--bottom" aria-hidden="true"></div>
       </div>

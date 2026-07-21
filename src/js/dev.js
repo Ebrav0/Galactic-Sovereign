@@ -61,6 +61,7 @@ import {
 import { deployBuilderDrone } from './builder-drones.js';
 import { setCompletedDysonsForTest } from './milestones.js';
 import { spawnHeroFlagshipForTest } from './hero-flagships.js';
+import { forceGraduateTutorial } from './tutorial.js';
 import {
   ensureSuperweapon,
   hasSuperweaponCradle,
@@ -854,7 +855,9 @@ export function devInstantSpawnAtShipyard(state, systemId, shipyardId, hull) {
     return ok({ hull, scoutId: spawned.id, shipyardId });
   }
 
-  spawned = spawnPlayerShip(state, systemId, hull, shipyard.bodyId);
+  spawned = spawnPlayerShip(state, systemId, hull, shipyard.bodyId, {
+    ownerPlayerId: state.flagship?.pilotId ?? null,
+  });
   checkBattleTrigger(state, systemId);
   return ok({ hull, shipId: spawned.id, shipyardId });
 }
@@ -877,12 +880,13 @@ export function devSpawnFriendlyShips(state, systemId, hull, count, anchorBodyId
   }
 
   const ids = [];
+  const ownerPlayerId = state.flagship?.pilotId ?? null;
   for (let i = 0; i < countCheck.details.count; i++) {
-    const ship = spawnPlayerShip(state, systemId, hull, anchorBodyId);
+    const ship = spawnPlayerShip(state, systemId, hull, anchorBodyId, { ownerPlayerId });
     ids.push(ship.id);
   }
   checkBattleTrigger(state, systemId);
-  return ok({ hull, count: ids.length, shipIds: ids, systemId });
+  return ok({ hull, count: ids.length, shipIds: ids, systemId, ownerPlayerId });
 }
 
 export function devSpawnScouts(state, systemId, count) {
@@ -893,10 +897,11 @@ export function devSpawnScouts(state, systemId, count) {
   if (!countCheck.ok) return countCheck;
 
   const ids = [];
+  const ownerPlayerId = state.flagship?.pilotId ?? null;
   for (let i = 0; i < countCheck.details.count; i++) {
-    ids.push(spawnScout(state, systemId).id);
+    ids.push(spawnScout(state, systemId, { ownerPlayerId }).id);
   }
-  return ok({ count: ids.length, scoutIds: ids, systemId });
+  return ok({ count: ids.length, scoutIds: ids, systemId, ownerPlayerId });
 }
 
 export function devSpawnEnemyFleet(state, systemId, composition = PIRATE_SHIPS) {
@@ -1106,6 +1111,15 @@ export function devSetCompletedDysons(state, count) {
     diplomacyUnlocked: state.milestones?.diplomacyUnlocked ?? false,
     superweaponUnlocked: state.milestones?.superweaponUnlocked ?? false,
     events,
+  });
+}
+
+export function devForceGraduate(state) {
+  // Tutorial exit only — do not grant tech, milestones, or fabricated Dysons.
+  const tutorial = forceGraduateTutorial(state);
+  return ok({
+    tutorial: true,
+    mode: tutorial.mode,
   });
 }
 
@@ -1363,6 +1377,8 @@ export function devAction(state, action, params = {}) {
       return devUnlockTech(state, params.nodeId);
     case 'unlockAllTech':
       return devUnlockAllTech(state);
+    case 'forceGraduate':
+      return devForceGraduate(state);
     case 'setHullForgeStage':
       return devSetHullForgeStage(state, params.stage ?? 5);
     case 'unlockHullForge':

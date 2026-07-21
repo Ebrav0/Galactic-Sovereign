@@ -24,6 +24,7 @@ export function createAudioDirector(engine) {
   const seenFx = new Set();
   let nextCrackleAt = 0;
   let nextHeartbeatAt = 0;
+  let nextTelemetryAt = 0;
 
   const play = (cueId, opts) => engine.playCue(cueId, opts);
 
@@ -258,14 +259,18 @@ export function createAudioDirector(engine) {
         : shells > 0 ? 'ambience.dyson' : 'ambience.system';
     const tierGain = cueId === 'ambience.dyson' ? 0.7 + Math.min(8, shells) * 0.055 : 1;
     engine.startLoop('primary', cueId, { gain: pausedGain * tierGain });
+    if (phase === 'playing' && view === 'system' && !state?.paused && now >= nextTelemetryAt) {
+      play('ambience.system_telemetry', { gain: 0.55 + Math.random() * 0.35, pan: (Math.random() - 0.5) * 0.7 });
+      nextTelemetryAt = now + 4200 + Math.random() * 5200;
+    }
     if (phase !== 'playing' || view !== 'system' || state?.paused || shells < 3) return;
     if (now >= nextCrackleAt) {
-      play('dyson.crackle', { gain: 0.7 + shells * 0.04, pan: Math.sin(now * 0.013) * 0.55 });
-      nextCrackleAt = now + 420 + Math.random() * 520;
+      play('dyson.crackle', { gain: 0.55 + shells * 0.03, pan: Math.sin(now * 0.013) * 0.55 });
+      nextCrackleAt = now + 2200 + Math.random() * 2800;
     }
     if (shells >= 5 && now >= nextHeartbeatAt) {
-      play('dyson.heartbeat', { gain: 0.65 + shells * 0.035 });
-      nextHeartbeatAt = now + 2300 + Math.random() * 900;
+      play('dyson.heartbeat', { gain: 0.5 + shells * 0.03 });
+      nextHeartbeatAt = now + 5200 + Math.random() * 2400;
     }
   };
 
@@ -331,6 +336,7 @@ export function createAudioDirector(engine) {
       seenFx.clear();
       nextCrackleAt = 0;
       nextHeartbeatAt = 0;
+      nextTelemetryAt = 0;
       engine.stopLoop('intro');
       engine.stopLoop('primary');
       engine.stopLoop('flagship');

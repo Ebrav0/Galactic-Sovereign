@@ -191,6 +191,8 @@ export function enqueueProduct(state, productInput, options = {}) {
     enqueuedAt: state.time,
     status: 'pending',
     costPaid: cost,
+    // Co-op: stamp the requesting pilot so spawned assets inherit ownership.
+    ownerPlayerId: options.ownerPlayerId ?? null,
   };
   state.empireQueue.push(item);
   return { ok: true, item };
@@ -285,6 +287,7 @@ export function dispatchEmpireQueue(state) {
         startedAt: state.time,
         durationMs: buildMs,
         queueItemId: item.id,
+        ownerPlayerId: item.ownerPlayerId ?? null,
       });
       item.status = 'building';
       item.assignedShipyardId = yard.shipyardId;

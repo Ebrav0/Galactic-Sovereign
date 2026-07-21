@@ -1,6 +1,10 @@
 // HUD, build panel, save menu, toasts. Manipulates DOM inside #hud only.
 
 import {
+  canControl,
+} from './coop-acl.js';
+import { defaultWsUrl, coopHealthUrl } from './coop-client.js';
+import {
   OUTPOST_COST,
   SHIPYARD_COST,
   SCOUT_HULL_COST,
@@ -194,6 +198,147 @@ const CONSTRUCTION_AFFORDABILITY_THRESHOLDS = Object.freeze([
 
 const el = (id) => document.getElementById(id);
 
+// Co-op bridge (set in initUi). When active, empire mutators route through the
+// host with the issuing pilot's identity instead of mutating local state.
+let coopHooks = {
+  active: () => false,
+  run: null,
+  players: () => [],
+  playerId: () => null,
+};
+
+/** Route a mutator through the co-op host; falls back to localFn when offline. */
+function coopOrLocal(command, payload, localFn, { onOk = null } = {}) {
+  if (!coopHooks.active() || !coopHooks.run) return localFn();
+  coopHooks.run(command, payload).then((res) => {
+    if (res.ok) onOk?.(res);
+    else if (res.reason) toast(res.reason, 'error');
+  });
+  return { ok: true, pending: true };
+}
+
+/**
+ * Owner / controllers line with Grant / Revoke / Request / Transfer / Release
+ * for a shareable asset (ship, scout, battleGroup). Returns null outside co-op.
+ */
+function callsignFor(playerId) {
+  if (!playerId) return 'team';
+  const me = coopHooks.playerId();
+  if (playerId === me) return 'you';
+  const hit = (coopHooks.players() ?? []).find((p) => p.id === playerId);
+  return hit?.callsign ?? playerId;
+}
+
+function renderControlShareRow(assetKind, asset, label) {
+  if (!coopHooks.active() || !asset?.id) return null;
+  const me = coopHooks.playerId();
+  const others = (coopHooks.players() ?? []).filter((p) => p.id && p.id !== me && p.online !== false);
+  if (!asset.ownerPlayerId && others.length === 0) return null;
+
+  const row = document.createElement('div');
+  row.className = 'dev-row coop-share-row';
+  const controllers = asset.grantedControllers ?? [];
+  const info = document.createElement('span');
+  info.className = 'panel-note panel-note--muted';
+  const ownerName = !asset.ownerPlayerId ? 'team' : callsignFor(asset.ownerPlayerId);
+  const sharedNames = controllers.map(callsignFor).join(', ');
+  info.textContent = `Owner: ${ownerName}${controllers.length ? ` · Shared: ${sharedNames}` : ''}`;
+  row.appendChild(info);
+
+  const controllable = canControl(me, asset);
+  if (!controllable) row.classList.add('coop-share-row--locked');
+
+  if (asset.ownerPlayerId === me) {
+    for (const p of others) {
+      const granted = controllers.includes(p.id);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn--ghost btn--xs';
+      btn.textContent = `${granted ? 'Revoke' : 'Grant'} ${p.callsign ?? p.id}`;
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        coopHooks.run?.(granted ? 'revokeControl' : 'grantControl', {
+          assetKind, assetId: asset.id, targetPlayerId: p.id,
+        }).then((res) => toast(
+          res.ok
+            ? `${label} ${granted ? 'control revoked from' : 'shared with'} ${p.callsign ?? p.id}`
+            : res.reason,
+          res.ok ? 'ok' : 'error',
+        ));
+      };
+      row.appendChild(btn);
+    }
+    if (others.length) {
+      const transfer = document.createElement('select');
+      transfer.className = 'command-input coop-share-transfer';
+      transfer.dataset.testid = `transfer-${assetKind}-${asset.id}`;
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Transfer ownership…';
+      transfer.appendChild(placeholder);
+      for (const p of others) {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = p.callsign ?? p.id;
+        transfer.appendChild(opt);
+      }
+      transfer.onchange = (e) => {
+        e.stopPropagation();
+        const targetPlayerId = transfer.value;
+        if (!targetPlayerId) return;
+        coopHooks.run?.('transferOwnership', {
+          assetKind, assetId: asset.id, targetPlayerId,
+        }).then((res) => {
+          toast(
+            res.ok ? `${label} ownership transferred to ${callsignFor(targetPlayerId)}` : res.reason,
+            res.ok ? 'ok' : 'error',
+          );
+          transfer.value = '';
+        });
+      };
+      row.appendChild(transfer);
+    }
+  } else if (asset.ownerPlayerId && !controllable) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--xs';
+    btn.textContent = 'Request control';
+    btn.dataset.testid = `request-control-${assetKind}-${asset.id}`;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      coopHooks.run?.('requestControl', { assetKind, assetId: asset.id }).then((res) => {
+        toast(
+          res.ok
+            ? (res.already ? 'Request already pending' : `Asked ${callsignFor(asset.ownerPlayerId)} for control`)
+            : res.reason,
+          res.ok ? 'ok' : 'error',
+        );
+      });
+    };
+    row.appendChild(btn);
+  } else if (asset.ownerPlayerId && controllable && asset.ownerPlayerId !== me) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--ghost btn--xs';
+    btn.textContent = 'Release control';
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      coopHooks.run?.('releaseControl', { assetKind, assetId: asset.id }).then((res) => {
+        toast(res.ok ? `Released control of ${label}` : res.reason, res.ok ? 'ok' : 'error');
+      });
+    };
+    row.appendChild(btn);
+  }
+  return row;
+}
+
+/** Mark a fleet list row as non-commandable for this pilot. */
+function applyControlLockClass(row, asset) {
+  if (!coopHooks.active() || !asset) return;
+  const me = coopHooks.playerId();
+  if (!canControl(me, asset)) row.classList.add('list-row--no-control');
+}
+
 function escapeMarkup(value) {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -201,8 +346,8 @@ function escapeMarkup(value) {
 }
 
 const HINTS = {
-  system: 'WASD / arrows: fly flagship · O: orbit star/planet/moon · F: follow · drag: pan · M: galaxy map',
-  galaxy: 'Helioclast: choose command, then star · Click star: travel · Ctrl/Cmd+click: drone · Tab+click: fleet · Shift+click: scout · double-click: view · M: system',
+  system: 'WASD / arrows: fly · O: orbit · F: follow · P: ping · drag: pan · M: galaxy map',
+  galaxy: 'Helioclast: choose command, then star · Click star: travel · Ctrl/Cmd+click: drone · Tab+click: fleet · Shift+click: scout · P / right-click: ping · double-click: view · M: system',
 };
 
 const PLANET_DOT = {
@@ -296,6 +441,38 @@ function formatStellarProperty(key, value) {
     ? value.toLocaleString(undefined, { maximumFractionDigits: value < 10 ? 3 : 0 })
     : value;
   return `${labels[key] ?? key}: ${display}${suffix}`;
+}
+
+function intelBodySnapshot(sys, captureReq) {
+  if (!sys) return 'none';
+  const bodies = (sys.bodies ?? [])
+    .map((p) => `${p.id}:${p.name}:${p.type}:${p.moons?.length ?? 0}`)
+    .join(',');
+  const structures = (sys.structures ?? [])
+    .map((s) => `${s.id}:${s.type}:${s.bodyId ?? ''}:${s.level ?? 0}`)
+    .join(',');
+  return [
+    sys.id,
+    sys.name,
+    sys.owner,
+    sys.environment ?? '',
+    sys.star?.type ?? sys.star ?? '',
+    bodies,
+    structures,
+    captureReq,
+  ].join('|');
+}
+
+function capturePanelSnapshot(state, systemId, req, ctx, battle) {
+  const force = ctx.captureForceInSystem(state, systemId);
+  // Quantize progress so capture UI refreshes ~4×/sec instead of every frame.
+  const progressBucket = Math.floor(ctx.captureProgressMs(state, systemId) / 250);
+  const hold = ctx.canHoldCapture(state, systemId) ? 1 : 0;
+  const enemy = ctx.enemyCombatPresence(state, systemId);
+  const battleKey = battle?.active
+    ? `${battle.mode}:${battle.playerShips}:${battle.enemyShips}`
+    : '';
+  return `${systemId}|${req}|${force}|${progressBucket}|${hold}|${enemy}|${battleKey}`;
 }
 
 function renderIntelBody(container, sys, captureReq) {
@@ -624,8 +801,10 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
       destination.appendChild(option);
     }
     destination.onchange = () => {
-      const result = setDepotDestination(state, depot.id, destination.value || null);
-      toast(result.ok ? 'Logistics destination updated' : result.reason, result.ok ? 'ok' : 'error');
+      coopOrLocal('setDepotDestination', { depotId: depot.id, nexusSystemId: destination.value || null }, () => {
+        const result = setDepotDestination(state, depot.id, destination.value || null);
+        toast(result.ok ? 'Logistics destination updated' : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Logistics destination updated', 'ok') });
     };
     card.append(destinationLabel, destination);
 
@@ -637,16 +816,20 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
     pause.textContent = depot.routePaused ? 'Resume route' : 'Pause route';
     pause.onclick = () => {
       const wasPaused = depot.routePaused;
-      const result = wasPaused ? resumeDepotRoute(state, depot.id) : pauseDepotRoute(state, depot.id);
-      toast(result.ok ? (wasPaused ? 'Route resumed' : 'Route paused') : result.reason, result.ok ? 'ok' : 'error');
+      coopOrLocal(wasPaused ? 'resumeDepotRoute' : 'pauseDepotRoute', { depotId: depot.id }, () => {
+        const result = wasPaused ? resumeDepotRoute(state, depot.id) : pauseDepotRoute(state, depot.id);
+        toast(result.ok ? (wasPaused ? 'Route resumed' : 'Route paused') : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast(wasPaused ? 'Route resumed' : 'Route paused', 'ok') });
     };
     const dispatch = document.createElement('button');
     dispatch.type = 'button';
     dispatch.className = 'btn btn--ghost btn--xs';
     dispatch.textContent = 'Dispatch now';
     dispatch.onclick = () => {
-      const result = dispatchDepot(state, depot.id);
-      toast(result.ok ? `${result.convoy.id} jumping to Trade Nexus` : result.reason, result.ok ? 'ok' : 'error');
+      coopOrLocal('dispatchDepot', { depotId: depot.id }, () => {
+        const result = dispatchDepot(state, depot.id);
+        toast(result.ok ? `${result.convoy.id} jumping to Trade Nexus` : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Convoy dispatched to Trade Nexus', 'ok') });
     };
     actions.append(pause, dispatch);
     card.appendChild(actions);
@@ -679,16 +862,21 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
     reroute.className = 'btn btn--ghost btn--xs';
     reroute.textContent = 'Reroute';
     reroute.onclick = () => {
-      const result = rerouteConvoy(state, convoy.id);
-      toast(result.ok ? 'Convoy rerouted over shortest valid lanes' : result.reason, result.ok ? 'ok' : 'error');
+      coopOrLocal('rerouteConvoy', { convoyId: convoy.id }, () => {
+        const result = rerouteConvoy(state, convoy.id);
+        toast(result.ok ? 'Convoy rerouted over shortest valid lanes' : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Convoy rerouted over shortest valid lanes', 'ok') });
     };
     const escort = document.createElement('button');
     escort.type = 'button';
     escort.className = 'btn btn--ghost btn--xs';
     escort.textContent = '+ Escort';
     escort.onclick = () => {
-      const result = setConvoyEscort(state, convoy.id, (convoy.escortStrength ?? 0) + 25);
-      toast(result.ok ? 'Escort strength assigned' : result.reason, result.ok ? 'ok' : 'error');
+      const nextEscort = (convoy.escortStrength ?? 0) + 25;
+      coopOrLocal('setConvoyEscort', { convoyId: convoy.id, escortStrength: nextEscort }, () => {
+        const result = setConvoyEscort(state, convoy.id, nextEscort);
+        toast(result.ok ? 'Escort strength assigned' : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Escort strength assigned', 'ok') });
     };
     actions.append(followButton, reroute, escort);
     card.append(title, status, danger, actions);
@@ -1063,8 +1251,10 @@ function renderCampaignPanel(container, state, ctx = {}) {
             : part.label;
       btn.disabled = part.installed || !part.canInstall;
       btn.onclick = () => {
-        const res = installSuperweaponPart(state, part.id);
-        toast(res.ok ? `Installed ${part.label}` : res.reason, res.ok ? 'ok' : 'error');
+        coopOrLocal('installSuperweaponPart', { partId: part.id }, () => {
+          const res = installSuperweaponPart(state, part.id);
+          toast(res.ok ? `Installed ${part.label}` : res.reason, res.ok ? 'ok' : 'error');
+        }, { onOk: () => toast(`Installed ${part.label}`, 'ok') });
       };
       partRow.appendChild(btn);
     }
@@ -1092,11 +1282,13 @@ function renderCampaignPanel(container, state, ctx = {}) {
       btn.title = check.reason ?? '';
       btn.onclick = () => {
         if (!tid) { toast('Select a target star', 'error'); return; }
-        const fn = type === 'create' ? superweaponCreate
-          : type === 'destroy' ? superweaponDestroy
-            : superweaponJump;
-        const res = fn(state, tid);
-        toast(res.ok ? (res.pending ? `${label} started…` : label) : res.reason, res.ok ? 'ok' : 'error');
+        coopOrLocal('superweaponAction', { mode: type, targetId: tid }, () => {
+          const fn = type === 'create' ? superweaponCreate
+            : type === 'destroy' ? superweaponDestroy
+              : superweaponJump;
+          const res = fn(state, tid);
+          toast(res.ok ? (res.pending ? `${label} started…` : label) : res.reason, res.ok ? 'ok' : 'error');
+        }, { onOk: (res) => toast(res.pending ? `${label} started…` : label, 'ok') });
       };
       swRow.appendChild(btn);
     }
@@ -1106,8 +1298,10 @@ function renderCampaignPanel(container, state, ctx = {}) {
     heroBtn.className = 'btn btn--primary btn--sm';
     heroBtn.textContent = 'Build Hero Flagship';
     heroBtn.onclick = () => {
-      const res = buildHeroFlagship(state);
-      toast(res.ok ? 'Hero flagship queued' : res.reason, res.ok ? 'ok' : 'error');
+      coopOrLocal('buildHeroFlagship', {}, () => {
+        const res = buildHeroFlagship(state);
+        toast(res.ok ? 'Hero flagship queued' : res.reason, res.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Hero flagship queued', 'ok') });
     };
     container.appendChild(heroBtn);
   }
@@ -1712,6 +1906,9 @@ function renderFleetShipRow(ship, galaxy, state) {
   main.appendChild(sub);
   row.appendChild(icon);
   row.appendChild(main);
+  applyControlLockClass(row, ship);
+  const shareRow = renderControlShareRow('ship', ship, ship.id);
+  if (shareRow) main.appendChild(shareRow);
   return row;
 }
 
@@ -1771,12 +1968,14 @@ function renderStructureUpgradeButtons(container, state, systemId, bodyId = unde
     }, { action: 'Upgrade' });
     btn.title = check.ok ? `Upgrade ${label} to level ${check.nextLevel}` : check.reason;
     btn.onclick = () => {
-      const result = upgradeBodyStructure(state, systemId, structure.id);
-      if (result.ok) toast(
-        result.queued ? `${label} level ${result.level} upgrade queued` : `${label} upgraded to level ${result.level}`,
-        'ok',
-      );
-      else toast(result.reason, 'error');
+      coopOrLocal('upgradeBodyStructure', { systemId, structureId: structure.id }, () => {
+        const result = upgradeBodyStructure(state, systemId, structure.id);
+        if (result.ok) toast(
+          result.queued ? `${label} level ${result.level} upgrade queued` : `${label} upgraded to level ${result.level}`,
+          'ok',
+        );
+        else toast(result.reason, 'error');
+      }, { onOk: () => toast(`${label} upgrade ordered`, 'ok') });
     };
     container.appendChild(btn);
   }
@@ -1800,9 +1999,17 @@ function renderStarNodeBuildButtons(container, state, systemId, { includeHeading
     decorateStructureButton(btn, row);
     btn.title = row.check.ok ? row.description : row.check.reason;
     btn.onclick = () => {
-      const result = buildBodyStructure(state, systemId, null, row.type);
-      if (result.ok) toast(result.queued ? `${row.label} construction queued` : `${row.label} built`, 'ok');
-      else toast(result.reason, 'error');
+      coopOrLocal(
+        'buildBodyStructure',
+        { systemId, bodyId: null, structureType: row.type },
+        () => {
+          const result = buildBodyStructure(state, systemId, null, row.type);
+          if (result.ok) toast(result.queued ? `${row.label} construction queued` : `${row.label} built`, 'ok');
+          else toast(result.reason, 'error');
+          return result;
+        },
+        { onOk: () => toast(`${row.label} ordered`, 'ok') },
+      );
     };
     container.appendChild(btn);
   }
@@ -1839,9 +2046,17 @@ function renderStrategicBuildButtons(container, state, systemId, planetId) {
       decorateStructureButton(btn, row);
       btn.title = row.check.ok ? `${row.label} · ${placement}` : row.check.reason;
       btn.onclick = () => {
-        const res = buildBodyStructure(state, systemId, planetId, row.type);
-        if (res.ok) toast(res.queued ? `${row.label} construction queued` : `${row.label} built`, 'ok');
-        else toast(res.reason, 'error');
+        coopOrLocal(
+          'buildBodyStructure',
+          { systemId, bodyId: planetId, structureType: row.type },
+          () => {
+            const res = buildBodyStructure(state, systemId, planetId, row.type);
+            if (res.ok) toast(res.queued ? `${row.label} construction queued` : `${row.label} built`, 'ok');
+            else toast(res.reason, 'error');
+            return res;
+          },
+          { onOk: () => toast(`${row.label} ordered`, 'ok') },
+        );
       };
       container.appendChild(btn);
 
@@ -1873,9 +2088,11 @@ function renderStrategicBuildButtons(container, state, systemId, planetId) {
     btn.disabled = !check.ok;
     btn.textContent = `${labels[type] ?? type} (${def.cost} cr)`;
     btn.onclick = () => {
-      const res = buildStrategicStructure(state, systemId, type, pid);
-      if (res.ok) toast(`${labels[type] ?? type} built`, 'ok');
-      else toast(res.reason, 'error');
+      coopOrLocal('buildStrategicStructure', { systemId, structureType: type, planetId: pid }, () => {
+        const res = buildStrategicStructure(state, systemId, type, pid);
+        if (res.ok) toast(`${labels[type] ?? type} built`, 'ok');
+        else toast(res.reason, 'error');
+      }, { onOk: () => toast(`${labels[type] ?? type} built`, 'ok') });
     };
     container.appendChild(btn);
   }
@@ -1893,6 +2110,13 @@ function renderHelioclastFleetTab(container, state, ctx) {
   title.className = 'intel-section-title';
   title.textContent = 'Helioclast Shipyard';
   container.appendChild(title);
+
+  if (coopHooks.active()) {
+    const teamNote = document.createElement('p');
+    teamNote.className = 'panel-note panel-note--muted';
+    teamNote.textContent = 'Team asset — one Helioclast for the whole empire. Any pilot may build and fire it.';
+    container.appendChild(teamNote);
+  }
 
   const status = document.createElement('p');
   status.className = 'panel-note';
@@ -1941,13 +2165,15 @@ function renderHelioclastFleetTab(container, state, ctx) {
     buildBtn.disabled = !can.ok;
     buildBtn.title = can.ok ? 'Queue berth construction at Stronghold' : (can.reason ?? '');
     buildBtn.onclick = () => {
-      const res = buildHelioclastShipyard(state, state.stronghold);
-      toast(
-        res.ok
-          ? (res.instant ? 'Helioclast shipyard online' : 'Helioclast shipyard construction started')
-          : res.reason,
-        res.ok ? 'ok' : 'error',
-      );
+      coopOrLocal('buildHelioclastShipyard', { systemId: state.stronghold }, () => {
+        const res = buildHelioclastShipyard(state, state.stronghold);
+        toast(
+          res.ok
+            ? (res.instant ? 'Helioclast shipyard online' : 'Helioclast shipyard construction started')
+            : res.reason,
+          res.ok ? 'ok' : 'error',
+        );
+      }, { onOk: () => toast('Helioclast shipyard construction started', 'ok') });
     };
     container.appendChild(buildBtn);
   }
@@ -1981,8 +2207,10 @@ function renderHelioclastFleetTab(container, state, ctx) {
         btn.disabled = !part.canInstall;
       }
       btn.onclick = () => {
-        const res = installSuperweaponPart(state, part.id);
-        toast(res.ok ? (res.instant ? `Installed ${part.label}` : `Assembling ${part.label}…`) : res.reason, res.ok ? 'ok' : 'error');
+        coopOrLocal('installSuperweaponPart', { partId: part.id }, () => {
+          const res = installSuperweaponPart(state, part.id);
+          toast(res.ok ? (res.instant ? `Installed ${part.label}` : `Assembling ${part.label}…`) : res.reason, res.ok ? 'ok' : 'error');
+        }, { onOk: () => toast(`Assembling ${part.label}…`, 'ok') });
       };
       partRow.appendChild(btn);
     }
@@ -2003,8 +2231,10 @@ function renderHelioclastFleetTab(container, state, ctx) {
       calBtn.className = 'btn btn--primary';
       calBtn.textContent = 'Run live-fire test';
       calBtn.onclick = () => {
-        const res = markLiveFireComplete(state);
-        toast(res.ok ? 'Live-fire calibration complete' : res.reason, res.ok ? 'ok' : 'error');
+        coopOrLocal('markLiveFire', {}, () => {
+          const res = markLiveFireComplete(state);
+          toast(res.ok ? 'Live-fire calibration complete' : res.reason, res.ok ? 'ok' : 'error');
+        }, { onOk: () => toast('Live-fire calibration complete', 'ok') });
       };
       container.appendChild(calBtn);
     }
@@ -2036,11 +2266,13 @@ function renderHelioclastFleetTab(container, state, ctx) {
       : (check.reason ?? '');
     btn.onclick = () => {
       if (!tid) { toast('Select a target star on the galaxy map', 'error'); return; }
-      const fn = type === 'create' ? superweaponCreate
-        : type === 'destroy' ? superweaponDestroy
-          : superweaponJump;
-      const res = fn(state, tid);
-      toast(res.ok ? (res.pending ? `${label} sequence started…` : label) : res.reason, res.ok ? 'ok' : 'error');
+      coopOrLocal('superweaponAction', { mode: type, targetId: tid }, () => {
+        const fn = type === 'create' ? superweaponCreate
+          : type === 'destroy' ? superweaponDestroy
+            : superweaponJump;
+        const res = fn(state, tid);
+        toast(res.ok ? (res.pending ? `${label} sequence started…` : label) : res.reason, res.ok ? 'ok' : 'error');
+      }, { onOk: (res) => toast(res.pending ? `${label} sequence started…` : label, 'ok') });
     };
     fireRow.appendChild(btn);
   }
@@ -2059,8 +2291,10 @@ function renderHelioclastFleetTab(container, state, ctx) {
     withFlag.className = 'btn btn--ghost btn--sm';
     withFlag.textContent = 'Keep with Flagship';
     withFlag.onclick = () => {
-      const res = setHelioclastFleetMode(state, 'flagship');
-      toast(res.ok ? 'Helioclast slowly escorts the flagship' : res.reason, res.ok ? 'ok' : 'error');
+      coopOrLocal('setHelioclastFleetMode', { mode: 'flagship' }, () => {
+        const res = setHelioclastFleetMode(state, 'flagship');
+        toast(res.ok ? 'Helioclast slowly escorts the flagship' : res.reason, res.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Helioclast slowly escorts the flagship', 'ok') });
     };
     modeRow.appendChild(withFlag);
 
@@ -2070,8 +2304,10 @@ function renderHelioclastFleetTab(container, state, ctx) {
       btn.className = 'btn btn--ghost btn--xs';
       btn.textContent = `Assign · Fleet ${group.ordinal}`;
       btn.onclick = () => {
-        const res = setHelioclastFleetMode(state, 'group', group.id);
-        toast(res.ok ? `Assigned to Fleet ${group.ordinal}` : res.reason, res.ok ? 'ok' : 'error');
+        coopOrLocal('setHelioclastFleetMode', { mode: 'group', battleGroupId: group.id }, () => {
+          const res = setHelioclastFleetMode(state, 'group', group.id);
+          toast(res.ok ? `Assigned to Fleet ${group.ordinal}` : res.reason, res.ok ? 'ok' : 'error');
+        }, { onOk: () => toast(`Assigned to Fleet ${group.ordinal}`, 'ok') });
       };
       modeRow.appendChild(btn);
     }
@@ -2274,19 +2510,32 @@ function renderFleetPanel(container, state, ctx) {
     ? `Auto Assign ${unassigned.length} Ship${unassigned.length === 1 ? '' : 's'}`
     : 'All Ships Assigned';
   autoAssignBtn.onclick = () => {
-    const result = autoAssignShipsToFleets(state, { preferredGroupId: selectedBattleGroupId });
-    if (!result.ok) {
-      toast(result.reason, 'error');
-      return;
-    }
-    const selectedId = result.groupIds[0] ?? result.createdGroupIds[0];
-    if (selectedId) doSelectBattleGroup?.(selectedId);
-    toast(
-      result.assigned > 0
-        ? `${result.assigned} ship${result.assigned === 1 ? '' : 's'} assigned to fleets`
-        : 'All ships are already assigned',
-      result.assigned > 0 ? 'ok' : 'info',
-    );
+    coopOrLocal('autoAssignShipsToFleets', { preferredGroupId: selectedBattleGroupId }, () => {
+      const result = autoAssignShipsToFleets(state, { preferredGroupId: selectedBattleGroupId });
+      if (!result.ok) {
+        toast(result.reason, 'error');
+        return;
+      }
+      const selectedId = result.groupIds[0] ?? result.createdGroupIds[0];
+      if (selectedId) doSelectBattleGroup?.(selectedId);
+      toast(
+        result.assigned > 0
+          ? `${result.assigned} ship${result.assigned === 1 ? '' : 's'} assigned to fleets`
+          : 'All ships are already assigned',
+        result.assigned > 0 ? 'ok' : 'info',
+      );
+    }, {
+      onOk: (result) => {
+        const selectedId = result.groupIds?.[0] ?? result.createdGroupIds?.[0];
+        if (selectedId) doSelectBattleGroup?.(selectedId);
+        toast(
+          result.assigned > 0
+            ? `${result.assigned} ship${result.assigned === 1 ? '' : 's'} assigned to fleets`
+            : 'All ships are already assigned',
+          result.assigned > 0 ? 'ok' : 'info',
+        );
+      },
+    });
   };
   container.appendChild(autoAssignBtn);
 
@@ -2333,6 +2582,12 @@ function renderFleetPanel(container, state, ctx) {
     header.appendChild(icon);
     header.appendChild(main);
     header.appendChild(del);
+    applyControlLockClass(header, group);
+    if (coopHooks.active() && !canControl(coopHooks.playerId(), group)) {
+      del.classList.add('is-disabled');
+      del.style.pointerEvents = 'none';
+      del.title = 'No control — request or ask the owner';
+    }
     block.appendChild(header);
 
     const drop = document.createElement('div');
@@ -2391,21 +2646,31 @@ function renderFleetPanel(container, state, ctx) {
       anchorSel.appendChild(opt);
     }
     anchorSel.onchange = () => {
-      let res;
-      if (anchorSel.value === 'player-flagship') {
-        res = setBattleGroupFlagshipAnchor(state, group.id, true);
-      } else if (anchorSel.value.startsWith('hero:')) {
-        res = setBattleGroupHeroAnchor(state, group.id, anchorSel.value.slice(5));
-      } else {
-        setBattleGroupFlagshipAnchor(state, group.id, false);
-        res = setBattleGroupHeroAnchor(state, group.id, null);
-      }
-      if (!res.ok) toast(res.reason, 'error');
-      else toast(`${formatFleetName(group.ordinal)} anchor updated`, 'ok');
+      const anchorPayload = anchorSel.value === 'player-flagship'
+        ? { groupId: group.id, anchor: 'flagship' }
+        : anchorSel.value.startsWith('hero:')
+          ? { groupId: group.id, anchor: 'hero', heroId: anchorSel.value.slice(5) }
+          : { groupId: group.id, anchor: null };
+      coopOrLocal('setBattleGroupAnchor', anchorPayload, () => {
+        let res;
+        if (anchorSel.value === 'player-flagship') {
+          res = setBattleGroupFlagshipAnchor(state, group.id, true);
+        } else if (anchorSel.value.startsWith('hero:')) {
+          res = setBattleGroupHeroAnchor(state, group.id, anchorSel.value.slice(5));
+        } else {
+          setBattleGroupFlagshipAnchor(state, group.id, false);
+          res = setBattleGroupHeroAnchor(state, group.id, null);
+        }
+        if (!res.ok) toast(res.reason, 'error');
+        else toast(`${formatFleetName(group.ordinal)} anchor updated`, 'ok');
+      }, { onOk: () => toast(`${formatFleetName(group.ordinal)} anchor updated`, 'ok') });
     };
     anchorRow.appendChild(anchorLabel);
     anchorRow.appendChild(anchorSel);
     block.appendChild(anchorRow);
+
+    const shareRow = renderControlShareRow('battleGroup', group, formatFleetName(group.ordinal));
+    if (shareRow) block.appendChild(shareRow);
 
     container.appendChild(block);
   }
@@ -2444,8 +2709,10 @@ function renderFleetPanel(container, state, ctx) {
         rallySel.appendChild(opt);
       }
       rallySel.onchange = () => {
-        const res = setHeroRally(state, hero.id, rallySel.value);
-        if (!res.ok) toast(res.reason, 'error');
+        coopOrLocal('setHeroRally', { heroId: hero.id, starId: rallySel.value }, () => {
+          const res = setHeroRally(state, hero.id, rallySel.value);
+          if (!res.ok) toast(res.reason, 'error');
+        });
       };
       row.appendChild(rallySel);
       container.appendChild(row);
@@ -2531,8 +2798,11 @@ function renderFleetPanel(container, state, ctx) {
       main.appendChild(sub);
       btn.appendChild(icon);
       btn.appendChild(main);
+      applyControlLockClass(btn, scout);
       btn.addEventListener('click', () => doSelectScout(scout.id));
       roster.appendChild(btn);
+      const shareRow = renderControlShareRow('scout', scout, scout.id);
+      if (shareRow) roster.appendChild(shareRow);
     }
     container.appendChild(roster);
 
@@ -2799,9 +3069,11 @@ function renderTechScreen(container, state, techUiState) {
   chrome.appendChild(hint);
 
   const onResearch = (nodeId) => {
-    const res = startResearch(state, nodeId);
-    if (!res.ok) toast(res.reason, 'error');
-    else toast(`Started ${techNode(nodeId)?.name ?? nodeId}`, 'ok');
+    coopOrLocal('startResearch', { techId: nodeId }, () => {
+      const res = startResearch(state, nodeId);
+      if (!res.ok) toast(res.reason, 'error');
+      else toast(`Started ${techNode(nodeId)?.name ?? nodeId}`, 'ok');
+    }, { onOk: () => toast(`Started ${techNode(nodeId)?.name ?? nodeId}`, 'ok') });
   };
 
   const fillTechDetail = (nodeId, { traced = false } = {}) => {
@@ -3031,11 +3303,129 @@ export function initUi(ctx) {
     followConvoy,
     getBootPhase,
     setBootPhase,
+    joinCoop,
+    leaveCoop,
+    returnToTitle,
+    parkTitleSeed,
   } = ctx;
+
+  const CALLSIGN_STORAGE_KEY = 'gs.coop.callsign';
+
+  function truncateEndpoint(url, max = 42) {
+    const s = String(url || '');
+    if (s.length <= max) return s;
+    return `${s.slice(0, max - 1)}…`;
+  }
+
+  function setMpStatus(status, title) {
+    const pip = el('title-mp-status-pip');
+    if (!pip) return;
+    pip.dataset.status = status;
+    pip.classList.toggle('is-uplinking', status === 'checking');
+    if (title) pip.title = title;
+  }
+
+  function setMpJoinStatus(message, kind = '') {
+    const status = el('title-mp-join-status');
+    if (!status) return;
+    status.textContent = message || '';
+    status.classList.toggle('is-error', kind === 'error');
+    status.classList.toggle('is-busy', kind === 'busy');
+  }
+
+  function showMpClearance(show) {
+    const servers = el('title-mp-servers');
+    const clearance = el('title-mp-clearance');
+    servers?.classList.toggle('hidden', show);
+    if (servers) {
+      servers.hidden = show;
+      servers.setAttribute('aria-hidden', String(show));
+    }
+    clearance?.classList.toggle('hidden', !show);
+    if (clearance) {
+      clearance.hidden = !show;
+      clearance.setAttribute('aria-hidden', String(!show));
+    }
+    if (show) {
+      const input = el('title-mp-callsign');
+      try {
+        const saved = localStorage.getItem(CALLSIGN_STORAGE_KEY);
+        if (saved && input && !input.value) input.value = saved;
+      } catch { /* private mode */ }
+      const params = new URLSearchParams(window.location.search);
+      if (input && !input.value && params.get('coopName')) input.value = params.get('coopName');
+      if (input && !input.value) input.value = 'pilot';
+      const pass = el('title-mp-password');
+      if (pass && !pass.value && params.get('coopPass')) pass.value = params.get('coopPass');
+      setMpJoinStatus('');
+      queueMicrotask(() => input?.focus?.());
+    }
+  }
+
+  async function probeCoopHost() {
+    const endpoint = defaultWsUrl();
+    const endpointEl = el('title-mp-endpoint');
+    if (endpointEl) endpointEl.textContent = truncateEndpoint(endpoint);
+    setMpStatus('checking', 'Checking host…');
+    const health = coopHealthUrl(endpoint);
+    if (!health) {
+      setMpStatus('unknown', 'Host status unknown');
+      return;
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2500);
+      const res = await fetch(health, { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(timer);
+      if (res.ok) setMpStatus('online', 'Host online');
+      else setMpStatus('offline', `Host returned ${res.status}`);
+    } catch {
+      setMpStatus('offline', 'Host unreachable');
+    }
+  }
+
+  function showTitlePanel(panel = 'root') {
+    const panels = {
+      root: el('title-root'),
+      single: el('title-singleplayer'),
+      multi: el('title-multiplayer'),
+    };
+    for (const [key, node] of Object.entries(panels)) {
+      if (!node) continue;
+      const active = key === panel;
+      node.classList.toggle('hidden', !active);
+      node.hidden = !active;
+      node.setAttribute('aria-hidden', String(!active));
+      if (active) {
+        node.classList.remove('title-panel--enter');
+        void node.offsetWidth;
+        node.classList.add('title-panel--enter');
+      }
+    }
+    if (panel === 'multi') {
+      showMpClearance(false);
+      probeCoopHost();
+    } else {
+      showMpClearance(false);
+    }
+  }
+
+  coopHooks = {
+    active: ctx.coopActive ?? (() => false),
+    run: ctx.coopRun ?? null,
+    players: ctx.getCoopPlayers ?? (() => []),
+    playerId: ctx.getCoopPlayerId ?? (() => null),
+  };
 
   let activeBriefingId = null;
   let briefingWasPaused = null;
   let fleetSubTab = 'ships';
+
+  function setLocalPresentationPause(paused) {
+    // Co-op: planners / manuals must not pause the shared empire clock.
+    if (coopHooks.active()) return;
+    getState().paused = !!paused;
+  }
 
   function closeFieldManualBriefing({ acknowledge = true } = {}) {
     const id = activeBriefingId;
@@ -3044,7 +3434,7 @@ export function initUi(ctx) {
     el('field-manual-backdrop')?.classList.add('hidden');
     if (acknowledge && id) markBriefingSeen(id);
     if (briefingWasPaused != null) {
-      getState().paused = briefingWasPaused;
+      setLocalPresentationPause(briefingWasPaused);
       briefingWasPaused = null;
     }
   }
@@ -3054,7 +3444,7 @@ export function initUi(ctx) {
     if (!entry) return { ok: false, reason: 'Unknown Field Manual entry' };
     activeBriefingId = id;
     if (briefingWasPaused == null) briefingWasPaused = getState().paused;
-    getState().paused = true;
+    setLocalPresentationPause(true);
     const title = el('field-manual-title');
     const summary = el('field-manual-summary');
     const steps = el('field-manual-steps');
@@ -3196,6 +3586,8 @@ export function initUi(ctx) {
     starBuildPanel: '',
     wormholeBuildPanel: '',
     builderDroneGalaxyPanel: '',
+    intelBody: '',
+    capturePanel: '',
   };
   let dronePlannerSystemId = null;
   let dronePlannerDraft = [];
@@ -3214,7 +3606,7 @@ export function initUi(ctx) {
     dronePlannerSystemId = null;
     dronePlannerDraft = [];
     dronePlannerResumeOnClose = false;
-    if (shouldResume) getState().paused = false;
+    if (shouldResume) setLocalPresentationPause(false);
   }
 
   function addDronePlannerJob(bodyId, structureType, targetLabel = null) {
@@ -3339,9 +3731,22 @@ export function initUi(ctx) {
         cancel.className = 'btn btn--ghost btn--xs';
         cancel.textContent = 'Cancel';
         cancel.onclick = () => {
-          const result = cancelBuilderConstructionOrder?.(order.id);
-          toast(result?.ok ? `Order canceled · ${result.refunded} cr refunded` : result?.reason, result?.ok ? 'ok' : 'error');
-          renderDronePlanner();
+          coopOrLocal(
+            'cancelBuilderConstructionOrder',
+            { orderId: order.id },
+            () => {
+              const result = cancelBuilderConstructionOrder?.(order.id);
+              toast(result?.ok ? `Order canceled · ${result.refunded} cr refunded` : result?.reason, result?.ok ? 'ok' : 'error');
+              renderDronePlanner();
+              return result;
+            },
+            {
+              onOk: (result) => {
+                toast(result?.refunded != null ? `Order canceled · ${result.refunded} cr refunded` : 'Order canceled', 'ok');
+                renderDronePlanner();
+              },
+            },
+          );
         };
         row.appendChild(cancel);
       }
@@ -3359,8 +3764,8 @@ export function initUi(ctx) {
     if (!systemId || !systemById(getState(), systemId)) return;
     dronePlannerSystemId = systemId;
     dronePlannerDraft = [];
-    dronePlannerResumeOnClose = auto;
-    getState().paused = true;
+    dronePlannerResumeOnClose = auto && !coopHooks.active();
+    setLocalPresentationPause(true);
     el('drone-planner')?.classList.remove('hidden');
     el('drone-planner-backdrop')?.classList.remove('hidden');
     renderDronePlanner();
@@ -3370,14 +3775,28 @@ export function initUi(ctx) {
   el('drone-planner-backdrop')?.addEventListener('click', () => closeDronePlanner());
   el('drone-planner-confirm')?.addEventListener('click', () => {
     if (!dronePlannerSystemId) return;
-    const result = confirmBuilderConstructionPlan?.(dronePlannerSystemId, dronePlannerDraft);
-    if (!result?.ok) {
-      toast(result?.reason ?? 'Construction plan failed', 'error');
-      renderDronePlanner();
-      return;
-    }
-    toast(`${result.orders.length} construction job${result.orders.length === 1 ? '' : 's'} confirmed`, 'ok');
-    closeDronePlanner();
+    coopOrLocal(
+      'confirmBuilderConstructionPlan',
+      { systemId: dronePlannerSystemId, draftOrders: dronePlannerDraft },
+      () => {
+        const result = confirmBuilderConstructionPlan?.(dronePlannerSystemId, dronePlannerDraft);
+        if (!result?.ok) {
+          toast(result?.reason ?? 'Construction plan failed', 'error');
+          renderDronePlanner();
+          return result;
+        }
+        toast(`${result.orders.length} construction job${result.orders.length === 1 ? '' : 's'} confirmed`, 'ok');
+        closeDronePlanner();
+        return result;
+      },
+      {
+        onOk: (result) => {
+          const n = result?.orders?.length ?? dronePlannerDraft.length;
+          toast(`${n} construction job${n === 1 ? '' : 's'} confirmed`, 'ok');
+          closeDronePlanner();
+        },
+      },
+    );
   });
 
   function constructionUiSnapshot(state, systemId, bodyId = null) {
@@ -3558,9 +3977,17 @@ export function initUi(ctx) {
       toast(access.reason, 'error');
       return access;
     }
-    const res = enqueueHull(getState(), hull);
-    if (!res.ok) toast(res.reason, 'error');
-    else toast(`Queued ${hull}`, 'ok');
+    return coopOrLocal(
+      'enqueueProduct',
+      { kind: 'hull', productId: hull },
+      () => {
+        const res = enqueueHull(getState(), hull);
+        if (!res.ok) toast(res.reason, 'error');
+        else toast(`Queued ${hull}`, 'ok');
+        return res;
+      },
+      { onOk: () => toast(`Queued ${hull}`, 'ok') },
+    );
   }
 
   function wireInteractivePanels() {
@@ -3579,16 +4006,31 @@ export function initUi(ctx) {
     el('empire-queue-list')?.addEventListener('change', (e) => {
       const sel = e.target.closest('[data-queue-pin]');
       if (!sel) return;
-      const res = pinQueueItem(getState(), sel.dataset.queuePin, sel.value || null);
-      if (!res.ok) toast(res.reason, 'error');
+      coopOrLocal(
+        'pinQueueItem',
+        { queueId: sel.dataset.queuePin, shipyardId: sel.value || null },
+        () => {
+          const res = pinQueueItem(getState(), sel.dataset.queuePin, sel.value || null);
+          if (!res.ok) toast(res.reason, 'error');
+          return res;
+        },
+      );
     });
     el('empire-queue-list')?.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       const btn = e.target.closest('[data-queue-cancel]');
       if (!btn) return;
       e.preventDefault();
-      const res = cancelQueueItem(getState(), btn.dataset.queueCancel);
-      if (!res.ok) toast(res.reason, 'error');
+      coopOrLocal(
+        'cancelQueueItem',
+        { queueId: btn.dataset.queueCancel },
+        () => {
+          const res = cancelQueueItem(getState(), btn.dataset.queueCancel);
+          if (!res.ok) toast(res.reason, 'error');
+          return res;
+        },
+        { onOk: (res) => toast(res.refunded ? `Cancelled · ${res.refunded} cr refunded` : 'Cancelled', 'ok') },
+      );
     });
 
     el('scout-roster')?.addEventListener('mousedown', (e) => {
@@ -3613,7 +4055,9 @@ export function initUi(ctx) {
       if (createTarget) {
         e.preventDefault();
         const group = createBattleGroup();
-        doSelectBattleGroup(group.id);
+        // Co-op returns null — the fleet appears (and is selected) via the
+        // post-command snapshot instead of a locally created group.
+        if (group?.id) doSelectBattleGroup(group.id);
         return;
       }
       const deleteTarget = e.target.closest('[data-fleet-delete]');
@@ -3740,16 +4184,31 @@ export function initUi(ctx) {
 
   el('build-trade-btn')?.addEventListener('click', () => {
     const sel = getSelection();
-    if (sel) {
-      const res = buildTradeStation(getState(), getViewedSystemId(), sel);
-      if (!res.ok) toast(res.reason, 'error');
-      else toast('Export depot built', 'ok');
-    }
+    if (!sel) return;
+    coopOrLocal(
+      'buildTradeStation',
+      { systemId: getViewedSystemId(), planetId: sel },
+      () => {
+        const res = buildTradeStation(getState(), getViewedSystemId(), sel);
+        if (!res.ok) toast(res.reason, 'error');
+        else toast('Export depot built', 'ok');
+        return res;
+      },
+      { onOk: () => toast('Export depot built', 'ok') },
+    );
   });
   el('build-research-btn')?.addEventListener('click', () => {
-    const res = buildResearchStation(getState(), getViewedSystemId());
-    if (!res.ok) toast(res.reason, 'error');
-    else toast('Research station built', 'ok');
+    coopOrLocal(
+      'buildResearchStation',
+      { systemId: getViewedSystemId() },
+      () => {
+        const res = buildResearchStation(getState(), getViewedSystemId());
+        if (!res.ok) toast(res.reason, 'error');
+        else toast('Research station built', 'ok');
+        return res;
+      },
+      { onOk: () => toast('Research station built', 'ok') },
+    );
   });
 
   el('build-outpost-btn').addEventListener('click', () => {
@@ -3768,9 +4227,7 @@ export function initUi(ctx) {
   el('queue-scout-btn').addEventListener('click', () => {
     const access = tutorialAccess?.('scout_queue') ?? { allowed: true };
     if (!access.allowed) { toast(access.reason, 'error'); return; }
-    const res = enqueueHull(getState(), 'scout');
-    if (!res.ok) toast(res.reason, 'error');
-    else toast('Queued scout', 'ok');
+    queueHullFromUi('scout');
   });
 
   el('sw-create-btn')?.addEventListener('click', () => {
@@ -3896,7 +4353,8 @@ export function initUi(ctx) {
   function refreshTitleTutorialAccess() {
     const unlocked = academyUnlocked(tutorialGraduated());
     const modes = el('title-screen')?.querySelector('.title-screen__modes');
-    modes?.classList.toggle('hidden', !unlocked);
+    // Keep the mode grid visible so Solo Ops never looks empty; lock until Academy.
+    modes?.classList.remove('hidden');
     const titleLocks = [
       ['title-custom-campaign-btn', 'Campaign'],
       ['title-missions-btn', 'Missions'],
@@ -3924,6 +4382,7 @@ export function initUi(ctx) {
   }
   function showTitleScreen() {
     titleScreen?.classList.remove('hidden');
+    showTitlePanel('root');
     setBootPhase?.('title');
     getState().paused = true;
   }
@@ -3937,7 +4396,57 @@ export function initUi(ctx) {
     openNewGameModal(flow);
   }
 
+  el('title-singleplayer-door')?.addEventListener('click', () => showTitlePanel('single'));
+  el('title-multiplayer-door')?.addEventListener('click', () => showTitlePanel('multi'));
+  titleScreen?.querySelectorAll('[data-title-back]')?.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-title-back') || 'root';
+      showTitlePanel(target);
+    });
+  });
+
+  el('title-mp-server-card')?.addEventListener('click', () => showMpClearance(true));
+
+  el('title-mp-join-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (typeof joinCoop !== 'function') {
+      setMpJoinStatus('Co-op join unavailable', 'error');
+      return;
+    }
+    const callsign = String(el('title-mp-callsign')?.value || '').trim().slice(0, 32);
+    if (!callsign) {
+      setMpJoinStatus('Callsign required', 'error');
+      el('title-mp-callsign')?.focus?.();
+      return;
+    }
+    const password = String(el('title-mp-password')?.value || '');
+    const joinBtn = el('title-mp-join-btn');
+    const pip = el('title-mp-status-pip');
+    if (joinBtn) joinBtn.disabled = true;
+    pip?.classList.add('is-uplinking');
+    setMpJoinStatus('Uplink…', 'busy');
+    try {
+      const result = await joinCoop({
+        playerName: callsign,
+        password,
+        promptPassword: false,
+      });
+      if (result?.ok) {
+        try { localStorage.setItem(CALLSIGN_STORAGE_KEY, callsign); } catch { /* private mode */ }
+        setMpJoinStatus('');
+      } else {
+        setMpJoinStatus(result?.reason || 'Docking denied', 'error');
+      }
+    } catch (err) {
+      setMpJoinStatus(err?.message || 'Docking denied', 'error');
+    } finally {
+      if (joinBtn) joinBtn.disabled = false;
+      pip?.classList.remove('is-uplinking');
+    }
+  });
+
   el('title-new-campaign-btn')?.addEventListener('click', async () => {
+    if (coopHooks.active?.()) leaveCoop?.({ returnToTitle: false, silent: true });
     await loadProfile();
     if (academyUnlocked(tutorialGraduated())) openNewGameModal('custom');
     else doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
@@ -3946,12 +4455,16 @@ export function initUi(ctx) {
   el('title-missions-btn')?.addEventListener('click', () => openLockedMode('missions', 'Missions'));
   el('title-sandbox-btn')?.addEventListener('click', () => openLockedMode('sandbox', 'Sandbox'));
   el('title-continue-btn')?.addEventListener('click', async () => {
+    if (coopHooks.active?.()) leaveCoop?.({ returnToTitle: false, silent: true });
     titleScreen?.classList.add('hidden');
-    setBootPhase?.('playing');
-    getState().paused = false;
-    await doLoadSlot('autosave');
+    const res = await doLoadSlot('autosave');
+    if (!res?.ok) {
+      parkTitleSeed?.();
+      showTitlePanel('single');
+    }
   });
   el('title-load-btn')?.addEventListener('click', () => {
+    if (coopHooks.active?.()) leaveCoop?.({ returnToTitle: false, silent: true });
     titleScreen?.classList.add('hidden');
     openSaveMenu();
   });
@@ -3975,6 +4488,12 @@ export function initUi(ctx) {
   loadProfile().then(refreshTitleTutorialAccess);
   window.addEventListener('gs-profile-changed', refreshTitleTutorialAccess);
   window.addEventListener('gs-tutorial-override-changed', refreshTitleTutorialAccess);
+  window.addEventListener('gs-show-title', (event) => {
+    titleScreen?.classList.remove('hidden');
+    showTitlePanel(event?.detail?.panel || 'root');
+    setBootPhase?.('title');
+    getState().paused = true;
+  });
   el('close-new-game-btn')?.addEventListener('click', closeNewGameModal);
   newGameBackdrop?.addEventListener('click', closeNewGameModal);
   el('new-game-mode-picker')?.addEventListener('click', (event) => {
@@ -4027,6 +4546,10 @@ export function initUi(ctx) {
   const saveBackdrop = el('save-menu-backdrop');
 
   function openSaveMenu() {
+    if (coopHooks.active?.()) {
+      toast('Leave co-op before using local saves', 'error');
+      return;
+    }
     saveMenu.classList.remove('hidden');
     saveBackdrop.classList.remove('hidden');
     refreshSaveMenu();
@@ -4043,6 +4566,7 @@ export function initUi(ctx) {
     const existing = new Map((res.saves ?? []).map((s) => [s.slot, s]));
     const container = el('save-slots');
     container.innerHTML = '';
+    const coopLocked = !!coopHooks.active?.();
     for (const slot of SLOTS) {
       const info = existing.get(slot);
       const row = document.createElement('div');
@@ -4062,7 +4586,13 @@ export function initUi(ctx) {
         saveBtn.type = 'button';
         saveBtn.className = 'btn btn--ghost btn--sm';
         saveBtn.textContent = 'Save';
+        saveBtn.disabled = coopLocked;
+        saveBtn.title = coopLocked ? 'Leave co-op before saving locally' : 'Save to this slot';
         saveBtn.addEventListener('click', async () => {
+          if (coopHooks.active?.()) {
+            toast('Leave co-op before saving a local slot', 'error');
+            return;
+          }
           await doSaveSlot(slot);
           refreshSaveMenu();
         });
@@ -4073,8 +4603,13 @@ export function initUi(ctx) {
       loadBtn.type = 'button';
       loadBtn.className = 'btn btn--primary btn--sm';
       loadBtn.textContent = 'Load';
-      loadBtn.disabled = !info;
+      loadBtn.disabled = !info || coopLocked;
+      loadBtn.title = coopLocked ? 'Leave co-op before loading a local save' : 'Load this slot';
       loadBtn.addEventListener('click', async () => {
+        if (coopHooks.active?.()) {
+          toast('Leave co-op before loading a local save', 'error');
+          return;
+        }
         await doLoadSlot(slot);
         closeSaveMenu();
       });
@@ -4098,12 +4633,28 @@ export function initUi(ctx) {
       el('notification-log').classList.contains('collapsed') ? '+' : '−';
   });
 
-  el('export-save-btn').addEventListener('click', () => exportSaveFile(getState()));
-  el('import-save-btn').addEventListener('click', () => el('import-file-input').click());
+  el('export-save-btn').addEventListener('click', () => {
+    if (coopHooks.active?.()) {
+      toast('Leave co-op before exporting a local save', 'error');
+      return;
+    }
+    exportSaveFile(getState());
+  });
+  el('import-save-btn').addEventListener('click', () => {
+    if (coopHooks.active?.()) {
+      toast('Leave co-op before importing a local save', 'error');
+      return;
+    }
+    el('import-file-input').click();
+  });
   el('import-file-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
+    if (coopHooks.active?.()) {
+      toast('Leave co-op before importing a local save', 'error');
+      return;
+    }
     const res = await importSaveFile(file);
     if (res.ok) {
       doImportState(res.state);
@@ -4112,6 +4663,10 @@ export function initUi(ctx) {
     } else {
       toast(res.error, 'error');
     }
+  });
+
+  el('pause-return-title-btn')?.addEventListener('click', () => {
+    returnToTitle?.({ autosave: true });
   });
 
   const captureCtx = {
@@ -4231,6 +4786,7 @@ export function initUi(ctx) {
         renderDiplomacyCommandScreen(el('diplomacy-screen-body'), state, {
           getGalaxyTargetStar,
           toast,
+          coopRun: coopHooks.run,
         });
       } else uiSnapshots.diplomacyPanel = diploSnap;
     } else {
@@ -4249,6 +4805,7 @@ export function initUi(ctx) {
         renderOperationsPanel(el('operations-screen-body'), state, {
           getGalaxyTargetStar,
           toast,
+          coopRun: coopHooks.run,
         });
       }
     } else {
@@ -4588,32 +5145,47 @@ export function initUi(ctx) {
       intelPanel.classList.remove('hidden');
       const sys = viewedSystem;
       const req = captureRequirement(state, viewedSystemId);
-      renderIntelBody(intelBody, sys, req);
-      renderCaptureBody(captureBody, state, viewedSystemId, req, captureCtx);
+      const intelSnap = intelBodySnapshot(sys, req);
+      if (intelSnap !== uiSnapshots.intelBody) {
+        uiSnapshots.intelBody = intelSnap;
+        renderIntelBody(intelBody, sys, req);
+      }
       const battle = battleSummaryForSystem(state, viewedSystemId);
-      if (battle?.active) {
-        const warn = document.createElement('div');
-        warn.className = 'panel-note';
-        warn.style.marginTop = '10px';
-        warn.innerHTML = `<span class="badge badge--contested">Battle</span> ${battle.mode} — ${battle.playerShips} vs ${battle.enemyShips}`;
-        captureBody.appendChild(warn);
-      } else if (enemyCombatPresence(state, viewedSystemId) > 0) {
-        const warn = document.createElement('div');
-        warn.className = 'panel-note panel-note--muted';
-        warn.style.marginTop = '10px';
-        warn.textContent = 'Pirate presence detected in this system.';
-        captureBody.appendChild(warn);
+      const captureSnap = capturePanelSnapshot(state, viewedSystemId, req, captureCtx, battle);
+      if (captureSnap !== uiSnapshots.capturePanel) {
+        uiSnapshots.capturePanel = captureSnap;
+        renderCaptureBody(captureBody, state, viewedSystemId, req, captureCtx);
+        if (battle?.active) {
+          const warn = document.createElement('div');
+          warn.className = 'panel-note';
+          warn.style.marginTop = '10px';
+          warn.innerHTML = `<span class="badge badge--contested">Battle</span> ${battle.mode} — ${battle.playerShips} vs ${battle.enemyShips}`;
+          captureBody.appendChild(warn);
+        } else if (enemyCombatPresence(state, viewedSystemId) > 0) {
+          const warn = document.createElement('div');
+          warn.className = 'panel-note panel-note--muted';
+          warn.style.marginTop = '10px';
+          warn.textContent = 'Pirate presence detected in this system.';
+          captureBody.appendChild(warn);
+        }
       }
     } else if (view === 'system' && viewedSystem) {
       intelPanel.classList.remove('hidden');
-      clearChildren(intelBody);
-      clearChildren(captureBody);
-      const msg = document.createElement('p');
-      msg.className = 'no-intel-msg';
-      msg.textContent = 'No intel — send a scout or visit with your flagship.';
-      intelBody.appendChild(msg);
+      const noIntelSnap = `no-intel:${viewedSystemId}`;
+      if (noIntelSnap !== uiSnapshots.intelBody) {
+        uiSnapshots.intelBody = noIntelSnap;
+        uiSnapshots.capturePanel = '';
+        clearChildren(intelBody);
+        clearChildren(captureBody);
+        const msg = document.createElement('p');
+        msg.className = 'no-intel-msg';
+        msg.textContent = 'No intel — send a scout or visit with your flagship.';
+        intelBody.appendChild(msg);
+      }
     } else {
       intelPanel.classList.add('hidden');
+      uiSnapshots.intelBody = '';
+      uiSnapshots.capturePanel = '';
     }
 
     renderTutorialGuide(state, phase);

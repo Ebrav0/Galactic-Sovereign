@@ -19,6 +19,7 @@ import {
 } from './state.js';
 import { computeShipyardOrbitRadius } from './structure-sites.js';
 import { computeFoundryRingRadius, foundryRingMotion } from './sail-shuttles.js';
+import { flagshipForJob } from './flagship-presence.js';
 
 const RESEARCH_ORBIT_PAD = 28;
 const RESEARCH_ORBIT_SPREAD = 0.42;
@@ -70,10 +71,21 @@ function fixedSlotAngle(structureId, salt = 0) {
   return ((hashSeed(0x5f3759df + salt, structureId) % 10000) / 10000) * Math.PI * 2;
 }
 
-function flagshipHome(state, override = null) {
-  if (override) return override;
-  const f = state.flagship;
-  return { x: f.x, y: f.y };
+/** Hangar home for a job — the issuing pilot's flagship when known. */
+function jobHome(state, job, homeOverride = null) {
+  if (homeOverride && !job?.ownerPlayerId) {
+    return { x: homeOverride.x, y: homeOverride.y, heading: homeOverride.heading ?? 0 };
+  }
+  if (homeOverride && job?.ownerPlayerId) {
+    // Only use the display-smoothed override when it belongs to this job's owner
+    // (render passes the local pilot's pose as a global override for solo).
+    const owner = flagshipForJob(state, job);
+    if (owner && state.flagship && owner === state.flagship) {
+      return { x: homeOverride.x, y: homeOverride.y, heading: homeOverride.heading ?? owner.heading ?? 0 };
+    }
+  }
+  const f = flagshipForJob(state, job) ?? state.flagship;
+  return { x: f?.x ?? 0, y: f?.y ?? 0, heading: f?.heading ?? 0 };
 }
 
 function tripDurationMs(from, to) {
@@ -165,10 +177,9 @@ export function constructionSiteAnchor(state, job, time = state.time) {
   };
 }
 
-function hangarPose(state, drone, homeOverride = null) {
-  const home = flagshipHome(state, homeOverride);
-  const heading = state.flagship?.heading ?? 0;
-  return { x: home.x, y: home.y, heading, phase: 'docked', working: false, hidden: true };
+function hangarPose(state, drone, job, homeOverride = null) {
+  const home = jobHome(state, job, homeOverride);
+  return { x: home.x, y: home.y, heading: home.heading ?? 0, phase: 'docked', working: false, hidden: true };
 }
 
 function workingPose(site, drone, time) {
@@ -202,7 +213,7 @@ export function dronePose(state, drone, job, time = state.time, homeOverride = n
     return null;
   }
 
-  const home = flagshipHome(state, homeOverride);
+  const home = jobHome(state, job, homeOverride);
   const site = constructionSiteAnchor(state, job, time);
   const tripMs = tripDurationMs(home, site);
   const cycleMs = tripMs * 2 + DRONE_WORK_DWELL_MS;
@@ -215,7 +226,7 @@ export function dronePose(state, drone, job, time = state.time, homeOverride = n
 
   // Staggered bay hold — still stowed until this craft's launch slot.
   if (time < missionT0 + launchStagger) {
-    return hangarPose(state, drone, homeOverride);
+    return hangarPose(state, drone, job, homeOverride);
   }
 
   const cycleT = elapsed % cycleMs;

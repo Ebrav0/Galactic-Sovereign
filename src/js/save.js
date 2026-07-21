@@ -3,6 +3,7 @@
 
 import { SAVE_VERSION, FLAGSHIP_HP } from './constants.js';
 import { TECH_NODES, TECH_ID_MIGRATION } from './tech-nodes.js';
+import { ensurePlayerFlagships } from './flagship.js';
 import { refreshFlagshipHullFromTech } from './hull.js';
 import { ensureSuperweapon } from './superweapon.js';
 import {
@@ -1414,7 +1415,15 @@ function migrateV21toV22(envelope) {
 }
 
 // Returns {ok, state} or {ok:false, error}. Refuses corrupt files; never repairs.
-export function deserialize(envelopeJson) {
+/**
+ * @param {string} envelopeJson
+ * @param {{ verifyChecksum?: boolean, trustCurrent?: boolean }} [opts]
+ *   verifyChecksum defaults true for disk loads. Co-op network snapshots may
+ *   skip it — re-stringifying a ~1MB world on the UI thread is a freeze source.
+ *   trustCurrent skips migration/init when saveVersion already matches (co-op host
+ *   sends live state).
+ */
+export function deserialize(envelopeJson, { verifyChecksum = true, trustCurrent = false } = {}) {
   let envelope;
   try {
     envelope = JSON.parse(envelopeJson);
@@ -1426,9 +1435,16 @@ export function deserialize(envelopeJson) {
     return { ok: false, error: `Unknown save version: ${envelope.saveVersion}` };
   }
 
-  const stateJson = JSON.stringify(envelope.state);
-  if (crc32(stateJson) !== envelope.checksum) {
-    return { ok: false, error: 'Save file failed checksum — refusing to load' };
+  if (verifyChecksum) {
+    const stateJson = JSON.stringify(envelope.state);
+    if (crc32(stateJson) !== envelope.checksum) {
+      return { ok: false, error: 'Save file failed checksum — refusing to load' };
+    }
+  }
+
+  // Co-op hot path: host already runs a live current-version world.
+  if (trustCurrent && envelope.saveVersion === SAVE_VERSION && envelope.state) {
+    return { ok: true, state: envelope.state };
   }
 
   if (envelope.saveVersion < SAVE_VERSION) {
@@ -1452,6 +1468,8 @@ export function deserialize(envelopeJson) {
       : [];
     envelope.state.flagship.wing = envelope.state.flagship.wing ?? null;
   }
+  // Legacy singular flagship → per-pilot roster (state.flagship rebinds to an entry).
+  ensurePlayerFlagships(envelope.state);
   if (envelope.state?.superweapon) {
     envelope.state.superweapon.fireSequence = envelope.state.superweapon.fireSequence ?? null;
   }

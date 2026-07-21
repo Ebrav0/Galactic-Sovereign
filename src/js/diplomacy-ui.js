@@ -310,7 +310,21 @@ function resultReason(result) {
     ?? 'Diplomatic command failed';
 }
 
-function safeAction(instance, action, successMessage) {
+function safeAction(instance, action, successMessage, coopSpec = null) {
+  if (coopSpec?.command && typeof instance.options?.coopRun === 'function') {
+    instance.options.coopRun(coopSpec.command, coopSpec.payload ?? {}).then((result) => {
+      if (!result?.ok) {
+        notify(instance, resultReason(result), 'error');
+      } else {
+        const message = typeof successMessage === 'function' ? successMessage(result) : successMessage;
+        notify(instance, message ?? 'Diplomatic command completed', 'ok');
+      }
+      instance.refresh();
+    }).catch((error) => {
+      notify(instance, error?.message ?? String(error), 'error');
+    });
+    return { ok: true, pending: true };
+  }
   try {
     const result = action();
     if (!result?.ok) {
@@ -326,6 +340,10 @@ function safeAction(instance, action, successMessage) {
     notify(instance, reason, 'error');
     return { ok: false, reason };
   }
+}
+
+function diplomacyCoop(action, args = {}) {
+  return { command: 'diplomacyAction', payload: { action, args } };
 }
 
 function captureControls(root) {
@@ -450,6 +468,13 @@ function renderRelationshipCard(instance, faction, leverage) {
         trigger: 'player_command',
       }),
       () => `Communications advanced with ${faction.name}`,
+      diplomacyCoop('establishContact', {
+        factionId: faction.id,
+        options: {
+          stage: contact.stage === CONTACT_DETECTED ? CONTACT_CONTACTED : CONTACT_ESTABLISHED,
+          trigger: 'player_command',
+        },
+      }),
     ));
     actions.appendChild(contactButton);
     card.appendChild(actions);
@@ -515,6 +540,7 @@ function renderNegotiationsCard(instance, faction, viewState) {
         instance,
         () => submitProposal(instance.state, liveInput, { autoResolve: true }),
         (result) => treatyOutcomeMessage(result, label, faction.name),
+        diplomacyCoop('submitProposal', { input: liveInput, options: { autoResolve: true } }),
       );
     });
     actions.appendChild(button);
@@ -544,11 +570,21 @@ function renderNegotiationsCard(instance, faction, viewState) {
         instance,
         () => respondToProposal(instance.state, proposal.id, 'accept', { actor: PLAYER_ID }),
         () => `Proposal from ${faction.name} accepted`,
+        diplomacyCoop('respondToProposal', {
+          proposalId: proposal.id,
+          decision: 'accept',
+          options: { actor: PLAYER_ID },
+        }),
       ));
       reject.addEventListener('click', () => safeAction(
         instance,
         () => respondToProposal(instance.state, proposal.id, 'reject', { actor: PLAYER_ID }),
         () => `Proposal from ${faction.name} rejected`,
+        diplomacyCoop('respondToProposal', {
+          proposalId: proposal.id,
+          decision: 'reject',
+          options: { actor: PLAYER_ID },
+        }),
       ));
       rowActions.append(accept, reject);
     } else {
@@ -700,7 +736,8 @@ function renderDealBuilderCard(instance, faction, viewState) {
       return;
     }
     safeAction(instance, () => submitProposal(instance.state, input, { autoResolve: true }),
-      (result) => treatyOutcomeMessage(result, 'Advanced deal', faction.name));
+      (result) => treatyOutcomeMessage(result, 'Advanced deal', faction.name),
+      diplomacyCoop('submitProposal', { input, options: { autoResolve: true } }));
   });
   actions.append(previewButton, submitButton);
   card.appendChild(actions);
@@ -743,6 +780,15 @@ function renderWarCard(instance, faction, summary) {
         source: 'player_command',
       }),
       () => `Claim recorded against ${faction.name} for ${systemName(instance.state, selected)}`,
+      diplomacyCoop('createClaim', {
+        input: {
+          claimant: PLAYER_ID,
+          target: faction.id,
+          systemId: selected,
+          galaxyId: instance.state.activeGalaxyId,
+          source: 'player_command',
+        },
+      }),
     );
   });
   claimActions.appendChild(claim);
@@ -763,6 +809,10 @@ function renderWarCard(instance, faction, summary) {
         instance,
         () => withdrawClaim(instance.state, entry.id, { reason: 'player_withdrawn' }),
         () => `Claim on ${systemName(instance.state, entry.systemId)} withdrawn`,
+        diplomacyCoop('withdrawClaim', {
+          claimId: entry.id,
+          options: { reason: 'player_withdrawn' },
+        }),
       ));
       actions.appendChild(withdraw);
     }
@@ -805,6 +855,17 @@ function renderWarCard(instance, faction, summary) {
           }],
         }),
         () => `Formal war declared against ${faction.name}`,
+        diplomacyCoop('declareWar', {
+          input: {
+            attacker: PLAYER_ID,
+            defender: faction.id,
+            goals: [{
+              type: selectedGoal,
+              systemIds: goalSystemId ? [goalSystemId] : [],
+              target: faction.id,
+            }],
+          },
+        }),
       );
     });
     warActions.appendChild(declare);
@@ -859,6 +920,7 @@ function renderWarCard(instance, faction, summary) {
       instance,
       () => submitProposal(instance.state, input, { autoResolve: true }),
       (result) => treatyOutcomeMessage(result, 'White peace', faction.name),
+      diplomacyCoop('submitProposal', { input, options: { autoResolve: true } }),
     );
   });
   peaceActions.appendChild(peace);
@@ -905,6 +967,14 @@ function renderCouncilCard(instance, faction, summary) {
       reason: activeSanction ? 'Diplomatic normalization' : 'Threat to galactic stability',
     }),
     () => `Council ${labelize(resolutionSelect.value)} vote opened`,
+    diplomacyCoop('proposeCouncilResolution', {
+      input: {
+        proposer: PLAYER_ID,
+        target: faction.id,
+        type: resolutionSelect.value,
+        reason: activeSanction ? 'Diplomatic normalization' : 'Threat to galactic stability',
+      },
+    }),
   ));
   councilActions.append(resolutionSelect, propose);
   card.appendChild(councilActions);
@@ -930,6 +1000,11 @@ function renderCouncilCard(instance, faction, summary) {
         instance,
         () => castCouncilVote(instance.state, resolution.id, PLAYER_ID, vote),
         () => `Council vote recorded: ${labelize(vote)}`,
+        diplomacyCoop('castCouncilVote', {
+          resolutionId: resolution.id,
+          voterId: PLAYER_ID,
+          vote,
+        }),
       ));
       votes.appendChild(button);
     }
@@ -961,9 +1036,11 @@ function renderOverviewCard(instance, faction, summary) {
     const accept = makeButton(`diplomacy-call-${call.id}-accept`, 'Join Defense', 'primary');
     const refuse = makeButton(`diplomacy-call-${call.id}-refuse`, 'Refuse');
     accept.addEventListener('click', () => safeAction(instance,
-      () => respondToCallToArms(instance.state, call.id, true, PLAYER_ID), 'Defensive call honored'));
+      () => respondToCallToArms(instance.state, call.id, true, PLAYER_ID), 'Defensive call honored',
+      diplomacyCoop('respondToCallToArms', { callId: call.id, accept: true, actorId: PLAYER_ID })));
     refuse.addEventListener('click', () => safeAction(instance,
-      () => respondToCallToArms(instance.state, call.id, false, PLAYER_ID), 'Defensive call refused; treaty consequences applied'));
+      () => respondToCallToArms(instance.state, call.id, false, PLAYER_ID), 'Defensive call refused; treaty consequences applied',
+      diplomacyCoop('respondToCallToArms', { callId: call.id, accept: false, actorId: PLAYER_ID })));
     actions.append(accept, refuse);
     row.append(element('strong', '', `Call to arms from ${call.caller}`), actions);
     card.appendChild(row);

@@ -18,6 +18,7 @@ import {
   FOUNDRY_COST,
   LAUNCHER_COST,
   SUPERWEAPON_CRADLE_COST,
+  FLAGSHIP_MAX_SPEED,
 } from './constants.js';
 import {
   createNewGame,
@@ -49,6 +50,7 @@ import {
   jobEtaMs,
   jobProgress,
   resetDroneIds,
+  applyConstructionJobsSummary,
 } from './drones.js';
 import { dronePoses } from './drone-motion.js';
 import {
@@ -61,7 +63,7 @@ import {
   shipyardBuildProgress,
   activeCombatQueues,
 } from './production.js';
-import { setFlagshipInput, flagshipControlStatus, flagshipEngineStatus, orderTravel, transitStatus, transitEtaMs, toggleFlagshipOrbit, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
+import { setFlagshipInput, getFlagshipInput, flagshipControlStatus, flagshipEngineStatus, orderTravel, transitStatus, transitEtaMs, toggleFlagshipOrbit, isFlagshipOrbiting, orbitTargetLabel, resyncFlagshipDisplayPose, advanceCoopFlagshipVisual, ensurePlayerFlagships, getPlayerFlagship } from './flagship.js';
 import {
   orderScoutTravel,
   scoutEtaMs,
@@ -161,6 +163,8 @@ import {
   camera,
   galaxyCamera,
   hitTestCombatUnit,
+  hitTestStar,
+  pushMapPing,
 } from './render.js';
 import { attachInput } from './input.js';
 import {
@@ -350,6 +354,10 @@ import { AUDIO_CATALOG, AUDIO_PRELOAD_CUES } from './audio-catalog.js';
 import { createAudioEngine } from './audio-engine.js';
 import { createAudioDirector } from './audio-director.js';
 import { initAudioUi } from './audio-ui.js';
+import { createCoopClient, coopQueryEnabled, defaultWsUrl } from './coop-client.js';
+import { applyCombatSummary, applyFleetsSummary } from './coop-protocol.js';
+import { applySharedStateDelta } from './coop-replication.js';
+import { captureCombatDisplayPose } from './combat-steering.js';
 
 let state = createNewGame(DEFAULT_SEED);
 loadProfile();
@@ -371,6 +379,872 @@ let followedConvoyId = null;
 let combatSelectionIds = [];
 let combatCommandMode = null;
 let combatMarquee = null;
+let coopStatus = { phase: 'idle', connected: false, authed: false };
+
+const EMPTY_TICK_EVENTS = Object.freeze({
+  captures: [],
+  prodReady: [],
+  scoutArrivals: [],
+  shipArrivals: [],
+  aiArrivals: [],
+  pirateArrivals: [],
+  pirateInterdictions: [],
+  battleEvents: [],
+  dysonEvents: [],
+  wormholeArrivals: [],
+  builderDroneEvents: [],
+  droneCompletions: [],
+  logisticsEvents: [],
+  bulkProductionEvents: [],
+  bulkDeliveryEvents: [],
+  strategicOperationEvents: [],
+  diplomacyEvents: [],
+  campaignEvents: [],
+  remainingMs: 0,
+});
+
+/** Min gap between full world applies (join/flush bypass). Keeps the UI thread free
+ * while still letting post-command debounced snapshots land promptly. */
+const COOP_SNAPSHOT_MIN_INTERVAL_MS = 1_500;
+
+/**
+ * Align camera/view with the shared flagship after a co-op world replace.
+ * System ids collide across seeds (sys-N), so "does this id exist?" is not enough.
+ * @param {{ force?: boolean }} [opts] force=true on join; later only when system changes / view invalid.
+ */
+function syncCoopViewToFlagship({ force = false } = {}) {
+  const f = state.flagship;
+  resyncFlagshipDisplayPose(state);
+
+  if (f?.transit) {
+    const transit = transitStatus(state);
+    view = 'galaxy';
+    follow.enabled = false;
+    lastFlagshipSystemId = f.systemId ?? lastFlagshipSystemId;
+    if (transit) {
+      galaxyCamera.x = transit.x;
+      galaxyCamera.y = transit.y;
+      galaxyCamera.zoom = Math.max(galaxyCamera.zoom, 0.28);
+    }
+    return;
+  }
+
+  const focusId = f?.systemId || state.stronghold;
+  const viewedMissing = !systemById(state, viewedSystemId);
+  const arrivedViaSnapshot = !!(focusId && focusId !== lastFlagshipSystemId);
+  // Do not chase the flagship on every snapshot while the player is freely panning.
+  const shouldFocus = force || viewedMissing || arrivedViaSnapshot;
+
+  if (shouldFocus && focusId) {
+    viewedSystemId = focusId;
+    view = 'system';
+    follow.enabled = true;
+    snapCameraTo(f?.systemId ? f.x : 0, f?.systemId ? f.y : 0);
+    if (force || arrivedViaSnapshot) camera.zoom = CAMERA_DEFAULT_ZOOM;
+  } else if (viewedMissing && state.stronghold) {
+    viewedSystemId = state.stronghold;
+  }
+
+  lastFlagshipSystemId = f?.systemId ?? lastFlagshipSystemId;
+}
+
+/** Latest teammate roster from summaries ([{id, callsign, online}]). */
+let coopPlayers = [];
+
+/** Max acceptable client↔host divergence for co-op presentation (ms). */
+const COOP_SYNC_LAG_MS = 250;
+/** Position error budget ≈ how far a flagship can travel in that window. */
+const COOP_SYNC_POS_ERR = FLAGSHIP_MAX_SPEED * (COOP_SYNC_LAG_MS / 1000);
+
+/**
+ * Host-anchored presentation clock.
+ * state.time advances smoothly every frame and slews toward host — never rewinds
+ * (rewinds hitch planet/moon/ambient-fleet orbits that are f(state.time)).
+ */
+const coopClock = {
+  latestHostTime: 0,
+  latestHostAt: 0,
+  ready: false,
+};
+
+function syncCoopClockFromHost(hostTime) {
+  if (!Number.isFinite(hostTime)) return;
+  const now = performance.now();
+  if (!coopClock.ready) {
+    coopClock.latestHostTime = hostTime;
+    coopClock.latestHostAt = now;
+    coopClock.ready = true;
+    state.time = hostTime;
+    return;
+  }
+  // Reject only true host rewinds (monotonic sim time). Never compare against
+  // wall-extrapolated estimates — that falsely rejects good poses and locks the
+  // client into jump/hold stutter (skew multi-second in logs).
+  if (hostTime + 1 < coopClock.latestHostTime) {
+    return;
+  }
+  coopClock.latestHostTime = hostTime;
+  coopClock.latestHostAt = now;
+}
+
+function advanceCoopClock(dtMs) {
+  if (!coopClock.ready) return;
+  const dt = Math.max(0, Number(dtMs) || 0);
+  const estimatedHost = coopClock.latestHostTime + (performance.now() - coopClock.latestHostAt);
+  if (!Number.isFinite(state.time)) {
+    state.time = estimatedHost;
+    return;
+  }
+  const err = estimatedHost - state.time;
+  if (err > 500) {
+    // Only hard-catch when catastrophically behind; soft-slew covers the 250ms budget.
+    state.time = estimatedHost - 80;
+  } else if (err < -30) {
+    // Ahead of host — keep planets/fleets moving (never freeze), just slow the clock.
+    state.time += dt * 0.35;
+  } else {
+    // Advance with frame dt and catch up remaining error over ~150ms.
+    state.time += dt + err * Math.min(1, dt / 150);
+  }
+}
+
+/**
+ * Pull a pose toward authority without leaving the 250ms sync budget.
+ * Large errors snap; mid errors correct strongly this packet; small errors blend.
+ */
+function reconcilePose2d(target, pose, {
+  local = false,
+  systemChanged = false,
+  maxErr = COOP_SYNC_POS_ERR,
+} = {}) {
+  if (typeof pose.x !== 'number' || typeof pose.y !== 'number') {
+    if (typeof pose.x === 'number') target.x = pose.x;
+    if (typeof pose.y === 'number') target.y = pose.y;
+    return { hardSnapped: false, err: 0, alpha: 0 };
+  }
+  const hasPose = Number.isFinite(target.x) && Number.isFinite(target.y);
+  const dx = pose.x - (target.x ?? pose.x);
+  const dy = pose.y - (target.y ?? pose.y);
+  const err = Math.hypot(dx, dy);
+  if (!hasPose || systemChanged || err > maxErr * 2.5) {
+    target.x = pose.x;
+    target.y = pose.y;
+    return { hardSnapped: true, err, alpha: 1 };
+  }
+  // Outside the 250ms budget — yank most of the way back this packet.
+  if (err > maxErr) {
+    target.x += dx * 0.85;
+    target.y += dy * 0.85;
+    return { hardSnapped: false, err, alpha: 0.85 };
+  }
+  // Local pilot thrusting inside budget: trust prediction (host trails by RTT).
+  if (local) {
+    const inp = getFlagshipInput?.();
+    if (inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6) {
+      return { hardSnapped: false, err, alpha: 0 };
+    }
+  }
+  // Inside budget: light blend so we don't fight dead-reckoning every 100ms.
+  const alpha = local ? 0.12 : 0.22;
+  target.x += dx * alpha;
+  target.y += dy * alpha;
+  return { hardSnapped: false, err, alpha };
+}
+
+function reconcileHeading(target, heading, { local = false, systemChanged = false } = {}) {
+  if (typeof heading !== 'number') return;
+  if (!Number.isFinite(target.heading) || systemChanged) {
+    target.heading = heading;
+    return;
+  }
+  let dH = heading - target.heading;
+  while (dH > Math.PI) dH -= 2 * Math.PI;
+  while (dH < -Math.PI) dH += 2 * Math.PI;
+  target.heading += dH * (local ? 0.3 : 0.4);
+}
+
+function applyPoseToFlagship(f, pose, { local = false, authTime = null } = {}) {
+  const prevSys = f.systemId;
+  const systemChanged = pose.systemId != null && pose.systemId !== f.systemId;
+  if (pose.systemId !== undefined) f.systemId = pose.systemId;
+  if (pose.galaxyId != null) f.galaxyId = pose.galaxyId;
+
+  if ('orbit' in pose) {
+    if (pose.orbit && typeof pose.orbit === 'object') {
+      f.orbit = {
+        kind: pose.orbit.kind,
+        bodyId: pose.orbit.bodyId ?? null,
+        radius: pose.orbit.radius,
+        angle: pose.orbit.angle,
+      };
+      // Auth sample — extrapolate with state.time (same clock as planet centers).
+      f._coopOrbitAngle = pose.orbit.angle;
+      f._coopOrbitSimTime = Number.isFinite(authTime) ? authTime : state.time;
+    } else {
+      f.orbit = null;
+      f._coopOrbitAngle = null;
+      f._coopOrbitSimTime = null;
+    }
+  }
+
+  const orbiting = !!f.orbit;
+  let hardSnapped = false;
+  // While orbiting, position is kinematic from angle+planet time — don't xy-rubber-band.
+  if (!orbiting) {
+    const rec = reconcilePose2d(f, pose, { local, systemChanged });
+    hardSnapped = rec.hardSnapped;
+    reconcileHeading(f, pose.heading, { local, systemChanged });
+    if (typeof pose.vx === 'number') {
+      const thrusting = local && (() => {
+        const inp = getFlagshipInput?.();
+        return inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6;
+      })();
+      f.vx = thrusting && Number.isFinite(f.vx) ? f.vx : (local && Number.isFinite(f.vx) ? f.vx * 0.5 + pose.vx * 0.5 : pose.vx);
+    }
+    if (typeof pose.vy === 'number') {
+      const thrusting = local && (() => {
+        const inp = getFlagshipInput?.();
+        return inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6;
+      })();
+      f.vy = thrusting && Number.isFinite(f.vy) ? f.vy : (local && Number.isFinite(f.vy) ? f.vy * 0.5 + pose.vy * 0.5 : pose.vy);
+    }
+  }
+
+  if (typeof pose.hp === 'number') f.hp = pose.hp;
+  if (typeof pose.maxHp === 'number') f.maxHp = pose.maxHp;
+  if ('transit' in pose) f.transit = pose.transit;
+  if ('wormholeTransit' in pose) f.wormholeTransit = pose.wormholeTransit;
+  if (pose.callsign != null) f.callsign = pose.callsign;
+  return { prevSys, systemChanged, hardSnapped };
+}
+
+function advanceCoopCombatVisual(state, dtMs) {
+  if (!state || state.paused) return;
+  const dt = Math.max(0, Number(dtMs) || 0) / 1000;
+  if (dt <= 0) return;
+  for (const battle of Object.values(state.systemBattles ?? {})) {
+    if (!battle?.active || battle.mode !== 'tactical' || !Array.isArray(battle.units)) continue;
+    for (const unit of battle.units) {
+      if (!unit || unit.hp <= 0 || unit.escaped) continue;
+      // Piloted flagships are advanced by advanceCoopFlagshipVisual / pose sync.
+      if (unit.hull === 'flagship') continue;
+      const vx = Number(unit.vx) || 0;
+      const vy = Number(unit.vy) || 0;
+      if (vx === 0 && vy === 0) continue;
+      unit.x = (unit.x ?? 0) + vx * dt;
+      unit.y = (unit.y ?? 0) + vy * dt;
+    }
+  }
+}
+
+/**
+ * Lightweight HUD / pose sync from periodic summaries — no 1MB deserialize.
+ * Client extrapolates time/pose between summaries; this snaps to authority.
+ * Applies every pilot's flagship pose plus ally hero capitals.
+ */
+function applyCoopSummary(summary) {
+  if (!summary || !coop.isActive()) {
+    updateCoopBanner();
+    return;
+  }
+  if (typeof summary.time === 'number') {
+    syncCoopClockFromHost(summary.time);
+  }
+  if (typeof summary.credits === 'number') state.credits = summary.credits;
+  if (typeof summary.paused === 'boolean') {
+    const wasPaused = !!state.paused;
+    state.paused = summary.paused;
+    // Don't let wall-clock pause duration inflate the extrapolated host time.
+    if (wasPaused && !summary.paused && coopClock.ready) {
+      coopClock.latestHostAt = performance.now();
+      state.time = coopClock.latestHostTime;
+    }
+  }
+  state.pausedBy = summary.paused ? (summary.pausedBy ?? state.pausedBy ?? null) : null;
+  if (typeof summary.research === 'number') {
+    if (state.research && typeof state.research === 'object') state.research.points = summary.research;
+    else state.researchPoints = summary.research;
+  }
+  if (Array.isArray(summary.players)) {
+    coopPlayers = summary.players;
+    state._coopOnlineIds = new Set(
+      summary.players.filter((p) => p?.online && p.id != null).map((p) => p.id),
+    );
+  }
+
+  const localPilotId = coop.getPlayerId();
+  ensurePlayerFlagships(state, localPilotId);
+
+  const poses = summary.flagships && typeof summary.flagships === 'object'
+    ? summary.flagships
+    : (summary.flagship ? { [localPilotId ?? 'solo']: summary.flagship } : {});
+
+  for (const [pilotId, pose] of Object.entries(poses)) {
+    let f = getPlayerFlagship(state, pilotId);
+    if (!f) {
+      // Pilot joined after our last snapshot — materialize a minimal entry so
+      // their ship renders now; the next snapshot replaces it wholesale.
+      f = { pilotId, callsign: pose.callsign ?? pilotId, weapons: [], wing: null, orbit: null };
+      state.playerFlagships.push(f);
+    }
+    const applied = applyPoseToFlagship(f, pose, {
+      local: pilotId === localPilotId,
+      authTime: typeof summary.time === 'number' ? summary.time : state.time,
+    });
+    if (f === state.flagship) {
+      // Co-op sets accumulator=0, so display pose is `prev` — keep it glued to live coords.
+      resyncFlagshipDisplayPose(state);
+      if (pose.systemId && pose.systemId !== applied.prevSys) {
+        syncCoopViewToFlagship({ force: false });
+      }
+    }
+  }
+
+  if (summary.heroes && typeof summary.heroes === 'object') {
+    if (!Array.isArray(state.heroFlagships)) state.heroFlagships = [];
+    for (const [heroId, h] of Object.entries(summary.heroes)) {
+      let hero = state.heroFlagships.find((entry) => entry.id === heroId);
+      if (!hero) {
+        hero = { id: heroId, vx: 0, vy: 0 };
+        state.heroFlagships.push(hero);
+      }
+      const systemChanged = h.systemId != null && h.systemId !== hero.systemId;
+      hero.ownerPlayerId = h.ownerPlayerId ?? hero.ownerPlayerId ?? null;
+      if (h.galaxyId != null) hero.galaxyId = h.galaxyId;
+      if (h.systemId !== undefined) hero.systemId = h.systemId;
+      reconcilePose2d(hero, h, { systemChanged, maxErr: COOP_SYNC_POS_ERR });
+      reconcileHeading(hero, h.heading, { systemChanged });
+      if (typeof h.hp === 'number') hero.hp = h.hp;
+      if (typeof h.maxHp === 'number') hero.maxHp = h.maxHp;
+      if ('transit' in h) hero.transit = h.transit;
+      if (h.rallyStarId !== undefined) hero.rallyStarId = h.rallyStarId;
+      if (h.buildCompleteAt !== undefined) hero.buildCompleteAt = h.buildCompleteAt;
+    }
+  }
+
+  if (Array.isArray(summary.builds)) {
+    applyConstructionJobsSummary(state, summary.builds);
+  }
+
+  if (Array.isArray(summary.combat)) {
+    applyCombatSummary(state, summary.combat, { capturePose: captureCombatDisplayPose });
+  }
+
+  if (summary.fleets && typeof summary.fleets === 'object') {
+    applyFleetsSummary(state, summary.fleets);
+  }
+
+  updateCoopBanner();
+}
+
+function adoptCoopSnapshot(snapshotJson, { forceFocus = false, summary = null } = {}) {
+  if (!coop.isActive()) return;
+  // Preserve client-local presentation (camera/view/selection live outside state).
+  const presentation = {
+    view,
+    viewedSystemId,
+    selection,
+    selectedScoutId,
+    selectedBattleGroupId,
+    selectedBuilderDroneId,
+    combatSelectionIds: [...combatSelectionIds],
+    combatCommandMode,
+    followEnabled: follow.enabled,
+    followAllyPilotId: follow.allyPilotId,
+    helioclastTargetingMode,
+  };
+  const prevSys = state.flagship?.systemId ?? null;
+  const next = coop.parseSnapshot(snapshotJson);
+  for (const key of Object.keys(state)) delete state[key];
+  Object.assign(state, next);
+  // Bind state.flagship to *my* ship in the roster (camera/HUD/WASD follow it).
+  ensurePlayerFlagships(state, coop.getPlayerId());
+  // Re-apply the snapshot's companion summary so fleets/combat that arrived
+  // via the fast channel aren't wiped by a slightly older world blob.
+  if (summary) applyCoopSummary(summary);
+  // Restore presentation that must never be host-owned.
+  if (!forceFocus) {
+    if (presentation.view) view = presentation.view;
+    if (presentation.viewedSystemId && systemById(state, presentation.viewedSystemId)) {
+      viewedSystemId = presentation.viewedSystemId;
+    }
+    selection = presentation.selection;
+    selectedScoutId = presentation.selectedScoutId;
+    selectedBattleGroupId = presentation.selectedBattleGroupId;
+    selectedBuilderDroneId = presentation.selectedBuilderDroneId;
+    combatSelectionIds = presentation.combatSelectionIds;
+    combatCommandMode = presentation.combatCommandMode;
+    follow.enabled = presentation.followEnabled;
+    follow.allyPilotId = presentation.followAllyPilotId ?? null;
+    helioclastTargetingMode = presentation.helioclastTargetingMode;
+  }
+  const nextSys = state.flagship?.systemId ?? null;
+  // Camera/pose focus only on join or when the shared flagship changed systems.
+  if (forceFocus || prevSys !== nextSys) {
+    syncCoopViewToFlagship({ force: forceFocus });
+  } else {
+    resyncFlagshipDisplayPose(state);
+  }
+  lastCoopSnapshotAt = performance.now();
+  lastUiAt = 0; // refresh HUD on the next frame after a world adopt
+  updateCoopBanner();
+}
+
+let pendingCoopSnapshot = null;
+/** @type {object | null} */
+let pendingCoopSnapshotSummary = null;
+/** @type {{ worldId?: string, tick?: number, revision?: number, reason?: string } | null} */
+let pendingCoopSnapshotMeta = null;
+/** @type {ReturnType<typeof setTimeout> | 0} */
+let coopSnapshotTimer = 0;
+let coopSnapshotRaf = 0;
+let coopAwaitingFirstFocus = false;
+let lastCoopSnapshotAt = -Infinity;
+let coopJoinInFlight = false;
+
+function clearCoopSnapshotSchedule() {
+  if (coopSnapshotTimer) {
+    clearTimeout(coopSnapshotTimer);
+    coopSnapshotTimer = 0;
+  }
+  if (coopSnapshotRaf) {
+    cancelAnimationFrame(coopSnapshotRaf);
+    coopSnapshotRaf = 0;
+  }
+}
+
+function resetClientCoopPresentation() {
+  clearCoopSnapshotSchedule();
+  pendingCoopSnapshot = null;
+  pendingCoopSnapshotSummary = null;
+  pendingCoopSnapshotMeta = null;
+  coopAwaitingFirstFocus = false;
+  coopClock.ready = false;
+  coopClock.latestHostTime = 0;
+  coopClock.latestHostAt = 0;
+  coopPlayers = [];
+  follow.allyPilotId = null;
+  state.pausedBy = null;
+  closeCoopRoster();
+  hideControlRequestToast();
+  updateCoopBanner();
+}
+
+function parkTitleSeedWorld() {
+  resetClientCoopPresentation();
+  audioDirector.reset();
+  state = createNewGame(DEFAULT_SEED);
+  state.pirates = spawnPirateFleets(state);
+  seedAiFaction(state, state.homeGalaxyId);
+  initBuilderDrones(state);
+  state.paused = true;
+  selection = null;
+  selectedScoutId = null;
+  selectedBattleGroupId = null;
+  selectedBuilderDroneId = null;
+  combatSelectionIds = [];
+  combatCommandMode = null;
+  helioclastTargetingMode = null;
+  followedConvoyId = null;
+  view = 'system';
+  viewedSystemId = state.stronghold;
+  lastFlagshipSystemId = state.flagship?.systemId ?? null;
+  follow.enabled = true;
+  setBootPhase(BOOT_PHASE.TITLE);
+  document.getElementById('title-screen')?.classList.remove('hidden');
+  window.dispatchEvent(new CustomEvent('gs-show-title', { detail: { panel: 'root' } }));
+}
+
+function stripCoopQueryParams() {
+  try {
+    const url = new URL(window.location.href);
+    let changed = false;
+    for (const key of ['coop', 'coopName', 'coopPass', 'coopPort']) {
+      if (url.searchParams.has(key)) {
+        url.searchParams.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState({}, '', next);
+    }
+  } catch { /* ignore */ }
+}
+
+function runCoopSnapshotApply({ forceFocus = false } = {}) {
+  if (!coop.isActive()) {
+    pendingCoopSnapshot = null;
+    pendingCoopSnapshotSummary = null;
+    pendingCoopSnapshotMeta = null;
+    return;
+  }
+  const json = pendingCoopSnapshot;
+  const summary = pendingCoopSnapshotSummary;
+  const meta = pendingCoopSnapshotMeta;
+  pendingCoopSnapshot = null;
+  pendingCoopSnapshotSummary = null;
+  pendingCoopSnapshotMeta = null;
+  if (!json) return;
+  if (meta?.tick && meta.tick < coop.getLastAppliedTick()) return;
+  const focus = forceFocus || coopAwaitingFirstFocus;
+  coopAwaitingFirstFocus = false;
+  adoptCoopSnapshot(json, { forceFocus: focus, summary });
+}
+
+function queueCoopSnapshot(snapshotJson, summary = null, meta = null) {
+  // Keep only the newest world; drop intermediates so a backlog cannot freeze tabs.
+  pendingCoopSnapshot = snapshotJson;
+  if (summary) pendingCoopSnapshotSummary = summary;
+  if (meta) pendingCoopSnapshotMeta = meta;
+  if (coopAwaitingFirstFocus) {
+    // Join path: flushPendingCoopSnapshot applies immediately after connect.
+    return;
+  }
+  if (coopSnapshotTimer || coopSnapshotRaf) return;
+  const elapsed = performance.now() - lastCoopSnapshotAt;
+  const wait = Math.max(0, COOP_SNAPSHOT_MIN_INTERVAL_MS - elapsed);
+  coopSnapshotTimer = setTimeout(() => {
+    coopSnapshotTimer = 0;
+    if (!pendingCoopSnapshot) return;
+    // Apply on the next frame so the timer callback itself stays cheap.
+    coopSnapshotRaf = requestAnimationFrame(() => {
+      coopSnapshotRaf = 0;
+      runCoopSnapshotApply({ forceFocus: false });
+    });
+  }, wait);
+}
+
+function flushPendingCoopSnapshot({ forceFocus = false } = {}) {
+  clearCoopSnapshotSchedule();
+  if (!coop.isActive() || !pendingCoopSnapshot) {
+    if (!coop.isActive()) {
+      pendingCoopSnapshot = null;
+      pendingCoopSnapshotSummary = null;
+      pendingCoopSnapshotMeta = null;
+    }
+    return false;
+  }
+  coopAwaitingFirstFocus = false;
+  runCoopSnapshotApply({ forceFocus });
+  return true;
+}
+
+function callsignForCoop(playerId) {
+  if (!playerId) return 'ally';
+  if (playerId === coop.getPlayerId()) return 'you';
+  const hit = coopPlayers.find((p) => p.id === playerId);
+  return hit?.callsign ?? playerId;
+}
+
+function updateCoopBanner() {
+  const el = document.getElementById('coop-banner');
+  if (!el) return;
+  if (!coop.isActive()) {
+    el.classList.add('hidden');
+    closeCoopRoster();
+    hideControlRequestToast();
+    return;
+  }
+  const summary = coop.getSummary();
+  el.classList.remove('hidden');
+  const online = summary?.playersOnline
+    ?? (summary?.players ?? []).filter((p) => p.online).length
+    ?? 1;
+  const pausedBy = state.paused ? (state.pausedBy ?? summary?.pausedBy) : null;
+  const pauseNote = pausedBy ? ` · Paused by ${callsignForCoop(pausedBy)}` : '';
+  el.textContent = `CO-OP · ${coop.getPlayerId() ?? 'pilot'} · ${online} online${pauseNote}`;
+  if (!document.getElementById('coop-roster')?.classList.contains('hidden')) {
+    renderCoopRoster();
+  }
+}
+
+function setCoopRosterOpen(open) {
+  const panel = document.getElementById('coop-roster');
+  if (!panel) return;
+  if (open) {
+    panel.hidden = false;
+    panel.classList.remove('hidden');
+    renderCoopRoster();
+  } else {
+    panel.hidden = true;
+    panel.classList.add('hidden');
+  }
+}
+
+function closeCoopRoster() {
+  setCoopRosterOpen(false);
+}
+
+function renderCoopRoster() {
+  const list = document.getElementById('coop-roster-list');
+  if (!list || !coop.isActive()) return;
+  list.replaceChildren();
+  const poses = coop.getSummary()?.flagships ?? {};
+  for (const p of coopPlayers) {
+    const li = document.createElement('li');
+    if (!p.online) li.classList.add('is-offline');
+    const pose = poses[p.id];
+    const loc = pose?.systemId
+      ? (systemById(state, pose.systemId)?.name ?? pose.systemId)
+      : '—';
+    const meta = document.createElement('span');
+    meta.textContent = `${p.callsign ?? p.id}${p.id === coop.getPlayerId() ? ' (you)' : ''} · ${p.online ? loc : 'offline'}`;
+    li.appendChild(meta);
+    if (p.online && p.id !== coop.getPlayerId()) {
+      const followBtn = document.createElement('button');
+      followBtn.type = 'button';
+      followBtn.className = 'btn btn--ghost btn--xs';
+      followBtn.textContent = follow.allyPilotId === p.id ? 'Following' : 'Follow';
+      followBtn.onclick = () => followAllyCamera(p.id);
+      li.appendChild(followBtn);
+    }
+    list.appendChild(li);
+  }
+}
+
+function followAllyCamera(pilotId) {
+  const ally = (state.playerFlagships ?? []).find((p) => p.pilotId === pilotId);
+  if (!ally) {
+    toast('Ally flagship not found', 'error');
+    return;
+  }
+  follow.enabled = true;
+  follow.allyPilotId = pilotId;
+  if (ally.systemId) {
+    viewedSystemId = ally.systemId;
+    view = 'system';
+    snapCameraTo(ally.x ?? 0, ally.y ?? 0);
+  }
+  toast(`Camera following ${callsignForCoop(pilotId)}`, 'ok');
+  renderCoopRoster();
+}
+
+function copyCoopInviteUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('coop', coop.getUrl?.() || defaultWsUrl());
+  if (!url.searchParams.get('coopName')) url.searchParams.set('coopName', 'pilot');
+  const text = url.toString();
+  const done = () => toast('Invite URL copied', 'ok');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => {
+      window.prompt('Copy invite URL', text);
+    });
+  } else {
+    window.prompt('Copy invite URL', text);
+  }
+}
+
+function leaveCoopSession(opts = {}) {
+  const returnToTitle = opts.returnToTitle !== false;
+  if (coop.isActive()) {
+    coop.disconnect();
+  }
+  resetClientCoopPresentation();
+  if (returnToTitle) {
+    parkTitleSeedWorld();
+    if (opts.silent) return;
+    toast('Left co-op — choose Single Player or Multiplayer', 'info');
+  } else if (!opts.silent) {
+    toast('Left co-op session', 'info');
+  }
+}
+
+async function returnToTitleFromPlay(opts = {}) {
+  const autosave = opts.autosave !== false;
+  if (coop.isActive()) {
+    leaveCoopSession({ returnToTitle: true });
+    return { ok: true };
+  }
+  if (autosave && getBootPhase() === BOOT_PHASE.PLAYING) {
+    try { await writeSlot('autosave', state); } catch { /* private mode */ }
+  }
+  parkTitleSeedWorld();
+  toast('Returned to title', 'info');
+  return { ok: true };
+}
+
+function hideControlRequestToast() {
+  const el = document.getElementById('coop-request-toast');
+  if (!el) return;
+  el.hidden = true;
+  el.classList.add('hidden');
+  el.replaceChildren();
+}
+
+function showControlRequestToast(ev) {
+  const el = document.getElementById('coop-request-toast');
+  if (!el) return;
+  el.hidden = false;
+  el.classList.remove('hidden');
+  el.replaceChildren();
+  const title = document.createElement('div');
+  title.textContent = `${ev.fromCallsign ?? ev.fromPlayerId} requests control of ${ev.label ?? ev.assetId}`;
+  el.appendChild(title);
+  const actions = document.createElement('div');
+  actions.className = 'coop-request-toast__actions';
+  const accept = document.createElement('button');
+  accept.type = 'button';
+  accept.className = 'btn btn--xs';
+  accept.textContent = 'Accept';
+  accept.dataset.testid = 'coop-request-accept';
+  accept.onclick = () => {
+    coopSend('respondControlRequest', { requestId: ev.requestId, accept: true }).then((res) => {
+      toast(res.ok ? 'Control shared' : (res.reason || 'Failed'), res.ok ? 'ok' : 'error');
+      hideControlRequestToast();
+    });
+  };
+  const deny = document.createElement('button');
+  deny.type = 'button';
+  deny.className = 'btn btn--ghost btn--xs';
+  deny.textContent = 'Deny';
+  deny.dataset.testid = 'coop-request-deny';
+  deny.onclick = () => {
+    coopSend('respondControlRequest', { requestId: ev.requestId, accept: false }).then((res) => {
+      toast(res.ok ? 'Request denied' : (res.reason || 'Failed'), res.ok ? 'ok' : 'error');
+      hideControlRequestToast();
+    });
+  };
+  actions.appendChild(accept);
+  actions.appendChild(deny);
+  el.appendChild(actions);
+}
+
+function handleCoopMeshEvents(events) {
+  const me = coop.getPlayerId();
+  for (const ev of events ?? []) {
+    if (!ev || typeof ev !== 'object') continue;
+    if (ev.kind === 'controlRequest') {
+      if (ev.ownerPlayerId === me) showControlRequestToast(ev);
+      continue;
+    }
+    if (ev.kind === 'controlRequestResolved') {
+      if (ev.fromPlayerId === me) {
+        toast(
+          ev.accept
+            ? `Control granted for ${ev.label ?? ev.assetId}`
+            : `Control request denied for ${ev.label ?? ev.assetId}`,
+          ev.accept ? 'ok' : 'info',
+        );
+      }
+      if (ev.ownerPlayerId === me) hideControlRequestToast();
+      continue;
+    }
+    if (ev.kind === 'mapPing') {
+      pushMapPing(ev);
+      if (ev.fromPlayerId !== me) {
+        const where = ev.systemId
+          ? (systemById(state, ev.systemId)?.name ?? ev.systemId)
+          : 'map';
+        toast(`${ev.fromCallsign ?? 'Ally'} pinged ${where}`, 'info');
+      }
+    }
+  }
+}
+
+function doMapPing(opts = {}) {
+  if (!coop.isActive()) return { ok: false, reason: 'Not in co-op' };
+  const galaxyId = state.activeGalaxyId ?? null;
+  if (view === 'system') {
+    const f = state.flagship;
+    const x = Number.isFinite(opts.x) ? opts.x : (f?.systemId === viewedSystemId ? f.x : 0);
+    const y = Number.isFinite(opts.y) ? opts.y : (f?.systemId === viewedSystemId ? f.y : 0);
+    coopSend('mapPing', { galaxyId, systemId: viewedSystemId, x, y, label: opts.label });
+    return { ok: true };
+  }
+  let systemId = opts.systemId ?? null;
+  if (!systemId && Number.isFinite(opts.x) && Number.isFinite(opts.y)) {
+    systemId = hitTestStar(state, opts.x, opts.y);
+  }
+  if (!systemId) {
+    const graph = getGraph(state);
+    let best = null;
+    let bestD = Infinity;
+    for (const star of graph.stars ?? []) {
+      const d = Math.hypot(star.x - galaxyCamera.x, star.y - galaxyCamera.y);
+      if (d < bestD) {
+        bestD = d;
+        best = star.id;
+      }
+    }
+    systemId = best;
+  }
+  if (!systemId) {
+    toast('No star to ping', 'error');
+    return { ok: false, reason: 'No star' };
+  }
+  coopSend('mapPing', { galaxyId, systemId, label: opts.label });
+  return { ok: true };
+}
+
+function wireCoopRosterUi() {
+  const banner = document.getElementById('coop-banner');
+  banner?.addEventListener('click', () => {
+    if (!coop.isActive()) return;
+    const panel = document.getElementById('coop-roster');
+    const open = panel?.classList.contains('hidden');
+    setCoopRosterOpen(!!open);
+  });
+  banner?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      banner.click();
+    }
+  });
+  document.getElementById('coop-roster-close')?.addEventListener('click', () => closeCoopRoster());
+  document.getElementById('coop-copy-invite')?.addEventListener('click', () => copyCoopInviteUrl());
+  document.getElementById('coop-leave-btn')?.addEventListener('click', () => leaveCoopSession());
+}
+
+wireCoopRosterUi();
+
+function coopSend(command, payload = {}) {
+  return coop.command(command, payload).catch((err) => {
+    toast(err.message || 'Co-op command failed', 'error');
+    return { ok: false, reason: err.message };
+  });
+}
+
+let pendingCoopTickEvents = null;
+
+function mergeCoopTickEvents(events) {
+  for (const envelope of events ?? []) {
+    const tickEvents = envelope?.tickEvents;
+    if (!tickEvents || typeof tickEvents !== 'object') continue;
+    if (!pendingCoopTickEvents) pendingCoopTickEvents = { ...EMPTY_TICK_EVENTS };
+    for (const [key, value] of Object.entries(tickEvents)) {
+      if (!Array.isArray(value) || !value.length) continue;
+      pendingCoopTickEvents[key] = [...(pendingCoopTickEvents[key] ?? []), ...value];
+    }
+  }
+}
+
+function takeCoopTickEvents() {
+  const events = pendingCoopTickEvents ?? EMPTY_TICK_EVENTS;
+  pendingCoopTickEvents = null;
+  return events;
+}
+
+function applyCoopDelta(operations) {
+  if (!coop.isActive()) return;
+  const applied = applySharedStateDelta(state, operations);
+  if (!applied) return;
+  ensurePlayerFlagships(state, coop.getPlayerId());
+  lastUiAt = 0;
+}
+
+const coop = createCoopClient({
+  onSnapshot: (snapshotJson, summary, meta) => queueCoopSnapshot(snapshotJson, summary, meta),
+  onSummary: (summary) => applyCoopSummary(summary),
+  onDelta: (operations) => applyCoopDelta(operations),
+  onEvents: (events) => mergeCoopTickEvents(events),
+  onNotice: (notice) => toast(notice, 'info'),
+  onStatus: (info) => {
+    coopStatus = info;
+    updateCoopBanner();
+  },
+  onError: (message) => toast(message, 'error'),
+});
 
 const audioEngine = createAudioEngine(AUDIO_CATALOG);
 const audioDirector = createAudioDirector(audioEngine);
@@ -635,6 +1509,13 @@ function doSelectBuilderDrone(droneId) {
 }
 
 function doDeleteBattleGroup(groupId) {
+  if (coop.isActive()) {
+    coopSend('deleteBattleGroup', { groupId }).then((res) => {
+      if (res.ok && selectedBattleGroupId === groupId) selectedBattleGroupId = null;
+      else if (!res.ok && res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = deleteBattleGroup(state, groupId);
   if (!res.ok) {
     toast(res.reason, 'error');
@@ -665,6 +1546,12 @@ function doTogglePause() {
     toast('Issue an Attack order before resuming the training battle', 'error');
     return { ok: false, reason: 'Attack order required' };
   }
+  if (coop.isActive()) {
+    const willPause = !state.paused;
+    audioEngine.playCue(willPause ? 'ui.pause' : 'ui.resume');
+    coopSend('togglePaused');
+    return { ok: true, pending: true };
+  }
   togglePaused(state);
   audioEngine.playCue(state.paused ? 'ui.pause' : 'ui.resume');
   markTutorialTimeToggled(state);
@@ -690,7 +1577,11 @@ function doSetView(v) {
 
 function doViewSystem(systemId) {
   if (!systemById(state, systemId)) return;
-  promoteBattleToTactical(state, systemId);
+  if (coop.isActive()) {
+    coopSend('promoteBattleToTactical', { systemId }).catch(() => {});
+  } else {
+    promoteBattleToTactical(state, systemId);
+  }
   viewedSystemId = systemId;
   view = 'system';
   selection = null;
@@ -761,12 +1652,31 @@ function doFocusTutorial() {
   return { ok: true };
 }
 
+// Throttled WASD relay to the co-op host (host integrates thrust authoritatively).
+const coopThrust = { x: 0, y: 0, sentAt: 0 };
+const COOP_THRUST_MIN_INTERVAL_MS = 50;
+
+function sendCoopFlagshipInput(x, y) {
+  const now = performance.now();
+  const changed = x !== coopThrust.x || y !== coopThrust.y;
+  if (!changed) return;
+  const releasing = x === 0 && y === 0;
+  if (!releasing && now - coopThrust.sentAt < COOP_THRUST_MIN_INTERVAL_MS) return;
+  coopThrust.x = x;
+  coopThrust.y = y;
+  coopThrust.sentAt = now;
+  // Fire-and-forget: pose corrections arrive via summaries; no toast spam.
+  coop.command('setFlagshipInput', { x, y }).catch(() => {});
+}
+
 function doFlagshipInput(x, y) {
   if (view !== 'system') {
     setFlagshipInput(0, 0, state.time);
+    if (coop.isActive()) sendCoopFlagshipInput(0, 0);
     return;
   }
   setFlagshipInput(x, y, state.time);
+  if (coop.isActive()) sendCoopFlagshipInput(x, y);
   if (x !== 0 || y !== 0) {
     cancelCombatCinema();
     follow.enabled = true;
@@ -783,6 +1693,14 @@ function doToggleOrbit() {
     toast('Flagship is not in this system', 'error');
     return;
   }
+  if (coop.isActive()) {
+    coopSend('toggleOrbit', { bodyId: selection }).then((res) => {
+      if (res.ok && res.orbiting) toast(`Stable orbit: ${res.target}`, 'ok');
+      else if (res.ok) toast('Orbit disengaged', 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = toggleFlagshipOrbit(state, selection);
   if (res.ok && res.orbiting) {
     toast(`Stable orbit: ${res.target}`, 'ok');
@@ -795,6 +1713,22 @@ function doToggleOrbit() {
 }
 
 function doToggleWingHangar() {
+  if (coop.isActive()) {
+    coopSend('toggleWingHangar').then((res) => {
+      if (!res.ok) {
+        if (res.reason) toast(res.reason, 'error');
+        return;
+      }
+      if (res.already) {
+        toast(res.hangar === 'stowed' || res.hangar === 'recalling'
+          ? 'Escorts already in hangar'
+          : 'Escorts already deployed', 'ok');
+        return;
+      }
+      toast(res.hangar === 'recalling' ? 'Escorts returning to hangar' : 'Escorts launching', 'ok');
+    });
+    return { ok: true, pending: true };
+  }
   const res = toggleFlagshipWingHangar(state);
   if (!res.ok) {
     toast(res.reason, 'error');
@@ -813,6 +1747,15 @@ function doToggleWingHangar() {
 function doOrderTravel(targetId) {
   const access = tutorialGuard('flagship_travel');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('orderTravel', { targetId }).then((res) => {
+      if (res.ok) {
+        const dest = systemById(state, targetId);
+        toast(`Course set: ${dest?.name ?? targetId} — ETA ${Math.ceil((res.etaMs ?? 0) / 1000)}s`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = orderTravel(state, targetId);
   if (res.ok) {
     accelerateCurrentTransit(state.flagship);
@@ -864,6 +1807,19 @@ function doHelioclastTarget(targetId, requestedMode = helioclastTargetingMode) {
   const mode = requestedMode ?? helioclastTargetingMode;
   if (!mode) return { ok: false, reason: 'No Helioclast command armed' };
   galaxyTargetStarId = targetId;
+  const label = mode === 'create' ? 'Forge Star' : mode === 'destroy' ? 'Annihilate' : 'Gate Jump';
+  if (coop.isActive()) {
+    // Team-unique superweapon: fire through the host so the single Helioclast
+    // sequence plays out identically on every screen.
+    coopSend('superweaponAction', { mode, targetId }).then((res) => {
+      if (res.ok) {
+        helioclastTargetingMode = null;
+        const targetName = systemById(state, targetId)?.name ?? targetId;
+        toast(`${label} sequence started on ${targetName}`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const action = mode === 'create' ? superweaponCreate
     : mode === 'destroy' ? superweaponDestroy
       : superweaponJump;
@@ -874,7 +1830,6 @@ function doHelioclastTarget(targetId, requestedMode = helioclastTargetingMode) {
   }
   helioclastTargetingMode = null;
   const targetName = systemById(state, targetId)?.name ?? targetId;
-  const label = mode === 'create' ? 'Forge Star' : mode === 'destroy' ? 'Annihilate' : 'Gate Jump';
   toast(`${label} sequence started on ${targetName}`, 'ok');
   return res;
 }
@@ -886,6 +1841,16 @@ function doOrderScoutTravel(targetId) {
   if (!selectedScoutId) {
     toast('Build a scout at your shipyard first', 'error');
     return { ok: false, reason: 'Build a scout at your shipyard first' };
+  }
+  if (coop.isActive()) {
+    const scoutId = selectedScoutId;
+    coopSend('orderScoutTravel', { scoutId, targetId }).then((res) => {
+      if (res.ok) {
+        const dest = systemById(state, targetId);
+        toast(`Scout dispatched to ${dest?.name ?? targetId} — ETA ${Math.ceil((res.etaMs ?? 0) / 1000)}s`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
   }
   const res = orderScoutTravel(state, selectedScoutId, targetId);
   if (res.ok) {
@@ -903,6 +1868,18 @@ function doOrderBattleGroupTravel(targetId) {
     toast('Select a fleet in Fleet Command first', 'error');
     return { ok: false, reason: 'Select a fleet in Fleet Command first' };
   }
+  if (coop.isActive()) {
+    const groupId = selectedBattleGroupId;
+    coopSend('orderBattleGroupTravel', { groupId, targetId }).then((res) => {
+      const dest = systemById(state, targetId);
+      const destName = dest?.name ?? targetId;
+      if (res.ok) {
+        const skipNote = res.skipped > 0 ? ` · ${res.skipped} skipped` : '';
+        toast(`${res.fleetName ?? 'Fleet'}: ${res.dispatched ?? 0} dispatched to ${destName}${skipNote}`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = orderBattleGroupTravel(state, selectedBattleGroupId, targetId);
   const dest = systemById(state, targetId);
   const destName = dest?.name ?? targetId;
@@ -919,6 +1896,16 @@ function doOrderBuilderDroneTravel(targetId) {
   if (!selectedBuilderDroneId) {
     return { ok: false, reason: 'Select a builder drone in Fleet Command first' };
   }
+  if (coop.isActive()) {
+    const droneId = selectedBuilderDroneId;
+    coopSend('deployBuilderDrone', { systemId: targetId, droneId }).then((res) => {
+      if (res.ok) {
+        const dest = systemById(state, targetId);
+        toast(`Builder drone dispatched to ${dest?.name ?? targetId} — ETA ${Math.ceil((res.etaMs ?? 0) / 1000)}s`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = deployBuilderDrone(state, targetId, selectedBuilderDroneId);
   if (res.ok) {
     const dest = systemById(state, targetId);
@@ -932,6 +1919,14 @@ function doOrderBuilderDroneTravel(targetId) {
 function doBuildOutpost(planetId) {
   const access = tutorialGuard('outpost');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    const systemId = viewedSystemId;
+    coopSend('buildOutpost', { systemId, planetId }).then((res) => {
+      if (res.ok) toast(`Outpost established on ${findPlanet(state, systemId, planetId)?.name ?? planetId}`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = buildOutpost(state, viewedSystemId, planetId);
   if (res.ok) {
     toast(`Outpost established on ${findPlanet(state, viewedSystemId, planetId).name}`, 'ok');
@@ -945,6 +1940,14 @@ function doBuildOutpost(planetId) {
 function doBuildShipyard(planetId) {
   const access = tutorialGuard('shipyard');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    const systemId = viewedSystemId;
+    coopSend('buildShipyard', { systemId, planetId }).then((res) => {
+      if (res.ok) toast(`Shipyard established on ${findPlanet(state, systemId, planetId)?.name ?? planetId}`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = buildShipyard(state, viewedSystemId, planetId);
   if (res.ok) {
     toast(`Shipyard established on ${findPlanet(state, viewedSystemId, planetId).name}`, 'ok');
@@ -957,6 +1960,13 @@ function doBuildShipyard(planetId) {
 function doQueueScout(shipyardId) {
   const access = tutorialGuard('scout_queue');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('queueScout', { shipyardId, systemId: viewedSystemId }).then((res) => {
+      if (res.ok) toast(`Scout queued (${SCOUT_BUILD_MS / 1000}s)`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = queueScout(state, shipyardId, viewedSystemId);
   if (res.ok) {
     toast(`Scout queued (${SCOUT_BUILD_MS / 1000}s)`, 'ok');
@@ -969,6 +1979,13 @@ function doQueueScout(shipyardId) {
 function doQueueHull(shipyardId, hull) {
   const access = tutorialGuard(hull === 'scout' ? 'scout_queue' : 'combat_ship_queue');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('queueHull', { shipyardId, systemId: viewedSystemId, hull }).then((res) => {
+      if (res.ok) toast(`${hull} queued`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = queueHull(state, shipyardId, viewedSystemId, hull);
   if (res.ok) toast(`${hull} queued`, 'ok');
   else toast(res.reason, 'error');
@@ -976,6 +1993,15 @@ function doQueueHull(shipyardId, hull) {
 }
 
 function doDispatchShip(shipId, starId) {
+  if (coop.isActive()) {
+    coopSend('orderShipTravel', { shipId, targetId: starId }).then((res) => {
+      if (res.ok) {
+        const dest = systemById(state, starId);
+        toast(`Ship dispatched to ${dest?.name ?? starId}`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = orderShipTravel(state, shipId, starId);
   if (res.ok) {
     const dest = systemById(state, starId);
@@ -992,6 +2018,13 @@ function doBuildFoundry(planetId = selection) {
     ?? system?.bodies.find((p) => p.type === 'habitable')?.id
     ?? system?.bodies[0]?.id;
   const planet = resolvedId ? findPlanet(state, viewedSystemId, resolvedId) : null;
+  if (coop.isActive()) {
+    coopSend('buildFoundry', { systemId: viewedSystemId, planetId: resolvedId }).then((res) => {
+      if (res.ok) toast(`Sail Foundry ring established at ${planet?.name ?? 'planet'}`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = buildFoundry(state, viewedSystemId, resolvedId);
   if (res.ok) {
     toast(`Sail Foundry ring established at ${planet?.name ?? 'planet'}`, 'ok');
@@ -1004,6 +2037,13 @@ function doBuildFoundry(planetId = selection) {
 function doBuildLauncher(bodyId) {
   const access = tutorialGuard('dyson');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('buildLauncher', { systemId: viewedSystemId, bodyId }).then((res) => {
+      if (res.ok) toast('Dyson launcher deployed', 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = buildLauncher(state, viewedSystemId, bodyId);
   if (res.ok) toast('Dyson launcher deployed', 'ok');
   else toast(res.reason, 'error');
@@ -1013,6 +2053,15 @@ function doBuildLauncher(bodyId) {
 function doDeployBuilderDrone(systemId) {
   const access = tutorialGuard('operations');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('deployBuilderDrone', { systemId }).then((res) => {
+      if (res.ok) {
+        const name = systemById(state, res.systemId ?? systemId)?.name ?? systemId;
+        toast(`Builder drone deployed to ${name}`, 'ok');
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = deployBuilderDrone(state, systemId);
   if (res.ok) {
     const name = systemById(state, res.systemId)?.name ?? res.systemId;
@@ -1024,6 +2073,12 @@ function doDeployBuilderDrone(systemId) {
 }
 
 function doCancelBuilderDrone(droneId) {
+  if (coop.isActive()) {
+    coopSend('cancelBuilderDrone', { droneId }).then((res) => {
+      toast(res.ok ? 'Builder drone recalled' : (res.reason || 'Failed'), res.ok ? 'ok' : 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = cancelBuilderDrone(state, droneId);
   toast(res.ok ? 'Builder drone recalled' : res.reason, res.ok ? 'ok' : 'error');
   return res;
@@ -1032,6 +2087,18 @@ function doCancelBuilderDrone(droneId) {
 function doEnterWormhole(opts = {}) {
   const access = tutorialGuard('wormholes');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('enterWormhole', {
+      targetGalaxyId: opts.targetGalaxyId ?? null,
+      forceAnchored: !!opts.forceAnchored,
+    }).then((res) => {
+      if (res.ok) {
+        toast(`Wormhole transit — ETA ${Math.ceil((res.etaMs ?? 0) / 1000)}s`, 'ok');
+        audioEngine.playCue('navigation.wormhole', { force: true });
+      } else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = orderWormholeTravel(state, opts);
   if (res.ok) {
     toast(`Wormhole transit — ETA ${Math.ceil(res.etaMs / 1000)}s`, 'ok');
@@ -1044,6 +2111,13 @@ function doEnterWormhole(opts = {}) {
 function doBuildWormholeAnchor(targetGalaxyId) {
   const access = tutorialGuard('wormholes');
   if (!access.ok) return access;
+  if (coop.isActive()) {
+    coopSend('buildWormholeAnchor', { targetGalaxyId }).then((res) => {
+      if (res.ok) toast(`Wormhole anchored to ${state.galaxies[targetGalaxyId]?.name ?? targetGalaxyId}`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const res = buildWormholeAnchor(state, targetGalaxyId);
   if (res.ok) toast(`Wormhole anchored to ${state.galaxies[targetGalaxyId]?.name ?? targetGalaxyId}`, 'ok');
   else toast(res.reason, 'error');
@@ -1051,12 +2125,20 @@ function doBuildWormholeAnchor(targetGalaxyId) {
 }
 
 async function doSaveSlot(slot) {
+  if (coop.isActive()) {
+    toast('Leave co-op before saving a local slot', 'error');
+    return { ok: false, error: 'coop-active' };
+  }
   const res = await writeSlot(slot, state);
   toast(res.ok ? `Saved to ${slot}` : `Save failed: ${res.error}`, res.ok ? 'ok' : 'error');
   return res;
 }
 
 async function doLoadSlot(slot) {
+  if (coop.isActive()) {
+    toast('Leave co-op before loading a local save', 'error');
+    return { ok: false, error: 'coop-active' };
+  }
   const res = await readSlot(slot);
   if (res.ok) {
     doImportState(res.state);
@@ -1266,6 +2348,14 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
     groupId: group?.id ?? null,
     subjectIds,
   };
+  if (coop.isActive()) {
+    // Host owns the battle sim; unit ids match our snapshot copy.
+    coopSend('issueTacticalOrder', { systemId, order: canonical }).then((res) => {
+      if (res.ok) toast(`Order: ${canonical.type.replaceAll('_', ' ')}`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+    });
+    return { ok: true, pending: true };
+  }
   const result = applyFleetOrder(battle, canonical, {
     time: state.time,
     units: battle.units,
@@ -1284,6 +2374,13 @@ function doIssueTacticalOrder(order, groupId = selectedBattleGroupId) {
 }
 
 function doCancelTacticalRetreat() {
+  if (coop.isActive()) {
+    return coopSend('cancelTacticalRetreat', { systemId: viewedSystemId }).then((res) => {
+      if (res.ok) toast('Withdrawal cancelled', 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+      return res;
+    });
+  }
   const result = cancelTacticalRetreat(state, viewedSystemId);
   if (result.ok) toast('Withdrawal cancelled', 'ok');
   else toast(result.reason, 'error');
@@ -1295,12 +2392,25 @@ function doSetCombatCinema(enabled) {
 }
 
 function doSetCombatDoctrine(doctrine) {
+  if (coop.isActive()) {
+    return coopSend('setCombatDoctrine', { doctrine, systemId: viewedSystemId }).then((res) => {
+      if (res.ok) toast(`Doctrine: ${normalizeDoctrine(doctrine).replaceAll('_', ' ')}`, 'ok');
+      else if (res.reason) toast(res.reason, 'error');
+      return res;
+    });
+  }
   const result = setCombatDoctrine(state, doctrine, viewedSystemId);
   if (result.ok) toast(`Doctrine: ${normalizeDoctrine(doctrine).replaceAll('_', ' ')}`, 'ok');
   return result;
 }
 
 function doSetAdvancedTactics(enabled) {
+  if (coop.isActive()) {
+    return coopSend('setAdvancedTactics', { enabled, systemId: viewedSystemId }).then((res) => {
+      if (!enabled) combatCommandMode = null;
+      return res;
+    });
+  }
   const result = setAdvancedTactics(state, enabled, viewedSystemId);
   if (!enabled) {
     const battle = getBattleState(state, viewedSystemId);
@@ -1311,6 +2421,13 @@ function doSetAdvancedTactics(enabled) {
     combatCommandMode = null;
   }
   return result;
+}
+
+function doSetCombatPriority(priority) {
+  if (coop.isActive()) {
+    return coopSend('setCombatPriority', { priority, systemId: viewedSystemId });
+  }
+  return setCombatFleetPriority(state, priority, viewedSystemId);
 }
 
 function doRecommendCombatFormation() {
@@ -1402,9 +2519,29 @@ const { updateUi, closeSidePanel } = initUi({
   doSelectBuilderDrone,
   getSelectedBattleGroupId: () => selectedBattleGroupId,
   doSelectBattleGroup,
-  createBattleGroup: () => createBattleGroup(state),
+  createBattleGroup: () => {
+    if (coop.isActive()) {
+      coopSend('createBattleGroup').then((res) => {
+        if (res.ok && res.groupId) selectedBattleGroupId = res.groupId;
+      });
+      return null; // fleet appears via the post-command snapshot
+    }
+    return createBattleGroup(state);
+  },
   deleteBattleGroup: doDeleteBattleGroup,
-  assignShipToGroup: (shipId, groupId) => assignShipToGroup(state, shipId, groupId),
+  assignShipToGroup: (shipId, groupId) => {
+    if (coop.isActive()) {
+      coopSend('assignShipToGroup', { shipId, groupId }).then((res) => {
+        if (!res.ok && res.reason) toast(res.reason, 'error');
+      });
+      return { ok: true, pending: true };
+    }
+    return assignShipToGroup(state, shipId, groupId);
+  },
+  coopActive: () => coop.isActive(),
+  coopRun: (command, payload = {}) => coopSend(command, payload),
+  getCoopPlayers: () => coopPlayers,
+  getCoopPlayerId: () => coop.getPlayerId(),
   doBuildOutpost,
   doBuildShipyard,
   doBuildFoundry,
@@ -1453,7 +2590,7 @@ const { updateUi, closeSidePanel } = initUi({
   validateSolRecommendation: validateSolRecommendationForGame,
   issueTacticalOrder: doIssueTacticalOrder,
   setCombatDoctrine: doSetCombatDoctrine,
-  setCombatPriority: (priority) => setCombatFleetPriority(state, priority, viewedSystemId),
+  setCombatPriority: doSetCombatPriority,
   setAdvancedTactics: doSetAdvancedTactics,
   getFlagshipControlStatus: () => flagshipControlStatus(state),
   getCombatSelection: () => [...combatSelectionIds],
@@ -1469,6 +2606,10 @@ const { updateUi, closeSidePanel } = initUi({
   followConvoy: doFollowConvoy,
   getBootPhase,
   setBootPhase,
+  joinCoop: (opts) => joinCoopSession(opts),
+  leaveCoop: (opts) => leaveCoopSession(opts),
+  returnToTitle: (opts) => returnToTitleFromPlay(opts),
+  parkTitleSeed: () => parkTitleSeedWorld(),
 });
 
 attachInput(canvas, {
@@ -1500,24 +2641,40 @@ attachInput(canvas, {
   onBattleGroupSelect: doSelectBattleGroup,
   onStarView: doViewSystem,
   onScoutSelect: doSelectScout,
-  onFollowRequest: () => { follow.enabled = true; },
+  onFollowRequest: () => {
+    follow.enabled = true;
+    follow.allyPilotId = null;
+  },
   onToggleOrbit: doToggleOrbit,
   onGalaxyStarClick: (starId) => { galaxyTargetStarId = starId; },
   getHelioclastTargetingMode: () => helioclastTargetingMode,
   onHelioclastTarget: doHelioclastTarget,
   onHelioclastCancelTargeting: () => setHelioclastTargetingMode(null),
   onBuilderDroneDeployClick: doDeployBuilderDrone,
+  onMapPing: (opts) => doMapPing(opts),
 });
 
 window.__devLastResult = null;
 let devPanel = null;
 
 function runDevAction(action, params = {}) {
-  const result = devAction(state, action, {
+  const payload = {
     ...params,
     systemId: params.systemId ?? viewedSystemId,
     planetId: params.planetId ?? selection,
-  });
+  };
+  if (coop.isActive()) {
+    // Host is authority — local mutates would desync alpha/beta views.
+    return coopSend('devAction', { action, ...payload }).then((res) => {
+      window.__devLastResult = res;
+      if (res?.ok) {
+        checkFlagshipArrival();
+        ensureSelectedScout();
+      }
+      return res;
+    });
+  }
+  const result = devAction(state, action, payload);
   window.__devLastResult = result;
   if (result.ok) {
     checkFlagshipArrival();
@@ -1526,7 +2683,26 @@ function runDevAction(action, params = {}) {
   return result;
 }
 
-if (import.meta.env.DEV) {
+/** Keep the backtick Dev Panel on shipped CT builds until we lock it down. */
+function shouldEnableDevPanel() {
+  if (import.meta.env.DEV) return true;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('dev');
+    if (q === '0' || q === 'false') return false;
+    if (q === '1' || q === 'true') {
+      try { localStorage.setItem('gs-dev-panel', '1'); } catch { /* ignore */ }
+      return true;
+    }
+    const stored = localStorage.getItem('gs-dev-panel');
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+  } catch { /* ignore */ }
+  // Default ON for home testing builds; set localStorage gs-dev-panel=0 to disable.
+  return true;
+}
+
+if (shouldEnableDevPanel()) {
   devPanel = initDevPanel({
     getState: () => state,
     getViewedSystemId: () => viewedSystemId,
@@ -1555,10 +2731,12 @@ if (import.meta.env.DEV) {
 }
 
 if (window.gameSave?.onExitSaveRequest) {
-  window.gameSave.onExitSaveRequest(() => writeSlot('exit-save', state));
+  window.gameSave.onExitSaveRequest(() => {
+    if (!coop.isActive()) writeSlot('exit-save', state);
+  });
 } else {
   window.addEventListener('beforeunload', () => {
-    writeSlot('autosave', state);
+    if (!coop.isActive()) writeSlot('autosave', state);
   });
 }
 
@@ -1567,23 +2745,58 @@ if (window.gameSave?.onExitSaveRequest) {
 let lastFrame = performance.now();
 let accumulator = 0;
 let lastAutosave = performance.now();
+let lastUiAt = 0;
+// HUD refresh is expensive; keep sim/render at full rate, throttle DOM updates.
+const SOLO_UI_INTERVAL_MS = 50;   // ~20 Hz HUD — keeps Solo smooth on the CT
+const COOP_UI_INTERVAL_MS = 100;  // ~10 Hz — shared-world clients
+const MAX_CATCHUP_TICKS = 3;      // avoid spiral-of-death when a frame hitch accumulates sim work
+let frameCount = 0;
+let fpsWindowStart = performance.now();
+let lastFps = 0;
+
+function scheduleNextFrame() {
+  // Background co-op tabs still ate CPU at 60fps; throttle them so the focused tab stays usable.
+  if (coop.isActive() && typeof document !== 'undefined' && document.hidden) {
+    setTimeout(() => frame(performance.now()), 250);
+    return;
+  }
+  requestAnimationFrame(frame);
+}
+
+function maybeUpdateUi(now) {
+  const interval = coop.isActive() ? COOP_UI_INTERVAL_MS : SOLO_UI_INTERVAL_MS;
+  if (now - lastUiAt < interval) return;
+  lastUiAt = now;
+  updateUi();
+}
+
+function noteFrameFps(now) {
+  frameCount += 1;
+  const elapsed = now - fpsWindowStart;
+  if (elapsed >= 1000) {
+    lastFps = Math.round((frameCount * 1000) / elapsed);
+    frameCount = 0;
+    fpsWindowStart = now;
+  }
+}
 
 function frame(now) {
+  noteFrameFps(now);
   const dt = Math.min(now - lastFrame, 250);
   lastFrame = now;
   const phase = getBootPhase();
 
   if (phase === BOOT_PHASE.TITLE) {
     drawTitleBackground(ctx2d, canvas, now);
-    updateUi();
+    maybeUpdateUi(now);
     audioDirector.syncFrame({ state, view, viewedSystemId, phase, now, cameraX: camera.x });
-    requestAnimationFrame(frame);
+    scheduleNextFrame();
     return;
   }
 
   if (phase === BOOT_PHASE.WARP_INTRO) {
     drawWarpIntro(ctx2d, canvas, now);
-    updateUi();
+    maybeUpdateUi(now);
     audioDirector.syncFrame({
       state,
       view,
@@ -1593,13 +2806,27 @@ function frame(now) {
       now,
       cameraX: camera.x,
     });
-    requestAnimationFrame(frame);
+    scheduleNextFrame();
     return;
   }
 
-  if (!state.paused) state.meta.playTimeMs += dt;
-  const tickEvents = step(state, accumulator + dt);
-  accumulator = tickEvents.remainingMs ?? 0;
+  if (!coop.isActive() && !state.paused) state.meta.playTimeMs += dt;
+  const tickEvents = coop.isActive()
+    ? takeCoopTickEvents()
+    : step(state, accumulator + dt, { maxTicks: MAX_CATCHUP_TICKS });
+  accumulator = coop.isActive() ? 0 : (tickEvents.remainingMs ?? 0);
+
+  if (coop.isActive()) {
+    handleCoopMeshEvents(tickEvents.coopMeshEvents);
+  }
+
+  // Co-op clients do not run step(); advance presentation clock + dead-reckon pose
+  // so planets/flagship stay smooth between authority summaries.
+  if (coop.isActive() && !state.paused) {
+    advanceCoopClock(dt);
+    advanceCoopFlagshipVisual(state, dt);
+    advanceCoopCombatVisual(state, dt);
+  }
 
   for (const ready of tickEvents.prodReady ?? []) {
     const name = systemById(state, ready.systemId)?.name ?? ready.systemId;
@@ -1741,9 +2968,13 @@ function frame(now) {
   ensureSelectedScout();
   audioDirector.syncFrame({ state, view, viewedSystemId, phase, tickEvents, now, cameraX: camera.x });
 
-  if (!state.paused && now - lastAutosave >= AUTOSAVE_INTERVAL_MS) {
+  if (!coop.isActive() && !state.paused && now - lastAutosave >= AUTOSAVE_INTERVAL_MS) {
     lastAutosave = now;
-    writeSlot('autosave', state);
+    const snapshot = state;
+    const schedule = typeof requestIdleCallback === 'function'
+      ? (fn) => requestIdleCallback(() => fn(), { timeout: 2500 })
+      : (fn) => setTimeout(fn, 0);
+    schedule(() => { writeSlot('autosave', snapshot); });
   }
 
   if (view === 'galaxy') {
@@ -1767,14 +2998,21 @@ function frame(now) {
       galaxyTargetStarId,
     );
   } else {
-    markTutorialSystemViewed(state);
+    if (state.campaign?.mode === 'tutorial') markTutorialSystemViewed(state);
+    if (follow.enabled && follow.allyPilotId) {
+      const ally = (state.playerFlagships ?? []).find((p) => p.pilotId === follow.allyPilotId);
+      if (ally?.systemId && ally.systemId !== viewedSystemId && !ally.transit) {
+        viewedSystemId = ally.systemId;
+        snapCameraTo(ally.x ?? 0, ally.y ?? 0);
+      }
+    }
     updateCombatCinemaCamera(state, viewedSystemId, dt);
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator, combatOverlayForRender());
   }
-  updateUi();
+  maybeUpdateUi(now);
   if (devPanel?.isOpen()) devPanel.updateDevPanel();
-  requestAnimationFrame(frame);
+  scheduleNextFrame();
 }
 requestAnimationFrame(frame);
 
@@ -2461,7 +3699,82 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   return state;
 };
 
+async function joinCoopSession(opts = {}) {
+  if (coopJoinInFlight) {
+    return { ok: false, reason: 'Already joining' };
+  }
+  coopJoinInFlight = true;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    let password = opts.password ?? params.get('coopPass');
+    if (password == null && opts.promptPassword) {
+      password = window.prompt('Co-op password (leave blank if none)', '') ?? '';
+    }
+    password = password ?? '';
+
+    let playerName = opts.playerName ?? params.get('coopName');
+    if (!playerName && opts.promptPassword) {
+      playerName = window.prompt('Pilot callsign', 'pilot') ?? 'pilot';
+    }
+    playerName = String(playerName || 'pilot').slice(0, 32) || 'pilot';
+
+    toast(`Connecting to ${opts.url || defaultWsUrl()}…`, 'info');
+    coopAwaitingFirstFocus = true;
+    coopClock.ready = false;
+    try {
+      await coop.connect({
+        url: opts.url,
+        password,
+        playerName,
+      });
+    } catch (err) {
+      coopAwaitingFirstFocus = false;
+      resetClientCoopPresentation();
+      toast(err.message || 'Co-op connect failed', 'error');
+      return { ok: false, reason: err.message };
+    }
+
+    try { localStorage.setItem('gs.coop.callsign', playerName); } catch { /* private mode */ }
+
+    try {
+      // Welcome snapshot is queued during connect — apply it now so we don't keep the
+      // title-screen world's sys-N id / display pose (ids collide across seeds).
+      if (!flushPendingCoopSnapshot({ forceFocus: true })) {
+        syncCoopViewToFlagship({ force: true });
+      }
+    } catch (err) {
+      coop.disconnect();
+      resetClientCoopPresentation();
+      parkTitleSeedWorld();
+      const reason = err?.message || 'Failed to apply co-op world';
+      toast(reason, 'error');
+      return { ok: false, reason };
+    }
+
+    if (!coop.isActive()) {
+      resetClientCoopPresentation();
+      parkTitleSeedWorld();
+      return { ok: false, reason: 'Co-op session ended during join' };
+    }
+
+    document.getElementById('title-screen')?.classList.add('hidden');
+    setBootPhase(BOOT_PHASE.PLAYING);
+    selection = null;
+    updateCoopBanner();
+    stripCoopQueryParams();
+    toast(`Co-op online as ${coop.getPlayerId()} — your flagship, shared empire vs AI`, 'ok');
+    // Each browser tab needs its own gesture unlock for audio.
+    audioEngine.unlock?.().catch?.(() => {});
+    return { ok: true };
+  } finally {
+    coopJoinInFlight = false;
+  }
+}
+
 function doStartNewGame(opts = {}) {
+  if (coop.isActive()) {
+    leaveCoopSession({ returnToTitle: false, silent: true });
+  }
   window.__newGame(DEFAULT_SEED, opts);
   view = 'system';
   viewedSystemId = state.stronghold;
@@ -2723,3 +4036,12 @@ window.__destroyFlagship = () => {
   state.flagship.hp = 0;
   return { ok: true };
 };
+
+window.__joinCoop = (opts) => joinCoopSession(opts ?? { promptPassword: true });
+window.__coopStatus = () => ({ ...coopStatus, active: coop.isActive(), summary: coop.getSummary() });
+window.__fps = () => lastFps;
+
+if (coopQueryEnabled()) {
+  // Auto-join when opened as http://localhost:5173/?coop=1 (or ?coop=2, ?coop=true, …)
+  queueMicrotask(() => joinCoopSession({ promptPassword: false }));
+}

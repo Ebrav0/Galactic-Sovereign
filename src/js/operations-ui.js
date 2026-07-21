@@ -602,7 +602,16 @@ function notify(instance, message, kind = '') {
   if (typeof instance.options.toast === 'function') instance.options.toast(message, kind);
 }
 
-function safeAction(instance, action, successMessage) {
+function safeAction(instance, action, successMessage, coopSpec = null) {
+  if (coopSpec?.command && typeof instance.options?.coopRun === 'function') {
+    instance.options.coopRun(coopSpec.command, coopSpec.payload ?? {}).then((result) => {
+      notify(instance, result?.ok ? successMessage(result) : (result?.reason ?? 'Order failed'), result?.ok ? 'ok' : 'error');
+      instance.refresh();
+    }).catch((error) => {
+      notify(instance, error?.message ?? String(error), 'error');
+    });
+    return { ok: true, pending: true };
+  }
   try {
     const result = action();
     notify(instance, result?.ok ? successMessage(result) : (result?.reason ?? 'Order failed'), result?.ok ? 'ok' : 'error');
@@ -670,6 +679,7 @@ function renderOrderCard(instance, order) {
       instance,
       () => resumeBulkProductionOrder(instance.state, order.id),
       () => `${order.name} resumed`,
+      { command: 'resumeBulkProductionOrder', payload: { orderId: order.id } },
     ));
     actions.appendChild(resume);
   } else if (order.storedStatus === 'active') {
@@ -679,6 +689,7 @@ function renderOrderCard(instance, order) {
       instance,
       () => pauseBulkProductionOrder(instance.state, order.id),
       () => `${order.name} paused`,
+      { command: 'pauseBulkProductionOrder', payload: { orderId: order.id } },
     ));
     actions.appendChild(pause);
   }
@@ -689,6 +700,7 @@ function renderOrderCard(instance, order) {
       instance,
       () => cancelBulkProductionOrder(instance.state, order.id),
       (result) => `${order.name} cancelled · ${formatCredits(result.refund ?? result.refunded ?? 0)} refunded`,
+      { command: 'cancelBulkProductionOrder', payload: { orderId: order.id } },
     ));
     actions.appendChild(cancel);
   }
@@ -758,6 +770,7 @@ function renderCampaignCard(instance, campaign) {
       instance,
       () => resumeExpansionCampaign(instance.state, campaign.id),
       () => `${campaign.name} resumed`,
+      { command: 'resumeExpansionCampaign', payload: { campaignId: campaign.id } },
     ));
     actions.appendChild(resume);
   } else if (['active', 'cancelling'].includes(campaign.status)) {
@@ -767,6 +780,7 @@ function renderCampaignCard(instance, campaign) {
       instance,
       () => pauseExpansionCampaign(instance.state, campaign.id),
       () => `${campaign.name} paused`,
+      { command: 'pauseExpansionCampaign', payload: { campaignId: campaign.id } },
     ));
     actions.appendChild(pause);
   }
@@ -784,6 +798,7 @@ function renderCampaignCard(instance, campaign) {
       instance,
       () => cancelExpansionCampaign(instance.state, campaign.id, cancelMode.value),
       () => `${campaign.name} cancellation issued`,
+      { command: 'cancelExpansionCampaign', payload: { campaignId: campaign.id, mode: cancelMode.value } },
     ));
     actions.append(cancelMode, cancel);
   }
@@ -1016,6 +1031,18 @@ function buildPanel(container, state, options) {
       renderBulkPreview(refs.bulkPreview, null, errors);
       return;
     }
+    if (typeof instance.options?.coopRun === 'function') {
+      instance.options.coopRun('createBulkProductionOrder', { spec }).then((result) => {
+        renderBulkPreview(
+          refs.bulkPreview,
+          result.preview ?? null,
+          result.preview ? [] : [result.reason ?? 'Bulk order failed'],
+        );
+        notify(instance, result.ok ? `${result.order?.name ?? 'Bulk order'} issued as one aggregate order` : result.reason, result.ok ? 'ok' : 'error');
+        instance.refresh();
+      });
+      return;
+    }
     let result;
     try { result = createBulkProductionOrder(instance.state, spec); } catch (error) {
       result = { ok: false, reason: error.message };
@@ -1136,6 +1163,18 @@ function buildPanel(container, state, options) {
     const { spec, errors } = buildCampaignSpec(instance);
     if (errors.length > 0) {
       renderCampaignPreview(refs.campaignPreview, null, errors);
+      return;
+    }
+    if (typeof instance.options?.coopRun === 'function') {
+      instance.options.coopRun('createExpansionCampaign', { spec, options: {} }).then((result) => {
+        renderCampaignPreview(
+          refs.campaignPreview,
+          result.preview ?? null,
+          result.preview ? [] : [result.reason ?? 'Campaign launch failed'],
+        );
+        notify(instance, result.ok ? `${result.campaign?.name ?? 'Campaign'} launched` : result.reason, result.ok ? 'ok' : 'error');
+        instance.refresh();
+      });
       return;
     }
     let result;

@@ -862,6 +862,7 @@ export function buildBodyStructure(state, systemId, bodyId, type, opts = {}) {
       bodyId: def.starNode ? null : bodyId,
       creditCost: def.cost,
       durationMs: STRUCTURE_BUILD_MS[type] ?? 24000,
+      ownerPlayerId: opts.ownerPlayerId,
       extraStructureFields: {
         placement: def.placement,
         level: 1,

@@ -88,7 +88,7 @@ function tickOnce(state) {
   const aiArrivals = tickAiShips(state, (destId, ship) => handleArrival(state, destId, aiShipFactionId(state, ship)));
   const pirateArrivals = tickPirates(state, (destId) => handleArrival(state, destId));
   const pirateInterdictions = tickPirateInterdictions(state, (destId) => handleArrival(state, destId));
-  if (!state.flagship.wormholeTransit) tickFlagship(state);
+  tickFlagship(state); // per-pilot roster; wormhole-transiting ships skip inside
   const flagshipAnchorEvents = syncFlagshipAnchoredFleets(state);
   const battleEvents = tickCombat(state);
   const bodyStructureEvents = tickBodyStructureEffects(state);
@@ -110,7 +110,7 @@ function tickOnce(state) {
   };
 }
 
-export function step(state, accumulatedMs) {
+export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
   if (state.paused) {
     return {
       captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], aiArrivals: [], pirateArrivals: [], pirateInterdictions: [],
@@ -138,7 +138,8 @@ export function step(state, accumulatedMs) {
   const bulkDeliveryEvents = [];
   const strategicOperationEvents = [];
   const diplomacyEvents = [];
-  while (remaining >= TICK_MS) {
+  let ticks = 0;
+  while (remaining >= TICK_MS && ticks < maxTicks) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
     scoutArrivals.push(...events.scoutArrivals);
@@ -158,6 +159,11 @@ export function step(state, accumulatedMs) {
     if (events.capture) captures.push(events.capture);
     if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
     remaining -= TICK_MS;
+    ticks += 1;
+  }
+  // If we hit the catch-up cap, discard the backlog so hitch cascades cannot compound.
+  if (Number.isFinite(maxTicks) && ticks >= maxTicks && remaining >= TICK_MS) {
+    remaining %= TICK_MS;
   }
   return {
     captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents,

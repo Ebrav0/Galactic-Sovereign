@@ -157,14 +157,26 @@ export function orderWormholeTravel(state, { targetGalaxyId = null, forceAnchore
 }
 
 export function tickWormholeTransit(state) {
-  const wt = state.flagship?.wormholeTransit;
+  // Co-op: any pilot's flagship may be mid-jump, not just the locally bound one.
+  const roster = Array.isArray(state.playerFlagships) && state.playerFlagships.length
+    ? state.playerFlagships
+    : (state.flagship ? [state.flagship] : []);
+  for (const f of roster) {
+    const arrival = tickShipWormholeTransit(state, f);
+    if (arrival) return arrival;
+  }
+  return null;
+}
+
+function tickShipWormholeTransit(state, f) {
+  const wt = f?.wormholeTransit;
   if (!wt) return null;
-  const status = wormholeTransitStatus(state);
-  if (!status.complete) return null;
+  const elapsed = state.time - wt.startTime;
+  if (elapsed < wt.durationMs) return null;
 
   const toWh = state.wormholes[wt.toWh];
   if (!toWh) {
-    state.flagship.wormholeTransit = null;
+    f.wormholeTransit = null;
     return null;
   }
 
@@ -177,14 +189,14 @@ export function tickWormholeTransit(state) {
   state.wormholes[wt.fromWh].discovered = true;
   state.wormholes[wt.toWh].discovered = true;
 
-  state.flagship.galaxyId = toGalaxyId;
-  state.flagship.systemId = BLACK_HOLE_ID;
-  state.flagship.x = 0;
-  state.flagship.y = 0;
-  state.flagship.vx = 0;
-  state.flagship.vy = 0;
-  state.flagship.transit = null;
-  state.flagship.wormholeTransit = null;
+  f.galaxyId = toGalaxyId;
+  f.systemId = BLACK_HOLE_ID;
+  f.x = 0;
+  f.y = 0;
+  f.vx = 0;
+  f.vy = 0;
+  f.transit = null;
+  f.wormholeTransit = null;
 
   return {
     fromGalaxyId,

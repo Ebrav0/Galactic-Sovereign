@@ -78,6 +78,8 @@ export function buildHeroFlagship(state, rallyStarId = null, opts = {}) {
 
   const hero = {
     id: `hero-${nextHeroId++}`,
+    // Personal capital: the commissioning pilot alone commands this hero.
+    ownerPlayerId: opts.ownerPlayerId ?? null,
     galaxyId: state.activeGalaxyId,
     systemId: check.cradleSystemId,
     x: 120,
@@ -197,6 +199,7 @@ export function heroFlagshipsSummary(state) {
     .filter((h) => h.galaxyId === state.activeGalaxyId)
     .map((h) => ({
       id: h.id,
+      ownerPlayerId: h.ownerPlayerId ?? null,
       systemId: h.systemId,
       hp: h.hp,
       maxHp: h.maxHp,

@@ -125,7 +125,16 @@ export const AUDIO_CATALOG = Object.freeze({
 
   'ambience.title': { bus: 'ambience', files: mix('ambience_drone_dark.mp3', 'ambience_bass_suspense.mp3'), gain: 0.3, loop: true },
   'ambience.command': { bus: 'ambience', files: mix('ambience_high_tech.mp3', 'ambience_engine_hum.mp3'), gain: 0.22, loop: true },
-  'ambience.system': { bus: 'ambience', files: [...mix('ambience_engine_hum.mp3'), ...duck('sfx_19a.mp3', 'sfx_19b.mp3')], gain: 0.24, loop: true },
+  // Loop bed only — short SFX must NOT be in the loop file pool (startLoop picks one file and loops it forever).
+  'ambience.system': { bus: 'ambience', files: mix('ambience_engine_hum.mp3'), gain: 0.22, loop: true },
+  'ambience.system_telemetry': {
+    bus: 'ambience',
+    files: duck('sfx_19a.mp3', 'sfx_19b.mp3'),
+    gain: 0.08,
+    rateMin: 0.92,
+    rateMax: 1.08,
+    cooldownMs: 1800,
+  },
   'ambience.dyson': { bus: 'ambience', files: mix('ambience_bass_suspense.mp3', 'ambience_drone_dark.mp3'), gain: 0.26, rateMin: 0.85, rateMax: 1, loop: true },
 
   // Flagship drive bed — quiet Kenney low-engine hum; gain/rate nudged by thrust+speed.

@@ -152,6 +152,24 @@ export function initDevPanel(ctx) {
     const systemId = params.systemId ?? getViewedSystemId();
     const planetId = params.planetId ?? getSelection();
     const result = runAction(action, { ...params, systemId, planetId });
+    if (result && typeof result.then === 'function') {
+      statusEl.textContent = `${action} — sending to host…`;
+      statusEl.classList.remove('dev-status--error');
+      result.then((res) => {
+        setStatus(res);
+        if (res?.ok) {
+          toast(`${action} — OK`, 'ok');
+          updateDevPanel(true);
+        } else {
+          toast(res?.reason || 'Dev action failed', 'error');
+        }
+      }).catch((err) => {
+        const fail = { ok: false, reason: err?.message || 'Dev action failed' };
+        setStatus(fail);
+        toast(fail.reason, 'error');
+      });
+      return result;
+    }
     setStatus(result);
     if (result.ok) {
       const d = result.details;
@@ -230,11 +248,28 @@ export function initDevPanel(ctx) {
         toast(result?.reason ?? 'Could not mark graduated', 'error');
         return;
       }
+      setTutorialSessionOverride(true);
+      const game = await Promise.resolve(runAction('forceGraduate', {}));
+      if (!game?.ok) {
+        setStatus({
+          ok: false,
+          code: 'TUTORIAL_GRADUATE',
+          reason: game?.reason ?? 'Could not end tutorial run',
+          details: { profile: 'graduated' },
+        });
+        toast(game?.reason ?? 'Profile graduated, but current run could not unlock', 'error');
+        updateDevPanel(true);
+        return;
+      }
       setStatus({
         ok: true,
-        details: { profile: 'graduated', at: result.profile?.tutorialGraduatedAt ?? null },
+        details: {
+          profile: 'graduated',
+          at: result.profile?.tutorialGraduatedAt ?? null,
+          mode: game.details?.mode ?? 'sandbox',
+        },
       });
-      toast('Academy marked graduated — campaign modes unlocked', 'ok');
+      toast('Tutorial ended — Academy complete, feature gates open', 'ok');
       updateDevPanel(true);
     } catch (error) {
       setStatus({

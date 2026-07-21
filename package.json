@@ -9,7 +9,13 @@
     "electron": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:standalone": "vite build --config vite.standalone.config.js",
     "build": "npm run build:standalone && vite build && node scripts/write-sites-worker.mjs",
-    "electron:prod": "npm run build && electron ."
+    "electron:prod": "npm run build && electron .",
+    "coop": "node server/coop-host.mjs",
+    "coop:smoke": "node scripts/coop-smoke.mjs",
+    "coop:gate": "node scripts/coop-gate.mjs",
+    "coop:ship": "node scripts/coop-ship-readiness.mjs",
+    "coop:fps": "node scripts/coop-fps-probe.mjs",
+    "coop:reset": "GS_COOP_RESET=1 node server/coop-host.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.3",
@@ -19,5 +25,8 @@
     "playwright": "^1.61.1",
     "vite": "^8.1.3",
     "wait-on": "^9.0.10"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
   }
 }

@@ -106,7 +106,7 @@ import {
   drawResearchStationLabel,
   researchStationLabelAnchor,
 } from './research-render.js';
-import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual } from './flagship.js';
+import { getFlagshipInput, getFlagshipDisplayPose, transitStatus, isFlagshipOrbiting, getFlagshipOrbitVisual, flagshipTransitStatusFor, ensurePlayerFlagships } from './flagship.js';
 import { flagshipWingPoses } from './flagship-wing.js';
 import { ensureFlagshipWeapons, flagshipHullStage, hullSpriteVisualOpts } from './hull.js';
 import { scoutTransitPositions, scoutsAtSystem } from './scout.js';
@@ -161,7 +161,54 @@ import { wormholeVisualState } from './wormholes.js';
 
 export const camera = { x: 0, y: 0, zoom: 1 };
 export const galaxyCamera = { x: 0, y: 0, zoom: 0.4 };
-export const follow = { enabled: false };
+export const follow = { enabled: false, allyPilotId: null };
+
+/** Ephemeral ally map pings (host events); pruned by expiresAt. */
+const mapPings = [];
+
+export function pushMapPing(ping) {
+  if (!ping || typeof ping !== 'object') return;
+  const expiresAt = Number(ping.expiresAt) || (Date.now() + 8000);
+  mapPings.push({
+    fromPlayerId: ping.fromPlayerId ?? null,
+    fromCallsign: ping.fromCallsign ?? ping.fromPlayerId ?? 'ally',
+    galaxyId: ping.galaxyId ?? null,
+    systemId: ping.systemId ?? null,
+    x: Number.isFinite(ping.x) ? ping.x : null,
+    y: Number.isFinite(ping.y) ? ping.y : null,
+    label: ping.label ?? null,
+    expiresAt,
+  });
+}
+
+function liveMapPings(now = Date.now()) {
+  for (let i = mapPings.length - 1; i >= 0; i--) {
+    if (mapPings[i].expiresAt <= now) mapPings.splice(i, 1);
+  }
+  return mapPings;
+}
+
+function drawMapPingMarker(ctx, sx, sy, callsign, ageFrac) {
+  const pulse = 0.55 + 0.45 * Math.sin(performance.now() / 180);
+  const r = 10 + 8 * (1 - ageFrac) * pulse;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = `rgba(125, 255, 212, ${0.85 * (1 - ageFrac * 0.6)})`;
+  ctx.fillStyle = `rgba(125, 255, 212, ${0.22 * pulse})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(sx, sy - r - 4);
+  ctx.lineTo(sx, sy + r + 4);
+  ctx.moveTo(sx - r - 4, sy);
+  ctx.lineTo(sx + r + 4, sy);
+  ctx.stroke();
+  labelText(ctx, callsign, sx, sy + r + 14, 11, '#7dffd4');
+  ctx.restore();
+}
 
 let lastGalaxyPerf = {
   tier: 'close',
@@ -206,10 +253,18 @@ export function screenToWorld(cam, sx, sy, canvas) {
 }
 
 export function updateFollowCamera(state, viewedSystemId, dtMs, accumulatorMs = 0) {
-  const f = state.flagship;
   if (combatCinemaEnabled && state.time < combatCinemaDirector.activeUntil) return;
-  if (!follow.enabled || f.transit || f.systemId !== viewedSystemId) return;
-  const pose = getFlagshipDisplayPose(state, accumulatorMs);
+  if (!follow.enabled) return;
+  let pose = null;
+  if (follow.allyPilotId) {
+    const ally = (state.playerFlagships ?? []).find((p) => p.pilotId === follow.allyPilotId);
+    if (!ally || ally.transit || ally.systemId !== viewedSystemId) return;
+    pose = { x: ally.x ?? 0, y: ally.y ?? 0 };
+  } else {
+    const f = state.flagship;
+    if (!f || f.transit || f.systemId !== viewedSystemId) return;
+    pose = getFlagshipDisplayPose(state, accumulatorMs);
+  }
   const k = 1 - Math.exp(-CAMERA_FOLLOW_RATE * (dtMs / 1000));
   camera.x += (pose.x - camera.x) * k;
   camera.y += (pose.y - camera.y) * k;
@@ -1176,6 +1231,48 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       state.flagship.maxHp ?? 1,
       { time: t, hardpointFireAt, hullStage: flagshipHullStage(state) },
     );
+    if ((state.playerFlagships?.length ?? 1) > 1) {
+      labelText(
+        ctx,
+        state.flagship.callsign ?? state.flagship.pilotId ?? 'you',
+        fs.x,
+        fs.y + FLAGSHIP_RADIUS * z + 16,
+        Math.max(9, 11 * Math.min(1.4, z)),
+        '#ffe9a8',
+      );
+    }
+  }
+
+  // Allied pilots' flagships (co-op): host-authoritative poses with callsigns.
+  // Skip offline ghosts so a polluted roster can't tank FPS.
+  const onlineIds = state._coopOnlineIds;
+  for (const ally of state.playerFlagships ?? []) {
+    if (ally === state.flagship) continue;
+    if (onlineIds && ally.pilotId != null && !onlineIds.has(ally.pilotId)) continue;
+    if (ally.galaxyId !== state.activeGalaxyId || ally.systemId !== systemId) continue;
+    if (ally.transit || ally.wormholeTransit || (ally.hp ?? 1) <= 0) continue;
+    const as = worldToScreen(camera, ally.x, ally.y, canvas);
+    if (!screenInView(as, canvas, 60)) continue;
+    const allyThrusting = !state.paused && Math.hypot(ally.vx ?? 0, ally.vy ?? 0) > 24;
+    drawFlagshipSprite(
+      ctx,
+      as.x,
+      as.y,
+      ally.heading ?? 0,
+      FLAGSHIP_RADIUS * z,
+      allyThrusting,
+      ally.hp ?? 1,
+      ally.maxHp ?? 1,
+      { time: t, hullStage: flagshipHullStage(state) },
+    );
+    labelText(
+      ctx,
+      ally.callsign ?? ally.pilotId ?? 'ally',
+      as.x,
+      as.y + FLAGSHIP_RADIUS * z + 16,
+      Math.max(9, 11 * Math.min(1.4, z)),
+      '#8fd8ff',
+    );
   }
 
   drawCombatLayer(ctx, state, systemId, canvas, z, t, combatOverlay, accumulatorMs);
@@ -1203,6 +1300,17 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       t,
       canvas,
     );
+  }
+
+  const nowMs = Date.now();
+  for (const ping of liveMapPings(nowMs)) {
+    if (ping.galaxyId != null && ping.galaxyId !== state.activeGalaxyId) continue;
+    if (ping.systemId && ping.systemId !== systemId) continue;
+    if (!(Number.isFinite(ping.x) && Number.isFinite(ping.y))) continue;
+    const s = worldToScreen(camera, ping.x, ping.y, canvas);
+    if (!screenInView(s, canvas, 40)) continue;
+    const ageFrac = Math.min(1, Math.max(0, 1 - (ping.expiresAt - nowMs) / 8000));
+    drawMapPingMarker(ctx, s.x, s.y, ping.label || ping.fromCallsign, ageFrac);
   }
 }
 
@@ -1977,21 +2085,44 @@ function drawCombatLayer(
   const pirateFleets = pirateFleetAtSystem(state, systemId);
   const pirateTotal = pirateFleets.reduce((n, f) => n + f.ships.filter((s) => s.hp > 0).length, 0);
   const ambientMode = combatRenderMode(playerShips.length + pirateTotal, z);
-  const flagDisplay = state.flagship?.systemId === systemId && !state.flagship?.transit
-    ? getFlagshipDisplayPose(state, accumulatorMs)
-    : null;
+  /** @type {Map<string, { x: number, y: number, heading: number, vx?: number, vy?: number }>} */
+  const flagPoseByPilot = new Map();
+  for (const f of ensurePlayerFlagships(state)) {
+    if (!f || f.systemId !== systemId || f.transit || f.wormholeTransit) continue;
+    const key = f.pilotId ?? 'solo';
+    if (f === state.flagship) {
+      const pose = getFlagshipDisplayPose(state, accumulatorMs);
+      flagPoseByPilot.set(key, {
+        ...pose,
+        vx: f.vx ?? 0,
+        vy: f.vy ?? 0,
+      });
+    } else {
+      flagPoseByPilot.set(key, {
+        x: f.x ?? 0,
+        y: f.y ?? 0,
+        heading: f.heading ?? 0,
+        vx: f.vx ?? 0,
+        vy: f.vy ?? 0,
+      });
+    }
+  }
   playerShips.forEach((ship, idx) => {
     const follow = fleetFollowHome(state, ship, systemId);
     let homeOverride = null;
-    if (follow?.kind === 'flagship' && flagDisplay) {
-      homeOverride = {
-        ...follow,
-        x: flagDisplay.x,
-        y: flagDisplay.y,
-        heading: flagDisplay.heading,
-        vx: state.flagship?.vx ?? follow.vx,
-        vy: state.flagship?.vy ?? follow.vy,
-      };
+    if (follow?.kind === 'flagship') {
+      const pilotKey = follow.pilotId ?? state.flagship?.pilotId ?? 'solo';
+      const pose = flagPoseByPilot.get(pilotKey);
+      if (pose) {
+        homeOverride = {
+          ...follow,
+          x: pose.x,
+          y: pose.y,
+          heading: pose.heading,
+          vx: pose.vx ?? follow.vx,
+          vy: pose.vy ?? follow.vy,
+        };
+      }
     }
     const pose = ambientShipPose(
       state,
@@ -2667,18 +2798,35 @@ export function drawGalaxy(
       }
     }
 
-    if (state.flagship.galaxyId === state.activeGalaxyId && state.flagship.systemId === star.id) {
+    let pilotIdx = 0;
+    const onlineIds = state._coopOnlineIds;
+    for (const pf of (state.playerFlagships?.length ? state.playerFlagships : [state.flagship])) {
+      if (!pf || pf.galaxyId !== state.activeGalaxyId || pf.systemId !== star.id || pf.transit) continue;
+      if (onlineIds && pf.pilotId != null && pf !== state.flagship && !onlineIds.has(pf.pilotId)) continue;
+      const px = s.x + nodeR + 14 * z + pilotIdx * 13 * z;
+      const py = s.y - nodeR - 12 * z;
       drawFlagshipSprite(
         ctx,
-        s.x + nodeR + 14 * z,
-        s.y - nodeR - 12 * z,
+        px,
+        py,
         -Math.PI / 4,
         Math.max(3, 5.5 * z),
         false,
-        state.flagship.hp ?? 1,
-        state.flagship.maxHp ?? 1,
+        pf.hp ?? 1,
+        pf.maxHp ?? 1,
         { hullStage: flagshipHullStage(state) },
       );
+      if ((state.playerFlagships?.length ?? 1) > 1) {
+        labelText(
+          ctx,
+          pf.callsign ?? pf.pilotId ?? 'pilot',
+          px,
+          py - 10 * Math.max(0.6, z),
+          Math.max(8, 9 * z),
+          pf === state.flagship ? '#ffe9a8' : '#8fd8ff',
+        );
+      }
+      pilotIdx++;
     }
 
     let heroIdx = 0;
@@ -2694,6 +2842,16 @@ export function drawGalaxy(
         hero.hp,
         hero.maxHp,
       );
+      if (hero.ownerPlayerId && (state.playerFlagships?.length ?? 1) > 1) {
+        labelText(
+          ctx,
+          hero.ownerPlayerId,
+          s.x - nodeR - 14 * z - heroIdx * 12 * z,
+          s.y + nodeR + 10 * z + 12 * Math.max(0.6, z),
+          Math.max(7, 8 * z),
+          '#8fd8ff',
+        );
+      }
       heroIdx++;
     }
 
@@ -2755,6 +2913,36 @@ export function drawGalaxy(
       THEME.accentGold,
       Math.max(1, 1.6 * z),
       0.35 + 0.4 * pulse,
+    );
+  }
+
+  // Allied pilots mid-lane (co-op): pure function of state.time, no local sim.
+  const onlineIdsGalaxy = state._coopOnlineIds;
+  for (const ally of state.playerFlagships ?? []) {
+    if (ally === state.flagship || !ally.transit) continue;
+    if (onlineIdsGalaxy && ally.pilotId != null && !onlineIdsGalaxy.has(ally.pilotId)) continue;
+    if ((ally.galaxyId ?? state.activeGalaxyId) !== state.activeGalaxyId) continue;
+    const allyTransit = flagshipTransitStatusFor(state, ally);
+    if (!allyTransit) continue;
+    const s = worldToScreen(galaxyCamera, allyTransit.x, allyTransit.y, canvas);
+    drawFlagshipSprite(
+      ctx,
+      s.x,
+      s.y,
+      allyTransit.angle,
+      Math.max(3.5, 6.5 * z),
+      true,
+      ally.hp ?? 1,
+      ally.maxHp ?? 1,
+      { hullStage: flagshipHullStage(state) },
+    );
+    labelText(
+      ctx,
+      ally.callsign ?? ally.pilotId ?? 'ally',
+      s.x,
+      s.y + 14 * Math.max(0.6, z),
+      Math.max(8, 9 * z),
+      '#8fd8ff',
     );
   }
 
@@ -3003,6 +3191,28 @@ export function drawGalaxy(
       progress: seq.progress ?? 0,
       totalProgress: seq.totalProgress ?? 0,
     });
+  }
+
+  const nowMs = Date.now();
+  for (const ping of liveMapPings(nowMs)) {
+    if (ping.galaxyId != null && ping.galaxyId !== state.activeGalaxyId) continue;
+    let wx = null;
+    let wy = null;
+    if (ping.systemId) {
+      const node = nodePos(galaxy, ping.systemId);
+      if (node) {
+        wx = node.x;
+        wy = node.y;
+      }
+    } else if (Number.isFinite(ping.x) && Number.isFinite(ping.y)) {
+      wx = ping.x;
+      wy = ping.y;
+    }
+    if (wx == null) continue;
+    const s = worldToScreen(galaxyCamera, wx, wy, canvas);
+    if (!screenInView(s, canvas, 50)) continue;
+    const ageFrac = Math.min(1, Math.max(0, 1 - (ping.expiresAt - nowMs) / 8000));
+    drawMapPingMarker(ctx, s.x, s.y, ping.label || ping.fromCallsign, ageFrac);
   }
 
   lastGalaxyPerf = {

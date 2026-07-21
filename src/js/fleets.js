@@ -127,13 +127,16 @@ export function beginPostBattleReturnToPose(ship, target, finalPose, now) {
   return ship.postBattleReturn;
 }
 
-export function spawnPlayerShip(state, systemId, hull, anchorBodyId = null) {
+export function spawnPlayerShip(state, systemId, hull, anchorBodyId = null, opts = {}) {
   const ship = {
     ...createShipInstance(`ship-${nextShipId++}`, hull, state),
     galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
     anchorBodyId,
+    // Co-op: queuing pilot owns the hull; null = shared team asset.
+    ownerPlayerId: opts.ownerPlayerId ?? null,
+    grantedControllers: [],
   };
   state.playerShips.push(ship);
   return ship;

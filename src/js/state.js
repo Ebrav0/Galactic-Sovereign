@@ -673,6 +673,11 @@ export function createNewGame(seed) {
   const intel = getGalaxyIntel(state, homeGalaxyId);
   intel[strongholdStarId] = { gatheredAt: 0 };
 
+  // Multi-pilot roster: state.flagship aliases the local pilot's entry.
+  state.flagship.pilotId = 'solo';
+  state.flagship.callsign = null;
+  state.playerFlagships = [state.flagship];
+
   return state;
 }
 

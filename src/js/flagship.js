@@ -8,6 +8,8 @@ import {
   FLAGSHIP_ACCEL,
   FLAGSHIP_MAX_SPEED,
   FLAGSHIP_DRAG,
+  FLAGSHIP_HP,
+  FLAGSHIP_SPAWN_ORBIT,
   FLAGSHIP_ENTRY_MARGIN,
   FLAGSHIP_ENTRY_MIN_RADIUS,
   FLAGSHIP_ORBIT_OMEGA,
@@ -45,8 +47,11 @@ let manualOverrideUntil = 0;
 let autopilotBlendUntil = 0;
 /** Last applied drive magnitude (0–1) for engine audio; not serialized. */
 let lastDriveMag = 0;
+/** Host-side thrust orders for non-local pilots (co-op). pilotId → {x,y}. */
+const remoteInputs = new Map();
 
 // Previous-tick pose for render-time extrapolation between 20 Hz physics steps.
+// Tracks the locally piloted flagship (state.flagship) only.
 const prev = { x: 0, y: 0, heading: 0 };
 let prevInit = false;
 
@@ -55,6 +60,238 @@ function syncPrevPose(f) {
   prev.y = f.y;
   prev.heading = f.heading;
   prevInit = true;
+}
+
+// --- Multi-pilot flagship roster ---
+//
+// state.playerFlagships is the source-of-truth list (one entry per pilot).
+// state.flagship aliases the local pilot's entry so all existing single-ship
+// gameplay code keeps working. Solo worlds have one entry with pilotId 'solo'.
+
+function normalizeFlagshipEntry(f, pilotId = 'solo') {
+  if (f.pilotId == null) f.pilotId = pilotId;
+  if (f.callsign === undefined) f.callsign = f.pilotId === 'solo' ? null : f.pilotId;
+  if (f.orbit === undefined) f.orbit = null;
+  if (f.wormholeTransit === undefined) f.wormholeTransit = null;
+  if (!Array.isArray(f.weapons)) f.weapons = [];
+  if (f.wing === undefined) f.wing = null;
+  return f;
+}
+
+/**
+ * Normalize the roster and rebind state.flagship to the local pilot's entry.
+ * Safe to call repeatedly (idempotent). Pass localPilotId in co-op clients;
+ * host/solo callers omit it and bind to the existing/first entry.
+ */
+export function ensurePlayerFlagships(state, localPilotId = null) {
+  if (!state) return [];
+  if (!Array.isArray(state.playerFlagships) || state.playerFlagships.length === 0) {
+    state.playerFlagships = state.flagship ? [state.flagship] : [];
+  }
+  for (const f of state.playerFlagships) normalizeFlagshipEntry(f);
+
+  const want = localPilotId
+    ?? state.flagship?.pilotId
+    ?? state.playerFlagships[0]?.pilotId
+    ?? null;
+  const bound = state.playerFlagships.find((f) => f.pilotId === want)
+    ?? state.playerFlagships[0]
+    ?? null;
+  if (bound && state.flagship !== bound) state.flagship = bound;
+  else if (bound) normalizeFlagshipEntry(state.flagship);
+  return state.playerFlagships;
+}
+
+export function listPlayerFlagships(state) {
+  return ensurePlayerFlagships(state);
+}
+
+export function getPlayerFlagship(state, pilotId) {
+  return ensurePlayerFlagships(state).find((f) => f.pilotId === pilotId) ?? null;
+}
+
+/** Spawn a fresh flagship for a pilot near the stronghold (offset per roster slot). */
+export function spawnPilotFlagship(state, pilotId, callsign = pilotId) {
+  const roster = ensurePlayerFlagships(state);
+  const slot = roster.length;
+  const angle = -Math.PI / 2 + slot * (Math.PI / 5);
+  const radius = FLAGSHIP_SPAWN_ORBIT * (1 + slot * 0.12);
+  const f = normalizeFlagshipEntry({
+    pilotId,
+    callsign,
+    galaxyId: state.homeGalaxyId ?? state.activeGalaxyId,
+    systemId: state.stronghold,
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+    vx: 0,
+    vy: 0,
+    heading: 0,
+    hp: FLAGSHIP_HP,
+    maxHp: FLAGSHIP_HP,
+    transit: null,
+    wormholeTransit: null,
+    orbit: null,
+    weapons: [],
+    wing: null,
+  }, pilotId);
+  roster.push(f);
+  return f;
+}
+
+/**
+ * Host join path: return the pilot's flagship, letting the first joiner adopt
+ * the legacy 'solo' ship so a solo-created world doesn't strand a ghost vessel.
+ */
+export function adoptOrSpawnPilotFlagship(state, pilotId, callsign = pilotId) {
+  const roster = ensurePlayerFlagships(state);
+  const existing = roster.find((f) => f.pilotId === pilotId);
+  if (existing) {
+    if (callsign && !existing.callsign) existing.callsign = callsign;
+    return { flagship: existing, spawned: false };
+  }
+  const solo = roster.find((f) => f.pilotId === 'solo');
+  if (solo) {
+    solo.pilotId = pilotId;
+    solo.callsign = callsign;
+    return { flagship: solo, spawned: false, adopted: true };
+  }
+  return { flagship: spawnPilotFlagship(state, pilotId, callsign), spawned: true };
+}
+
+/** Host-side: record a remote pilot's live thrust order. */
+export function setFlagshipInputFor(pilotId, x, y) {
+  if (!pilotId) return;
+  remoteInputs.set(pilotId, { x: Number(x) || 0, y: Number(y) || 0 });
+}
+
+function driveFor(state, f) {
+  const remote = remoteInputs.get(f.pilotId);
+  if (f === state.flagship) {
+    // Local keyboard wins (browser client / solo); otherwise fall back to the
+    // pilot's remote thrust order so the headless coop host flies this ship too.
+    if (input.x !== 0 || input.y !== 0) return input;
+    return remote ?? input;
+  }
+  return remote ?? { x: 0, y: 0 };
+}
+
+/** Pure transit status for any flagship entry (galaxy-map rendering of allies). */
+export function flagshipTransitStatusFor(state, f) {
+  if (!f?.transit) return null;
+  return transitStatusCore(f.transit, getGraph(state), state.time, LANE_SPEED, LANE_MIN_LEG_MS);
+}
+
+/** Call after replacing flagship state without running sim ticks (e.g. co-op snapshots). */
+export function resyncFlagshipDisplayPose(state) {
+  if (state?.flagship) syncPrevPose(state.flagship);
+  else prevInit = false;
+}
+
+/**
+ * Client-only visual motion between co-op authority summaries.
+ * Does not run combat/economy — keeps display smooth until the next pose sync.
+ * Coasts every pilot's flagship so allied ships stay in motion too.
+ */
+/**
+ * Client-side dead-reckoning between host summaries (~4 Hz).
+ * Remotes coast on the last authoritative vx/vy. The local ship also integrates
+ * keyboard thrust so WASD feels immediate (host still corrects via summaries).
+ */
+export function advanceCoopFlagshipVisual(state, dtMs) {
+  if (!state || state.paused) return;
+  const dt = Math.max(0, Number(dtMs) || 0) / 1000;
+  if (dt <= 0) return;
+
+  const speedMult = Math.max(0.5, techEffects(state).flagshipSpeedMult ?? 1);
+  const accel = FLAGSHIP_ACCEL * speedMult;
+  const maxSpeed = FLAGSHIP_MAX_SPEED * speedMult;
+
+  for (const f of ensurePlayerFlagships(state)) {
+    if (f.transit || f.wormholeTransit) continue;
+    ensureOrbitField(f);
+
+    // Local pilot: apply the same thrust model as tickOneFlagship so engines
+    // and position stay in sync while we wait for the host pose.
+    if (f === state.flagship) {
+      const driveX = input.x;
+      const driveY = input.y;
+      const thrusting = Math.hypot(driveX, driveY) > 1e-6;
+      lastDriveMag = thrusting ? Math.min(1, Math.hypot(driveX, driveY)) : 0;
+      if (f.orbit) {
+        if (thrusting) clearOrbit(f);
+        else {
+          applyCoopOrbitVisual(state, f);
+          syncPrevPose(f);
+          continue;
+        }
+      }
+      if (thrusting) {
+        let ax = driveX;
+        let ay = driveY;
+        const mag = Math.hypot(ax, ay);
+        if (mag > 1) {
+          ax /= mag;
+          ay /= mag;
+        }
+        f.vx = (f.vx ?? 0) + ax * accel * dt;
+        f.vy = (f.vy ?? 0) + ay * accel * dt;
+        const speed = Math.hypot(f.vx, f.vy);
+        if (speed > maxSpeed) {
+          f.vx = (f.vx / speed) * maxSpeed;
+          f.vy = (f.vy / speed) * maxSpeed;
+        }
+      } else {
+        const damp = Math.max(0, 1 - FLAGSHIP_DRAG * dt);
+        f.vx = (f.vx ?? 0) * damp;
+        f.vy = (f.vy ?? 0) * damp;
+        if (Math.hypot(f.vx, f.vy) < 2) {
+          f.vx = 0;
+          f.vy = 0;
+        }
+      }
+      f.x += (f.vx ?? 0) * dt;
+      f.y += (f.vy ?? 0) * dt;
+      if (Math.hypot(f.vx ?? 0, f.vy ?? 0) > 1) {
+        f.heading = Math.atan2(f.vy, f.vx);
+      }
+      syncPrevPose(f);
+      continue;
+    }
+
+    if (f.orbit) {
+      applyCoopOrbitVisual(state, f);
+    } else {
+      f.x += (f.vx ?? 0) * dt;
+      f.y += (f.vy ?? 0) * dt;
+      if (Math.hypot(f.vx ?? 0, f.vy ?? 0) > 1) {
+        f.heading = Math.atan2(f.vy, f.vx);
+      }
+    }
+  }
+}
+
+/**
+ * Co-op orbit: extrapolate from the last host angle sample instead of integrating
+ * locally and then getting overwritten by the next pose (that fight causes hitching).
+ */
+function applyCoopOrbitVisual(state, f) {
+  const system = systemById(state, f.systemId);
+  if (!system || !f.orbit) return;
+  const center = orbitCenterPose(state, system, f.orbit);
+  if (!center) return;
+  const omega = FLAGSHIP_ORBIT_OMEGA;
+  const authAngle = Number.isFinite(f._coopOrbitAngle) ? f._coopOrbitAngle : f.orbit.angle;
+  const authSim = Number.isFinite(f._coopOrbitSimTime) ? f._coopOrbitSimTime : state.time;
+  // Same clock as planet centers — avoids wall-clock vs state.time orbit drift.
+  const age = Math.min(0.28, Math.max(0, (state.time - authSim) / 1000));
+  const angle = authAngle + omega * age;
+  f.orbit.angle = angle;
+  f.x = center.x + Math.cos(angle) * f.orbit.radius;
+  f.y = center.y + Math.sin(angle) * f.orbit.radius;
+  const { vx, vy } = orbitVelocity(center, f.orbit, omega);
+  f.vx = vx;
+  f.vy = vy;
+  f.heading = Math.atan2(vy, vx);
 }
 
 function ensureOrbitField(f) {
@@ -81,7 +318,7 @@ export function getFlagshipDisplayPose(state, accumulatorMs) {
   const f = state.flagship;
   ensureOrbitField(f);
   if (!prevInit) syncPrevPose(f);
-  if (state.paused || f.transit) {
+  if (state.paused || f.transit || !(accumulatorMs > 0)) {
     const heading = f.orbit ? headingFromMotion(f, f.vx, f.vy) : f.heading;
     return { x: f.x, y: f.y, heading };
   }
@@ -361,8 +598,7 @@ export function toggleFlagshipOrbit(state, preferredBodyId = null) {
   return { ok: true, orbiting: true, target: orbitTargetLabel(state) };
 }
 
-function tickOrbit(state) {
-  const f = state.flagship;
+function tickOrbit(state, f = state.flagship) {
   const system = systemById(state, f.systemId);
   if (!system || !f.orbit) {
     clearOrbit(f);
@@ -444,8 +680,7 @@ export function transitStatus(state) {
   );
 }
 
-function applyFlagshipKeepOut(state) {
-  const f = state.flagship;
+function applyFlagshipKeepOut(state, f = state.flagship) {
   // Stable orbit disables the soft keep-out field — position is kinematic each tick.
   if (f.transit || !f.systemId || f.orbit) return;
   const system = systemById(state, f.systemId);
@@ -460,15 +695,21 @@ function applyFlagshipKeepOut(state) {
 // --- Per-tick update (called from simulation.js after state.time advances) ---
 
 export function tickFlagship(state) {
-  const f = state.flagship;
+  for (const f of ensurePlayerFlagships(state)) {
+    tickOneFlagship(state, f);
+  }
+}
+
+function tickOneFlagship(state, f) {
+  const isLocal = f === state.flagship;
   if (f.wormholeTransit) {
-    lastDriveMag = 0;
+    if (isLocal) lastDriveMag = 0;
     return;
   }
   ensureOrbitField(f);
-  if (!f.transit) syncPrevPose(f);
+  if (!f.transit && isLocal) syncPrevPose(f);
   if (f.transit) {
-    lastDriveMag = 0;
+    if (isLocal) lastDriveMag = 0;
     const galaxy = getGraph(state);
     const durFn = (a, b) => effectiveLegDurationMs(state, galaxy, a, b, LANE_SPEED, LANE_MIN_LEG_MS);
     advanceTransit(
@@ -477,39 +718,42 @@ export function tickFlagship(state) {
       state.time,
       LANE_SPEED,
       LANE_MIN_LEG_MS,
-      (destId, fromId) => arrive(state, destId, fromId),
+      (destId, fromId) => arrive(state, f, destId, fromId),
       durFn,
       {
         canEnter: (systemId) => canRouteThroughSystem(state, systemId, 'player', {
           galaxyId: state.activeGalaxyId,
           allowHostile: true,
         }).ok,
-        onBlocked: (safeSystemId, blockedSystemId) => arrive(state, safeSystemId, blockedSystemId),
+        onBlocked: (safeSystemId, blockedSystemId) => arrive(state, f, safeSystemId, blockedSystemId),
       },
     );
     return;
   }
 
-  const control = flagshipControlStatus(state);
+  // Autopilot / manual-override blending only applies to the locally bound
+  // flagship (control status reads local input); remote pilots fly manual.
+  const drive = driveFor(state, f);
+  const control = isLocal ? flagshipControlStatus(state) : { mode: 'manual', blend: 0 };
   const autopilot = control.mode === 'manual' ? null : flagshipAutopilotPlan(state);
-  let driveX = input.x;
-  let driveY = input.y;
+  let driveX = drive.x;
+  let driveY = drive.y;
   if (autopilot) {
     const weight = control.mode === 'returning_to_auto' ? control.blend : 1;
     driveX = autopilot.x * weight;
     driveY = autopilot.y * weight;
     f.autopilotTargetId = autopilot.targetId ?? null;
     f.combatIntent = autopilot.intent;
-  } else if (control.mode === 'manual') {
+  } else if (isLocal && control.mode === 'manual') {
     f.combatIntent = 'manual_override';
   }
   const thrusting = Math.hypot(driveX, driveY) > 1e-6;
-  lastDriveMag = thrusting ? Math.min(1, Math.hypot(driveX, driveY)) : 0;
+  if (isLocal) lastDriveMag = thrusting ? Math.min(1, Math.hypot(driveX, driveY)) : 0;
   if (f.orbit) {
     if (thrusting) {
       clearOrbit(f);
     } else {
-      tickOrbit(state);
+      tickOrbit(state, f);
       return;
     }
   }
@@ -543,7 +787,7 @@ export function tickFlagship(state) {
     }
   }
 
-  applyFlagshipKeepOut(state);
+  applyFlagshipKeepOut(state, f);
 
   f.x += f.vx * dt;
   f.y += f.vy * dt;
@@ -552,8 +796,7 @@ export function tickFlagship(state) {
   }
 }
 
-function arrive(state, destId, fromId) {
-  const f = state.flagship;
+function arrive(state, f, destId, fromId) {
   f.transit = null;
   f.systemId = destId;
   clearOrbit(f);
@@ -568,7 +811,7 @@ function arrive(state, destId, fromId) {
   f.vx = 0;
   f.vy = 0;
   f.heading = entryAngle + Math.PI;
-  syncPrevPose(f);
+  if (f === state.flagship) syncPrevPose(f);
 }
 
 function systemEntryRadius(state, systemId) {
