@@ -472,7 +472,7 @@ function clusterBounds(positions, nodes, clusterId) {
 export function researchSnapshotKey(summary) {
   const unlocked = (summary.unlocked ?? []).slice().sort().join(',');
   const queue = (summary.queue ?? []).slice().join(',');
-  return `${unlocked}|${summary.activeNodeId ?? ''}|${queue}|${Math.round((summary.progress ?? 0) * 1000)}`;
+  return `${unlocked}|${summary.activeNodeId ?? ''}|${queue}|${Math.round((summary.progress ?? 0) * 1000)}|${summary.stationCount ?? 0}|${summary.maxQueue ?? 0}`;
 }
 
 /**

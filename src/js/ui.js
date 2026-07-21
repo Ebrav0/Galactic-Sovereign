@@ -2603,6 +2603,11 @@ function renderTechScreen(container, state, techUiState) {
   stats.innerHTML = `
     <span>Stations: <strong>${summary.stationCount}</strong></span>
     <span>Speed: <strong>${summary.speedMult}×</strong></span>
+    <span>Queue: <strong>${
+      summary.maxQueue > 0
+        ? `${summary.queue.length}/${summary.maxQueue}`
+        : '—'
+    }</strong></span>
     <span>Unlocked: <strong>${summary.unlocked.length - 1}</strong> / ${allTechNodes().length - 1}</span>
   `;
   chrome.appendChild(stats);
@@ -4097,6 +4102,7 @@ export function initUi(ctx) {
         active: summary.activeNodeId,
         queue: summary.queue,
         stations: summary.stationCount,
+        maxQueue: summary.maxQueue,
         speed: summary.speedMult,
       });
       if (techSnap !== uiSnapshots.techPanel && !uiPointerActive) {

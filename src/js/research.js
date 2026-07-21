@@ -177,6 +177,30 @@ function nodeResearchMs(nodeId) {
   return node.researchMs || Math.round(RESEARCH_BASE_MS * (1 + (depth - 1) * 0.25));
 }
 
+export function empireResearchStationCount(state) {
+  return persistentSystemRecords(state).reduce((count, { system }) => count
+    + (system.owner === 'player'
+      ? (system.structures ?? []).filter((structure) => structure.type === 'research_station'
+        && isOperationalStructure(state, structure, { owner: 'player' })).length
+      : 0), 0);
+}
+
+/** Max items that can wait behind the active project. Each station adds +1. */
+export function researchQueueCapacity(state) {
+  ensureResearchState(state);
+  const techDepth = techEffects(state).researchQueueDepth ?? 1;
+  const archiveBonus = structureResearchQueueSlotBonus(state);
+  const stationCount = empireResearchStationCount(state);
+  const maxQueued = Math.max(0, techDepth - 1) + archiveBonus + stationCount;
+  return {
+    maxQueued,
+    depth: maxQueued + 1,
+    stationCount,
+    archiveBonus,
+    techDepth,
+  };
+}
+
 export function canStartResearch(state, nodeId) {
   ensureResearchState(state);
   const node = techNode(nodeId);
@@ -184,10 +208,14 @@ export function canStartResearch(state, nodeId) {
   if (isTechUnlocked(state, nodeId)) return { ok: false, reason: 'Already researched' };
   if (!techPrereqsMet(state, nodeId)) return { ok: false, reason: 'Prerequisites not met' };
   if (state.research.activeNodeId && state.research.activeNodeId !== nodeId) {
-    const maxQueue = techEffects(state).researchQueueDepth - 1
-      + structureResearchQueueSlotBonus(state);
-    if (state.research.queue.length >= maxQueue) {
-      return { ok: false, reason: 'Research queue full' };
+    const { maxQueued } = researchQueueCapacity(state);
+    if (state.research.queue.length >= maxQueued) {
+      return {
+        ok: false,
+        reason: maxQueued > 0
+          ? `Research queue full (${state.research.queue.length}/${maxQueued})`
+          : 'Research queue full (build a research station to queue)',
+      };
     }
   }
 
@@ -284,16 +312,15 @@ export function tickResearch(state) {
 
 export function researchSummary(state) {
   ensureResearchState(state);
+  const capacity = researchQueueCapacity(state);
   return {
     activeNodeId: state.research.activeNodeId,
     progress: Math.round((state.research.progress ?? 0) * 1000) / 1000,
     unlocked: [...(state.research.unlocked ?? [])],
     queue: [...(state.research.queue ?? [])],
-    stationCount: persistentSystemRecords(state).reduce((count, { system }) => count
-      + (system.owner === 'player'
-        ? (system.structures ?? []).filter((structure) => structure.type === 'research_station'
-          && isOperationalStructure(state, structure, { owner: 'player' })).length
-        : 0), 0),
+    stationCount: capacity.stationCount,
+    maxQueue: capacity.maxQueued,
+    queueCapacity: capacity,
     speedMult: Math.round(researchSpeedMultiplier(state) * 100) / 100,
   };
 }

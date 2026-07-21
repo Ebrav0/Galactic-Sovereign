@@ -536,13 +536,14 @@ function structureLevelStrength(structure) {
 function syncAiResearchInfrastructure(state, faction) {
   let bonus = 0;
   let hasArchive = false;
+  let stationCount = 0;
   for (const system of persistentAiOwnedSystems(state, faction.id)) {
     const structures = (system.structures ?? []).filter((structure) => operationalStructure(state, structure));
     const habitats = structures.filter((structure) => structure.type === 'orbital_habitat').length;
     const habitatMultiplier = Math.pow(1.1, habitats);
-    const stationStrength = structures
-      .filter((structure) => structure.type === 'research_station')
-      .reduce((sum, structure) => sum + structureLevelStrength(structure), 0);
+    const stations = structures.filter((structure) => structure.type === 'research_station');
+    stationCount += stations.length;
+    const stationStrength = stations.reduce((sum, structure) => sum + structureLevelStrength(structure), 0);
     const archiveStrength = structures
       .filter((structure) => structure.type === 'quantum_archive')
       .reduce((sum, structure) => sum + structureLevelStrength(structure), 0);
@@ -551,7 +552,7 @@ function syncAiResearchInfrastructure(state, faction) {
     if (archiveStrength > 0) hasArchive = true;
   }
   faction.research.infrastructureSpeedMult = 1 + bonus;
-  faction.research.queueSlotBonus = hasArchive ? 1 : 0;
+  faction.research.queueSlotBonus = (hasArchive ? 1 : 0) + stationCount;
 }
 
 function tickAiDyson(state, faction, deltaMs = TICK_MS) {
