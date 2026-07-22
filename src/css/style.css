@@ -110,8 +110,10 @@ html, body {
 .account-import strong { color: #ffcf7a; font-size: 13px; }
 .account-import span { color: #9cafca; font-size: 12px; }
 
-.panel--modal.account-admin { z-index: 1001; width: min(840px, calc(100vw - 40px)); max-width: calc(100vw - 40px); max-height: min(700px, calc(100vh - 40px)); }
+.panel--modal.account-admin { z-index: 1001; width: min(960px, calc(100vw - 40px)); max-width: calc(100vw - 40px); max-height: min(820px, calc(100vh - 40px)); }
 .account-admin__body { overflow: auto; user-select: text; }
+.account-admin__overview { margin: 0 0 14px; padding: 10px 12px; border: 1px solid rgba(111,214,255,.16); background: rgba(2,8,20,.55); color: #9eb8d8; font-size: 12px; line-height: 1.45; }
+.account-admin__section-title { margin: 18px 0 8px; color: #dff7ff; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
 .account-form--row { grid-template-columns: 1fr 1fr auto; align-items: end; margin-top: 0; }
 .account-user-list { display: grid; gap: 8px; margin-top: 16px; }
 .account-user-row { display: grid; grid-template-columns: minmax(180px, 1fr) repeat(3, auto); align-items: center; gap: 7px; padding: 11px; border: 1px solid rgba(111,214,255,.13); background: rgba(2,8,20,.45); }

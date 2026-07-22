@@ -57,11 +57,13 @@ function installMarkup() {
     <section id="account-admin" class="panel panel--modal account-admin hidden" role="dialog" aria-modal="true" aria-labelledby="account-admin-title">
       <div class="panel__header">
         <span class="panel__marker" aria-hidden="true"></span>
-        <span class="panel__title" id="account-admin-title">Account Administration</span>
+        <span class="panel__title" id="account-admin-title">Operations Dashboard</span>
         <span class="panel__trace" aria-hidden="true"></span>
         <button id="account-admin-close" class="btn btn--ghost btn--xs" type="button">Close</button>
       </div>
       <div class="panel__body account-admin__body">
+        <p class="account-card__notice">Intended to run behind Cloudflare Access. Passwords and secrets are never listed here.</p>
+        <div id="account-admin-overview" class="account-admin__overview" aria-live="polite"></div>
         <form id="account-create-form" class="account-form account-form--row">
           <label><span>Username</span><input id="account-create-username" maxlength="32" required /></label>
           <label><span>Display name</span><input id="account-create-display" maxlength="32" required /></label>
@@ -69,7 +71,18 @@ function installMarkup() {
         </form>
         <p id="account-admin-status" class="account-status" aria-live="polite"></p>
         <div id="account-temp-password" class="account-temp-password hidden"></div>
+        <h3 class="account-admin__section-title">Players</h3>
         <div id="account-user-list" class="account-user-list"></div>
+        <h3 class="account-admin__section-title">Active sessions</h3>
+        <div id="account-session-list" class="account-user-list"></div>
+        <h3 class="account-admin__section-title">Multiplayer</h3>
+        <div id="account-mp-status" class="account-user-list"></div>
+        <h3 class="account-admin__section-title">Save files (metadata)</h3>
+        <div id="account-save-list" class="account-user-list"></div>
+        <h3 class="account-admin__section-title">Backups</h3>
+        <div id="account-backup-list" class="account-user-list"></div>
+        <h3 class="account-admin__section-title">Audit log</h3>
+        <div id="account-audit-list" class="account-user-list"></div>
         <div id="account-legacy-section" class="account-legacy-section hidden">
           <h3>Legacy multiplayer pilots</h3>
           <p>Attach each preserved pilot identity to one account. Claims are one-time.</p>
@@ -122,19 +135,93 @@ async function renderAccount() {
   }
 }
 
+function formatWhen(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+}
+
+function formatBytes(n) {
+  const value = Number(n);
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function fillSimpleList(elementId, rows) {
+  const list = byId(elementId);
+  if (!list) return;
+  list.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'account-card__notice';
+    empty.textContent = 'None';
+    list.append(empty);
+    return;
+  }
+  for (const row of rows) {
+    const article = document.createElement('article');
+    article.className = 'account-user-row';
+    const identity = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = row.title;
+    const meta = document.createElement('span');
+    meta.textContent = row.meta;
+    identity.append(title, meta);
+    article.append(identity);
+    list.append(article);
+  }
+}
+
 async function renderUsers() {
-  const result = await accountApi('/api/v1/admin/users');
-  if (!result.response.ok) throw new Error(result.payload.error || 'Could not load users');
+  const [usersResult, overviewResult, sessionsResult, savesResult, backupsResult, auditResult, mpResult] = await Promise.all([
+    accountApi('/api/v1/admin/users'),
+    accountApi('/api/v1/admin/overview'),
+    accountApi('/api/v1/admin/sessions'),
+    accountApi('/api/v1/admin/saves'),
+    accountApi('/api/v1/admin/backups'),
+    accountApi('/api/v1/admin/audit?limit=40'),
+    accountApi('/api/v1/admin/multiplayer'),
+  ]);
+  if (!usersResult.response.ok) throw new Error(usersResult.payload.error || 'Could not load users');
+
+  const overview = byId('account-admin-overview');
+  if (overview && overviewResult.response.ok) {
+    const o = overviewResult.payload;
+    const mp = o.multiplayer || {};
+    overview.replaceChildren();
+    const line = document.createElement('p');
+    line.textContent = [
+      `Accounts ${o.users?.active ?? '—'}/${o.users?.total ?? '—'} active`,
+      `Sessions ${o.activeSessions ?? '—'}`,
+      `Solo saves ${o.soloSaves ?? '—'}`,
+      `Relay sockets ${o.liveRelayCount ?? '—'}`,
+      `Co-op online ${mp.playersOnline ?? '—'} · tick ${mp.tick ?? '—'}`,
+      mp.ok === false ? `Co-op health: ${mp.error || 'down'}` : 'Co-op health: ok',
+    ].join(' · ');
+    overview.append(line);
+  }
+
   const list = byId('account-user-list');
   list.replaceChildren();
-  for (const user of result.payload.users ?? []) {
+  for (const user of usersResult.payload.users ?? []) {
     const row = document.createElement('article');
     row.className = 'account-user-row';
     const identity = document.createElement('div');
     const name = document.createElement('strong');
     name.textContent = user.displayName;
     const meta = document.createElement('span');
-    meta.textContent = `${user.username} · ${user.role} · ${user.status}${user.mustChangePassword ? ' · password change required' : ''}`;
+    meta.textContent = [
+      user.username,
+      user.role,
+      user.status,
+      user.mustChangePassword ? 'password change required' : null,
+      `last login ${formatWhen(user.lastLoginAt)}`,
+      `last seen ${formatWhen(user.lastSeenAt)}`,
+      `${user.activeSessionCount || 0} session(s)`,
+      user.multiplayerOnline ? 'MP online' : 'MP offline',
+      `${user.soloSaveCount || 0} save(s)`,
+    ].filter(Boolean).join(' · ');
     identity.append(name, meta);
     row.append(identity);
     if (user.role !== 'owner') {
@@ -155,6 +242,39 @@ async function renderUsers() {
     }
     list.append(row);
   }
+
+  fillSimpleList('account-session-list', (sessionsResult.payload?.sessions ?? []).map((s) => ({
+    title: `${s.displayName || s.username} · ${s.sessionId}`,
+    meta: `created ${formatWhen(s.createdAt)} · last seen ${formatWhen(s.lastSeenAt)} · expires ${formatWhen(s.expiresAt)}`,
+  })));
+
+  const mpLive = mpResult.payload?.live ?? [];
+  const mpHealth = mpResult.payload?.health ?? {};
+  fillSimpleList('account-mp-status', [
+    {
+      title: `World ${mpHealth.worldId || '—'}`,
+      meta: `online ${mpHealth.playersOnline ?? '—'} · tick ${mpHealth.tick ?? '—'} · saved ${formatWhen(mpHealth.lastSavedAt)}`,
+    },
+    ...mpLive.map((p) => ({
+      title: p.displayName || p.userId,
+      meta: `RTT ${p.lastRttMs ?? '—'} ms`,
+    })),
+  ]);
+
+  fillSimpleList('account-save-list', (savesResult.payload?.saves ?? []).map((s) => ({
+    title: `${s.displayName || s.username} · ${s.slot}`,
+    meta: `rev ${s.revision} · ${formatBytes(s.sizeBytes)} · ${formatWhen(s.savedAt)} · credits ${s.credits ?? '—'}`,
+  })));
+
+  fillSimpleList('account-backup-list', (backupsResult.payload?.backups ?? []).map((b) => ({
+    title: b.name,
+    meta: `${formatBytes(b.sizeBytes)} · ${formatWhen(b.modifiedAt)}`,
+  })));
+
+  fillSimpleList('account-audit-list', (auditResult.payload?.events ?? []).map((e) => ({
+    title: e.action,
+    meta: `${e.actorUsername || 'system'} → ${e.targetUsername || '—'} · ${formatWhen(e.createdAt)}`,
+  })));
 
   const legacyResult = await accountApi('/api/v1/admin/legacy-pilots');
   if (!legacyResult.response.ok) throw new Error(legacyResult.payload.error || 'Could not load legacy pilots');
@@ -177,7 +297,7 @@ async function renderUsers() {
       const select = document.createElement('select');
       select.className = 'menu-select';
       select.setAttribute('aria-label', `Account for ${pilot.displayName}`);
-      for (const user of result.payload.users ?? []) {
+      for (const user of usersResult.payload.users ?? []) {
         if (user.status !== 'active') continue;
         const option = document.createElement('option');
         option.value = user.id;

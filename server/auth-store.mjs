@@ -62,6 +62,7 @@ function publicUser(row) {
     mustChangePassword: !!row.must_change_password,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastLoginAt: row.last_login_at ?? null,
   };
 }
 
@@ -128,7 +129,17 @@ export class AuthStore {
         imported_at INTEGER NOT NULL,
         claimed_at INTEGER
       );
+      CREATE TABLE IF NOT EXISTS admin_handoffs (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at INTEGER NOT NULL,
+        consumed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS admin_handoffs_expiry_idx ON admin_handoffs(expires_at);
     `);
+    try {
+      this.db.exec('ALTER TABLE users ADD COLUMN last_login_at INTEGER');
+    } catch { /* column already exists */ }
     try { if (this.dbPath !== ':memory:') fs.chmodSync(this.dbPath, 0o600); } catch { /* ignore */ }
   }
 
@@ -173,13 +184,282 @@ export class AuthStore {
     return this.db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(publicUser);
   }
 
+  summarizeSaveEnvelope(envelope, meta = {}) {
+    try {
+      const parsed = typeof envelope === 'string' ? JSON.parse(envelope) : envelope;
+      const state = parsed?.state && typeof parsed.state === 'object' ? parsed.state : parsed;
+      const campaign = state?.campaign && typeof state.campaign === 'object' ? state.campaign : {};
+      const tutorial = campaign.tutorial && typeof campaign.tutorial === 'object' ? campaign.tutorial : {};
+      const outposts = Array.isArray(state?.outposts) ? state.outposts : [];
+      const systems = Array.isArray(state?.systems) ? state.systems : null;
+      return {
+        slot: meta.slot ?? null,
+        revision: meta.revision ?? null,
+        saveVersion: meta.saveVersion ?? parsed?.saveVersion ?? null,
+        savedAt: meta.savedAt ?? parsed?.savedAt ?? null,
+        sizeBytes: meta.sizeBytes ?? (typeof envelope === 'string' ? Buffer.byteLength(envelope) : null),
+        campaignMode: campaign.mode ?? null,
+        tutorialStatus: tutorial.status ?? null,
+        tutorialStepId: tutorial.currentStepId ?? null,
+        credits: Number.isFinite(Number(state?.credits)) ? Number(state.credits) : null,
+        outpostCount: outposts.length,
+        systemCount: systems ? systems.length : null,
+      };
+    } catch {
+      return {
+        slot: meta.slot ?? null,
+        revision: meta.revision ?? null,
+        saveVersion: meta.saveVersion ?? null,
+        savedAt: meta.savedAt ?? null,
+        sizeBytes: meta.sizeBytes ?? null,
+        campaignMode: null,
+        tutorialStatus: null,
+        tutorialStepId: null,
+        credits: null,
+        outpostCount: null,
+        systemCount: null,
+        corrupt: true,
+      };
+    }
+  }
+
+  listSaveSummaries(userId) {
+    const rows = this.db.prepare(`
+      SELECT slot, revision, save_version AS saveVersion, saved_at AS savedAt,
+             length(envelope_json) AS sizeBytes, envelope_json AS envelope
+      FROM save_slots WHERE user_id = ? ORDER BY saved_at DESC, slot ASC
+    `).all(String(userId));
+    return rows.map((row) => this.summarizeSaveEnvelope(row.envelope, {
+      slot: row.slot,
+      revision: row.revision,
+      saveVersion: row.saveVersion,
+      savedAt: row.savedAt,
+      sizeBytes: row.sizeBytes,
+    }));
+  }
+
+  listUserSessions(userId) {
+    const t = now();
+    return this.db.prepare(`
+      SELECT substr(token_hash, 1, 12) AS sessionId,
+             created_at AS createdAt, last_seen_at AS lastSeenAt, expires_at AS expiresAt
+      FROM sessions WHERE user_id = ? AND expires_at > ?
+      ORDER BY last_seen_at DESC
+    `).all(String(userId), t);
+  }
+
+  listActiveSessions() {
+    const t = now();
+    return this.db.prepare(`
+      SELECT substr(s.token_hash, 1, 12) AS sessionId,
+             s.user_id AS userId, u.username, u.display_name AS displayName,
+             s.created_at AS createdAt, s.last_seen_at AS lastSeenAt, s.expires_at AS expiresAt
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.expires_at > ?
+      ORDER BY s.last_seen_at DESC
+      LIMIT 200
+    `).all(t);
+  }
+
+  listAllSaveSummaries({ limit = 100 } = {}) {
+    const capped = Math.max(1, Math.min(500, Number(limit) || 100));
+    const rows = this.db.prepare(`
+      SELECT s.user_id AS userId, u.username, u.display_name AS displayName,
+             s.slot, s.revision, s.save_version AS saveVersion, s.saved_at AS savedAt,
+             length(s.envelope_json) AS sizeBytes, s.envelope_json AS envelope
+      FROM save_slots s
+      JOIN users u ON u.id = s.user_id
+      ORDER BY s.saved_at DESC
+      LIMIT ?
+    `).all(capped);
+    return rows.map((row) => ({
+      userId: row.userId,
+      username: row.username,
+      displayName: row.displayName,
+      ...this.summarizeSaveEnvelope(row.envelope, {
+        slot: row.slot,
+        revision: row.revision,
+        saveVersion: row.saveVersion,
+        savedAt: row.savedAt,
+        sizeBytes: row.sizeBytes,
+      }),
+    }));
+  }
+
+  listUsersEnriched({ onlineWindowMs = 120_000, lastServer = null } = {}) {
+    const t = now();
+    const users = this.listUsers();
+    const sessionAgg = this.db.prepare(`
+      SELECT user_id AS userId,
+             COUNT(*) AS activeSessionCount,
+             MAX(last_seen_at) AS lastSeenAt,
+             SUM(CASE WHEN last_seen_at >= created_at THEN last_seen_at - created_at ELSE 0 END) AS approxOnlineMs
+      FROM sessions
+      WHERE expires_at > ?
+      GROUP BY user_id
+    `).all(t);
+    const sessionByUser = new Map(sessionAgg.map((row) => [row.userId, row]));
+    const saveAgg = this.db.prepare(`
+      SELECT user_id AS userId, COUNT(*) AS soloSaveCount, MAX(saved_at) AS latestSoloSavedAt
+      FROM save_slots GROUP BY user_id
+    `).all();
+    const saveByUser = new Map(saveAgg.map((row) => [row.userId, row]));
+    const latestEnvelopes = this.db.prepare(`
+      SELECT s.user_id AS userId, s.slot, s.revision, s.save_version AS saveVersion,
+             s.saved_at AS savedAt, length(s.envelope_json) AS sizeBytes, s.envelope_json AS envelope
+      FROM save_slots s
+      INNER JOIN (
+        SELECT user_id, MAX(saved_at) AS max_saved
+        FROM save_slots GROUP BY user_id
+      ) latest ON latest.user_id = s.user_id AND latest.max_saved = s.saved_at
+    `).all();
+    const latestByUser = new Map();
+    for (const row of latestEnvelopes) {
+      if (latestByUser.has(row.userId)) continue;
+      latestByUser.set(row.userId, this.summarizeSaveEnvelope(row.envelope, row));
+    }
+    const legacyByUser = new Map(
+      this.db.prepare(`
+        SELECT claimed_user_id AS userId, pilot_id AS pilotId
+        FROM legacy_pilots WHERE claimed_user_id IS NOT NULL
+      `).all().map((row) => [row.userId, row.pilotId]),
+    );
+    return users.map((user) => {
+      const sessions = sessionByUser.get(user.id);
+      const saves = saveByUser.get(user.id);
+      const lastSeenAt = sessions?.lastSeenAt ?? null;
+      return {
+        ...user,
+        lastSeenAt,
+        activeSessionCount: Number(sessions?.activeSessionCount || 0),
+        approxOnline: lastSeenAt != null && (t - lastSeenAt) <= onlineWindowMs,
+        approxOnlineMs: Number(sessions?.approxOnlineMs || 0),
+        soloSaveCount: Number(saves?.soloSaveCount || 0),
+        latestSoloSavedAt: saves?.latestSoloSavedAt ?? null,
+        latestSoloSummary: latestByUser.get(user.id) ?? null,
+        multiplayerOnline: false,
+        multiplayerRttMs: null,
+        lastServer: lastServer || null,
+        legacyPilotId: legacyByUser.get(user.id) ?? null,
+      };
+    });
+  }
+
+  getUserDetail(userId, { lastServer = null } = {}) {
+    const user = this.getUserById(userId);
+    if (!user) return null;
+    const enriched = this.listUsersEnriched({ lastServer }).find((entry) => entry.id === user.id);
+    return {
+      user: enriched || user,
+      sessions: this.listUserSessions(user.id),
+      saves: this.listSaveSummaries(user.id),
+      legacyPilot: this.claimedPilotForUser(user.id),
+    };
+  }
+
+  adminOverviewCounts() {
+    const t = now();
+    const users = this.db.prepare(`
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN status = 'disabled' THEN 1 ELSE 0 END) AS disabled,
+        SUM(CASE WHEN role = 'owner' THEN 1 ELSE 0 END) AS owners
+      FROM users
+    `).get();
+    const activeSessions = this.db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE expires_at > ?').get(t)?.count || 0;
+    const soloSaves = this.db.prepare('SELECT COUNT(*) AS count FROM save_slots').get()?.count || 0;
+    return {
+      users: {
+        total: Number(users?.total || 0),
+        active: Number(users?.active || 0),
+        disabled: Number(users?.disabled || 0),
+        owners: Number(users?.owners || 0),
+      },
+      activeSessions: Number(activeSessions),
+      soloSaves: Number(soloSaves),
+    };
+  }
+
+  updateDisplayName(userId, displayName, actorUserId) {
+    const name = normalizeDisplayName(displayName);
+    const result = this.db.prepare('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?')
+      .run(name, now(), String(userId));
+    if (!result.changes) throw new Error('User not found');
+    this.audit('user.display_name_changed', {
+      actorUserId, targetUserId: String(userId), detail: { displayName: name },
+    });
+    return this.getUserById(userId);
+  }
+
+  createAdminHandoff(userId) {
+    const user = this.getUserById(userId);
+    if (!user || user.role !== 'owner' || user.status !== 'active' || user.mustChangePassword) {
+      throw new Error('Owner handoff unavailable');
+    }
+    this.db.prepare('DELETE FROM admin_handoffs WHERE expires_at < ? OR consumed_at IS NOT NULL').run(now());
+    const token = randomToken(32);
+    const tokenHash = this.hashSessionToken(token);
+    const expiresAt = now() + 60_000;
+    this.db.prepare(`
+      INSERT INTO admin_handoffs(token_hash, user_id, expires_at, consumed_at)
+      VALUES (?, ?, ?, NULL)
+    `).run(tokenHash, user.id, expiresAt);
+    this.audit('admin.handoff_created', { actorUserId: user.id, targetUserId: user.id });
+    return { token, expiresAt };
+  }
+
+  redeemAdminHandoff(rawToken) {
+    if (!rawToken) throw new Error('Handoff token required');
+    const tokenHash = this.hashSessionToken(String(rawToken));
+    const row = this.db.prepare('SELECT * FROM admin_handoffs WHERE token_hash = ?').get(tokenHash);
+    if (!row || row.consumed_at != null || row.expires_at <= now()) {
+      throw new Error('Handoff token invalid or expired');
+    }
+    const user = this.getUserById(row.user_id);
+    if (!user || user.role !== 'owner' || user.status !== 'active' || user.mustChangePassword) {
+      throw new Error('Handoff account unavailable');
+    }
+    this.db.prepare('UPDATE admin_handoffs SET consumed_at = ? WHERE token_hash = ?').run(now(), tokenHash);
+    const created = this.createSession(user.id);
+    this.audit('admin.handoff_redeemed', { actorUserId: user.id, targetUserId: user.id });
+    return { ...created, user };
+  }
+
+  listAuditEvents(limit = 50) {
+    const capped = Math.max(1, Math.min(200, Number(limit) || 50));
+    return this.db.prepare(`
+      SELECT e.id, e.actor_user_id AS actorUserId, a.username AS actorUsername,
+             e.target_user_id AS targetUserId, t.username AS targetUsername,
+             e.action, e.detail_json AS detailJson, e.created_at AS createdAt
+      FROM audit_events e
+      LEFT JOIN users a ON a.id = e.actor_user_id
+      LEFT JOIN users t ON t.id = e.target_user_id
+      ORDER BY e.id DESC
+      LIMIT ?
+    `).all(capped).map((row) => ({
+      id: row.id,
+      actorUserId: row.actorUserId,
+      actorUsername: row.actorUsername,
+      targetUserId: row.targetUserId,
+      targetUsername: row.targetUsername,
+      action: row.action,
+      detail: (() => { try { return JSON.parse(row.detailJson || '{}'); } catch { return {}; } })(),
+      createdAt: row.createdAt,
+    }));
+  }
+
   async authenticate(username, password) {
     let canonical;
     try { canonical = normalizeUsername(username); } catch { return null; }
     const row = this.db.prepare('SELECT * FROM users WHERE username = ?').get(canonical);
     if (!row || row.status !== 'active') return null;
     if (!await argonVerify(row.password_hash, String(password ?? ''))) return null;
-    return publicUser(row);
+    const loginAt = now();
+    this.db.prepare('UPDATE users SET last_login_at = ?, updated_at = ? WHERE id = ?')
+      .run(loginAt, loginAt, row.id);
+    return publicUser({ ...row, last_login_at: loginAt, updated_at: loginAt });
   }
 
   createSession(userId) {
@@ -201,7 +481,8 @@ export class AuthStore {
     if (!rawToken) return null;
     const tokenHash = this.hashSessionToken(String(rawToken));
     const row = this.db.prepare(`
-      SELECT s.*, u.username, u.display_name, u.role, u.status, u.must_change_password, u.created_at AS user_created_at, u.updated_at
+      SELECT s.*, u.username, u.display_name, u.role, u.status, u.must_change_password,
+             u.created_at AS user_created_at, u.updated_at, u.last_login_at
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ?
     `).get(tokenHash);
@@ -225,6 +506,7 @@ export class AuthStore {
         must_change_password: row.must_change_password,
         created_at: row.user_created_at,
         updated_at: row.updated_at,
+        last_login_at: row.last_login_at,
       }),
     };
   }
