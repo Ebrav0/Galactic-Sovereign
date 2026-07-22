@@ -44,15 +44,16 @@ import {
   projectSharedState,
   replicationManifest,
 } from '../src/js/coop-replication.js';
-import { applyCoopCommand, QUIET_COMMANDS } from './actions.mjs';
+import { applyCoopCommand, QUIET_COMMANDS, COOP_COMMAND_REGISTRY } from './actions.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const DATA_DIR = process.env.GS_COOP_DATA_DIR
   ? path.resolve(process.env.GS_COOP_DATA_DIR)
   : path.join(__dirname, 'data');
 const WORLD_PATH = path.join(DATA_DIR, 'world.json');
 const PORT = Number(process.env.GS_COOP_PORT || 9090);
-const HOST = process.env.GS_COOP_HOST || '0.0.0.0';
+const HOST = process.env.GS_COOP_HOST || '127.0.0.1';
 const PASSWORD = process.env.GS_COOP_PASSWORD || '';
 const SEED = Number(process.env.GS_COOP_SEED || Date.now() % 1_000_000_000);
 const AUTOSAVE_MS = Number(process.env.GS_COOP_AUTOSAVE_MS || 60_000);
@@ -66,6 +67,9 @@ const BACKPRESSURE_LOG_MS = Number(process.env.GS_COOP_BACKPRESSURE_LOG_MS || 5_
 const MAX_ONLINE_PLAYERS = Number(process.env.GS_COOP_MAX_PLAYERS || 5);
 const COMMANDS_PER_SECOND = Number(process.env.GS_COOP_COMMANDS_PER_SECOND || 20);
 const COMMAND_BURST = Number(process.env.GS_COOP_COMMAND_BURST || 40);
+const MAX_WS_PAYLOAD = Number(process.env.GS_COOP_MAX_PAYLOAD || 256 * 1024);
+const HELLO_WINDOW_MS = 15 * 60 * 1000;
+const HELLO_MAX_ATTEMPTS = 5;
 
 function readCredential(name, fileName) {
   if (process.env[name]) return process.env[name];
@@ -79,7 +83,27 @@ function readCredential(name, fileName) {
 }
 
 const GATEWAY_SECRET = readCredential('GS_GATEWAY_SECRET', 'gateway-secret');
+/** Cheats stay available only for unlocked local development (no gateway, not production). */
+const ALLOW_DEV_ACTIONS = !IS_PRODUCTION && !GATEWAY_SECRET;
 
+function assertSecureProductionConfig() {
+  if (!IS_PRODUCTION) return;
+  if (!GATEWAY_SECRET) {
+    console.error('[coop][security] Refusing to start: GS_GATEWAY_SECRET (or credential file) is required when NODE_ENV=production');
+    process.exit(1);
+  }
+  const loopback = new Set(['127.0.0.1', '::1', 'localhost']);
+  if (!loopback.has(HOST)) {
+    console.error(`[coop][security] Refusing to start: GS_COOP_HOST must be loopback in production (got ${HOST})`);
+    process.exit(1);
+  }
+}
+
+assertSecureProductionConfig();
+
+function securityLog(event, detail = {}) {
+  console.warn('[coop][security]', JSON.stringify({ event, at: new Date().toISOString(), ...detail }));
+}
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -513,7 +537,18 @@ function sendCheckpoint(ws, reason = 'resync') {
 }
 
 function applyCommand(type, payload = {}, playerId = null) {
-  const result = applyCoopCommand(state, type, payload, { playerId });
+  if (type === 'devAction' && !ALLOW_DEV_ACTIONS) {
+    securityLog('blocked_dev_action', { playerId });
+    return { ok: false, reason: 'Dev actions disabled on this host' };
+  }
+  if (!COOP_COMMAND_REGISTRY.has(type)) {
+    securityLog('unknown_command', { playerId, command: String(type).slice(0, 64) });
+    return { ok: false, reason: `Unknown command: ${type}` };
+  }
+  const result = applyCoopCommand(state, type, payload, {
+    playerId,
+    allowDevActions: ALLOW_DEV_ACTIONS,
+  });
   if (result?.ok && type !== 'requestSnapshot') dirty = true;
   return result;
 }
@@ -527,6 +562,49 @@ function safeEqual(a, b) {
   const left = Buffer.from(String(a ?? ''));
   const right = Buffer.from(String(b ?? ''));
   return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function hashReconnectToken(token) {
+  return crypto.createHash('sha256').update(String(token ?? ''), 'utf8').digest('hex');
+}
+
+function reconnectTokenMatches(stored, presented) {
+  if (!stored || !presented) return false;
+  // Legacy plaintext tokens in older world.json files (UUID-sized, not sha256 hex).
+  if (stored.length <= 64 && !/^[0-9a-f]{64}$/i.test(stored)) {
+    return safeEqual(stored, presented);
+  }
+  return safeEqual(stored, hashReconnectToken(presented));
+}
+
+function storeReconnectToken(plaintext) {
+  return hashReconnectToken(plaintext);
+}
+
+const helloAttempts = new Map();
+
+function helloClientKey(req) {
+  return String(req?.socket?.remoteAddress || 'unknown');
+}
+
+function helloAllowed(key) {
+  const entry = helloAttempts.get(key);
+  if (!entry || Date.now() - entry.startedAt > HELLO_WINDOW_MS) return true;
+  return entry.count < HELLO_MAX_ATTEMPTS;
+}
+
+function recordHelloFailure(key, reason) {
+  const entry = helloAttempts.get(key);
+  if (!entry || Date.now() - entry.startedAt > HELLO_WINDOW_MS) {
+    helloAttempts.set(key, { startedAt: Date.now(), count: 1 });
+  } else {
+    entry.count += 1;
+  }
+  securityLog('hello_auth_failed', { key: key.slice(0, 64), reason, count: helloAttempts.get(key)?.count });
+}
+
+function clearHelloFailures(key) {
+  helloAttempts.delete(key);
 }
 
 function trustedIdentityFromRequest(req) {
@@ -559,8 +637,13 @@ function resolveIdentity(msg, trustedIdentity = null) {
 
   if (requestedId) {
     const known = coopMeta.identities[requestedId];
-    if (known && token && known.reconnectToken === token) {
+    if (known && token && reconnectTokenMatches(known.reconnectToken, token)) {
       known.displayName = displayName;
+      // Upgrade legacy plaintext tokens to hashes on successful reconnect.
+      if (known.reconnectToken.length <= 64 && !/^[0-9a-f]{64}$/i.test(known.reconnectToken)) {
+        known.reconnectToken = storeReconnectToken(token);
+        dirty = true;
+      }
       return { id: requestedId, displayName, reconnectToken: token };
     }
   }
@@ -573,20 +656,28 @@ function resolveIdentity(msg, trustedIdentity = null) {
     } while (coopMeta.identities[id]);
   }
   const reconnectToken = token || crypto.randomUUID();
-  coopMeta.identities[id] = { displayName, reconnectToken, createdAt: Date.now() };
+  coopMeta.identities[id] = {
+    displayName,
+    reconnectToken: storeReconnectToken(reconnectToken),
+    createdAt: Date.now(),
+  };
   dirty = true;
   return { id, displayName, reconnectToken };
 }
 
-function handleMessage(ws, raw) {
+function handleMessage(ws, raw, req) {
   const meta = clients.get(ws);
   if (!meta) return;
 
   let msg;
   try {
-    msg = decode(raw);
-  } catch {
-    send(ws, { type: 'error', error: 'Invalid JSON message' });
+    msg = decode(raw, { maxBytes: MAX_WS_PAYLOAD });
+  } catch (err) {
+    securityLog('invalid_message', {
+      playerId: meta.id,
+      error: String(err?.message || err).slice(0, 120),
+    });
+    send(ws, { type: 'error', error: 'Invalid message' });
     return;
   }
 
@@ -596,6 +687,13 @@ function handleMessage(ws, raw) {
   }
 
   if (msg.type === 'hello') {
+    const rateKey = helloClientKey(req);
+    if (!helloAllowed(rateKey)) {
+      securityLog('hello_rate_limited', { key: rateKey.slice(0, 64) });
+      send(ws, { type: 'error', error: 'Too many login attempts; try again later' });
+      ws.close(4029, 'rate limited');
+      return;
+    }
     if (msg.protocolVersion !== PROTOCOL_VERSION) {
       send(ws, {
         type: 'error',
@@ -606,7 +704,8 @@ function handleMessage(ws, raw) {
       ws.close(4002, 'protocol mismatch');
       return;
     }
-    if (!meta.trustedIdentity && PASSWORD && msg.password !== PASSWORD) {
+    if (!meta.trustedIdentity && PASSWORD && !safeEqual(msg.password ?? '', PASSWORD)) {
+      recordHelloFailure(rateKey, 'invalid_password');
       send(ws, { type: 'error', error: 'Invalid password' });
       ws.close(4001, 'Invalid password');
       return;
@@ -618,6 +717,7 @@ function handleMessage(ws, raw) {
       ws.close(4004, 'server full');
       return;
     }
+    clearHelloFailures(rateKey);
     meta.authed = true;
     meta.id = identity.id;
     meta.displayName = identity.displayName;
@@ -659,11 +759,21 @@ function handleMessage(ws, raw) {
   }
 
   if (!meta.authed) {
+    securityLog('command_before_hello', { playerId: meta.id, type: msg.type });
     send(ws, { type: 'error', error: 'Send hello first' });
     return;
   }
 
   if (msg.type === 'command') {
+    if (!COOP_COMMAND_REGISTRY.has(msg.command)) {
+      securityLog('unknown_command', { playerId: meta.id, command: msg.command });
+      send(ws, {
+        type: 'commandResult',
+        requestId: msg.requestId ?? null,
+        result: { ok: false, reason: `Unknown command: ${msg.command}` },
+      });
+      return;
+    }
     const now = Date.now();
     const elapsedSeconds = Math.max(0, now - meta.commandRefillAt) / 1000;
     meta.commandTokens = Math.min(COMMAND_BURST, meta.commandTokens + elapsedSeconds * COMMANDS_PER_SECOND);
@@ -729,14 +839,14 @@ function handleMessage(ws, raw) {
         notice = `${meta.id} released control of ${msg.payload?.assetId}`;
       } else if (msg.command === 'togglePaused' || msg.command === 'setPaused') {
         if (result.paused) {
-          const now = Date.now();
-          if (lastPauseBy && lastPauseBy !== meta.id && now - lastPauseNoticeAt < 2000) {
+          const pauseNow = Date.now();
+          if (lastPauseBy && lastPauseBy !== meta.id && pauseNow - lastPauseNoticeAt < 2000) {
             notice = `${meta.id} paused (was just paused by ${lastPauseBy})`;
           } else {
             notice = `${meta.id} paused the empire`;
           }
           lastPauseBy = meta.id;
-          lastPauseNoticeAt = now;
+          lastPauseNoticeAt = pauseNow;
         } else {
           notice = `${meta.id} resumed the empire`;
           lastPauseBy = null;
@@ -755,6 +865,7 @@ function handleMessage(ws, raw) {
     return;
   }
 
+  securityLog('unknown_message_type', { playerId: meta.id, type: msg.type });
   send(ws, { type: 'error', error: `Unknown message type: ${msg.type}` });
 }
 
@@ -826,10 +937,12 @@ function healthPayload() {
 loadOrCreateWorld();
 
 const server = http.createServer((req, res) => {
-  // Allow the static game (:8080) and other origins to probe health.
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // Local/dev static game may probe health cross-origin; production stays loopback-only.
+  if (!IS_PRODUCTION) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -844,11 +957,12 @@ const server = http.createServer((req, res) => {
   res.end('Not found');
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, maxPayload: MAX_WS_PAYLOAD });
 
 wss.on('connection', (ws, req) => {
   const trustedIdentity = trustedIdentityFromRequest(req);
   if (GATEWAY_SECRET && !trustedIdentity) {
+    securityLog('gateway_auth_rejected', { ip: helloClientKey(req) });
     ws.close(4003, 'gateway authentication required');
     return;
   }
@@ -859,7 +973,7 @@ wss.on('connection', (ws, req) => {
     commandTokens: COMMAND_BURST,
     commandRefillAt: Date.now(),
   });
-  ws.on('message', (data) => handleMessage(ws, data.toString()));
+  ws.on('message', (data) => handleMessage(ws, data.toString(), req));
   ws.on('close', () => {
     const meta = clients.get(ws);
     if (meta) {
@@ -882,6 +996,8 @@ server.listen(PORT, HOST, () => {
   console.log(`[coop] websocket ws://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}`);
   console.log(`[coop] password ${PASSWORD ? 'ENABLED' : GATEWAY_SECRET ? 'disabled (gateway identity only)' : 'disabled (open development session)'}`);
   console.log(`[coop] gateway authentication ${GATEWAY_SECRET ? 'REQUIRED' : 'disabled (development mode)'}`);
+  console.log(`[coop] dev actions ${ALLOW_DEV_ACTIONS ? 'ENABLED (local development)' : 'DISABLED'}`);
+  console.log(`[coop] maxPayload ${MAX_WS_PAYLOAD} bytes`);
   console.log(`[coop] world ${WORLD_PATH}`);
   console.log(`[coop] pose every ${SUMMARY_EVERY_TICKS} ticks · delta every ${DELTA_EVERY_TICKS} ticks`);
   startTickLoop();

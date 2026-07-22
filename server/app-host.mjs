@@ -37,7 +37,9 @@ function readCredential(name, fileName) {
 
 const GATEWAY_SECRET = readCredential('GS_GATEWAY_SECRET', 'gateway-secret');
 const SESSION_PEPPER = readCredential('GS_SESSION_PEPPER', 'session-pepper');
-if (process.env.NODE_ENV === 'production' && !SESSION_PEPPER) throw new Error('Missing session-pepper credential');
+if ((process.env.NODE_ENV === 'production' || GATEWAY_SECRET) && !SESSION_PEPPER) {
+  throw new Error('Missing session-pepper credential (required in production and whenever gateway secret is configured)');
+}
 const store = new AuthStore({ dataDir: DATA_DIR, sessionPepper: SESSION_PEPPER });
 const loginAttempts = new Map();
 const liveSockets = new Set();

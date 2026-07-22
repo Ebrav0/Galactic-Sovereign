@@ -144,7 +144,7 @@ function setPauseState(state, paused, playerId) {
   return { ok: true, paused: state.paused, pausedBy: state.pausedBy };
 }
 
-function dispatch(state, command, payload, playerId) {
+function dispatch(state, command, payload, playerId, ctx = {}) {
   switch (command) {
     case 'setPaused':
       return setPauseState(state, !!payload.paused, playerId);
@@ -557,7 +557,11 @@ function dispatch(state, command, payload, playerId) {
       return { ok: true, snapshot: true };
 
     // Dev panel cheats / spawns — host-authoritative so both screens see them.
+    // Disabled in production / gateway-locked hosts (ctx.allowDevActions === false).
     case 'devAction': {
+      if (ctx?.allowDevActions === false) {
+        return { ok: false, reason: 'Dev actions disabled on this host' };
+      }
       const action = payload.action;
       if (!action || typeof action !== 'string') {
         return { ok: false, reason: 'action required' };
@@ -575,11 +579,14 @@ function dispatch(state, command, payload, playerId) {
  * @param {any} state
  * @param {string} command
  * @param {Record<string, any>} payload
- * @param {{ playerId?: string | null }} [ctx] issuing pilot (null = trusted local/test)
+ * @param {{ playerId?: string | null, allowDevActions?: boolean }} [ctx] issuing pilot (null = trusted local/test)
  */
 export function applyCoopCommand(state, command, payload = {}, ctx = {}) {
   const playerId = ctx.playerId ?? null;
-  return withPilotFlagship(state, playerId, () => dispatch(state, command, payload, playerId));
+  if (command === 'devAction' && ctx.allowDevActions === false) {
+    return { ok: false, reason: 'Dev actions disabled on this host' };
+  }
+  return withPilotFlagship(state, playerId, () => dispatch(state, command, payload, playerId, ctx));
 }
 
 /** Commands that mutate the shared world beyond flagship poses / HUD fields. */
