@@ -15,6 +15,7 @@
     "verify:hosted-ui": "node scripts/verify-hosted-ui.mjs",
     "verify:hosted-load": "node scripts/verify-hosted-load.mjs",
     "verify:world-migration": "node scripts/verify-world-migration.mjs",
+    "verify:security": "node scripts/verify-security-hardening.mjs",
     "electron:prod": "npm run build && electron .",
     "coop": "node server/coop-host.mjs",
     "coop:smoke": "node scripts/coop-smoke.mjs",

@@ -43,8 +43,13 @@ export function decode(raw, { maxBytes = MAX_MESSAGE_CHARS } = {}) {
   if (text.length > maxBytes) throw new Error('Message too large');
   let msg;
   try {
-    msg = JSON.parse(text);
-  } catch {
+    msg = JSON.parse(text, (key, value) => {
+      if (FORBIDDEN_KEYS.has(key)) throw new Error('Forbidden message key');
+      return value;
+    });
+  } catch (error) {
+    if (String(error?.message || error).includes('Forbidden message key')) throw error;
+    if (String(error?.message || error).includes('nesting')) throw error;
     throw new Error('Invalid JSON message');
   }
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
