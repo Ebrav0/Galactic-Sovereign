@@ -120,9 +120,11 @@ export function diffSharedState(previous, next) {
 }
 
 function parentForPath(root, path, create = false) {
+  const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
   let cursor = root;
   for (let i = 0; i < path.length - 1; i++) {
     const key = path[i];
+    if (FORBIDDEN.has(String(key))) return null;
     const nextKey = path[i + 1];
     if (cursor[key] == null && create) {
       cursor[key] = typeof nextKey === 'number' ? [] : {};
@@ -136,13 +138,16 @@ function parentForPath(root, path, create = false) {
 /** Apply ordered delta operations to a live client state object. */
 export function applySharedStateDelta(state, operations) {
   if (!state || !Array.isArray(operations)) return 0;
+  const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
   let applied = 0;
   for (const operation of operations) {
     const path = Array.isArray(operation?.path) ? operation.path : null;
     if (!path || path.length === 0) continue;
+    if (path.some((key) => FORBIDDEN.has(String(key)))) continue;
     const parent = parentForPath(state, path, operation.op === 'set');
     if (!parent) continue;
     const key = path[path.length - 1];
+    if (FORBIDDEN.has(String(key))) continue;
     if (operation.op === 'delete') {
       if (Array.isArray(parent) && typeof key === 'number') parent.splice(key, 1);
       else delete parent[key];

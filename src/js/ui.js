@@ -3355,8 +3355,7 @@ export function initUi(ctx) {
       const params = new URLSearchParams(window.location.search);
       if (input && !input.value && params.get('coopName')) input.value = params.get('coopName');
       if (input && !input.value) input.value = 'pilot';
-      const pass = el('title-mp-password');
-      if (pass && !pass.value && params.get('coopPass')) pass.value = params.get('coopPass');
+      // Intentionally ignore ?coopPass= — passwords must not live in the URL.
       setMpJoinStatus('');
       queueMicrotask(() => input?.focus?.());
     }

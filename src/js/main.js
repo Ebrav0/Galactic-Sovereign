@@ -354,7 +354,7 @@ import { AUDIO_CATALOG, AUDIO_PRELOAD_CUES } from './audio-catalog.js';
 import { createAudioEngine } from './audio-engine.js';
 import { createAudioDirector } from './audio-director.js';
 import { initAudioUi } from './audio-ui.js';
-import { createCoopClient, coopQueryEnabled, defaultWsUrl } from './coop-client.js';
+import { createCoopClient, coopQueryEnabled, coopQueryAllowsAutoJoin, defaultWsUrl, confirmCustomCoopServer } from './coop-client.js';
 import { currentAccountSession, discoverAccountSession, hostedMultiplayerUrl, isHostedMode } from './account-client.js';
 import { initAccountUi, setHostedSaveFlushHandler } from './account-ui.js';
 import { applyCombatSummary, applyFleetsSummary } from './coop-protocol.js';
@@ -2738,23 +2738,24 @@ function runDevAction(action, params = {}) {
   return result;
 }
 
-/** Keep the backtick Dev Panel on shipped CT builds until we lock it down. */
+/** Dev Panel is opt-in outside Vite DEV (server also blocks `devAction` in prod/gateway). */
 function shouldEnableDevPanel() {
   if (import.meta.env.DEV) return true;
   try {
     const params = new URLSearchParams(window.location.search);
     const q = params.get('dev');
-    if (q === '0' || q === 'false') return false;
+    if (q === '0' || q === 'false') {
+      try { localStorage.setItem('gs-dev-panel', '0'); } catch { /* ignore */ }
+      return false;
+    }
     if (q === '1' || q === 'true') {
       try { localStorage.setItem('gs-dev-panel', '1'); } catch { /* ignore */ }
       return true;
     }
-    const stored = localStorage.getItem('gs-dev-panel');
-    if (stored === '0') return false;
-    if (stored === '1') return true;
-  } catch { /* ignore */ }
-  // Default ON for home testing builds; set localStorage gs-dev-panel=0 to disable.
-  return true;
+    return localStorage.getItem('gs-dev-panel') === '1';
+  } catch {
+    return false;
+  }
 }
 
 if (shouldEnableDevPanel()) {
@@ -3790,7 +3791,8 @@ async function joinCoopSession(opts = {}) {
   try {
     await discoverAccountSession();
     const params = new URLSearchParams(window.location.search);
-    let password = opts.password ?? params.get('coopPass');
+    // Never accept passwords from the query string (history / Referer leakage).
+    let password = opts.password;
     if (password == null && opts.promptPassword) {
       password = window.prompt('Co-op password (leave blank if none)', '') ?? '';
     }
@@ -3812,12 +3814,20 @@ async function joinCoopSession(opts = {}) {
       playerName = account.user.displayName;
     }
 
-    toast(`Connecting to ${opts.url || defaultWsUrl()}…`, 'info');
+    const targetUrl = opts.url || defaultWsUrl();
+    const confirmed = await confirmCustomCoopServer(targetUrl, {
+      forcePrompt: opts.confirmCustom === true,
+    });
+    if (!confirmed) {
+      return { ok: false, reason: 'Connection to custom server cancelled' };
+    }
+
+    toast(`Connecting to ${targetUrl}…`, 'info');
     coopAwaitingFirstFocus = true;
     coopClock.ready = false;
     try {
       await coop.connect({
-        url: opts.url,
+        url: targetUrl,
         password,
         playerName,
       });
@@ -4147,7 +4157,11 @@ window.__fps = () => lastFps;
 
 queueMicrotask(async () => {
   if (coopQueryEnabled()) {
-    // Auto-join when opened as http://localhost:5173/?coop=1 (or ?coop=2, ?coop=true, …)
+    // Auto-join only for flag-style ?coop / ?coop=1 — never for endpoint-shaped URLs.
+    if (!coopQueryAllowsAutoJoin()) {
+      toast('Custom co-op server in URL — open Multiplayer and confirm before joining', 'info');
+      return;
+    }
     await joinCoopSession({ promptPassword: false });
     return;
   }

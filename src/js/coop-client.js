@@ -5,6 +5,7 @@ import { PROTOCOL_VERSION } from './coop-protocol.js';
 import { isHostedMode, hostedMultiplayerUrl } from './account-client.js';
 
 const DEFAULT_COOP_PORT = '9090';
+const CUSTOM_SERVER_TRUST_PREFIX = 'gs.coop.trust.v1:';
 
 /** True when `coop` is a real WS endpoint, not a flag like 1 / 2 / true / 8080. */
 function looksLikeWsEndpoint(raw) {
@@ -20,14 +21,104 @@ function looksLikeWsEndpoint(raw) {
   return false;
 }
 
+function normalizeWsUrl(raw) {
+  const v = String(raw ?? '').trim();
+  if (!v) return '';
+  if (/^wss?:\/\//i.test(v)) return v;
+  if (looksLikeWsEndpoint(v)) return `ws://${v}`;
+  return v;
+}
+
+/** Same-origin hosted relay or local default same-host endpoints are trusted. */
+function isTrustedCoopUrl(url) {
+  const target = normalizeWsUrl(url);
+  if (!target) return false;
+  if (isHostedMode()) {
+    return target === hostedMultiplayerUrl();
+  }
+  try {
+    const u = new URL(target);
+    const pageHost = window.location.hostname || '127.0.0.1';
+    const loopback = new Set(['127.0.0.1', 'localhost', '::1']);
+    if (u.hostname === pageHost) return true;
+    if (loopback.has(u.hostname) && loopback.has(pageHost)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function isCustomCoopEndpoint(url) {
+  const target = normalizeWsUrl(url || defaultWsUrl());
+  return looksLikeWsEndpoint(
+    (() => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const raw = params.get('coop');
+        if (looksLikeWsEndpoint(raw)) return raw;
+      } catch { /* ignore */ }
+      return target;
+    })(),
+  ) && !isTrustedCoopUrl(target);
+}
+
+function customServerTrustKey(url) {
+  return `${CUSTOM_SERVER_TRUST_PREFIX}${normalizeWsUrl(url)}`;
+}
+
+function hasTrustedCustomServer(url) {
+  try {
+    return sessionStorage.getItem(customServerTrustKey(url)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function rememberTrustedCustomServer(url) {
+  try {
+    sessionStorage.setItem(customServerTrustKey(url), '1');
+  } catch { /* private mode */ }
+}
+
+/**
+ * Require an explicit confirm before connecting to a non-default co-op host.
+ * @returns {Promise<boolean>}
+ */
+async function confirmCustomCoopServer(url, { forcePrompt = false } = {}) {
+  const target = normalizeWsUrl(url || defaultWsUrl());
+  if (!target) return false;
+  if (isHostedMode()) return true;
+  if (isTrustedCoopUrl(target) && !looksLikeWsEndpoint(new URLSearchParams(window.location.search).get('coop'))) {
+    return true;
+  }
+  // Endpoint-shaped ?coop=… or an explicit non-page host always needs confirmation
+  // unless the player already approved this exact URL for the tab session.
+  const custom = !isTrustedCoopUrl(target)
+    || looksLikeWsEndpoint(new URLSearchParams(window.location.search).get('coop'));
+  if (!custom) return true;
+  if (!forcePrompt && hasTrustedCustomServer(target)) return true;
+  const ok = window.confirm(
+    `Connect to untrusted co-op server?\n\n${target}\n\n`
+    + 'That host can control your game state for this session. Only continue if you trust the operator.',
+  );
+  if (ok) rememberTrustedCustomServer(target);
+  return ok;
+}
+
+/** Auto-join is only safe for flag-style ?coop / ?coop=1, not endpoint URLs. */
+export function coopQueryAllowsAutoJoin() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has('coop')) return false;
+  const raw = params.get('coop');
+  return !looksLikeWsEndpoint(raw);
+}
+
 function defaultWsUrl() {
   const params = new URLSearchParams(window.location.search);
   const raw = params.get('coop');
   // ?coop, ?coop=1, ?coop=2, ?coop=true → default host. Only custom when it looks like a URL.
   if (looksLikeWsEndpoint(raw)) {
-    const v = raw.trim();
-    if (/^wss?:\/\//i.test(v)) return v;
-    return `ws://${v}`;
+    return normalizeWsUrl(raw);
   }
   if (isHostedMode()) return hostedMultiplayerUrl();
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -434,4 +525,4 @@ export function createCoopClient({
   };
 }
 
-export { defaultWsUrl, coopHealthUrl, DEFAULT_COOP_PORT, looksLikeWsEndpoint };
+export { defaultWsUrl, coopHealthUrl, DEFAULT_COOP_PORT, looksLikeWsEndpoint, confirmCustomCoopServer, isTrustedCoopUrl, normalizeWsUrl };
