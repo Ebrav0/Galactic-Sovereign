@@ -2,6 +2,7 @@
 
 import { deserialize } from './save.js';
 import { PROTOCOL_VERSION } from './coop-protocol.js';
+import { isHostedMode, hostedMultiplayerUrl } from './account-client.js';
 
 const DEFAULT_COOP_PORT = '9090';
 
@@ -28,6 +29,7 @@ function defaultWsUrl() {
     if (/^wss?:\/\//i.test(v)) return v;
     return `ws://${v}`;
   }
+  if (isHostedMode()) return hostedMultiplayerUrl();
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const host = window.location.hostname || '127.0.0.1';
   // Always default to the co-op host port — never the static/Vite page port (8080/5173).
@@ -40,7 +42,7 @@ function coopHealthUrl(wsUrl = defaultWsUrl()) {
   try {
     const u = new URL(wsUrl);
     u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
-    u.pathname = '/health';
+    u.pathname = u.pathname === '/ws/multiplayer' ? '/healthz' : '/health';
     u.search = '';
     u.hash = '';
     return u.toString();
@@ -77,6 +79,9 @@ export function createCoopClient({
   const revisions = { pose: 0, delta: 0, events: 0, checkpoint: 0 };
   let reconnectToken = null;
   const notices = [];
+  const commandLatenciesMs = [];
+  let lastPoseReceivedAt = 0;
+  let maxPoseGapMs = 0;
 
   function status(patch) {
     onStatus?.({
@@ -187,6 +192,9 @@ export function createCoopClient({
       if (!acceptsEnvelope(msg, 'pose')) {
         return;
       }
+      const receivedAt = performance.now();
+      if (lastPoseReceivedAt > 0) maxPoseGapMs = Math.max(maxPoseGapMs, receivedAt - lastPoseReceivedAt);
+      lastPoseReceivedAt = receivedAt;
       lastSummary = msg.pose ?? msg.summary ?? lastSummary;
       if (msg.notice) {
         notices.push(msg.notice);
@@ -346,6 +354,9 @@ export function createCoopClient({
     revisions.events = 0;
     revisions.checkpoint = 0;
     lastSummary = null;
+    commandLatenciesMs.length = 0;
+    lastPoseReceivedAt = 0;
+    maxPoseGapMs = 0;
     for (const [, entry] of pending) entry.reject(new Error('Disconnected'));
     pending.clear();
     status({ phase: 'idle' });
@@ -354,8 +365,16 @@ export function createCoopClient({
   function command(commandName, payload = {}) {
     if (!authed) return Promise.reject(new Error('Not connected to co-op host'));
     const requestId = `${requestSession}:${++requestSeq}`;
+    const startedAt = performance.now();
     return new Promise((resolve, reject) => {
-      pending.set(requestId, { resolve, reject });
+      pending.set(requestId, {
+        resolve: (value) => {
+          commandLatenciesMs.push(performance.now() - startedAt);
+          if (commandLatenciesMs.length > 500) commandLatenciesMs.splice(0, commandLatenciesMs.length - 500);
+          resolve(value);
+        },
+        reject,
+      });
       try {
         send({
           type: 'command',
@@ -403,6 +422,15 @@ export function createCoopClient({
     getRevisions: () => ({ ...revisions }),
     getSummary: () => lastSummary,
     getUrl: () => ws?.url ?? defaultWsUrl(),
+    getDiagnostics: () => {
+      const sorted = [...commandLatenciesMs].sort((a, b) => a - b);
+      return {
+        commandSamples: sorted.length,
+        commandAckP95Ms: sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] : null,
+        maxPoseGapMs: lastPoseReceivedAt > 0 ? maxPoseGapMs : null,
+        lastPoseAgeMs: lastPoseReceivedAt > 0 ? performance.now() - lastPoseReceivedAt : null,
+      };
+    },
   };
 }
 

@@ -45,6 +45,7 @@ import { ensureStrategicOrdersState } from './strategic-operations.js';
 import { ensureDiplomacy, previewProposal } from './diplomacy.js';
 import { ensureCombatSettings } from './combat-autonomy.js';
 import { createTutorialCampaignState } from './tutorial-access.js';
+import { accountApi, currentAccountSession, discoverAccountSession, isHostedMode } from './account-client.js';
 
 export const SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
 
@@ -1514,13 +1515,70 @@ export function deserialize(envelopeJson, { verifyChecksum = true, trustCurrent 
 const isElectron = () => typeof window !== 'undefined' && !!window.gameSave;
 const lsKey = (slot) => `gs-save-${slot}`;
 const TUTORIAL_CHECKPOINT_KEY = 'tutorial-checkpoint';
+const hostedRevisions = new Map();
 
-export async function writeSlot(slot, state) {
+async function useHostedSaves() {
+  if (isElectron()) return false;
+  await discoverAccountSession();
+  return isHostedMode();
+}
+
+async function hostedRevision(slot) {
+  if (hostedRevisions.has(slot)) return hostedRevisions.get(slot);
+  const listed = await listSlots();
+  if (!listed.ok) throw new Error(listed.error || 'Could not read save revision');
+  return hostedRevisions.get(slot) ?? 0;
+}
+
+async function writeHostedSlot(slot, envelopeJson, { keepalive = false } = {}) {
+  if (!currentAccountSession()?.authenticated) return { ok: false, error: 'Sign in to save' };
+  try {
+    const expectedRevision = keepalive
+      ? (hostedRevisions.get(slot) ?? 0)
+      : await hostedRevision(slot);
+    const result = await accountApi(`/api/v1/saves/${encodeURIComponent(slot)}`, {
+      method: 'PUT',
+      csrf: true,
+      keepalive,
+      body: { envelope: envelopeJson, expectedRevision },
+    });
+    if (keepalive) return { ok: true, keepalive: true };
+    if (result.response.status === 409) {
+      hostedRevisions.set(slot, Number(result.payload.currentRevision) || 0);
+      return { ok: false, conflict: true, error: 'This save changed in another tab. Reload it before saving again.' };
+    }
+    if (!result.response.ok) return { ok: false, error: result.payload.error || 'Could not save' };
+    hostedRevisions.set(slot, Number(result.payload.save?.revision) || expectedRevision + 1);
+    return { ok: true, revision: hostedRevisions.get(slot) };
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
+async function readHostedSlot(slot) {
+  if (!currentAccountSession()?.authenticated) return { ok: false, error: 'No save in this slot' };
+  try {
+    if (!hostedRevisions.has(slot)) {
+      const listed = await listSlots();
+      if (!listed.ok) return listed;
+      if (!hostedRevisions.has(slot)) return { ok: false, error: 'No save in this slot' };
+    }
+    const result = await accountApi(`/api/v1/saves/${encodeURIComponent(slot)}`);
+    if (!result.response.ok) return { ok: false, error: result.payload.error || 'No save in this slot' };
+    hostedRevisions.set(slot, Number(result.payload.save?.revision) || 0);
+    return deserialize(result.payload.save.envelope);
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error) };
+  }
+}
+
+export async function writeSlot(slot, state, { keepalive = false } = {}) {
   if (!SLOTS.includes(slot)) return { ok: false, error: `Invalid slot: ${slot}` };
   const envelopeJson = serialize(state);
   if (isElectron()) {
     return window.gameSave.write(slot, envelopeJson);
   }
+  if (await useHostedSaves()) return writeHostedSlot(slot, envelopeJson, { keepalive });
   try {
     localStorage.setItem(lsKey(slot), envelopeJson);
     return { ok: true };
@@ -1536,6 +1594,8 @@ export async function readSlot(slot) {
     const res = await window.gameSave.read(slot);
     if (!res.ok) return res;
     raw = res.data;
+  } else if (await useHostedSaves()) {
+    return readHostedSlot(slot);
   } else {
     raw = localStorage.getItem(lsKey(slot));
     if (raw === null) return { ok: false, error: 'No save in this slot' };
@@ -1546,6 +1606,17 @@ export async function readSlot(slot) {
 export async function listSlots() {
   if (isElectron()) {
     return window.gameSave.list();
+  }
+  if (await useHostedSaves()) {
+    if (!currentAccountSession()?.authenticated) return { ok: true, saves: [] };
+    try {
+      const result = await accountApi('/api/v1/saves');
+      if (!result.response.ok) return { ok: false, error: result.payload.error || 'Could not list saves' };
+      for (const save of result.payload.saves ?? []) hostedRevisions.set(save.slot, Number(save.revision) || 0);
+      return { ok: true, saves: result.payload.saves ?? [] };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
   }
   const saves = [];
   for (const slot of SLOTS) {
@@ -1568,6 +1639,7 @@ export async function writeTutorialCheckpoint(state) {
   if (isElectron() && window.gameSave.writeInternal) {
     return window.gameSave.writeInternal(TUTORIAL_CHECKPOINT_KEY, envelopeJson);
   }
+  if (await useHostedSaves()) return writeHostedSlot(TUTORIAL_CHECKPOINT_KEY, envelopeJson);
   try {
     localStorage.setItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`, envelopeJson);
     return { ok: true };
@@ -1582,6 +1654,8 @@ export async function readTutorialCheckpoint() {
     const result = await window.gameSave.readInternal(TUTORIAL_CHECKPOINT_KEY);
     if (!result?.ok) return result;
     raw = result.data;
+  } else if (await useHostedSaves()) {
+    return readHostedSlot(TUTORIAL_CHECKPOINT_KEY);
   } else {
     raw = localStorage.getItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`);
   }
@@ -1593,8 +1667,55 @@ export async function clearTutorialCheckpoint() {
   if (isElectron() && window.gameSave.deleteInternal) {
     return window.gameSave.deleteInternal(TUTORIAL_CHECKPOINT_KEY);
   }
+  if (await useHostedSaves()) {
+    try {
+      const result = await accountApi(`/api/v1/saves/${TUTORIAL_CHECKPOINT_KEY}`, { method: 'DELETE', csrf: true });
+      if (!result.response.ok) return { ok: false, error: result.payload.error || 'Could not clear checkpoint' };
+      hostedRevisions.delete(TUTORIAL_CHECKPOINT_KEY);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  }
   localStorage.removeItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`);
   return { ok: true };
+}
+
+export function browserLocalSaveCandidates() {
+  if (typeof localStorage === 'undefined') return [];
+  const keys = [
+    ...SLOTS.map((slot) => ({ slot, key: lsKey(slot) })),
+    { slot: TUTORIAL_CHECKPOINT_KEY, key: `gs-internal-${TUTORIAL_CHECKPOINT_KEY}` },
+  ];
+  return keys.flatMap(({ slot, key }) => {
+    const envelope = localStorage.getItem(key);
+    if (!envelope || !deserialize(envelope).ok) return [];
+    return [{ slot, key, envelope }];
+  });
+}
+
+export async function importBrowserLocalSaves() {
+  if (!await useHostedSaves() || !currentAccountSession()?.authenticated) {
+    return { ok: false, error: 'Sign in before importing browser saves' };
+  }
+  const remote = await listSlots();
+  if (!remote.ok) return remote;
+  const occupied = new Set((remote.saves ?? []).map((save) => save.slot));
+  const imported = [];
+  const skipped = [];
+  for (const candidate of browserLocalSaveCandidates()) {
+    if (occupied.has(candidate.slot)) {
+      skipped.push(candidate.slot);
+      continue;
+    }
+    hostedRevisions.set(candidate.slot, 0);
+    const written = await writeHostedSlot(candidate.slot, candidate.envelope);
+    if (!written.ok) return { ...written, imported, skipped };
+    const verified = await readHostedSlot(candidate.slot);
+    if (!verified.ok) return { ok: false, error: `Read-back failed for ${candidate.slot}`, imported, skipped };
+    imported.push(candidate.slot);
+  }
+  return { ok: true, imported, skipped, localOriginalsRetained: true };
 }
 
 // --- Browser-only export/import (JSON file download / file picker) ---

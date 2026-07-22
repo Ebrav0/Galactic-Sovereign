@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly encrypted Galactic Sovereign offsite backup
+
+[Timer]
+OnCalendar=*-*-* 05:10:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=galactic-sovereign-restic.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Galactic Sovereign backups
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=galactic-sovereign-backup.service
+
+[Install]
+WantedBy=timers.target

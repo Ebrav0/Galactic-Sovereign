@@ -14,7 +14,7 @@
  * Usage:
  *   GS_COOP_RESET=1 npm run coop   # fresh host in another terminal
  *   npm run coop:ship
- *   GS_COOP_URL=ws://100.67.50.44:9090 npm run coop:ship
+ *   GS_COOP_URL=ws://127.0.0.1:9090 npm run coop:ship
  */
 
 import WebSocket from 'ws';

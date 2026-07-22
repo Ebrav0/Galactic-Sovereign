@@ -53,14 +53,19 @@ function isRecord(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function arraysHaveStableIds(a, b) {
-  if (a.length !== b.length || a.length === 0) return false;
-  return a.every((entry, index) => (
-    isRecord(entry)
-    && isRecord(b[index])
-    && (entry.id ?? entry.pilotId) != null
-    && String(entry.id ?? entry.pilotId) === String(b[index].id ?? b[index].pilotId)
-  ));
+function arrayEntryIdentity(value) {
+  if (!isRecord(value)) return null;
+  return value.id ?? value.pilotId ?? null;
+}
+
+function arraysHaveIdentityConflict(before, after) {
+  for (let i = 0; i < before.length; i++) {
+    const beforeId = arrayEntryIdentity(before[i]);
+    const afterId = arrayEntryIdentity(after[i]);
+    if (beforeId == null && afterId == null) continue;
+    if (beforeId == null || afterId == null || String(beforeId) !== String(afterId)) return true;
+  }
+  return false;
 }
 
 /**
@@ -76,9 +81,16 @@ export function diffSharedState(previous, next) {
     if (samePrimitive(before, after)) return;
 
     if (Array.isArray(before) && Array.isArray(after)) {
-      // Stable entity arrays can be diffed field-by-field. Other list shape
-      // changes are replaced atomically, which also provides tombstones.
-      if (arraysHaveStableIds(before, after)) {
+      // Same-length arrays can be diffed field-by-field. List shape changes
+      // are replaced atomically, which also provides tombstones.
+      //
+      // projectSharedState deep-clones on every pass, so Object.is can never
+      // prove that an array is unchanged. Replacing every non-ID array here
+      // consequently retransmitted immutable galaxy lanes and bounded event
+      // histories several times per second. Same-length positional arrays are
+      // safe to recurse: changed indices are patched in place, while insert /
+      // delete shape changes still take the atomic replacement path below.
+      if (before.length === after.length && !arraysHaveIdentityConflict(before, after)) {
         for (let i = 0; i < after.length; i++) walk(before[i], after[i], [...path, i]);
       } else {
         ops.push({ op: 'set', path, value: jsonClone(after) });

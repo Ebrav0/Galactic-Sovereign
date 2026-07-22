@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Restore live accounts.sqlite + world.json from a local snapshot tarball.
+set -euo pipefail
+
+data=/var/lib/galactic-sovereign
+target="${1:-latest}"
+archive=""
+
+if [[ "$target" == latest ]]; then
+  archive="$(find "$data/backups" -mindepth 2 -maxdepth 2 -type f -name 'snapshot-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '1s/^[^ ]* //p')"
+elif [[ "$target" == /* && -f "$target" ]]; then
+  archive="$target"
+elif [[ -f "$data/backups/hourly/$target" ]]; then
+  archive="$data/backups/hourly/$target"
+elif [[ -f "$data/backups/daily/$target" ]]; then
+  archive="$data/backups/daily/$target"
+elif [[ -f "$target" ]]; then
+  archive="$target"
+else
+  echo "snapshot not found: $target" >&2
+  exit 1
+fi
+
+[[ -n "$archive" && -f "$archive" ]] || { echo 'no local snapshot available' >&2; exit 1; }
+
+work="$(mktemp -d /var/tmp/gs-restore.XXXXXX)"
+trap 'rm -rf -- "$work"' EXIT
+tar -xzf "$archive" -C "$work"
+(cd "$work" && sha256sum -c SHA256SUMS)
+
+if [[ -f "$work/accounts.sqlite" ]]; then
+  [[ "$(sqlite3 "$work/accounts.sqlite" 'PRAGMA integrity_check;')" == ok ]]
+fi
+if [[ -f "$work/world.json" ]]; then
+  GS_WORLD_RESTORE_TEST="$work/world.json" node --input-type=module -e \
+    "import fs from 'node:fs'; import { deserialize } from '/opt/galactic-sovereign/current/src/js/save.js'; const r=deserialize(fs.readFileSync(process.env.GS_WORLD_RESTORE_TEST,'utf8')); if(!r.ok) throw new Error(r.error);"
+fi
+
+systemctl stop galactic-sovereign-gateway.service galactic-sovereign-coop.service
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+pre="$data/backups/pre-restore-$stamp"
+install -d -m 0700 "$pre"
+[[ ! -f "$data/accounts/accounts.sqlite" ]] || install -m 0600 "$data/accounts/accounts.sqlite" "$pre/accounts.sqlite"
+[[ ! -f "$data/multiplayer/world.json" ]] || install -m 0600 "$data/multiplayer/world.json" "$pre/world.json"
+
+if [[ -f "$work/accounts.sqlite" ]]; then
+  install -d -o galactic-sovereign -g galactic-sovereign -m 0700 "$data/accounts"
+  install -o galactic-sovereign -g galactic-sovereign -m 0600 "$work/accounts.sqlite" "$data/accounts/accounts.sqlite"
+fi
+if [[ -f "$work/world.json" ]]; then
+  install -d -o galactic-sovereign -g galactic-sovereign -m 0700 "$data/multiplayer"
+  install -o galactic-sovereign -g galactic-sovereign -m 0600 "$work/world.json" "$data/multiplayer/world.json"
+fi
+
+systemctl start galactic-sovereign-coop.service galactic-sovereign-gateway.service
+for attempt in {1..40}; do
+  curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null \
+    && curl --fail --silent http://127.0.0.1:9090/health >/dev/null \
+    && break
+  [[ "$attempt" -lt 40 ]] || { echo 'services failed health checks after restore' >&2; exit 1; }
+  sleep 0.25
+done
+
+echo "restore complete from $archive (pre-restore copy in $pre)"

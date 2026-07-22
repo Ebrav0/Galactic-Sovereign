@@ -5,7 +5,7 @@ export const SAVE_VERSION = 25;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
-export const AUTOSAVE_INTERVAL_MS = 120000; // 2 minutes
+export const AUTOSAVE_INTERVAL_MS = 240000; // 4 minutes
 
 // --- Starting conditions ---
 export const STARTING_CREDITS = 900;

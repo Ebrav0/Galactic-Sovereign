@@ -97,6 +97,42 @@ function unitReplication() {
   applySharedStateDelta(clone, ops);
   assert(clone.credits === 900, 'delta should update credits');
   assert(clone.empireQueue.length === 2, 'delta should replace queue list');
+
+  const positionalBefore = projectSharedState({
+    graph: { lanes: [['sys-1', 'sys-2'], ['sys-2', 'sys-3']] },
+    logistics: { events: [{ type: 'dispatch', amount: 4 }, { type: 'delivery', amount: 8 }] },
+  });
+  const positionalSame = projectSharedState(structuredClone(positionalBefore));
+  const unchangedOps = diffSharedState(positionalBefore, positionalSame);
+  assert(unchangedOps.length === 0, 'unchanged positional arrays must not be retransmitted');
+
+  const positionalAfter = structuredClone(positionalSame);
+  positionalAfter.logistics.events[1].amount = 12;
+  const positionalOps = diffSharedState(positionalBefore, positionalAfter);
+  assert(positionalOps.length === 1, `one nested positional change should produce one op, got ${positionalOps.length}`);
+  assert(
+    positionalOps[0].path.join('.') === 'logistics.events.1.amount',
+    `unexpected positional delta path: ${positionalOps[0].path.join('.')}`,
+  );
+  const positionalClone = structuredClone(positionalBefore);
+  applySharedStateDelta(positionalClone, positionalOps);
+  assert(positionalClone.logistics.events[1].amount === 12, 'positional delta should apply at the changed index');
+
+  const resizedAfter = structuredClone(positionalAfter);
+  resizedAfter.graph.lanes.push(['sys-3', 'sys-4']);
+  const resizedOps = diffSharedState(positionalAfter, resizedAfter);
+  assert(
+    resizedOps.length === 1 && resizedOps[0].path.join('.') === 'graph.lanes',
+    'resized positional arrays should still be replaced atomically',
+  );
+
+  const rosterBefore = { playerFlagships: [{ pilotId: 'alpha', callsign: 'Alpha' }] };
+  const rosterAfter = { playerFlagships: [{ pilotId: 'beta', callsign: 'Beta' }] };
+  const rosterOps = diffSharedState(rosterBefore, rosterAfter);
+  assert(
+    rosterOps.length === 1 && rosterOps[0].path.join('.') === 'playerFlagships',
+    'same-length entity roster identity changes should remain atomic',
+  );
   console.log('[gate] unit replication PASS');
 }
 

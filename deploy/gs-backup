@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-hourly}"
+case "$mode" in hourly|daily) ;; *) echo "usage: gs-backup hourly|daily" >&2; exit 2 ;; esac
+
+data=/var/lib/galactic-sovereign
+dest="$data/backups/$mode"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+work="$(mktemp -d "$data/backups/.snapshot.XXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+install -d -m 0700 "$dest"
+
+if [[ -f "$data/accounts/accounts.sqlite" ]]; then
+  sqlite3 "$data/accounts/accounts.sqlite" ".timeout 5000" ".backup '$work/accounts.sqlite'"
+  chmod 0600 "$work/accounts.sqlite"
+fi
+if [[ -f "$data/multiplayer/world.json" ]]; then
+  install -m 0600 "$data/multiplayer/world.json" "$work/world.json"
+fi
+find "$work" -maxdepth 1 -type f -print -quit | grep -q . || {
+  echo 'no database or multiplayer world exists to back up' >&2
+  exit 1
+}
+(cd "$work" && sha256sum ./* > SHA256SUMS)
+tar -C "$work" -czf "$dest/.snapshot-$stamp.tar.gz.tmp" .
+chmod 0600 "$dest/.snapshot-$stamp.tar.gz.tmp"
+mv "$dest/.snapshot-$stamp.tar.gz.tmp" "$dest/snapshot-$stamp.tar.gz"
+
+if [[ "$mode" == hourly ]]; then
+  find "$dest" -type f -name 'snapshot-*.tar.gz' -printf '%T@ %p\n' | sort -rn | tail -n +25 | cut -d' ' -f2- | xargs -r rm --
+else
+  find "$dest" -type f -name 'snapshot-*.tar.gz' -printf '%T@ %p\n' | sort -rn | tail -n +15 | cut -d' ' -f2- | xargs -r rm --
+fi
+echo "backup $mode complete: $dest/snapshot-$stamp.tar.gz"

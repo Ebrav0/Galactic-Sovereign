@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly encrypted Galactic Sovereign offsite backup
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=12m
+Persistent=true
+Unit=galactic-sovereign-restic-hourly.service
+
+[Install]
+WantedBy=timers.target

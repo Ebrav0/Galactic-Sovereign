@@ -1,0 +1,12 @@
+[Unit]
+Description=Galactic Sovereign loopback health probe
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=15s
+Persistent=true
+Unit=galactic-sovereign-health.service
+
+[Install]
+WantedBy=timers.target

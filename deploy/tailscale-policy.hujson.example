@@ -1,0 +1,57 @@
+{
+  // Merge this narrow policy into the existing tailnet policy. Replace both
+  // example identities locally; do not commit the rendered policy.
+  "groups": {
+    "group:galactic-sovereign-admins": ["owner@example.com"],
+  },
+  "tagOwners": {
+    "tag:galactic-sovereign": ["group:galactic-sovereign-admins"],
+  },
+  "grants": [
+    {
+      "src": ["group:galactic-sovereign-admins"],
+      "dst": ["tag:galactic-sovereign"],
+      "ip": ["tcp:22"],
+    },
+  ],
+  "ssh": [
+    {
+      "action": "check",
+      "src": ["group:galactic-sovereign-admins"],
+      "dst": ["tag:galactic-sovereign"],
+      "users": ["gs-admin"],
+    },
+    // Preserve owner-to-self recovery access for untagged infrastructure such
+    // as the Proxmox host. Tagged application nodes do not match self.
+    {
+      "action": "check",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self"],
+      "users": ["autogroup:nonroot", "root"],
+    },
+  ],
+  "tests": [
+    {
+      "src": "owner@example.com",
+      "accept": ["tag:galactic-sovereign:22"],
+      "deny": ["tag:galactic-sovereign:80", "tag:galactic-sovereign:8080", "tag:galactic-sovereign:9090"],
+    },
+    {
+      "src": "other-member@example.com",
+      "deny": ["tag:galactic-sovereign:22"],
+    },
+  ],
+  "sshTests": [
+    {
+      "src": "owner@example.com",
+      "dst": ["tag:galactic-sovereign"],
+      "check": ["gs-admin"],
+      "deny": ["root"],
+    },
+    {
+      "src": "other-member@example.com",
+      "dst": ["tag:galactic-sovereign"],
+      "deny": ["gs-admin", "root"],
+    },
+  ],
+}

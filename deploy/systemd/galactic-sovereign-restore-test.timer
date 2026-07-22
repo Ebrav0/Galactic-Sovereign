@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly Galactic Sovereign restore validation
+
+[Timer]
+OnCalendar=monthly
+RandomizedDelaySec=6h
+Persistent=true
+Unit=galactic-sovereign-restore-test.service
+
+[Install]
+WantedBy=timers.target

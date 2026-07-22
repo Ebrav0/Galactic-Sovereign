@@ -355,6 +355,8 @@ import { createAudioEngine } from './audio-engine.js';
 import { createAudioDirector } from './audio-director.js';
 import { initAudioUi } from './audio-ui.js';
 import { createCoopClient, coopQueryEnabled, defaultWsUrl } from './coop-client.js';
+import { currentAccountSession, discoverAccountSession, hostedMultiplayerUrl, isHostedMode } from './account-client.js';
+import { initAccountUi, setHostedSaveFlushHandler } from './account-ui.js';
 import { applyCombatSummary, applyFleetsSummary } from './coop-protocol.js';
 import { applySharedStateDelta } from './coop-replication.js';
 import { captureCombatDisplayPose } from './combat-steering.js';
@@ -537,15 +539,14 @@ function reconcilePose2d(target, pose, {
     target.y += dy * 0.85;
     return { hardSnapped: false, err, alpha: 0.85 };
   }
-  // Local pilot thrusting inside budget: trust prediction (host trails by RTT).
-  if (local) {
+  // Inside budget: continuously bleed off prediction error. Previously a
+  // thrusting local pilot ignored every small correction until drift crossed
+  // maxErr, then received an 85% yank every few seconds.
+  const thrusting = local && (() => {
     const inp = getFlagshipInput?.();
-    if (inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6) {
-      return { hardSnapped: false, err, alpha: 0 };
-    }
-  }
-  // Inside budget: light blend so we don't fight dead-reckoning every 100ms.
-  const alpha = local ? 0.12 : 0.22;
+    return inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6;
+  })();
+  const alpha = thrusting ? 0.08 : (local ? 0.12 : 0.22);
   target.x += dx * alpha;
   target.y += dy * alpha;
   return { hardSnapped: false, err, alpha };
@@ -591,7 +592,26 @@ function applyPoseToFlagship(f, pose, { local = false, authTime = null } = {}) {
   let hardSnapped = false;
   // While orbiting, position is kinematic from angle+planet time — don't xy-rubber-band.
   if (!orbiting) {
-    const rec = reconcilePose2d(f, pose, { local, systemChanged });
+    let positionPose = pose;
+    // Pose coordinates describe the host's simulation time at send. Project
+    // them forward to the client's smooth host clock before reconciliation so
+    // normal network age is not mistaken for prediction error.
+    if (
+      Number.isFinite(authTime)
+      && Number.isFinite(state.time)
+      && Number.isFinite(pose.x)
+      && Number.isFinite(pose.y)
+    ) {
+      const leadMs = Math.max(0, Math.min(COOP_SYNC_LAG_MS, state.time - authTime));
+      if (leadMs > 0 && (Number.isFinite(pose.vx) || Number.isFinite(pose.vy))) {
+        positionPose = {
+          ...pose,
+          x: pose.x + (Number(pose.vx) || 0) * (leadMs / 1000),
+          y: pose.y + (Number(pose.vy) || 0) * (leadMs / 1000),
+        };
+      }
+    }
+    const rec = reconcilePose2d(f, positionPose, { local, systemChanged });
     hardSnapped = rec.hardSnapped;
     reconcileHeading(f, pose.heading, { local, systemChanged });
     if (typeof pose.vx === 'number') {
@@ -1040,6 +1060,7 @@ function leaveCoopSession(opts = {}) {
   if (coop.isActive()) {
     coop.disconnect();
   }
+  try { sessionStorage.removeItem('gs.hosted.coop.autoJoin'); } catch { /* private mode */ }
   resetClientCoopPresentation();
   if (returnToTitle) {
     parkTitleSeedWorld();
@@ -1225,11 +1246,45 @@ function takeCoopTickEvents() {
   return events;
 }
 
+const COOP_PROJECTED_POSE_FIELDS = ['x', 'y', 'vx', 'vy', 'heading', 'hp'];
+
+function captureProjectedPoses(entries, identityKey) {
+  const poses = new Map();
+  for (const entry of entries ?? []) {
+    const id = entry?.[identityKey];
+    if (id == null) continue;
+    const pose = {};
+    for (const field of COOP_PROJECTED_POSE_FIELDS) {
+      if (Number.isFinite(entry[field])) pose[field] = entry[field];
+    }
+    poses.set(String(id), pose);
+  }
+  return poses;
+}
+
+function restoreProjectedPoses(entries, identityKey, poses) {
+  for (const entry of entries ?? []) {
+    const previous = poses.get(String(entry?.[identityKey]));
+    if (!previous) continue;
+    for (const field of COOP_PROJECTED_POSE_FIELDS) {
+      if (!Number.isFinite(entry[field]) && Number.isFinite(previous[field])) entry[field] = previous[field];
+    }
+  }
+}
+
 function applyCoopDelta(operations) {
   if (!coop.isActive()) return;
+  // Generic replication intentionally strips high-rate pose fields. When an
+  // entity roster changes shape, its metadata array may be replaced atomically;
+  // retain the last dedicated-channel pose until the following pose packet.
+  const flagshipPoses = captureProjectedPoses(state.playerFlagships, 'pilotId');
+  const heroPoses = captureProjectedPoses(state.heroFlagships, 'id');
   const applied = applySharedStateDelta(state, operations);
   if (!applied) return;
+  restoreProjectedPoses(state.playerFlagships, 'pilotId', flagshipPoses);
+  restoreProjectedPoses(state.heroFlagships, 'id', heroPoses);
   ensurePlayerFlagships(state, coop.getPlayerId());
+  resyncFlagshipDisplayPose(state);
   lastUiAt = 0;
 }
 
@@ -2735,8 +2790,21 @@ if (window.gameSave?.onExitSaveRequest) {
     if (!coop.isActive()) writeSlot('exit-save', state);
   });
 } else {
+  const flushSoloAutosave = ({ keepalive = false } = {}) => {
+    if (coop.isActive()) return Promise.resolve();
+    return writeSlot('autosave', state, { keepalive });
+  };
+  window.addEventListener('pagehide', () => {
+    flushSoloAutosave({ keepalive: true });
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushSoloAutosave({ keepalive: true });
+  });
   window.addEventListener('beforeunload', () => {
-    if (!coop.isActive()) writeSlot('autosave', state);
+    flushSoloAutosave({ keepalive: true });
+  });
+  setHostedSaveFlushHandler(async () => {
+    await flushSoloAutosave();
   });
 }
 
@@ -2780,7 +2848,7 @@ function noteFrameFps(now) {
   }
 }
 
-function frame(now) {
+function runFrame(now) {
   noteFrameFps(now);
   const dt = Math.min(now - lastFrame, 250);
   lastFrame = now;
@@ -3013,6 +3081,21 @@ function frame(now) {
   maybeUpdateUi(now);
   if (devPanel?.isOpen()) devPanel.updateDevPanel();
   scheduleNextFrame();
+}
+
+let lastFrameErrorAt = -Infinity;
+function frame(now) {
+  try {
+    runFrame(now);
+  } catch (err) {
+    // A transient malformed network pose must not permanently kill rendering.
+    // Continue so the next authority packet / camera repair can recover.
+    if (now - lastFrameErrorAt >= 1000) {
+      lastFrameErrorAt = now;
+      console.error('[render] frame recovered after error', err);
+    }
+    scheduleNextFrame();
+  }
 }
 requestAnimationFrame(frame);
 
@@ -3705,6 +3788,7 @@ async function joinCoopSession(opts = {}) {
   }
   coopJoinInFlight = true;
   try {
+    await discoverAccountSession();
     const params = new URLSearchParams(window.location.search);
     let password = opts.password ?? params.get('coopPass');
     if (password == null && opts.promptPassword) {
@@ -3717,6 +3801,16 @@ async function joinCoopSession(opts = {}) {
       playerName = window.prompt('Pilot callsign', 'pilot') ?? 'pilot';
     }
     playerName = String(playerName || 'pilot').slice(0, 32) || 'pilot';
+
+    if (isHostedMode()) {
+      const account = currentAccountSession();
+      if (!account?.authenticated || account.user?.mustChangePassword) {
+        return { ok: false, reason: 'Sign in and change your temporary password first' };
+      }
+      opts.url = hostedMultiplayerUrl();
+      password = '';
+      playerName = account.user.displayName;
+    }
 
     toast(`Connecting to ${opts.url || defaultWsUrl()}…`, 'info');
     coopAwaitingFirstFocus = true;
@@ -3762,6 +3856,10 @@ async function joinCoopSession(opts = {}) {
     selection = null;
     updateCoopBanner();
     stripCoopQueryParams();
+    if (isHostedMode()) {
+      try { sessionStorage.setItem('gs.hosted.coop.autoJoin', '1'); } catch { /* private mode */ }
+      document.getElementById('account-import')?.classList.add('hidden');
+    }
     toast(`Co-op online as ${coop.getPlayerId()} — your flagship, shared empire vs AI`, 'ok');
     // Each browser tab needs its own gesture unlock for audio.
     audioEngine.unlock?.().catch?.(() => {});
@@ -4038,10 +4136,29 @@ window.__destroyFlagship = () => {
 };
 
 window.__joinCoop = (opts) => joinCoopSession(opts ?? { promptPassword: true });
-window.__coopStatus = () => ({ ...coopStatus, active: coop.isActive(), summary: coop.getSummary() });
+window.__coopCommand = (command, payload = {}) => coop.command(command, payload);
+window.__coopStatus = () => ({
+  ...coopStatus,
+  active: coop.isActive(),
+  summary: coop.getSummary(),
+  diagnostics: coop.getDiagnostics(),
+});
 window.__fps = () => lastFps;
 
-if (coopQueryEnabled()) {
-  // Auto-join when opened as http://localhost:5173/?coop=1 (or ?coop=2, ?coop=true, …)
-  queueMicrotask(() => joinCoopSession({ promptPassword: false }));
-}
+queueMicrotask(async () => {
+  if (coopQueryEnabled()) {
+    // Auto-join when opened as http://localhost:5173/?coop=1 (or ?coop=2, ?coop=true, …)
+    await joinCoopSession({ promptPassword: false });
+    return;
+  }
+  await discoverAccountSession();
+  let resumeHosted = false;
+  try { resumeHosted = sessionStorage.getItem('gs.hosted.coop.autoJoin') === '1'; } catch { /* private mode */ }
+  if (isHostedMode() && currentAccountSession()?.authenticated && resumeHosted) {
+    await joinCoopSession({ promptPassword: false });
+  }
+});
+
+initAccountUi().catch((error) => {
+  console.error('[account] initialization failed', error);
+});

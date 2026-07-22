@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+data=/var/lib/galactic-sovereign
+archive="$(find "$data/backups" -mindepth 2 -maxdepth 2 -type f -name 'snapshot-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -rn | sed -n '1s/^[^ ]* //p')"
+[[ -n "$archive" ]] || { echo 'no local snapshot available' >&2; exit 1; }
+work="$(mktemp -d /var/tmp/gs-restore-test.XXXXXX)"
+trap 'rm -rf -- "$work"' EXIT
+tar -xzf "$archive" -C "$work"
+(cd "$work" && sha256sum -c SHA256SUMS)
+[[ ! -f "$work/accounts.sqlite" ]] || [[ "$(sqlite3 "$work/accounts.sqlite" 'PRAGMA integrity_check;')" == ok ]]
+if [[ -f "$work/accounts.sqlite" ]]; then
+  save_count="$(sqlite3 "$work/accounts.sqlite" 'SELECT COUNT(*) FROM save_slots;')"
+  [[ "$save_count" =~ ^[0-9]+$ ]]
+fi
+if [[ -f "$work/world.json" ]]; then
+  GS_WORLD_RESTORE_TEST="$work/world.json" node --input-type=module -e "import fs from 'node:fs'; import { deserialize } from '/opt/galactic-sovereign/current/src/js/save.js'; const r=deserialize(fs.readFileSync(process.env.GS_WORLD_RESTORE_TEST,'utf8')); if(!r.ok) throw new Error(r.error);"
+fi
+echo "restore test passed: $archive"

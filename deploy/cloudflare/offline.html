@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="25" />
+  <title>Galactic Sovereign — Reconnecting</title>
+  <style>
+    :root {
+      --void: #05070d;
+      --nebula-a: #0b1c2e;
+      --nebula-b: #1a0f18;
+      --ember: #c47a3a;
+      --ice: #8eb6c9;
+      --foil: #e8dcc8;
+      --mute: #9aa6b2;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--void);
+      color: var(--foil);
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    }
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      isolation: isolate;
+    }
+    .sky {
+      position: fixed;
+      inset: 0;
+      z-index: -2;
+      background:
+        radial-gradient(1200px 700px at 18% 20%, rgba(196, 122, 58, 0.18), transparent 55%),
+        radial-gradient(900px 600px at 82% 70%, rgba(142, 182, 201, 0.14), transparent 50%),
+        linear-gradient(160deg, var(--nebula-a), var(--void) 45%, var(--nebula-b));
+      animation: drift 28s ease-in-out infinite alternate;
+    }
+    .stars {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      background-image:
+        radial-gradient(1px 1px at 12% 18%, rgba(232, 220, 200, 0.85), transparent),
+        radial-gradient(1px 1px at 28% 64%, rgba(232, 220, 200, 0.55), transparent),
+        radial-gradient(1.5px 1.5px at 47% 22%, rgba(142, 182, 201, 0.8), transparent),
+        radial-gradient(1px 1px at 63% 78%, rgba(232, 220, 200, 0.5), transparent),
+        radial-gradient(1px 1px at 81% 36%, rgba(232, 220, 200, 0.7), transparent),
+        radial-gradient(1.5px 1.5px at 91% 58%, rgba(196, 122, 58, 0.65), transparent),
+        radial-gradient(1px 1px at 74% 12%, rgba(232, 220, 200, 0.45), transparent),
+        radial-gradient(1px 1px at 39% 88%, rgba(142, 182, 201, 0.55), transparent);
+      animation: twinkle 6s ease-in-out infinite;
+    }
+    .scan {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        rgba(142, 182, 201, 0.035) 48%,
+        transparent 52%
+      );
+      background-size: 100% 220%;
+      animation: scan 4.8s linear infinite;
+      mix-blend-mode: screen;
+    }
+    main {
+      position: relative;
+      z-index: 2;
+      width: min(42rem, calc(100vw - 3rem));
+      text-align: center;
+      padding: 2.5rem 1rem 3rem;
+    }
+    .brand {
+      margin: 0;
+      font-size: clamp(2.4rem, 7vw, 4.4rem);
+      letter-spacing: 0.04em;
+      line-height: 1.05;
+      font-weight: 600;
+      text-wrap: balance;
+    }
+    .pulse {
+      width: 4.5rem;
+      height: 4.5rem;
+      margin: 1.75rem auto 1.5rem;
+      border-radius: 50%;
+      border: 1px solid rgba(142, 182, 201, 0.35);
+      box-shadow:
+        0 0 0 0 rgba(196, 122, 58, 0.35),
+        inset 0 0 24px rgba(142, 182, 201, 0.12);
+      position: relative;
+      animation: beacon 2.4s ease-out infinite;
+    }
+    .pulse::after {
+      content: "";
+      position: absolute;
+      inset: 28%;
+      border-radius: 50%;
+      background: radial-gradient(circle at 40% 35%, var(--ice), transparent 60%),
+                  radial-gradient(circle at 60% 70%, var(--ember), transparent 55%);
+      opacity: 0.85;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.15rem, 2.6vw, 1.55rem);
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ice);
+    }
+    p {
+      margin: 0.9rem auto 0;
+      max-width: 32rem;
+      font-size: 1.05rem;
+      line-height: 1.55;
+      color: var(--mute);
+    }
+    .status {
+      margin-top: 1.6rem;
+      font-size: 0.85rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(232, 220, 200, 0.72);
+    }
+    @keyframes drift {
+      from { transform: scale(1) translate3d(0, 0, 0); }
+      to { transform: scale(1.04) translate3d(-1.2%, 0.8%, 0); }
+    }
+    @keyframes twinkle {
+      0%, 100% { opacity: 0.75; }
+      50% { opacity: 1; }
+    }
+    @keyframes scan {
+      from { background-position: 0 -40%; }
+      to { background-position: 0 140%; }
+    }
+    @keyframes beacon {
+      0% { box-shadow: 0 0 0 0 rgba(196, 122, 58, 0.4), inset 0 0 24px rgba(142, 182, 201, 0.12); }
+      70% { box-shadow: 0 0 0 28px rgba(196, 122, 58, 0), inset 0 0 24px rgba(142, 182, 201, 0.12); }
+      100% { box-shadow: 0 0 0 0 rgba(196, 122, 58, 0), inset 0 0 24px rgba(142, 182, 201, 0.12); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .sky, .stars, .scan, .pulse { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sky" aria-hidden="true"></div>
+  <div class="stars" aria-hidden="true"></div>
+  <div class="scan" aria-hidden="true"></div>
+  <main>
+    <p class="brand">Galactic Sovereign</p>
+    <div class="pulse" aria-hidden="true"></div>
+    <h1>Re-establishing subspace link</h1>
+    <p>The sovereign host is offline. Your saves remain on the fleet archive. This page retries automatically.</p>
+    <p class="status" id="status">Retrying in 25s</p>
+  </main>
+  <script>
+    (function () {
+      const status = document.getElementById('status');
+      let remaining = 25;
+      const tick = () => {
+        status.textContent = remaining > 0 ? `Retrying in ${remaining}s` : 'Reconnecting…';
+        if (remaining <= 0) {
+          location.reload();
+          return;
+        }
+        remaining -= 1;
+        setTimeout(tick, 1000);
+      };
+      tick();
+    })();
+  </script>
+</body>
+</html>

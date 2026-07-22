@@ -9,6 +9,12 @@
     "electron": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
     "build:standalone": "vite build --config vite.standalone.config.js",
     "build": "npm run build:standalone && vite build && node scripts/write-sites-worker.mjs",
+    "app": "node server/app-host.mjs",
+    "admin:create": "node server/admin-cli.mjs create-owner",
+    "verify:hosted-auth": "node scripts/verify-hosted-auth.mjs",
+    "verify:hosted-ui": "node scripts/verify-hosted-ui.mjs",
+    "verify:hosted-load": "node scripts/verify-hosted-load.mjs",
+    "verify:world-migration": "node scripts/verify-world-migration.mjs",
     "electron:prod": "npm run build && electron .",
     "coop": "node server/coop-host.mjs",
     "coop:smoke": "node scripts/coop-smoke.mjs",
@@ -27,6 +33,7 @@
     "wait-on": "^9.0.10"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
     "ws": "^8.21.1"
   }
 }

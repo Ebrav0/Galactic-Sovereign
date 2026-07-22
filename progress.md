@@ -1741,3 +1741,159 @@ Never delete prior entries.
 - In-app Playwright passes the full first-contact → quick proposal → counteroffer → advanced combined deal → trade benefit → breach → war → peace → council-vote journey. All six command views render, `render_game_to_text` reports actionable v25 state, the inspected Negotiation/Council captures are legible, and the browser reports zero console errors.
 - Helioclast browser regression passes with the live simulation unpaused: star creation waits for impact, raises Concern, and an eight-shell Dyson defense blocks destruction. Save/text state remains v25 with zero browser errors.
 - Cross-system regressions pass: v16 integration 23/23, logistics 30/30, combat autonomy 8/8, and campaign 19/19. Production `npm run build` passes; the only build note is the existing chunk-size advisory.
+
+---
+
+## Session 2026-07-20 — Co-op tab freeze (full snapshots)
+
+**Task claimed:** Both co-op browser tabs freeze after joining a shared empire; verify WS defaults to 9090 (not static 8080).
+
+### Root cause
+- Full ~1.4MB world envelopes were JSON-parsed and `deserialize`d (including CRC re-stringify) on the UI thread, then wiped/`Object.assign`ed into live state.
+- Camera/pose refocus ran on every adopt; command paths could still schedule full snapshot broadcasts.
+- Historic `?coop=2` URL handling could resolve as a relative WebSocket against the page origin (e.g. static serve on **8080**).
+
+### Done
+- Client: throttle full snapshot applies (≥8s), coalesce/drop intermediates, apply summary pose/HUD between rare full worlds, skip CRC on coop parse, refocus only on join / flagship system change.
+- Client: harden `looksLikeWsEndpoint` so `1`/`2`/`8080` never become WS URLs; default remains `ws://<host>:9090`.
+- Host: full snapshots ~every 120s; commands broadcast compact summaries only (opt-in `GS_COOP_SNAPSHOT_ON_COMMAND=1`); richer flagship pose in summaries.
+
+### Verification
+- `npm run coop:smoke` PASS with pose-bearing summaries.
+- Playwright two-tab join: both use `ws://127.0.0.1:9090/`, toast shows 9090, soak evaluate max 373ms (not frozen).
+
+### Next TODOs
+- Optional: true deltas / binary snapshots instead of full JSON envelopes.
+- Optional: prune zombie WS clients so `playersOnline` cannot drift after abrupt tab closes.
+
+
+---
+
+## Session 2026-07-21 — Complete co-op parity (protocol v2 + command surface)
+
+**Task claimed:** Build the complete co-op feature-parity plan (host-authoritative replication, every solo mutator through the host, Alpha/Beta convergence).
+
+### Done
+- Protocol v2 channels already present were completed end-to-end: tick/revision envelopes, pose/delta/events/checkpoint, stable player identity + reconnect tokens, backpressure, idempotent request cache.
+- Command registry expanded (~71 commands): empire queue enqueue/pin/cancel/reorder, body structures, builder plan confirm/cancel, diplomacy actions, bulk production + expansion campaigns, combat priority/retreat/promote.
+- UI fail-closed routing: empire queue, trade/research stations, body builds, drone planner, diplomacy + operations panels now use `coopOrLocal` / `coopRun` instead of local-only mutation.
+- Production: queue items stamp `ownerPlayerId` through to shipyard builds; construction advances when **any** allied flagship is in-system (shared presence).
+- Combat: multi-pilot flagship units (`flagship:<pilotId>`), heroes in ally collection, roster-aware presence/candidates, per-pilot HP writeback.
+- Planners/manuals no longer pause the shared clock in co-op.
+- Checkpoints preserve client presentation (view/selection/follow) between rare full adopts.
+- Tests: `npm run coop:gate` (unit replication + registry + host) and updated `coop:smoke` (protocol 2 / pose).
+- Application CT: backed up `world.json` to a private recovery directory, deployed without wipe; remote health `protocolVersion: 2`; remote `coop:gate` PASS.
+
+### Verification
+- Local: `GS_COOP_PORT=9091 npm run coop:smoke` PASS; `npm run coop:gate` PASS.
+- Remote loopback/tailnet health and `coop:gate` passed; private deployment targets are intentionally omitted.
+
+### Play
+- Alpha/Beta used private, untracked test URLs.
+
+### Next TODOs
+- Dual-browser Playwright convergence soak on CT (enqueue → both see build progress).
+- Optional: richer combat FX/orders in the pose channel beyond unit transforms.
+- Optional: mutator audit that greps UI for bare local calls missing `coopOrLocal`.
+
+---
+
+## Session 2026-07-21 — Co-op movement stutter fix
+
+**Task claimed:** Fix the small multiplayer movement stutter recurring every 2–3 seconds.
+
+### Root cause
+- `projectSharedState()` deep-clones each projection, but `diffSharedState()` treated every non-ID array as changed by identity and retransmitted it wholesale. Live deltas averaged about 260 KB and repeatedly included all ten immutable galaxy lane tables plus logistics history.
+- The traffic delayed the intended 10 Hz pose stream and produced bursts/backpressure.
+- While thrusting, local prediction ignored all corrections inside the 250 ms / ~85-unit budget, then applied an 85% authority correction once drift crossed the threshold, creating the periodic movement yank.
+
+### Done
+- Same-length positional arrays now deep-diff by index; only list shape changes or entity identity changes replace the full array.
+- Added replication gate coverage for unchanged positional arrays, one-field positional changes, resized lists, and same-length entity roster replacement.
+- Host poses are projected forward from their authoritative simulation timestamp to the client's smooth host clock before reconciliation.
+- Local thrust now continuously bleeds off small prediction error instead of accumulating it until the large correction threshold.
+- Regenerated the standalone bundle.
+
+### Verification
+- Local live measurement: average delta payload fell from ~260 KB to ~4.6 KB; pose cadence averaged 100 ms.
+- Movement correction after warmup fell from roughly 100–150 units (occasional ~300) to a 4.75-unit maximum; zero corrections exceeded 20 units.
+- `npm run coop:gate` PASS, including the new array regression cases and 76-command registry/host integration.
+- `npm run coop:smoke` PASS, including two-pilot thrust, pose, control, ownership, ping, and reconnect flows.
+- Required web-game client completed co-op movement with no console-error artifact; the final gameplay capture was visually inspected.
+- `npm run build` PASS; only the existing chunk-size advisory remains.
+
+---
+
+## Session 2026-07-21 — Co-op reload black-screen recovery
+
+**Task claimed:** Fix the black world canvas shown after reloading an active multiplayer session.
+
+### Root cause
+- A roster shape change can atomically apply a metadata-only `playerFlagships` projection whose high-rate pose fields are intentionally stripped. Rebinding `state.flagship` during the short gap before the next pose packet left `x/y` missing.
+- Client dead reckoning converted the missing pose to `NaN`; camera follow inherited it, and smoothing could never recover because arithmetic with `NaN` remains `NaN`.
+- `drawStarfield()` then passed non-finite coordinates to `createRadialGradient`, throwing before the frame scheduled its successor and leaving the HUD over a permanently black canvas.
+
+### Done
+- Preserve the last valid flagship/hero pose across metadata-only roster delta replacements and resync the display pose after rebinding.
+- Skip dead reckoning for newly introduced remote flagships until their first finite pose arrives.
+- Sanitize camera position/zoom on snap, follow, and before starfield rendering; invalid zoom recovers to the normal system default.
+- Wrap the render frame so a transient draw exception is throttled/logged and the next frame still runs.
+- Regenerated the standalone bundle.
+
+### Verification
+- Real two-pilot co-op reconnect/reload renders the system normally; inspected `verify-coop-reload-roster.png`.
+- Deliberate `NaN`/`Infinity` camera poisoning self-recovers with a visible world and zero console/page errors.
+- An intentional one-frame `createRadialGradient` fault logs the recovery once, then the following frame renders normally; inspected `verify-coop-frame-recovery.png`.
+- Required web-game client completed live co-op movement with no console-error artifact; final capture inspected.
+- `npm run coop:gate`, `npm run coop:smoke`, syntax checks, diff checks, and `npm run build` pass.
+
+---
+
+## Session 2026-07-21 — Secure hosted accounts and persistence (complete)
+
+**Task claimed:** Implement authenticated solo saves, account-derived persistent multiplayer, hardened deployment, Tailscale administration, and Cloudflare rollout for `play.galacticsovereign.xyz`.
+
+### Done
+- Added a loopback Node gateway serving the production build, authenticated REST APIs, and an authenticated same-origin multiplayer WebSocket relay.
+- Added SQLite WAL persistence for users, Argon2id password hashes, hashed 256-bit sessions, per-user save slots/revisions, and audit events.
+- Added strict-origin/CSRF checks, secure hosted cookie settings, login throttling, body limits, owner account controls, password-change enforcement, and session revocation.
+- Co-op host now accepts immutable account UUID/display name only from a shared-secret loopback gateway, omits reconnect tokens for accounts, caps online players at five, and rate-limits commands.
+- Browser save backend now selects authenticated server storage in hosted mode while preserving Electron/local offline storage. It supports ETag-style stale-write protection, tutorial checkpoints, and verified one-time copy of existing browser saves without deleting originals.
+- Added hosted account UI for login, required password change, sign-out, local-save copy, and owner account administration.
+
+### Verification
+- `npm run build` PASS (existing bundle-size advisory only).
+- `npm run verify:hosted-auth` PASS: two-user slot isolation, stale write `409`, gateway identity override, no account reconnect token, disabled-session API denial, and live WebSocket revocation.
+
+### Next TODOs
+- Complete browser visual/interaction verification for login, password change, import, admin, and multiplayer reload.
+- Add immutable deployment artifacts, systemd hardening, `gsctl`, world migration, backup/restore scripts, and repository secret-hygiene checks.
+- Back up and deploy through Proxmox break-glass, then configure Tailscale SSH and Cloudflare after authoritative DNS/API readiness.
+
+### Hosted rollout update
+- Browser verification now passes the entire hosted flow: login, verified local-save copy, owner-created player, mandatory password replacement, authenticated multiplayer join, and same-identity reload. The six inspected screenshots show a valid rendered world before and after reload with no browser errors.
+- Added hardened systemd units, bounded `gsctl`, atomic release packaging, file/world migration, local snapshot/restore verification, conditional encrypted Restic/R2 backup, Cloudflare Tunnel service, Tailscale policy tests, and full-history Gitleaks CI.
+- Gitleaks scanned all 75 commits with no leaks; production dependency audit reports zero known vulnerabilities. The verified release excludes Git metadata, development dependencies, local deployment configuration, credentials, databases, worlds, backups, and test output.
+- Two successful Proxmox snapshots were made before cutover. The new loopback-only gateway and persistent co-op services are live as the unprivileged service account; the original world/release and checksums are retained for rollback.
+- Live migration preserved the six multiplayer identities as unclaimed legacy pilots, removed credential-shaped fields, and left the shared universe continuously ticking. SQLite integrity, atomic local backup, checksum verification, world deserialize, and isolated restore tests pass.
+- Raw tailnet and LAN probes to ports 8080/9090 fail. Direct Tailscale SSH works as `gs-admin` through the bounded sudo wrapper; direct root access to the tagged CT is denied. The CT's traditional OpenSSH socket/service and unused Postfix service are disabled, while owner-to-self Proxmox recovery remains functional.
+- The active tailnet policy tags the CT, restricts network and Tailscale SSH authorization to the owner group, uses Tailscale SSH check mode, and includes allow/deny policy tests. The Free-plan default check period is 12 hours.
+- Five authenticated browser contexts completed the required 15-minute persistent-universe load check. All remained connected for 898 command samples each; command acknowledgements were 11.2–13.5 ms p95 and the maximum observed pose gap was below 197 ms, comfortably passing the 250 ms/500 ms acceptance limits.
+- Authoritative Cloudflare DNS is active, and the five official MCP endpoints are registered; OAuth is complete for the main, bindings, builds, and observability endpoints (the docs endpoint is intentionally unauthenticated).
+- The final immutable release is live on loopback with a retrying post-restart health gate, `no-store` on non-fingerprinted responses, clean module boundaries, and the production co-op log explicitly reporting gateway-only identity. CT memory is 137 MiB, application listeners remain loopback-only, SQLite integrity is `ok`, all six migrated pilots remain available, and OpenSSH/Postfix remain inactive.
+
+### Public rollout completion
+- A remotely managed Cloudflare Tunnel now publishes only `play.galacticsovereign.xyz` to the loopback gateway; the raw application and multiplayer ports remain unreachable from the tailnet and LAN.
+- HTTP redirects permanently to HTTPS, HSTS is enabled, HTML/API/health responses are never cached, and only fingerprinted assets receive one-year immutable caching.
+- Cloudflare Access protects both `/admin*` and `/api/v1/admin/*` with email one-time PIN restricted to the configured owner email, while application owner-role checks remain enforced behind Access.
+- The initial `emmanuel` owner account is active with display name `Emmanuel`, a root-held temporary password, mandatory first-login password replacement, and a successfully revoked login smoke-test session.
+- A bucket-scoped R2 Object Read & Write account token is stored only in root-owned mode-0600 credentials. The nightly encrypted Restic timer is active with 14 daily, 8 weekly, and 12 monthly retention.
+- Proxmox now has an enabled CT-only Sunday snapshot job on the configured backup storage with Zstandard compression and `keep-weekly=4` retention.
+- The first encrypted R2 snapshot completed, and an isolated R2 restore verified archive checksums, SQLite integrity, the owner record, and multiplayer-world deserialization.
+- The public login page was visually inspected over HTTPS and rendered without a black frame; Cloudflare Access redirects and unauthenticated WebSocket rejection were verified externally.
+
+### Admin account-creation freeze repair
+- Root cause: the admin UI and admin API paths were separate Cloudflare Access applications with different token audiences. Authenticating to `/admin*` did not authorize the page's background calls to `/api/v1/admin/*`, so Cloudflare intercepted the request before it reached the gateway.
+- Consolidated both protected paths into one owner-only Access application while retaining the owner email allowlist, binding cookie, HttpOnly cookie, 12-hour session, application owner-role check, and `SameSite=Lax` callback compatibility.
+- Hardened account API calls with a 15-second abort and explicit rejection of non-JSON Access responses. Account creation now restores its button and shows an authorization/timeout error instead of remaining on `Creating account…`.
+- Confirmed the failed `charlie` submission did not create an account. Hosted auth and the full browser flow pass, including owner login, account creation, one-time temporary password, forced password replacement, multiplayer join, and reload.

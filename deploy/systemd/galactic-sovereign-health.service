@@ -1,0 +1,8 @@
+[Unit]
+Description=Galactic Sovereign loopback health probe
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/galactic-sovereign/gs-health-watch
+Nice=10

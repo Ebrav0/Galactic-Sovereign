@@ -1,89 +1,104 @@
-# Co-op host (Milestone 0)
+# Secure hosted runtime
 
-Shared-empire multiplayer host. Simulation runs on the server; clients connect over WebSocket.
+The production runtime has two loopback-only Node processes:
 
-## Product model
+| Process | Bind | Purpose |
+|---|---|---|
+| Authenticated gateway | `127.0.0.1:8080` | Static build, accounts, solo saves, admin API, WebSocket relay |
+| Persistent co-op host | `127.0.0.1:9090` | Continuously ticking server-authoritative universe |
 
-One website at `:8080` is the entry point:
+Only the gateway is published, through an outbound Cloudflare Tunnel at the canonical HTTPS hostname. The co-op port, databases, SSH, and hypervisor are never Cloudflare or router ingress targets.
 
-| Mode | Where | Saves |
-|------|--------|--------|
-| **Single Player** | Browser-local original game | Per-browser `gs-save-*` slots |
-| **Multiplayer** | This coop host (`:9090`) | Shared `world.json` on the CT |
-
-Everyday play: open the site → title doors → Solo or Multiplayer. Invite deep links are optional.
-
-## Home server (CT 909 — preferred)
-
-Proxmox LXC **`galactic-sovereign`** on Tailscale: `100.67.50.44`
-
-| Service | Port | systemd unit |
-|---------|------|----------------|
-| Static game | `8080` | `galactic-sovereign-web` |
-| Co-op host | `9090` | `galactic-sovereign-coop` |
-
-**Play (from any Tailscale device):**
-
-```text
-http://100.67.50.44:8080/
-```
-
-1. **Single Player** → Continue / Begin Academy / Load (local only).
-2. **Multiplayer** → Shared Empire → Pilot Clearance → Request Docking.
-
-Pause overlay includes **Return to Title** (autosaves Solo first; leaves co-op cleanly).
-
-**Dev panel (testing builds):** press `` ` `` (backtick) in-game. Enabled by default on shipped CT builds; disable with `?dev=0` or `localStorage.setItem('gs-dev-panel','0')`. Force-enable with `?dev=1`.
-
-**Optional invite deep link** (auto-joins; query params are stripped after a successful join):
-
-```text
-http://100.67.50.44:8080/?coop=ws://100.67.50.44:9090&coopName=alpha
-http://100.67.50.44:8080/?coop=ws://100.67.50.44:9090&coopName=beta
-```
-
-Or MagicDNS: `http://galactic-sovereign:8080/`
-
-**Deploy / update from your Mac** (via Proxmox host `halcyon`):
+## Local development
 
 ```bash
-# from the project root
-./scripts/deploy-home-ct.sh
+GS_COOP_RESET=1 npm run coop
+npm run dev
 ```
 
-**Fresh world on the CT:**
+Direct co-op mode without a gateway is deliberately a local-development compatibility path. Production sets a shared systemd credential in both services; once present, the co-op host rejects every connection that did not come through the authenticated gateway.
+
+## Production deployment
+
+1. Copy `.deploy.local.env.example` to the ignored `.deploy.local.env` and fill in the private Proxmox route.
+2. Run `scripts/deploy-secure-home.sh <release-id>`.
+3. Create the first owner locally through the recovery console. Read the
+   temporary password without echoing it, pass it on standard input, and clear
+   the shell variable immediately:
+
+   ```bash
+   read -rsp 'Temporary owner password: ' gs_owner_password
+   printf '%s' "$gs_owner_password" | runuser -u galactic-sovereign -- env \
+     GS_DATA_DIR=/var/lib/galactic-sovereign/accounts \
+     node /opt/galactic-sovereign/current/server/admin-cli.mjs \
+     create-owner <username> '<display name>' --password-stdin
+   unset gs_owner_password
+   ```
+
+   The owner must replace that temporary password on first login.
+
+4. Verify loopback health, direct Tailscale SSH as `gs-admin`, and rollback before disabling traditional SSH.
+5. Add the root-owned Cloudflare Tunnel credential, then run `sudo gsctl ensure-units` so gateway, coop, tunnel, health watch, and backup timers are enabled for boot.
+
+Routine administrators can run only the root-owned `sudo gsctl` wrapper. Valid commands are `deploy`, `rollback`, `ensure-units`, `status`, `logs`, `backup`, `restore-test`, `restore`, and `restart`.
+
+## Zero-touch recovery
+
+After a power loss or CT reboot, the full game stack is expected to return without SSH:
+
+1. Proxmox starts the CT (`onboot=1`).
+2. `tailscaled` returns Tailscale SSH for `gs-admin`.
+3. systemd starts `galactic-sovereign-coop`, `galactic-sovereign-gateway`, and `cloudflared-galactic-sovereign` (`Restart=always`).
+4. Backup / restic / restore-test / health timers resume (`Persistent=true`).
+5. `gs-health-watch` probes loopback health every minute and rate-limits automatic restarts.
+
+Verify:
 
 ```bash
-ssh root@100.65.176.48 'pct exec 909 -- bash -lc "
-  systemctl stop galactic-sovereign-coop
-  mkdir -p /root/backups
-  cp -a /root/Galactic-Sovereign/server/data/world.json /root/backups/world-$(date +%Y%m%d-%H%M%S).json 2>/dev/null || true
-  rm -f /root/Galactic-Sovereign/server/data/world.json /root/Galactic-Sovereign/server/data/world.json.tmp
-  systemctl start galactic-sovereign-coop
-"'
+sudo gsctl status
+curl -sf http://127.0.0.1:8080/healthz
+curl -sf http://127.0.0.1:9090/health
+curl -sf https://play.galacticsovereign.xyz/healthz
 ```
 
-**Logs:**
+### Outage runbook
+
+| Symptom | Expected automatic behavior | Manual only if stuck |
+|---|---|---|
+| Host power blip | CT onboot → units + tunnel restart → public healthz green | `sudo gsctl ensure-units` |
+| Gateway/coop crash | `Restart=always` + health watch restart | `sudo gsctl restart` / `sudo gsctl logs …` |
+| Public site down, CT up | Health watch may bounce cloudflared; Cloudflare emails fire | Check tunnel token + `sudo gsctl logs tunnel` |
+| Disk / world corruption | Local hourly+daily snapshots; restic offsite | `sudo gsctl restore latest` (or a named snapshot) |
+| Total disk loss | Restore restic snapshot to a temp path, then `gsctl restore /path/to/snapshot-….tar.gz` | Also re-run bootstrap if the CT is rebuilt |
+
+While the CT or tunnel cannot answer, Cloudflare Custom Errors should serve [`deploy/cloudflare/offline.html`](../deploy/cloudflare/offline.html). Configure alerts and the downtime page using [`deploy/cloudflare/README.md`](../deploy/cloudflare/README.md).
+
+Disaster restore (rare; not needed for normal power blips):
 
 ```bash
-ssh root@100.65.176.48 'pct exec 909 -- journalctl -u galactic-sovereign-coop -f'
+sudo gsctl backup
+sudo gsctl restore latest
+sudo gsctl status
 ```
 
-## Run locally (laptop — optional)
+## Data and credentials
+
+- Releases: `/opt/galactic-sovereign/releases/<release-id>`
+- Atomic current link: `/opt/galactic-sovereign/current`
+- Accounts and saves: `/var/lib/galactic-sovereign/accounts`
+- Multiplayer world: `/var/lib/galactic-sovereign/multiplayer`
+- Local backups: `/var/lib/galactic-sovereign/backups`
+- Root-only credentials: `/etc/galactic-sovereign/credentials`
+
+Never add real deployment targets, tailnet addresses, CT identifiers, tunnel tokens, R2 credentials, Restic passwords, databases, worlds, or backups to this repository.
+
+## Verification
 
 ```bash
-GS_COOP_RESET=1 npm run coop   # fresh world
-npm run dev                    # UI only
+npm run build
+npm run verify:hosted-auth
+npm run verify:hosted-ui
+npm run verify:world-migration
 ```
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `GS_COOP_PORT` | `9090` | HTTP + WebSocket |
-| `GS_COOP_HOST` | `0.0.0.0` | Bind address |
-| `GS_COOP_PASSWORD` | _(empty)_ | Join password |
-| `GS_COOP_SEED` | time-based | Seed for a **new** world |
-| `GS_COOP_RESET` | — | Wipe world on boot |
-| `GS_COOP_DATA_DIR` | `server/data` | Save directory |
-| `GS_COOP_SUMMARY_EVERY` | `2` | Pose every N ticks (2 ≈ 10 Hz) |
-
-Health: `http://100.67.50.44:9090/health`
+The hosted authentication verifier covers save isolation, revision conflicts, account-derived multiplayer identity, and immediate disabled-session revocation. The browser verifier covers login, password replacement, local-save copying, owner administration, multiplayer, and reload recovery.

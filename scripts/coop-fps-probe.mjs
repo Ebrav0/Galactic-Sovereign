@@ -7,13 +7,13 @@
  *
  * Usage:
  *   npm run coop:fps
- *   GS_COOP_FPS_URL=http://100.67.50.44:8080 GS_COOP_WS=ws://100.67.50.44:9090 GS_COOP_PILOTS=4 npm run coop:fps
+ *   GS_COOP_FPS_URL=http://127.0.0.1:5173 GS_COOP_WS=ws://127.0.0.1:9090 GS_COOP_PILOTS=4 npm run coop:fps
  */
 
 import { chromium } from 'playwright';
 
-const GAME = process.env.GS_COOP_FPS_URL || 'http://100.67.50.44:8080';
-const WS = process.env.GS_COOP_WS || 'ws://100.67.50.44:9090';
+const GAME = process.env.GS_COOP_FPS_URL || 'http://127.0.0.1:5173';
+const WS = process.env.GS_COOP_WS || 'ws://127.0.0.1:9090';
 const PILOTS = Math.max(2, Math.min(4, Number(process.env.GS_COOP_PILOTS || 4)));
 const SAMPLE_MS = Number(process.env.GS_COOP_FPS_MS || 5000);
 const SYNC_BUDGET_MS = Number(process.env.GS_COOP_SYNC_BUDGET_MS || 250);

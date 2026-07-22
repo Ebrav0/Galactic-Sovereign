@@ -1,0 +1,17 @@
+[Unit]
+Description=Galactic Sovereign local atomic backup
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/libexec/galactic-sovereign/gs-backup hourly
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/galactic-sovereign
+UMask=0077

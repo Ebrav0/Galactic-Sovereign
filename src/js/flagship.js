@@ -208,6 +208,10 @@ export function advanceCoopFlagshipVisual(state, dtMs) {
 
   for (const f of ensurePlayerFlagships(state)) {
     if (f.transit || f.wormholeTransit) continue;
+    // A metadata-only roster delta can introduce a new remote pilot just
+    // before their first dedicated pose packet. Do not turn missing pose
+    // fields into NaN during that brief interval.
+    if (!Number.isFinite(f.x) || !Number.isFinite(f.y)) continue;
     ensureOrbitField(f);
 
     // Local pilot: apply the same thrust model as tickOneFlagship so engines

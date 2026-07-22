@@ -63,6 +63,22 @@ const REQUEST_CACHE_LIMIT = Number(process.env.GS_COOP_REQUEST_CACHE_LIMIT || 51
 /** Offline parked pilots retained for reconnect; extras are pruned so snapshots stay small. */
 const MAX_OFFLINE_FLAGSHIPS = Number(process.env.GS_COOP_MAX_OFFLINE_FLAGSHIPS || 6);
 const BACKPRESSURE_LOG_MS = Number(process.env.GS_COOP_BACKPRESSURE_LOG_MS || 5_000);
+const MAX_ONLINE_PLAYERS = Number(process.env.GS_COOP_MAX_PLAYERS || 5);
+const COMMANDS_PER_SECOND = Number(process.env.GS_COOP_COMMANDS_PER_SECOND || 20);
+const COMMAND_BURST = Number(process.env.GS_COOP_COMMAND_BURST || 40);
+
+function readCredential(name, fileName) {
+  if (process.env[name]) return process.env[name];
+  const credentialsDir = process.env.CREDENTIALS_DIRECTORY;
+  if (credentialsDir) {
+    try { return fs.readFileSync(path.join(credentialsDir, fileName), 'utf8').trim(); } catch { /* continue */ }
+  }
+  const explicitPath = process.env[`${name}_FILE`];
+  if (explicitPath) return fs.readFileSync(explicitPath, 'utf8').trim();
+  return '';
+}
+
+const GATEWAY_SECRET = readCredential('GS_GATEWAY_SECRET', 'gateway-secret');
 
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -507,8 +523,36 @@ function sanitizePlayerName(value) {
   return cleaned || 'pilot';
 }
 
-function resolveIdentity(msg) {
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a ?? ''));
+  const right = Buffer.from(String(b ?? ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function trustedIdentityFromRequest(req) {
+  if (!GATEWAY_SECRET || !safeEqual(req.headers['x-gs-gateway-secret'], GATEWAY_SECRET)) return null;
+  let id = '';
+  try { id = decodeURIComponent(String(req.headers['x-gs-user-id'] ?? '')).slice(0, 80); } catch { return null; }
+  if (!id || /[\u0000-\u001f\u007f]/.test(id)) return null;
+  const accountId = String(req.headers['x-gs-account-id'] ?? id).slice(0, 80);
+  if (!/^[0-9a-f-]{36}$/i.test(accountId)) return null;
+  let displayName = 'pilot';
+  try { displayName = decodeURIComponent(String(req.headers['x-gs-display-name'] ?? 'pilot')); } catch { /* use fallback */ }
+  return { id, accountId, displayName: sanitizePlayerName(displayName) };
+}
+
+function resolveIdentity(msg, trustedIdentity = null) {
   const coopMeta = ensureCoopMetadata();
+  if (trustedIdentity) {
+    const known = coopMeta.identities[trustedIdentity.id] ?? {};
+    coopMeta.identities[trustedIdentity.id] = {
+      displayName: trustedIdentity.displayName,
+      accountId: trustedIdentity.accountId,
+      createdAt: Number(known.createdAt) || Date.now(),
+    };
+    dirty = true;
+    return { id: trustedIdentity.id, displayName: trustedIdentity.displayName, reconnectToken: null };
+  }
   const token = String(msg.reconnectToken ?? '').slice(0, 128);
   const requestedId = msg.playerId ? String(msg.playerId).slice(0, 64) : null;
   const displayName = sanitizePlayerName(msg.playerName);
@@ -562,13 +606,19 @@ function handleMessage(ws, raw) {
       ws.close(4002, 'protocol mismatch');
       return;
     }
-    if (PASSWORD && msg.password !== PASSWORD) {
+    if (!meta.trustedIdentity && PASSWORD && msg.password !== PASSWORD) {
       send(ws, { type: 'error', error: 'Invalid password' });
       ws.close(4001, 'Invalid password');
       return;
     }
+    const identity = resolveIdentity(msg, meta.trustedIdentity);
+    const replacesExisting = [...clients.values()].some((candidate) => candidate !== meta && candidate.authed && candidate.id === identity.id);
+    if (!replacesExisting && onlineCount() >= MAX_ONLINE_PLAYERS) {
+      send(ws, { type: 'error', code: 'server_full', error: `Server is limited to ${MAX_ONLINE_PLAYERS} players` });
+      ws.close(4004, 'server full');
+      return;
+    }
     meta.authed = true;
-    const identity = resolveIdentity(msg);
     meta.id = identity.id;
     meta.displayName = identity.displayName;
     meta.reconnectToken = identity.reconnectToken;
@@ -614,6 +664,15 @@ function handleMessage(ws, raw) {
   }
 
   if (msg.type === 'command') {
+    const now = Date.now();
+    const elapsedSeconds = Math.max(0, now - meta.commandRefillAt) / 1000;
+    meta.commandTokens = Math.min(COMMAND_BURST, meta.commandTokens + elapsedSeconds * COMMANDS_PER_SECOND);
+    meta.commandRefillAt = now;
+    if (meta.commandTokens < 1) {
+      send(ws, { type: 'commandResult', requestId: msg.requestId ?? null, result: { ok: false, reason: 'Command rate limit exceeded' } });
+      return;
+    }
+    meta.commandTokens -= 1;
     const requestId = String(msg.requestId ?? '');
     if (!requestId) {
       send(ws, { type: 'commandResult', requestId: null, result: { ok: false, reason: 'requestId required' } });
@@ -787,8 +846,19 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-wss.on('connection', (ws) => {
-  clients.set(ws, { id: 'connecting', authed: false });
+wss.on('connection', (ws, req) => {
+  const trustedIdentity = trustedIdentityFromRequest(req);
+  if (GATEWAY_SECRET && !trustedIdentity) {
+    ws.close(4003, 'gateway authentication required');
+    return;
+  }
+  clients.set(ws, {
+    id: 'connecting',
+    authed: false,
+    trustedIdentity,
+    commandTokens: COMMAND_BURST,
+    commandRefillAt: Date.now(),
+  });
   ws.on('message', (data) => handleMessage(ws, data.toString()));
   ws.on('close', () => {
     const meta = clients.get(ws);
@@ -810,7 +880,8 @@ wss.on('connection', (ws) => {
 server.listen(PORT, HOST, () => {
   console.log(`[coop] listening on http://${HOST}:${PORT}`);
   console.log(`[coop] websocket ws://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}`);
-  console.log(`[coop] password ${PASSWORD ? 'ENABLED' : 'disabled (open session)'}`);
+  console.log(`[coop] password ${PASSWORD ? 'ENABLED' : GATEWAY_SECRET ? 'disabled (gateway identity only)' : 'disabled (open development session)'}`);
+  console.log(`[coop] gateway authentication ${GATEWAY_SECRET ? 'REQUIRED' : 'disabled (development mode)'}`);
   console.log(`[coop] world ${WORLD_PATH}`);
   console.log(`[coop] pose every ${SUMMARY_EVERY_TICKS} ticks · delta every ${DELTA_EVERY_TICKS} ticks`);
   startTickLoop();

@@ -1,0 +1,18 @@
+[Unit]
+Description=Hourly encrypted Galactic Sovereign offsite backup of latest local snapshots
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/galactic-sovereign/gs-offsite-backup hourly
+Nice=10
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/galactic-sovereign/accounts /var/lib/galactic-sovereign/multiplayer /var/lib/galactic-sovereign/pre-migration
+ReadWritePaths=/var/lib/galactic-sovereign/backups
+LoadCredential=restic-password:/etc/galactic-sovereign/credentials/restic-password
+LoadCredential=restic-repository:/etc/galactic-sovereign/credentials/restic-repository
+LoadCredential=r2-access-key-id:/etc/galactic-sovereign/credentials/r2-access-key-id
+LoadCredential=r2-secret-access-key:/etc/galactic-sovereign/credentials/r2-secret-access-key

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Loopback health probe with rate-limited automatic restarts.
+set -euo pipefail
+
+state_dir=/run/galactic-sovereign-health
+install -d -m 0755 "$state_dir"
+now="$(date +%s)"
+window=900
+max_restarts=3
+
+may_restart() {
+  local unit="$1"
+  local stamp="$state_dir/${unit}.restarts"
+  local count=0
+  if [[ -f "$stamp" ]]; then
+    while IFS=' ' read -r ts; do
+      [[ -n "$ts" ]] || continue
+      if (( now - ts < window )); then
+        count=$((count + 1))
+        echo "$ts"
+      fi
+    done <"$stamp" >"$stamp.tmp" || true
+    mv -f "$stamp.tmp" "$stamp"
+  else
+    : >"$stamp"
+  fi
+  if (( count >= max_restarts )); then
+    echo "health-watch: refusing further restarts of $unit (${count} in ${window}s)" >&2
+    return 1
+  fi
+  echo "$now" >>"$stamp"
+  return 0
+}
+
+restart_unit() {
+  local unit="$1"
+  may_restart "$unit" || return 0
+  echo "health-watch: restarting $unit"
+  systemctl restart "$unit"
+}
+
+gateway_ok=0
+coop_ok=0
+if curl --fail --silent --max-time 3 http://127.0.0.1:8080/healthz >/dev/null; then
+  gateway_ok=1
+else
+  restart_unit galactic-sovereign-gateway.service
+fi
+
+if curl --fail --silent --max-time 3 http://127.0.0.1:9090/health >/dev/null; then
+  coop_ok=1
+else
+  restart_unit galactic-sovereign-coop.service
+fi
+
+# Tunnel can look healthy while gateway is dead; only bounce cloudflared when
+# loopback gateway is fine but the public edge still fails.
+if [[ "$gateway_ok" -eq 1 ]] \
+  && [[ -s /etc/galactic-sovereign/credentials/cloudflare-tunnel-token ]] \
+  && systemctl is-enabled --quiet cloudflared-galactic-sovereign.service 2>/dev/null; then
+  if ! curl --fail --silent --max-time 8 https://play.galacticsovereign.xyz/healthz >/dev/null; then
+    restart_unit cloudflared-galactic-sovereign.service
+  fi
+fi
+
+# Soft hygiene signals (non-fatal).
+usage="$(df -P / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
+if [[ "$usage" =~ ^[0-9]+$ ]] && (( usage >= 85 )); then
+  echo "health-watch: disk usage ${usage}% on /" >&2
+fi
+newest="$(find /var/lib/galactic-sovereign/backups -type f -name 'snapshot-*.tar.gz' -printf '%T@\n' 2>/dev/null | sort -rn | head -n1 || true)"
+if [[ -n "${newest:-}" ]]; then
+  age=$(( now - ${newest%.*} ))
+  if (( age > 93600 )); then
+    echo "health-watch: newest local backup is ${age}s old" >&2
+  fi
+fi
+
+[[ "$gateway_ok" -eq 1 && "$coop_ok" -eq 1 ]]

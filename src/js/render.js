@@ -6,6 +6,7 @@ import {
   SELECTION_PULSE_MS,
   CAMERA_MIN_ZOOM,
   CAMERA_MAX_ZOOM,
+  CAMERA_DEFAULT_ZOOM,
   CAMERA_FOLLOW_RATE,
   GALAXY_CAMERA_MIN_ZOOM,
   GALAXY_CAMERA_MAX_ZOOM,
@@ -231,6 +232,16 @@ export function clampGalaxyZoom(z) {
   return Math.min(GALAXY_CAMERA_MAX_ZOOM, Math.max(GALAXY_CAMERA_MIN_ZOOM, z));
 }
 
+function repairCamera(cam) {
+  if (!cam || typeof cam !== 'object') return { x: 0, y: 0, zoom: 1 };
+  if (!Number.isFinite(cam.x)) cam.x = 0;
+  if (!Number.isFinite(cam.y)) cam.y = 0;
+  if (!Number.isFinite(cam.zoom) || cam.zoom <= 0) {
+    cam.zoom = cam === galaxyCamera ? 0.4 : CAMERA_DEFAULT_ZOOM;
+  }
+  return cam;
+}
+
 let starAnimOrigin = performance.now();
 
 /** Session-relative clock for fluid star visuals (game time alone starts near zero). */
@@ -265,14 +276,17 @@ export function updateFollowCamera(state, viewedSystemId, dtMs, accumulatorMs = 
     if (!f || f.transit || f.systemId !== viewedSystemId) return;
     pose = getFlagshipDisplayPose(state, accumulatorMs);
   }
+  if (!Number.isFinite(pose?.x) || !Number.isFinite(pose?.y)) return;
+  repairCamera(camera);
   const k = 1 - Math.exp(-CAMERA_FOLLOW_RATE * (dtMs / 1000));
   camera.x += (pose.x - camera.x) * k;
   camera.y += (pose.y - camera.y) * k;
 }
 
 export function snapCameraTo(x, y) {
-  camera.x = x;
-  camera.y = y;
+  camera.x = Number.isFinite(x) ? x : 0;
+  camera.y = Number.isFinite(y) ? y : 0;
+  repairCamera(camera);
 }
 
 let combatCinemaEnabled = false;
@@ -396,6 +410,7 @@ function parallaxToScreen(cam, wx, wy, depth, canvas) {
 }
 
 function drawStarfield(ctx, cam, canvas, time = 0) {
+  repairCamera(cam);
   // Deep-space nebula haze (far parallax layer).
   for (const n of getNebulae()) {
     const p = parallaxToScreen(cam, n.x, n.y, n.depth, canvas);

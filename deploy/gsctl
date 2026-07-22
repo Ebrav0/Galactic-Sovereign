@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+releases=/opt/galactic-sovereign/releases
+current=/opt/galactic-sovereign/current
+credentials=/etc/galactic-sovereign/credentials
+command="${1:-status}"
+release_id="${2:-}"
+
+valid_release() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{5,79}$ ]]; }
+require_release() { valid_release "$release_id" || { echo 'invalid release id' >&2; exit 2; }; }
+
+has_restic_credentials() {
+  [[ -s "$credentials/restic-password" && \
+     -s "$credentials/r2-access-key-id" && \
+     -s "$credentials/r2-secret-access-key" && \
+     -s "$credentials/restic-repository" ]]
+}
+
+ensure_units() {
+  systemctl daemon-reload
+  systemctl enable galactic-sovereign-coop.service galactic-sovereign-gateway.service
+  systemctl enable \
+    galactic-sovereign-backup.timer \
+    galactic-sovereign-daily.timer \
+    galactic-sovereign-restore-test.timer \
+    galactic-sovereign-health.timer
+  systemctl start \
+    galactic-sovereign-backup.timer \
+    galactic-sovereign-daily.timer \
+    galactic-sovereign-restore-test.timer \
+    galactic-sovereign-health.timer
+
+  if [[ -s "$credentials/cloudflare-tunnel-token" ]]; then
+    systemctl enable cloudflared-galactic-sovereign.service
+    systemctl restart cloudflared-galactic-sovereign.service
+  else
+    echo 'ensure-units: tunnel token missing; leaving cloudflared disabled' >&2
+  fi
+
+  if has_restic_credentials; then
+    systemctl enable --now galactic-sovereign-restic.timer galactic-sovereign-restic-hourly.timer
+  else
+    systemctl disable --now galactic-sovereign-restic.timer galactic-sovereign-restic-hourly.timer 2>/dev/null || true
+  fi
+
+  systemctl restart galactic-sovereign-coop.service galactic-sovereign-gateway.service
+  if command -v tailscale >/dev/null; then
+    systemctl enable --now tailscaled.service 2>/dev/null || true
+    tailscale set --ssh --accept-risk=lose-ssh 2>/dev/null || true
+  fi
+}
+
+case "$command" in
+  deploy)
+    require_release
+    archive="/var/tmp/galactic-sovereign-$release_id.tar.gz"
+    sums="$archive.sha256"
+    [[ -f "$archive" && -f "$sums" ]] || { echo "missing release archive or checksum" >&2; exit 1; }
+    (cd /var/tmp && sha256sum -c "$(basename "$sums")")
+    release="$releases/$release_id"
+    [[ ! -e "$release" ]] || { echo 'release already exists' >&2; exit 1; }
+    stage="$releases/.staging-$release_id"
+    trap 'rm -rf -- "$stage"' EXIT
+    install -d -m 0755 "$stage"
+    while IFS= read -r member; do
+      [[ "$member" =~ ^[A-Za-z0-9._/-]+$ && "$member" != /* && "$member" != ../* && "$member" != */../* ]] || {
+        echo "unsafe release member: $member" >&2
+        exit 1
+      }
+    done < <(tar -tzf "$archive")
+    tar -xzf "$archive" -C "$stage" --no-same-owner --no-same-permissions
+    [[ -f "$stage/package.json" && -f "$stage/package-lock.json" && -f "$stage/server/app-host.mjs" ]] || {
+      echo 'release is missing required files' >&2
+      exit 1
+    }
+    if find "$stage" -type l -print -quit | grep -q .; then
+      echo 'release symlinks are not allowed' >&2
+      exit 1
+    fi
+    chown -R galactic-sovereign:galactic-sovereign "$stage"
+    runuser -u galactic-sovereign -- bash -lc \
+      'cd "$1" && npm ci --omit=dev --ignore-scripts && node --check server/app-host.mjs && node --check server/coop-host.mjs' \
+      _ "$stage"
+    chown -R root:root "$stage"
+    find "$stage" -type d -exec chmod 0755 {} +
+    find "$stage" -type f -exec chmod 0644 {} +
+    mv "$stage" "$release"
+    trap - EXIT
+    legacy_world=/var/lib/galactic-sovereign/pre-migration/original-world.json
+    live_world=/var/lib/galactic-sovereign/multiplayer/world.json
+    if [[ -f "$legacy_world" && ! -e "$live_world" ]]; then
+      GS_DATA_DIR=/var/lib/galactic-sovereign/accounts \
+        node "$release/scripts/migrate-multiplayer-world.mjs" "$legacy_world" "$live_world"
+      chown -R galactic-sovereign:galactic-sovereign \
+        /var/lib/galactic-sovereign/accounts /var/lib/galactic-sovereign/multiplayer
+      chmod 0700 /var/lib/galactic-sovereign/accounts /var/lib/galactic-sovereign/multiplayer
+      find /var/lib/galactic-sovereign/accounts /var/lib/galactic-sovereign/multiplayer -type f -exec chmod 0600 {} +
+    fi
+    # Refresh ops binaries and units from the release when present.
+    if [[ -d "$release/deploy" ]]; then
+      install -o root -g root -m 0755 "$release/deploy/gsctl" /usr/local/sbin/gsctl
+      install -o root -g root -m 0755 "$release/deploy/gs-backup" /usr/local/libexec/galactic-sovereign/gs-backup
+      install -o root -g root -m 0755 "$release/deploy/gs-offsite-backup" /usr/local/libexec/galactic-sovereign/gs-offsite-backup
+      install -o root -g root -m 0755 "$release/deploy/gs-restore-test" /usr/local/libexec/galactic-sovereign/gs-restore-test
+      install -o root -g root -m 0755 "$release/deploy/gs-restore" /usr/local/libexec/galactic-sovereign/gs-restore
+      install -o root -g root -m 0755 "$release/deploy/gs-health-watch" /usr/local/libexec/galactic-sovereign/gs-health-watch
+      install -o root -g root -m 0644 "$release/deploy/systemd/"* /etc/systemd/system/
+    fi
+    ln -sfn "$release" "$releases/.current-$release_id"
+    mv -Tf "$releases/.current-$release_id" "$current"
+    systemctl disable --now galactic-sovereign-web.service 2>/dev/null || true
+    ensure_units
+    for attempt in {1..20}; do
+      curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null && break
+      [[ "$attempt" -lt 20 ]] || { echo 'gateway health check timed out' >&2; exit 1; }
+      sleep 0.25
+    done
+    /usr/local/libexec/galactic-sovereign/gs-backup daily
+    ;;
+  ensure-units)
+    ensure_units
+    ;;
+  rollback)
+    require_release
+    if [[ "$release_id" == legacy ]]; then
+      config=/etc/galactic-sovereign/legacy.env
+      [[ -r "$config" ]] || { echo 'legacy rollback configuration missing' >&2; exit 1; }
+      # shellcheck disable=SC1090
+      source "$config"
+      [[ "$GS_LEGACY_WORLD_PATH" =~ ^/[A-Za-z0-9._/-]+$ && "$GS_LEGACY_WORLD_PATH" != / ]] || exit 2
+      /usr/local/libexec/galactic-sovereign/gs-backup daily || true
+      systemctl stop galactic-sovereign-gateway.service galactic-sovereign-coop.service
+      install -m 0600 /var/lib/galactic-sovereign/pre-migration/original-world.json "$GS_LEGACY_WORLD_PATH"
+      for unit in galactic-sovereign-web.service galactic-sovereign-coop.service; do
+        [[ ! -f "/var/lib/galactic-sovereign/pre-migration/$unit" ]] || \
+          install -m 0644 "/var/lib/galactic-sovereign/pre-migration/$unit" "/etc/systemd/system/$unit"
+      done
+      systemctl daemon-reload
+      systemctl enable --now galactic-sovereign-web.service galactic-sovereign-coop.service
+      exit 0
+    fi
+    release="$releases/$release_id"
+    [[ -d "$release" ]] || { echo 'release not found' >&2; exit 1; }
+    ln -sfn "$release" "$releases/.current-$release_id"
+    mv -Tf "$releases/.current-$release_id" "$current"
+    ensure_units
+    ;;
+  status)
+    readlink -f "$current" || true
+    systemctl --no-pager --full status \
+      galactic-sovereign-gateway.service \
+      galactic-sovereign-coop.service \
+      cloudflared-galactic-sovereign.service || true
+    systemctl list-timers --all --no-pager \
+      'galactic-sovereign*' 'cloudflared-galactic-sovereign*' 2>/dev/null || true
+    ;;
+  logs)
+    service="${2:-gateway}"
+    case "$service" in
+      gateway) unit=galactic-sovereign-gateway.service ;;
+      coop) unit=galactic-sovereign-coop.service ;;
+      tunnel) unit=cloudflared-galactic-sovereign.service ;;
+      health) unit=galactic-sovereign-health.service ;;
+      *) exit 2 ;;
+    esac
+    journalctl -u "$unit" --since '-2 hours' --no-pager -n 300
+    ;;
+  backup) /usr/local/libexec/galactic-sovereign/gs-backup daily ;;
+  restore-test) /usr/local/libexec/galactic-sovereign/gs-restore-test ;;
+  restore)
+    snapshot="${2:-latest}"
+    /usr/local/libexec/galactic-sovereign/gs-restore "$snapshot"
+    ;;
+  restart)
+    systemctl restart galactic-sovereign-coop.service galactic-sovereign-gateway.service
+    if systemctl is-enabled --quiet cloudflared-galactic-sovereign.service 2>/dev/null; then
+      systemctl restart cloudflared-galactic-sovereign.service
+    fi
+    ;;
+  *)
+    echo 'usage: gsctl deploy ID|rollback ID|ensure-units|status|logs [gateway|coop|tunnel|health]|backup|restore-test|restore [latest|PATH|NAME]|restart' >&2
+    exit 2
+    ;;
+esac
