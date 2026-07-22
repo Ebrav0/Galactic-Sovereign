@@ -607,7 +607,7 @@ const MIME = {
 
 function serveStatic(req, res, url) {
   const adminHost = isAdminHost(req);
-  if (!adminHost && ADMIN_ORIGIN && req.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) {
+  if (!adminHost && ADMIN_ORIGIN && ['GET', 'HEAD'].includes(req.method) && (url.pathname === '/admin' || url.pathname === '/admin/')) {
     res.writeHead(302, { location: `${ADMIN_ORIGIN}/`, 'cache-control': 'no-store' });
     return res.end();
   }
@@ -623,7 +623,7 @@ function serveStatic(req, res, url) {
   let target = path.resolve(DIST_DIR, relative);
   if (!target.startsWith(`${DIST_DIR}${path.sep}`) && target !== DIST_DIR) return json(res, 400, { ok: false, error: 'Invalid path' });
   if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
-    if (req.method === 'GET' && !path.extname(relative)) {
+    if (['GET', 'HEAD'].includes(req.method) && !path.extname(relative)) {
       target = path.join(DIST_DIR, adminHost ? 'admin.html' : 'index.html');
     } else return json(res, 404, { ok: false, error: 'Not found' });
   }

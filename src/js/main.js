@@ -2738,7 +2738,7 @@ function runDevAction(action, params = {}) {
   return result;
 }
 
-/** Dev Panel is opt-in outside Vite DEV (server also blocks `devAction` in prod/gateway). */
+/** Dev Panel stays available for personal/local use (`?dev=0` to hide). Co-op cheats still blocked server-side in production/gateway. */
 function shouldEnableDevPanel() {
   if (import.meta.env.DEV) return true;
   try {
@@ -2752,10 +2752,11 @@ function shouldEnableDevPanel() {
       try { localStorage.setItem('gs-dev-panel', '1'); } catch { /* ignore */ }
       return true;
     }
-    return localStorage.getItem('gs-dev-panel') === '1';
-  } catch {
-    return false;
-  }
+    const stored = localStorage.getItem('gs-dev-panel');
+    if (stored === '0') return false;
+    if (stored === '1') return true;
+  } catch { /* ignore */ }
+  return true;
 }
 
 if (shouldEnableDevPanel()) {

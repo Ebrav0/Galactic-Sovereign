@@ -21,7 +21,10 @@ export function setHostedSaveFlushHandler(handler) {
 }
 
 function resolveAdminTarget(session = currentAccountSession()) {
-  return session?.adminOrigin || adminOrigin();
+  if (session?.adminOrigin) return session.adminOrigin;
+  // Without a server-advertised admin host, stay same-origin (local /admin.html).
+  if (window.location.hostname === 'play.galacticsovereign.xyz') return adminOrigin();
+  return window.location.origin;
 }
 
 async function redirectOwnerToAdmin(session = currentAccountSession()) {

@@ -7,7 +7,30 @@ The production runtime has two loopback-only Node processes:
 | Authenticated gateway | `127.0.0.1:8080` | Static build, accounts, solo saves, admin API, WebSocket relay |
 | Persistent co-op host | `127.0.0.1:9090` | Continuously ticking server-authoritative universe |
 
-Only the gateway is published, through an outbound Cloudflare Tunnel at the canonical HTTPS hostname. The co-op port, databases, SSH, and hypervisor are never Cloudflare or router ingress targets.
+Only the gateway is published, through an outbound Cloudflare Tunnel. Public hostnames:
+
+| Hostname | Purpose |
+|---|---|
+| `https://play.galacticsovereign.xyz` | Game client |
+| `https://admin.galacticsovereign.xyz` | Owner ops dashboard (Cloudflare Access + app owner role) |
+
+The co-op port, databases, SSH, and hypervisor are never Cloudflare or router ingress targets.
+
+## Owner admin dashboard
+
+Owners who sign in on play are handed off to `GS_ADMIN_ORIGIN` via a one-time token (cookies are `__Host-` scoped and cannot cross subdomains).
+
+Provision / repair the admin hostname:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...   # Tunnel Edit + DNS Edit + Access apps
+export CF_ACCESS_OWNER_EMAIL=you@example.com   # if Access app must be created
+node deploy/cloudflare/provision-admin-hostname.mjs
+```
+
+See [deploy/cloudflare/README.md](../deploy/cloudflare/README.md).
+
+Local same-origin admin UI (no DNS): leave `GS_ADMIN_ORIGIN` empty and open `/admin.html` on the gateway.
 
 ## Local development
 

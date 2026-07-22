@@ -118,7 +118,7 @@ The in-app **Account Administration** panel (`/admin`) is for the owner role. Re
 | Session pepper only when `NODE_ENV=production` | Also required whenever gateway secret is set |
 | Health CORS `*` | Disabled in production |
 | Prototype pollution via delta paths | `__proto__` / `constructor` / `prototype` rejected |
-| Dev Panel default-on in shipped builds | Opt-in via `?dev=1` / localStorage |
+| Dev Panel default-on in shipped builds | Kept for personal operator use; `?dev=0` hides it. Hosted/gateway still rejects `devAction` cheats |
 
 ### Low — accepted / documented
 | Finding | Notes |

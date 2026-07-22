@@ -15,6 +15,7 @@ Environment=NODE_ENV=production
 Environment=GS_APP_HOST=127.0.0.1
 Environment=GS_APP_PORT=8080
 Environment=GS_PUBLIC_ORIGIN=https://play.galacticsovereign.xyz
+Environment=GS_ADMIN_ORIGIN=https://admin.galacticsovereign.xyz
 Environment=GS_DATA_DIR=/var/lib/galactic-sovereign/accounts
 Environment=GS_DIST_DIR=/opt/galactic-sovereign/current/dist
 Environment=GS_COOP_INTERNAL_URL=ws://127.0.0.1:9090

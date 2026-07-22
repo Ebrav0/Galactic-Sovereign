@@ -11,8 +11,12 @@ function metaContent(name) {
   return document.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim() || '';
 }
 
-function playOrigin() {
-  return metaContent('gs-play-origin') || location.origin;
+function playOriginHref() {
+  const fromSession = state.session?.playOrigin;
+  if (fromSession) return fromSession;
+  const meta = metaContent('gs-play-origin');
+  if (meta && /(?:^|\.)galacticsovereign\.xyz$/i.test(location.hostname)) return meta;
+  return location.origin;
 }
 
 function setStatus(id, message, kind = '') {
@@ -131,7 +135,7 @@ function showView(view) {
 }
 
 function wirePlayLinks() {
-  const play = playOrigin();
+  const play = playOriginHref();
   const openPlay = byId('admin-open-play');
   const forbiddenPlay = byId('admin-forbidden-play');
   if (openPlay) openPlay.href = `${play}/`;
