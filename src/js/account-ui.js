@@ -1,6 +1,8 @@
 import {
   accountApi,
+  adminOrigin,
   changeAccountPassword,
+  createAdminHandoff,
   currentAccountSession,
   discoverAccountSession,
   loginAccount,
@@ -16,6 +18,25 @@ let hostedSaveFlushHandler = null;
 /** Register a flush callback so Sign out can persist the active solo save first. */
 export function setHostedSaveFlushHandler(handler) {
   hostedSaveFlushHandler = typeof handler === 'function' ? handler : null;
+}
+
+function resolveAdminTarget(session = currentAccountSession()) {
+  return session?.adminOrigin || adminOrigin();
+}
+
+async function redirectOwnerToAdmin(session = currentAccountSession()) {
+  if (!session?.authenticated || session.user?.role !== 'owner' || session.user?.mustChangePassword) {
+    return false;
+  }
+  const target = resolveAdminTarget(session);
+  if (target && target !== window.location.origin) {
+    const handoff = await createAdminHandoff();
+    const admin = handoff.adminOrigin || target;
+    window.location.assign(`${admin}/?handoff=${encodeURIComponent(handoff.handoffToken)}`);
+    return true;
+  }
+  window.location.assign('/admin.html');
+  return true;
 }
 
 function installMarkup() {
@@ -339,9 +360,14 @@ export async function initAccountUi() {
     event.preventDefault();
     setStatus('account-login-status', 'Authorizing…', 'busy');
     try {
-      await loginAccount(byId('account-username').value, byId('account-password').value);
+      const session = await loginAccount(byId('account-username').value, byId('account-password').value);
       byId('account-password').value = '';
       setStatus('account-login-status', '');
+      if (session?.user?.role === 'owner' && !session.user.mustChangePassword) {
+        setStatus('account-login-status', 'Opening admin…', 'busy');
+        await redirectOwnerToAdmin(session);
+        return;
+      }
       await renderAccount();
     } catch (error) {
       setStatus('account-login-status', error.message, 'error');
@@ -397,19 +423,14 @@ export async function initAccountUi() {
     byId('account-admin-backdrop')?.classList.add('hidden');
   };
   const openAdmin = async () => {
-    if (!window.location.pathname.startsWith('/admin')) {
-      window.location.assign('/admin');
-      return;
+    try {
+      await redirectOwnerToAdmin();
+    } catch (error) {
+      setStatus('account-login-status', error.message || 'Could not open admin', 'error');
     }
-    byId('account-admin')?.classList.remove('hidden');
-    byId('account-admin-backdrop')?.classList.remove('hidden');
-    try { await renderUsers(); } catch (error) { setStatus('account-admin-status', error.message, 'error'); }
   };
   byId('account-admin-open')?.addEventListener('click', openAdmin);
-  byId('account-admin-close')?.addEventListener('click', () => {
-    closeAdmin();
-    if (window.location.pathname.startsWith('/admin')) window.location.assign('/');
-  });
+  byId('account-admin-close')?.addEventListener('click', closeAdmin);
   byId('account-admin-backdrop')?.addEventListener('click', closeAdmin);
 
   byId('account-create-form')?.addEventListener('submit', async (event) => {
@@ -474,7 +495,14 @@ export async function initAccountUi() {
     await renderUsers();
   });
 
-  if (window.location.pathname.startsWith('/admin') && currentAccountSession()?.user?.role === 'owner') {
-    await openAdmin();
+  if (window.location.pathname.startsWith('/admin')) {
+    const session = currentAccountSession();
+    if (session?.user?.role === 'owner' && !session.user.mustChangePassword) {
+      try {
+        await redirectOwnerToAdmin(session);
+      } catch (error) {
+        setStatus('account-login-status', error.message || 'Could not open admin', 'error');
+      }
+    }
   }
 }

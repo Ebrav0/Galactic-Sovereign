@@ -18,6 +18,18 @@ export function currentAccountSession() {
   return state.session;
 }
 
+function metaContent(name) {
+  return document.querySelector(`meta[name="${name}"]`)?.getAttribute('content')?.trim() || '';
+}
+
+export function playOrigin() {
+  return metaContent('gs-play-origin') || window.location.origin;
+}
+
+export function adminOrigin() {
+  return metaContent('gs-admin-origin') || window.location.origin;
+}
+
 export async function discoverAccountSession({ force = false } = {}) {
   if (discoveryPromise && !force) return discoveryPromise;
   discoveryPromise = (async () => {
@@ -110,6 +122,12 @@ export async function changeAccountPassword(currentPassword, newPassword) {
   if (!result.response.ok) throw new Error(result.payload.error || 'Password change failed');
   state.session = null;
   window.dispatchEvent(new CustomEvent('gs-account-changed', { detail: accountState() }));
+}
+
+export async function createAdminHandoff() {
+  const result = await accountApi('/api/v1/auth/admin-handoff', { method: 'POST', csrf: true });
+  if (!result.response.ok) throw new Error(result.payload.error || 'Admin handoff failed');
+  return result.payload;
 }
 
 export function hostedMultiplayerUrl() {

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Galactic Sovereign — Admin</title>
+  <link rel="icon" href="data:," />
+  <meta name="gs-admin-origin" content="https://admin.galacticsovereign.xyz" />
+  <meta name="gs-play-origin" content="https://play.galacticsovereign.xyz" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body class="admin-page">
+  <div id="admin-login-gate" class="admin-gate hidden" role="dialog" aria-modal="true" aria-labelledby="admin-login-title">
+    <div class="admin-gate__card">
+      <div class="admin-gate__sigil" aria-hidden="true">⬡</div>
+      <p class="admin-gate__eyebrow">Owner Command Channel</p>
+      <h1 id="admin-login-title">Admin authorization</h1>
+      <p class="admin-gate__copy">Sign in with the sovereign owner account. Player sessions are refused on this host.</p>
+      <form id="admin-login-form" class="account-form">
+        <label><span>Username</span><input id="admin-login-username" name="username" autocomplete="username" maxlength="32" required /></label>
+        <label><span>Password</span><input id="admin-login-password" name="password" type="password" autocomplete="current-password" maxlength="256" required /></label>
+        <p id="admin-login-status" class="account-status" aria-live="polite"></p>
+        <button class="btn btn--primary btn--block" type="submit">Authorize admin</button>
+      </form>
+      <p class="admin-gate__hint">Prefer signing in on Play — owners are handed off here automatically.</p>
+    </div>
+  </div>
+
+  <div id="admin-forbidden" class="admin-gate hidden" role="alert">
+    <div class="admin-gate__card">
+      <p class="admin-gate__eyebrow">Access denied</p>
+      <h1>Owner clearance required</h1>
+      <p class="admin-gate__copy">This console is reserved for the sovereign owner. Return to Play with a player account.</p>
+      <a id="admin-forbidden-play" class="btn btn--primary" href="https://play.galacticsovereign.xyz/">Open Play</a>
+    </div>
+  </div>
+
+  <div id="admin-shell" class="admin-shell hidden">
+    <header id="admin-header" class="admin-header">
+      <div class="admin-header__brand">
+        <div class="brand-sigil" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path fill="currentColor" d="M16 1 30 9v14L16 31 2 23V9L16 1zm0 4.6L6 11.3v9.4l10 5.7 10-5.7v-9.4L16 5.6zM16 10a6 6 0 110 12 6 6 0 010-12zm0 3.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z"/></svg>
+        </div>
+        <div>
+          <strong class="admin-header__title">Galactic Sovereign</strong>
+          <span class="admin-header__subtitle">Owner Operations</span>
+        </div>
+      </div>
+      <div class="admin-header__meta">
+        <span id="admin-signed-as" class="admin-header__signed">—</span>
+        <a id="admin-open-play" class="btn btn--ghost btn--sm" href="https://play.galacticsovereign.xyz/">Open Play</a>
+        <button id="admin-sign-out" class="btn btn--ghost btn--sm" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <section id="admin-overview" class="admin-section" aria-labelledby="admin-overview-title">
+        <div class="admin-section__head">
+          <h2 id="admin-overview-title">Fleet overview</h2>
+          <span id="admin-poll-status" class="admin-poll-status">Live</span>
+        </div>
+        <div id="admin-overview-grid" class="admin-overview-grid"></div>
+      </section>
+
+      <section id="admin-create" class="admin-section" aria-labelledby="admin-create-title">
+        <div class="admin-section__head">
+          <h2 id="admin-create-title">Create player</h2>
+        </div>
+        <form id="admin-create-form" class="account-form account-form--row admin-create-form">
+          <label><span>Username</span><input id="admin-create-username" maxlength="32" required autocomplete="off" /></label>
+          <label><span>Display name</span><input id="admin-create-display" maxlength="32" required autocomplete="off" /></label>
+          <button class="btn btn--primary btn--sm" type="submit">Create player</button>
+        </form>
+        <p id="admin-create-status" class="account-status" aria-live="polite"></p>
+        <div id="admin-temp-password" class="admin-temp-password hidden"></div>
+      </section>
+
+      <div class="admin-split">
+        <section id="admin-players" class="admin-section" aria-labelledby="admin-players-title">
+          <div class="admin-section__head">
+            <h2 id="admin-players-title">Players</h2>
+          </div>
+          <div class="admin-table-wrap">
+            <table id="admin-players-table" class="admin-table">
+              <thead>
+                <tr>
+                  <th>Pilot</th>
+                  <th>Status</th>
+                  <th>Last online</th>
+                  <th>Online time</th>
+                  <th>MP / RTT</th>
+                  <th>Latest stage</th>
+                </tr>
+              </thead>
+              <tbody id="admin-players-body"></tbody>
+            </table>
+          </div>
+          <p id="admin-players-status" class="account-status" aria-live="polite"></p>
+        </section>
+
+        <aside id="admin-detail" class="admin-section admin-detail" aria-labelledby="admin-detail-title">
+          <div class="admin-section__head">
+            <h2 id="admin-detail-title">Pilot detail</h2>
+            <button id="admin-detail-close" class="btn btn--ghost btn--xs" type="button">Close</button>
+          </div>
+          <div id="admin-detail-empty" class="admin-detail__empty">Select a player to inspect sessions, saves, and controls.</div>
+          <div id="admin-detail-body" class="admin-detail__body hidden"></div>
+        </aside>
+      </div>
+
+      <section id="admin-multiplayer" class="admin-section" aria-labelledby="admin-mp-title">
+        <div class="admin-section__head">
+          <h2 id="admin-mp-title">Multiplayer live</h2>
+        </div>
+        <div id="admin-mp-health" class="admin-mp-health"></div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>Pilot</th>
+                <th>Connected</th>
+                <th>RTT</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="admin-mp-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="admin-legacy" class="admin-section hidden" aria-labelledby="admin-legacy-title">
+        <div class="admin-section__head">
+          <h2 id="admin-legacy-title">Legacy pilots</h2>
+        </div>
+        <p class="admin-section__copy">Attach preserved multiplayer pilot identities to accounts. Claims are one-time.</p>
+        <div id="admin-legacy-list" class="admin-legacy-list"></div>
+      </section>
+
+      <section id="admin-audit" class="admin-section" aria-labelledby="admin-audit-title">
+        <div class="admin-section__head">
+          <h2 id="admin-audit-title">Audit</h2>
+        </div>
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Action</th>
+                <th>Actor</th>
+                <th>Target</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="admin-audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="./js/admin-dashboard.js"></script>
+</body>
+</html>
