@@ -6,12 +6,16 @@ output/
 playwright-report/
 test-results/
 .DS_Store
+Thumbs.db
 *.log
+
+# Local data / saves / databases
 server/data/
 .env
 .env.*
 !.env.example
 .deploy.local.env
+!.deploy.local.env.example
 *.sqlite
 *.sqlite-*
 *.db
@@ -21,10 +25,47 @@ world.json.*
 *.backup
 *.bak
 backups/
+saves/
+*.save
+
+# Credentials / tunnel / offsite
 credentials/
 cloudflared/
+**/cloudflare-tunnel-token
+**/tunnel-token
+restic-cache/
+.restic/
+
+# TLS / SSH keys / certificates
 *.pem
 *.key
 *.p12
 *.pfx
-restic-cache/
+*.crt
+*.cer
+*.csr
+*.ppk
+.ssh/
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+fullchain*.pem
+privkey*.pem
+
+# Tailscale local artifacts (keep example policy tracked)
+*.hujson
+!deploy/tailscale-policy.hujson.example
+
+# Editor / OS / temp
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+tmp/
+*.tmp
+.cache/
+.turbo/
