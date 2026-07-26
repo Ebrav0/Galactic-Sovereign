@@ -12,7 +12,7 @@ import { superweaponSummary } from './superweapon.js';
 import { countCompletedDysons } from './milestones.js';
 import { listAiFactionsFromState } from './diplomacy.js';
 import { FLAGSHIP_HP } from './constants.js';
-import { createTutorialCampaignState } from './tutorial-access.js';
+import { createTutorialCampaignState, TUTORIAL_STEP_IDS } from './tutorial-access.js';
 
 export const VICTORY_TYPES = [
   'sandbox', 'dominion', 'megastructure', 'annihilation', 'economic', 'sculptor',
@@ -53,6 +53,14 @@ export function ensureCampaign(state) {
     }
     if (!Array.isArray(state.campaign.tutorial.completedStepIds)) {
       state.campaign.tutorial.completedStepIds = [];
+    }
+    if (!state.campaign.tutorial.events || typeof state.campaign.tutorial.events !== 'object') {
+      state.campaign.tutorial.events = {};
+    }
+    if (!TUTORIAL_STEP_IDS.includes(state.campaign.tutorial.currentStepId)) {
+      state.campaign.tutorial.currentStepId = TUTORIAL_STEP_IDS[0];
+      state.campaign.tutorial.completedStepIds = [];
+      state.campaign.tutorial.events = {};
     }
   }
 }
@@ -199,6 +207,7 @@ export function campaignSummary(state) {
       ...state.campaign.tutorial,
       completedStepIds: [...state.campaign.tutorial.completedStepIds],
       flags: { ...state.campaign.tutorial.flags },
+      events: { ...state.campaign.tutorial.events },
     },
     activeMissionId: state.campaign.activeMissionId,
     completedMissions: [...(state.campaign.completedMissions ?? [])],

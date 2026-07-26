@@ -3,6 +3,11 @@
 
 import { CAMERA_ZOOM_STEP } from './constants.js';
 import {
+  controlActionForCode,
+  emitControlAction,
+  isEditableControlTarget,
+} from './control-registry.js';
+import {
   camera,
   galaxyCamera,
   follow,
@@ -63,6 +68,7 @@ export function attachInput(canvas, ctx) {
     onBuilderDroneDeployClick,
     onCameraIntent,
     onMapPing,
+    isGameplayInputActive = () => true,
   } = ctx;
 
   const activeCamera = () => (getView() === 'galaxy' ? galaxyCamera : camera);
@@ -84,11 +90,12 @@ export function attachInput(canvas, ctx) {
   let spaceUsedForPan = false;
 
   window.addEventListener('keydown', (e) => {
-    if (e.target instanceof HTMLInputElement) return;
+    if (!isGameplayInputActive() || isEditableControlTarget(e.target)) return;
     if (THRUST_KEYS[e.code]) {
       e.preventDefault();
       if (!e.repeat) {
         held.add(e.code);
+        emitControlAction(controlActionForCode(e.code), { source: 'keyboard' });
         emitThrust();
       }
       return;
@@ -100,6 +107,7 @@ export function attachInput(canvas, ctx) {
         spaceUsedForPan = false;
       }
     } else if (e.code === 'Escape') {
+      emitControlAction('cancel', { source: 'keyboard' });
       if (getCombatCommandMode?.()) {
         e.preventDefault();
         onCombatCancelCommand?.();
@@ -114,23 +122,31 @@ export function attachInput(canvas, ctx) {
       if (onCloseSidePanel) onCloseSidePanel();
       onSelect(null);
     } else if (e.code === 'KeyM') {
+      emitControlAction('toggle_view', { source: 'keyboard' });
       onToggleView();
     } else if (e.code === 'KeyF') {
+      emitControlAction('follow', { source: 'keyboard' });
       onFollowRequest();
     } else if (e.code === 'KeyO') {
       e.preventDefault();
+      emitControlAction('orbit', { source: 'keyboard' });
       onToggleOrbit();
     } else if (e.code === 'KeyP') {
       e.preventDefault();
+      emitControlAction('ping', { source: 'keyboard' });
       onMapPing?.({ source: 'hotkey' });
     }
   });
 
   window.addEventListener('keyup', (e) => {
+    if (!isGameplayInputActive() || isEditableControlTarget(e.target)) return;
     if (THRUST_KEYS[e.code] && held.delete(e.code)) emitThrust();
     if (e.code === 'Space') {
       e.preventDefault();
-      if (spaceHeld && !spaceUsedForPan) onTogglePause();
+      if (spaceHeld && !spaceUsedForPan) {
+        emitControlAction('pause', { source: 'keyboard' });
+        onTogglePause();
+      }
       spaceHeld = false;
       spaceUsedForPan = false;
     }
@@ -160,6 +176,7 @@ export function attachInput(canvas, ctx) {
   let marqueeAdditive = false;
 
   window.addEventListener('keydown', (e) => {
+    if (!isGameplayInputActive() || isEditableControlTarget(e.target)) return;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = true;
     if (e.code === 'Tab') {
       tabHeld = true;
@@ -167,12 +184,14 @@ export function attachInput(canvas, ctx) {
     }
   });
   window.addEventListener('keyup', (e) => {
+    if (!isGameplayInputActive() || isEditableControlTarget(e.target)) return;
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftHeld = false;
     if (e.code === 'Tab') tabHeld = false;
   });
 
   function beginPan() {
     onCameraIntent?.();
+    emitControlAction('pan', { source: 'pointer' });
     dragMode = 'pan';
     dragging = true;
     canvas.classList.add('panning');
@@ -315,6 +334,7 @@ export function attachInput(canvas, ctx) {
       }
       const hit = hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y)
         ?? hitTestSystemStar(getState(), getViewedSystemId(), w.x, w.y);
+      if (hit) emitControlAction('select', { source: 'pointer', targetId: hit });
       onSelect(hit);
       return;
     }
@@ -343,19 +363,23 @@ export function attachInput(canvas, ctx) {
     if (!starId) return;
 
     if ((e.ctrlKey || e.metaKey) && onBuilderDroneDeployClick) {
+      emitControlAction('drone_dispatch', { source: 'pointer', targetId: starId });
       onBuilderDroneDeployClick(starId);
       return;
     }
 
     if ((e.altKey || tabHeld) && onBattleGroupTravel) {
+      emitControlAction('fleet_dispatch', { source: 'pointer', targetId: starId });
       onBattleGroupTravel(starId);
       return;
     }
 
     if (e.shiftKey || shiftHeld) {
       if (ctx.getSelectedBuilderDroneId?.()) {
+        emitControlAction('drone_dispatch', { source: 'pointer', targetId: starId });
         onBuilderDroneTravel?.(starId);
       } else {
+        emitControlAction('scout_dispatch', { source: 'pointer', targetId: starId });
         onScoutTravel(starId);
       }
       return;
@@ -364,6 +388,7 @@ export function attachInput(canvas, ctx) {
     if (pendingStarClick && pendingStarClick.id === starId) {
       clearTimeout(pendingStarClick.timer);
       pendingStarClick = null;
+      emitControlAction('inspect_star', { source: 'pointer', targetId: starId });
       onStarView(starId);
       return;
     }
@@ -373,7 +398,10 @@ export function attachInput(canvas, ctx) {
       id: starId,
       timer: setTimeout(() => {
         pendingStarClick = null;
-        if (!getHelioclastTargetingMode?.()) onStarTravel(starId);
+        if (!getHelioclastTargetingMode?.()) {
+          emitControlAction('travel', { source: 'pointer', targetId: starId });
+          onStarTravel(starId);
+        }
       }, DOUBLE_CLICK_MS),
     };
   });
@@ -385,6 +413,7 @@ export function attachInput(canvas, ctx) {
   canvas.addEventListener('contextmenu', (e) => {
     if (combatUiActive?.()) {
       e.preventDefault();
+      emitControlAction('combat_order', { source: 'pointer' });
       const w = screenToWorld(camera, e.clientX, e.clientY, canvas);
       const unit = hitTestCombatUnit(getState(), getViewedSystemId(), w.x, w.y);
       onCombatContextCommand?.(w, unit);
@@ -400,6 +429,7 @@ export function attachInput(canvas, ctx) {
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
+    emitControlAction('zoom', { source: 'pointer' });
     onCameraIntent?.();
     const cam = activeCamera();
     const clamp = getView() === 'galaxy' ? clampGalaxyZoom : clampZoom;

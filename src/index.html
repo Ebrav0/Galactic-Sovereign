@@ -43,6 +43,7 @@
               <ul id="coop-roster-list" class="coop-roster__list"></ul>
               <div class="coop-roster__actions">
                 <button type="button" class="btn btn--ghost btn--xs" id="coop-copy-invite">Copy invite URL</button>
+                <button type="button" class="btn btn--ghost btn--xs" id="coop-replay-tutorial">Replay crew tour</button>
                 <button type="button" class="btn btn--ghost btn--xs" id="coop-leave-btn">Leave co-op</button>
               </div>
             </div>
@@ -52,7 +53,7 @@
 
       <div id="coop-request-toast" class="coop-request-toast hidden" data-testid="coop-request-toast" hidden></div>
 
-      <div class="hud-header__resources hud-group">
+      <div class="hud-header__resources hud-group" id="resource-strip">
         <div class="chip chip--gold">
           <span class="chip__icon" aria-hidden="true">
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M8 1l6 4.5L11.5 15h-7L2 5.5 8 1zm0 2.4L4.4 6.1l1.5 6.4h4.2l1.5-6.4L8 3.4z"/></svg>
@@ -114,6 +115,7 @@
             <span class="chip__value" id="scout-summary">0</span>
           </span>
         </div>
+        <button id="resource-explain-btn" type="button" class="btn btn--ghost btn--xs resource-explain-btn" aria-label="Explain credits and income">?</button>
       </div>
 
       <div class="hud-header__actions hud-group">
@@ -128,6 +130,9 @@
         <button id="audio-settings-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Open audio settings">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10l-4-3H2V6zm9.2-.8a4 4 0 010 5.6l-1-1a2.6 2.6 0 000-3.6l1-1zm2-2a6.8 6.8 0 010 9.6l-1-1a5.4 5.4 0 000-7.6l1-1z"/></svg>
           <span class="btn-label">Audio</span>
+        </button>
+        <button id="tutorial-library-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Open controls and tutorials">
+          <span class="btn-label">Controls &amp; Tutorials</span>
         </button>
         <button id="save-menu-btn" type="button" class="btn btn--primary btn--sm" aria-label="Open save menu">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h8l2 2v10H3V2zm1 1v10h8V4h-2V3H4zm2 0h4v2H6V3zm0 4h4v4H6V7z"/></svg>
@@ -335,6 +340,15 @@
 
     <footer id="hud-footer" class="hud-footer">
       <div id="view-hint" class="view-hint"></div>
+      <div id="flight-quick-controls" class="flight-quick-controls" aria-label="Clickable flight controls">
+        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="0" data-flight-y="-1" aria-label="Thrust up">↑</button>
+        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="-1" data-flight-y="0" aria-label="Thrust left">←</button>
+        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="0" data-flight-y="1" aria-label="Thrust down">↓</button>
+        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="1" data-flight-y="0" aria-label="Thrust right">→</button>
+        <button type="button" class="btn btn--ghost btn--xs" id="quick-orbit-btn">Orbit (O)</button>
+        <button type="button" class="btn btn--ghost btn--xs" id="quick-follow-btn">Follow (F)</button>
+        <button type="button" class="btn btn--ghost btn--xs" id="quick-ping-btn">Ping (P)</button>
+      </div>
       <nav id="tab-bar" class="tab-bar" aria-label="View navigation">
         <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
         <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
@@ -463,6 +477,7 @@
               </div>
               <div class="title-screen__utilities title-screen__utilities--root">
                 <button id="title-audio-btn" type="button" class="btn btn--ghost">Settings</button>
+                <button id="title-tutorial-btn" type="button" class="btn btn--ghost">Controls &amp; Tutorials</button>
               </div>
             </div>
 
@@ -673,7 +688,23 @@
         </div>
         <div class="panel__footer panel__actions">
           <button id="field-manual-show" type="button" class="btn btn--ghost btn--sm">Show me</button>
+          <button id="field-manual-later" type="button" class="btn btn--ghost btn--sm">Later</button>
           <button id="field-manual-ack" type="button" class="btn btn--primary btn--sm">Understood</button>
+        </div>
+      </div>
+      <div id="tutorial-library-backdrop" class="modal-backdrop hidden"></div>
+      <div id="tutorial-library-modal" class="panel panel--modal tutorial-library-modal hidden" role="dialog" aria-modal="true" aria-labelledby="tutorial-library-title">
+        <div class="panel__header">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title" id="tutorial-library-title">Controls &amp; Tutorials</span>
+          <button id="tutorial-library-close" type="button" class="btn btn--ghost btn--xs" aria-label="Close controls and tutorials">×</button>
+        </div>
+        <div class="panel__body tutorial-library__body">
+          <label class="tutorial-library__search" for="tutorial-library-search">
+            <span>Search lessons and controls</span>
+            <input id="tutorial-library-search" type="search" placeholder="Try orbit, fleets, research…" autocomplete="off" />
+          </label>
+          <div id="tutorial-library-content"></div>
         </div>
       </div>
       <div id="save-menu" class="panel panel--modal hidden">

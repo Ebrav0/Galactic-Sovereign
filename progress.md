@@ -10,6 +10,39 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-26 — Solo and multiplayer tutorial playtest readiness
+
+**Task claimed:** Make the single-player and multiplayer tutorials strong enough for a first-time friend playtest tonight.
+
+### Done
+- Added a seven-step first-join co-op orientation that teaches persistent-world expectations, personal flagship movement, Galaxy/System switching, team pings, roster/follow behavior, and shared asset ownership/control.
+- Kept co-op tutorial progress device-local and presentation-only so it cannot pause, gate, or mutate the shared world.
+- Added replay access from the co-op roster plus an always-available end-tour action.
+- Upgraded the Academy coach with its previously hidden explanatory instruction text, accurate action labels, a progress meter, and distinct objective/status presentation.
+
+### Verification
+- Full seven-step co-op curriculum state-machine check passes, including event gates, completion persistence, and replay.
+- Academy browser journey reached active gameplay, advanced from real pause/resume input, and focused the correct habitable world plus enabled Outpost control.
+- Isolated live co-op journey passed real flagship thrust, Galaxy switching, team ping, roster opening, Fleet Command, completion persistence, and roster replay.
+- Visually inspected Academy objective/build guidance plus co-op welcome, roster, and ownership guidance at the live browser viewport; coach placement remains readable and does not cover the controls it explains.
+- Fixed a discovered header/rail stacking defect so all co-op roster actions are physically visible and clickable.
+- Browser console reported zero warnings/errors.
+- Required standalone web-game client was attempted but hit the known macOS `bootstrap_check_in ... Permission denied` Chromium sandbox failure; the equivalent full journey passed through the working in-app browser.
+- `node --check` for changed modules, full production build, and `git diff --check` pass. The existing large-chunk advisory remains non-blocking.
+
+### Zero-knowledge curriculum expansion
+- Replaced the compressed Academy opening with a 25-step, five-module Foundations curriculum covering interface orientation, pause, movement, body selection, orbit entry/exit, camera recovery, System/Galaxy navigation, safe map inspection/pings, resources, construction, scouting, fleets, combat, and capture.
+- Added shared `TutorialCourse` / `TutorialStep` / `TutorialProgress` helpers and one platform-aware control registry used by input matching, hint text, lesson keycaps, and the searchable control reference.
+- Added per-account Foundations/co-op/chapter progress with migration from existing graduates, completed/waived states, guarded hold-to-skip, and local fallback.
+- Added a permanent Controls & Tutorials library plus prompt/defer/replay behavior for contextual feature chapters.
+- Expanded multiplayer Foundations with personal flight/orbit/camera practice and read-only shared-clock, resource, ownership, and reconnect guidance. No tutorial command was added to the co-op protocol.
+- Added clickable flight, orbit, follow, and ping controls and prevented gameplay key capture outside the active game phase.
+
+### Validation pending
+- Run deterministic tutorial/profile/control verifiers, production build, and cross-browser visual journeys.
+
+---
+
 ## Session 2026-07-26 — Multiplayer intro audio
 
 **Task claimed:** Add sound to the multiplayer join animation.
@@ -2137,3 +2170,22 @@ Never delete prior entries.
 - Confirmed the active release symlink, deployed motion/timing artifacts, loopback gateway and co-op health, Cloudflare tunnel state, and public `https://play.galacticsovereign.xyz/healthz`. The public authorization screen was visually inspected and rendered correctly.
 - GitHub push was denied by the execution environment's external code-export policy; the local branch remains ahead of `origin/main`. No alternate upload path was attempted.
 - Unrelated pre-existing issue: `galactic-sovereign-admin-ops.service` is in a long-running restart loop because `/run/galactic-sovereign` does not exist for its `ReadWritePaths` namespace. The player-facing gateway, co-op host, Cloudflare tunnel, and public game remain healthy. Fix the unit with a persistent runtime-directory declaration in a separately scoped operations change.
+
+---
+
+## Session 2026-07-26 — Zero-knowledge solo and multiplayer tutorials
+
+### Implemented
+- Replaced the compressed Academy with a 25-step, five-module Foundations curriculum. Each lesson presents one action with the exact input/control, purpose, expected feedback, progress, and a recovery path; event-scoped completion prevents generic Continue clicks or out-of-order inputs from skipping objectives.
+- Added a shared versioned course/progress model and centralized 19-action control registry used by gameplay input, platform-aware hint labels, lesson copy, clickable equivalents, and the searchable Controls & Tutorials library.
+- Added profile-persisted `completed` and `waived` Foundations states, legacy graduate/briefing migration, chapter completion/defer/replay state, module-boundary progress, and a 1.5-second guarded hold-to-skip that converts Academy into an unlocked sandbox while keeping Foundations replayable.
+- Converted major Field Manual systems into contextual 3–6-step chapters with one-time unlock prompts, Later deferral, completion, and replay.
+- Replaced the co-op orientation with an independent 15-step novice course covering shared-world rules, identity, movement, orbit, camera, view switching, one ping, roster/follow, ownership, reconnect, and help. Its required actions remain personal/client-local except the intentional harmless ping; it never requires spending, shared pause, travel, construction, fleet orders, or control transfer.
+- Added visible movement/orbit/follow/ping controls, platform presentation for macOS/Windows/Linux, editable-target guards for gameplay shortcuts, reduced-motion behavior, screen-reader semantics, viewport-bounded coach placement, and focused target recovery.
+
+### Verification
+- `npm run verify:tutorial` passes: 25 solo steps, 15 co-op steps, all required lesson-copy fields, completion predicates, platform labels, legacy migration, waived unlocks, and the full safe co-op state-machine flow.
+- The automated 1280×720 WebKit walkthrough passes movement, pause/resume, selection, orbit entry/exit, pan, zoom, follow, Galaxy/System navigation, double-click inspection, ping, resource help, searchable library, coach bounds, and guarded skip with no uncaught browser errors.
+- Chromium was exercised through the working in-app browser at 1280×720. Standalone Chromium remains unavailable in this macOS sandbox because its bootstrap helper is denied before page launch; Firefox similarly cannot launch here because Mozilla's macOS sandbox-extension bootstrap is denied. Both engines remain configured in the verifier for supported release hosts.
+- Visual evidence is under `output/tutorial-foundations/cross-browser/`; the orbit target and Galaxy targets remain outside the coach and side panels at the minimum supported viewport.
+- Module syntax checks, `git diff --check`, and the full production/standalone/Admin build pass. The existing large-bundle warning remains non-blocking.

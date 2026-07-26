@@ -304,6 +304,7 @@ import {
   markTutorialBattlePrepared,
   markTutorialBattleCommand,
   markTutorialBattleResolved,
+  recordTutorialEvent,
   tutorialNeedsBattlePreparation,
   tryAdvanceTutorial,
   beginTutorialGraduation,
@@ -320,6 +321,12 @@ import {
   setTutorialSessionOverride,
   tutorialAccess,
 } from './tutorial-access.js';
+import {
+  beginCoopTutorial,
+  getCoopTutorialState,
+  markCoopTutorialEvent,
+  restartCoopTutorial,
+} from './coop-tutorial.js';
 import { buildStrategicStructure, strategicStructuresSummary, STRUCTURE_DEFS } from './strategic-structures.js';
 import {
   allBodyStructuresSummary,
@@ -1047,6 +1054,7 @@ function setCoopRosterOpen(open) {
   if (open) {
     panel.hidden = false;
     panel.classList.remove('hidden');
+    markCoopTutorialEvent('roster_opened');
     renderCoopRoster();
   } else {
     panel.hidden = true;
@@ -1226,13 +1234,20 @@ function handleCoopMeshEvents(events) {
 }
 
 function doMapPing(opts = {}) {
-  if (!coop.isActive()) return { ok: false, reason: 'Not in co-op' };
+  if (!coop.isActive()) {
+    const tutorial = getTutorialState(state);
+    if (!tutorial.active) return { ok: false, reason: 'Team pings are available in multiplayer' };
+    recordSoloTutorialEvent('map_pinged', { view, source: opts.source ?? 'unknown' });
+    toast('Training ping placed — in multiplayer your crew sees this marker', 'ok');
+    return { ok: true, training: true };
+  }
   const galaxyId = state.activeGalaxyId ?? null;
   if (view === 'system') {
     const f = state.flagship;
     const x = Number.isFinite(opts.x) ? opts.x : (f?.systemId === viewedSystemId ? f.x : 0);
     const y = Number.isFinite(opts.y) ? opts.y : (f?.systemId === viewedSystemId ? f.y : 0);
     coopSend('mapPing', { galaxyId, systemId: viewedSystemId, x, y, label: opts.label });
+    markCoopTutorialEvent('map_ping');
     return { ok: true };
   }
   let systemId = opts.systemId ?? null;
@@ -1257,13 +1272,20 @@ function doMapPing(opts = {}) {
     return { ok: false, reason: 'No star' };
   }
   coopSend('mapPing', { galaxyId, systemId, label: opts.label });
+  markCoopTutorialEvent('map_ping');
   return { ok: true };
 }
 
 function wireCoopRosterUi() {
   const banner = document.getElementById('coop-banner');
-  banner?.addEventListener('click', () => {
+  banner?.addEventListener('click', (event) => {
     if (!coop.isActive()) return;
+    if (event.target instanceof Element && event.target.closest('#coop-replay-tutorial')) {
+      restartCoopTutorial();
+      closeCoopRoster();
+      toast('Crew orientation restarted', 'info');
+      return;
+    }
     const panel = document.getElementById('coop-roster');
     const open = panel?.classList.contains('hidden');
     setCoopRosterOpen(!!open);
@@ -1655,6 +1677,22 @@ function tutorialGuard(featureId) {
   return access;
 }
 
+function recordSoloTutorialEvent(eventId, detail = {}) {
+  return recordTutorialEvent(state, eventId, detail);
+}
+
+window.addEventListener('gs-control-action', (event) => {
+  const actionId = event?.detail?.actionId;
+  const coopActive = coop.isActive();
+  const record = (soloId, coopId = soloId) => {
+    if (coopActive) markCoopTutorialEvent(coopId);
+    else recordSoloTutorialEvent(soloId, event.detail);
+  };
+  if (actionId === 'pan') record('camera_panned');
+  else if (actionId === 'zoom') record('camera_zoomed');
+  else if (actionId === 'inspect_star') record('star_inspected');
+});
+
 function accelerateCurrentTransit(entity, durationMs = 2200) {
   if (!entity?.transit || state.campaign?.mode !== 'tutorial') return;
   entity.transit.legStartTime = state.time;
@@ -1677,6 +1715,7 @@ function doTogglePause() {
   togglePaused(state);
   audioEngine.playCue(state.paused ? 'ui.pause' : 'ui.resume');
   markTutorialTimeToggled(state);
+  recordSoloTutorialEvent('pause_toggled', { paused: state.paused });
   tryAdvanceTutorial(state);
   return { ok: true, paused: state.paused };
 }
@@ -1687,7 +1726,12 @@ function doToggleView() {
   if (!access.ok) return access;
   view = next;
   setFlagshipInput(0, 0, state.time);
-  if (view === 'system') markTutorialSystemViewed(state);
+  if (coop.isActive() && view === 'galaxy') markCoopTutorialEvent('galaxy_view');
+  if (view === 'galaxy') recordSoloTutorialEvent('galaxy_viewed');
+  if (view === 'system') {
+    markTutorialSystemViewed(state);
+    if (viewedSystemId === state.stronghold) recordSoloTutorialEvent('stronghold_returned');
+  }
   tryAdvanceTutorial(state);
   return { ok: true, view };
 }
@@ -1747,17 +1791,31 @@ function doFocusTutorial() {
     const graph = getGraph(state);
     const target = graph?.stars.find((star) => star.id === focus.systemId);
     if (target) {
-      const targetScreenX = Math.min(canvas.width - 88, canvas.width * 0.86);
-      const targetScreenY = canvas.height * 0.42;
+      const targetScreenX = Math.min(canvas.width - 180, canvas.width * 0.62);
+      const targetScreenY = canvas.height * 0.35;
       galaxyCamera.x = target.x - (targetScreenX - canvas.width / 2) / galaxyCamera.zoom;
       galaxyCamera.y = target.y - (targetScreenY - canvas.height / 2) / galaxyCamera.zoom;
     }
-    return { ok: true };
+    return { ok: true, focus };
   }
 
   doViewSystem(focus.systemId);
   selection = focus.bodyId ?? null;
+  if (focus.bodyId) {
+    const body = findPlanet(state, focus.systemId, focus.bodyId);
+    const pos = body ? planetPosition(body, state.time) : null;
+    if (pos) {
+      const targetScreenX = Math.min(canvas.width - 180, canvas.width * 0.62);
+      const targetScreenY = Math.max(120, canvas.height * 0.25);
+      camera.x = pos.x - (targetScreenX - canvas.width / 2) / camera.zoom;
+      camera.y = pos.y - (targetScreenY - canvas.height / 2) / camera.zoom;
+      follow.enabled = false;
+    }
+  }
   markTutorialSystemViewed(state);
+  if (focus.systemId === state.stronghold) {
+    recordSoloTutorialEvent('stronghold_returned', { source: 'show_me' });
+  }
 
   if (focus.panel === 'logistics') {
     document.getElementById('tab-logistics')?.click();
@@ -1771,7 +1829,7 @@ function doFocusTutorial() {
     intel?.classList.remove('hidden');
   }
 
-  return { ok: true };
+  return { ok: true, focus };
 }
 
 // Latest-value WASD relay to the co-op host (host integrates thrust authoritatively).
@@ -1797,9 +1855,19 @@ function doFlagshipInput(x, y) {
   setFlagshipInput(x, y, state.time);
   if (coop.isActive()) sendCoopFlagshipInput(x, y);
   if (x !== 0 || y !== 0) {
+    if (coop.isActive()) markCoopTutorialEvent('thrust');
+    else recordSoloTutorialEvent('movement', { x, y });
     cancelCombatCinema();
     follow.enabled = true;
   }
+}
+
+function doFollowFlagship() {
+  follow.enabled = true;
+  follow.allyPilotId = null;
+  if (coop.isActive()) markCoopTutorialEvent('camera_followed');
+  else recordSoloTutorialEvent('camera_followed');
+  return { ok: true };
 }
 
 function doToggleOrbit() {
@@ -1814,8 +1882,13 @@ function doToggleOrbit() {
   }
   if (coop.isActive()) {
     coopSend('toggleOrbit', { bodyId: selection }).then((res) => {
-      if (res.ok && res.orbiting) toast(`Stable orbit: ${res.target}`, 'ok');
-      else if (res.ok) toast('Orbit disengaged', 'ok');
+      if (res.ok && res.orbiting) {
+        toast(`Stable orbit: ${res.target}`, 'ok');
+        markCoopTutorialEvent('orbit_entered');
+      } else if (res.ok) {
+        toast('Orbit disengaged', 'ok');
+        markCoopTutorialEvent('orbit_exited');
+      }
       else if (res.reason) toast(res.reason, 'error');
     });
     return { ok: true, pending: true };
@@ -1824,8 +1897,10 @@ function doToggleOrbit() {
   if (res.ok && res.orbiting) {
     toast(`Stable orbit: ${res.target}`, 'ok');
     follow.enabled = true;
+    recordSoloTutorialEvent('orbit_entered', { bodyId: selection });
   } else if (res.ok) {
     toast('Orbit disengaged', 'ok');
+    recordSoloTutorialEvent('orbit_exited');
   } else {
     toast(res.reason, 'error');
   }
@@ -2671,6 +2746,10 @@ const { updateUi, closeSidePanel } = initUi({
   doQueueHull,
   doTogglePause,
   doToggleView,
+  doMapPing,
+  doFlagshipInput,
+  doToggleOrbit,
+  doFollowFlagship,
   doToggleWingHangar,
   doSaveSlot,
   doLoadSlot,
@@ -2705,6 +2784,7 @@ const { updateUi, closeSidePanel } = initUi({
   doCompleteTutorialGraduation,
   doRetryTutorialBattle,
   tutorialAccess: (featureId) => tutorialAccess(state, featureId),
+  recordTutorialEvent: (eventId, detail = {}) => recordSoloTutorialEvent(eventId, detail),
   executeSolRecommendation,
   validateSolRecommendation: validateSolRecommendationForGame,
   issueTacticalOrder: doIssueTacticalOrder,
@@ -2731,13 +2811,26 @@ const { updateUi, closeSidePanel } = initUi({
   parkTitleSeed: () => parkTitleSeedWorld(),
 });
 
+// Keep this state-bearing lesson event at the gameplay wiring layer. The UI
+// also presents the explanation, but tutorial progression must not depend on a
+// particular header renderer or breakpoint.
+document.getElementById('resource-explain-btn')?.addEventListener('click', () => {
+  recordSoloTutorialEvent('resources_inspected');
+});
+
 attachInput(canvas, {
   getState: () => state,
   getView: () => view,
   getViewedSystemId: () => viewedSystemId,
   getSelectedBuilderDroneId: () => selectedBuilderDroneId,
   getSelectedScoutId: () => selectedScoutId,
-  onSelect: (id) => { selection = id; },
+  onSelect: (id) => {
+    selection = id;
+    if (id && findPlanet(state, viewedSystemId, id)) {
+      if (coop.isActive()) markCoopTutorialEvent('body_selected');
+      else recordSoloTutorialEvent('body_selected', { bodyId: id });
+    }
+  },
   onCombatSelect: doSelectCombatUnit,
   onCombatFocus: doCombatFocus,
   getCombatCommandMode: () => combatCommandMode,
@@ -2760,10 +2853,7 @@ attachInput(canvas, {
   onBattleGroupSelect: doSelectBattleGroup,
   onStarView: doViewSystem,
   onScoutSelect: doSelectScout,
-  onFollowRequest: () => {
-    follow.enabled = true;
-    follow.allyPilotId = null;
-  },
+  onFollowRequest: doFollowFlagship,
   onToggleOrbit: doToggleOrbit,
   onGalaxyStarClick: (starId) => { galaxyTargetStarId = starId; },
   getHelioclastTargetingMode: () => helioclastTargetingMode,
@@ -2771,6 +2861,7 @@ attachInput(canvas, {
   onHelioclastCancelTargeting: () => setHelioclastTargetingMode(null),
   onBuilderDroneDeployClick: doDeployBuilderDrone,
   onMapPing: (opts) => doMapPing(opts),
+  isGameplayInputActive: () => getBootPhase() === BOOT_PHASE.PLAYING,
 });
 
 window.__devLastResult = null;
@@ -3252,6 +3343,7 @@ window.render_game_to_text = () => {
       serverName: coop.getSummary()?.serverName ?? null,
       playersOnline: coop.getSummary()?.playersOnline ?? 0,
       players: coopPlayers.map((player) => ({ id: player.id, callsign: player.callsign, online: !!player.online })),
+      tutorial: getCoopTutorialState(),
     } : null,
     saveVersion: SAVE_VERSION,
     time: state.time,
@@ -3951,6 +4043,7 @@ async function joinCoopSession(opts = {}) {
         setBootPhase(BOOT_PHASE.PLAYING);
         state.paused = false;
         updateCoopBanner();
+        beginCoopTutorial();
       },
       drawGameFrame: (ctx, fade) => {
         const savedZoom = camera.zoom;
@@ -4278,6 +4371,9 @@ window.__coopStatus = () => ({
     ...coopRemoteFlagshipPoses.diagnostics(),
   },
 });
+window.__getCoopTutorialState = () => getCoopTutorialState();
+window.__restartCoopTutorial = () => restartCoopTutorial();
+window.__markCoopTutorialEvent = (eventId) => markCoopTutorialEvent(eventId);
 window.__resetCoopMotionDiagnostics = () => {
   coopMotionDiagnostics.localHardSnaps = 0;
   coopMotionDiagnostics.maxLocalCorrectionError = 0;

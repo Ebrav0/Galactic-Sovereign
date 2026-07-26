@@ -18,6 +18,8 @@
     "verify:coop-movement-core": "node scripts/verify-coop-movement-core.mjs",
     "verify:coop-movement": "node scripts/verify-coop-movement-quality.mjs",
     "verify:world-migration": "node scripts/verify-world-migration.mjs",
+    "verify:tutorial": "node scripts/verify-tutorial-foundations.mjs",
+    "verify:tutorial:browsers": "node scripts/verify-tutorial-browsers.mjs",
     "verify:security": "node scripts/verify-security-hardening.mjs",
     "verify:access-auth": "node scripts/verify-access-auth.mjs",
     "verify:admin-host": "node scripts/verify-admin-host.mjs",

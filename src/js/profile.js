@@ -1,6 +1,6 @@
 import { TUTORIAL_CURRICULUM_VERSION } from './tutorial-access.js';
 
-export const PROFILE_VERSION = 1;
+export const PROFILE_VERSION = 2;
 const BROWSER_PROFILE_KEY = 'gs-profile-v1';
 
 function defaultProfile() {
@@ -9,6 +9,21 @@ function defaultProfile() {
     tutorialGraduatedAt: null,
     tutorialCurriculumVersion: TUTORIAL_CURRICULUM_VERSION,
     briefingsSeen: [],
+    tutorialProgress: {
+      foundations: {
+        status: 'not_started',
+        currentStepId: null,
+        completedStepIds: [],
+        updatedAt: null,
+      },
+      coop: {
+        status: 'not_started',
+        currentStepId: null,
+        completedStepIds: [],
+        updatedAt: null,
+      },
+      chapters: {},
+    },
   };
 }
 
@@ -24,14 +39,49 @@ function notifyProfileChanged() {
 }
 
 function normalizeProfile(input) {
+  const defaults = defaultProfile();
+  const incomingProgress = input?.tutorialProgress && typeof input.tutorialProgress === 'object'
+    ? input.tutorialProgress
+    : {};
+  const normalizeCourse = (value, fallback) => {
+    const allowed = new Set(['not_started', 'in_progress', 'completed', 'waived']);
+    return {
+      ...fallback,
+      ...(value && typeof value === 'object' ? value : {}),
+      status: allowed.has(value?.status) ? value.status : fallback.status,
+      completedStepIds: [...new Set(Array.isArray(value?.completedStepIds) ? value.completedStepIds : [])],
+      currentStepId: typeof value?.currentStepId === 'string' ? value.currentStepId : null,
+      updatedAt: Number.isFinite(value?.updatedAt) ? value.updatedAt : null,
+    };
+  };
   const merged = {
-    ...defaultProfile(),
+    ...defaults,
     ...(input && typeof input === 'object' ? input : {}),
     version: PROFILE_VERSION,
     briefingsSeen: [...new Set(Array.isArray(input?.briefingsSeen) ? input.briefingsSeen : [])],
+    tutorialProgress: {
+      foundations: normalizeCourse(incomingProgress.foundations, defaults.tutorialProgress.foundations),
+      coop: normalizeCourse(incomingProgress.coop, defaults.tutorialProgress.coop),
+      chapters: incomingProgress.chapters && typeof incomingProgress.chapters === 'object'
+        ? { ...incomingProgress.chapters }
+        : {},
+    },
   };
   const graduatedAt = merged.tutorialGraduatedAt;
   merged.tutorialGraduatedAt = Number.isFinite(graduatedAt) ? graduatedAt : null;
+  if (merged.tutorialGraduatedAt != null
+      && !['completed', 'waived'].includes(merged.tutorialProgress.foundations.status)) {
+    merged.tutorialProgress.foundations.status = 'completed';
+    merged.tutorialProgress.foundations.updatedAt = merged.tutorialGraduatedAt;
+  }
+  for (const id of merged.briefingsSeen) {
+    if (!merged.tutorialProgress.chapters[id]) {
+      merged.tutorialProgress.chapters[id] = {
+        status: 'completed',
+        updatedAt: merged.tutorialGraduatedAt,
+      };
+    }
+  }
   return merged;
 }
 
@@ -84,7 +134,12 @@ export function currentProfile() {
 }
 
 export function tutorialGraduated() {
-  return profile.tutorialGraduatedAt != null;
+  return profile.tutorialGraduatedAt != null
+    || ['completed', 'waived'].includes(profile.tutorialProgress?.foundations?.status);
+}
+
+export function foundationsStatus() {
+  return profile.tutorialProgress?.foundations?.status ?? 'not_started';
 }
 
 export async function markTutorialGraduated(at = Date.now()) {
@@ -92,6 +147,12 @@ export async function markTutorialGraduated(at = Date.now()) {
   mutationEpoch += 1;
   profile.tutorialGraduatedAt = Number.isFinite(at) ? at : Date.now();
   profile.tutorialCurriculumVersion = TUTORIAL_CURRICULUM_VERSION;
+  profile.tutorialProgress.foundations = {
+    ...profile.tutorialProgress.foundations,
+    status: 'completed',
+    currentStepId: null,
+    updatedAt: profile.tutorialGraduatedAt,
+  };
   loaded = true;
   const result = await persistProfile();
   notifyProfileChanged();
@@ -99,6 +160,64 @@ export async function markTutorialGraduated(at = Date.now()) {
     return { ok: false, reason: result.error ?? 'Failed to save profile', profile };
   }
   return { ok: true, profile };
+}
+
+export async function updateTutorialCourseProgress(courseId, {
+  status = 'in_progress',
+  currentStepId = null,
+  completedStepIds = [],
+} = {}) {
+  await loadProfile();
+  if (!['foundations', 'coop'].includes(courseId)) {
+    return { ok: false, reason: 'Unknown tutorial course', profile };
+  }
+  mutationEpoch += 1;
+  const prior = profile.tutorialProgress[courseId] ?? {};
+  profile.tutorialProgress[courseId] = {
+    ...prior,
+    status,
+    currentStepId,
+    completedStepIds: [...new Set(completedStepIds)],
+    updatedAt: Date.now(),
+  };
+  loaded = true;
+  const result = await persistProfile();
+  notifyProfileChanged();
+  return result?.ok === false ? { ok: false, reason: result.error, profile } : { ok: true, profile };
+}
+
+export async function waiveFoundations(at = Date.now()) {
+  await loadProfile();
+  mutationEpoch += 1;
+  profile.tutorialGraduatedAt = null;
+  profile.tutorialCurriculumVersion = TUTORIAL_CURRICULUM_VERSION;
+  profile.tutorialProgress.foundations = {
+    ...profile.tutorialProgress.foundations,
+    status: 'waived',
+    currentStepId: null,
+    updatedAt: Number.isFinite(at) ? at : Date.now(),
+  };
+  loaded = true;
+  const result = await persistProfile();
+  notifyProfileChanged();
+  return result?.ok === false ? { ok: false, reason: result.error, profile } : { ok: true, profile };
+}
+
+export function tutorialChapterStatus(id) {
+  return profile.tutorialProgress?.chapters?.[id]?.status ?? 'unseen';
+}
+
+export async function setTutorialChapterStatus(id, status) {
+  await loadProfile();
+  if (!id || !['unseen', 'prompted', 'deferred', 'in_progress', 'completed'].includes(status)) {
+    return { ok: false, reason: 'Invalid chapter status', profile };
+  }
+  mutationEpoch += 1;
+  profile.tutorialProgress.chapters[id] = { status, updatedAt: Date.now() };
+  loaded = true;
+  const result = await persistProfile();
+  notifyProfileChanged();
+  return result?.ok === false ? { ok: false, reason: result.error, profile } : { ok: true, profile };
 }
 
 export function hasSeenBriefing(id) {

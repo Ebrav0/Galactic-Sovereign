@@ -582,7 +582,11 @@ html, body {
   backdrop-filter: blur(var(--panel-blur));
   box-shadow: 0 6px 28px rgba(0, 0, 0, 0.5);
   position: relative;
+  /* Header popovers must paint above the left/right HUD rails. */
+  z-index: 50;
 }
+
+#hud > .hud-header { z-index: 50; }
 
 /* Luminous seam under the header. */
 .hud-header::after {
@@ -876,7 +880,9 @@ button {
   position: fixed;
   z-index: 40;
   width: max-content;
-  max-width: min(280px, calc(100vw - 24px));
+  max-width: min(390px, calc(100vw - 24px));
+  max-height: min(78vh, 620px);
+  overflow-y: auto;
   height: auto;
   padding: var(--space-2) var(--space-3);
   pointer-events: auto;
@@ -888,6 +894,18 @@ button {
   color: var(--text-primary);
   transform: translateZ(0);
   animation: tutorial-coach-in 0.2s ease-out;
+}
+
+.tutorial-coach--coop {
+  background:
+    linear-gradient(135deg, rgba(80, 200, 180, 0.16), transparent 42%),
+    linear-gradient(165deg, rgba(10, 30, 40, 0.98), rgba(5, 14, 25, 0.96));
+  border-color: rgba(125, 255, 212, 0.7);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.48), 0 0 20px rgba(80, 200, 180, 0.16);
+}
+
+.tutorial-coach.tutorial-coach--coop::before {
+  border-color: rgba(125, 255, 212, 0.7);
 }
 
 .tutorial-coach::before {
@@ -946,6 +964,37 @@ button {
   color: var(--accent-cyan);
 }
 
+.tutorial-coach__track {
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.tutorial-coach--coop .tutorial-coach__step {
+  color: #7dffd4;
+}
+
+.tutorial-coach__progress {
+  height: 3px;
+  margin: 0 0 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.tutorial-coach__progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-gold));
+  transition: width 180ms ease-out;
+}
+
+.tutorial-coach--coop .tutorial-coach__progress span {
+  background: linear-gradient(90deg, #43bca7, #7dffd4);
+}
+
 .tutorial-coach__title {
   font-family: var(--font-display);
   font-size: var(--text-sm);
@@ -961,11 +1010,246 @@ button {
   color: var(--text-secondary);
 }
 
+.tutorial-coach__objective {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.tutorial-coach__input {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  margin: 2px 0 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(126, 214, 255, 0.22);
+  background: rgba(60, 150, 210, 0.08);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.tutorial-coach__input > span {
+  color: var(--accent-cyan);
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tutorial-coach__input kbd,
+.tutorial-library__control kbd {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.tutorial-coach__detail,
+.tutorial-coach__recovery {
+  margin: 4px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.tutorial-coach__detail strong {
+  color: var(--text-primary);
+}
+
+.tutorial-coach__recovery {
+  padding: 5px 7px;
+  border-left: 2px solid rgba(126, 214, 255, 0.55);
+  background: rgba(126, 214, 255, 0.06);
+}
+
+.tutorial-coach__recovery strong {
+  color: var(--accent-cyan);
+}
+
+.tutorial-coach__instruction {
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tutorial-coach__status {
+  margin: 7px 0 0;
+  padding: 5px 7px;
+  border-left: 2px solid var(--accent-gold);
+  background: rgba(242, 197, 92, 0.08);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.tutorial-coach--coop .tutorial-coach__status {
+  border-left-color: #7dffd4;
+  background: rgba(80, 200, 180, 0.08);
+}
+
+.tutorial-coach__status--complete {
+  color: #b8ffe8;
+  border-left-color: #7dffd4;
+  background: rgba(80, 200, 180, 0.14);
+}
+
 .tutorial-coach__actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+.tutorial-coach__hold {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  --hold-progress: 0%;
+}
+
+.tutorial-coach__hold::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: var(--hold-progress);
+  background: rgba(242, 197, 92, 0.28);
+  transition: width 50ms linear;
+}
+
+.tutorial-library-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(86vh, 820px);
+}
+
+.tutorial-library__body {
+  overflow-y: auto;
+}
+
+.tutorial-library__search {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  color: var(--text-muted);
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.tutorial-library__search input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(126, 214, 255, 0.28);
+  background: rgba(0, 8, 18, 0.75);
+  color: var(--text-primary);
+  font: 13px var(--font-body);
+}
+
+.tutorial-library__heading {
+  margin: 18px 0 8px;
+  color: var(--accent-cyan);
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.tutorial-library__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tutorial-library__card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(126, 214, 255, 0.2);
+  background: rgba(7, 21, 34, 0.76);
+}
+
+.tutorial-library__card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tutorial-library__card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.tutorial-library__chapters,
+.tutorial-library__controls {
+  display: grid;
+  gap: 6px;
+}
+
+.tutorial-library__chapter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.tutorial-library__chapter span,
+.tutorial-library__chapter small {
+  display: block;
+}
+
+.tutorial-library__chapter small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.tutorial-library__chapter em {
+  color: var(--accent-gold);
+  font: 9px var(--font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tutorial-library__control {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.25fr);
+  gap: 12px;
+  align-items: center;
+  padding: 7px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .tutorial-library__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorial-library__control {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-coach,
+  .tutorial-coach__progress span,
+  .tutorial-coach__hold::before {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 .tutorial-coach__skip { margin-left: auto; }
@@ -1986,6 +2270,42 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.flight-quick-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.flight-quick-controls .btn {
+  min-width: 28px;
+  padding: 4px 7px;
+}
+
+.resource-explain-btn {
+  align-self: center;
+  min-width: 24px;
+  padding: 3px 7px;
+  border-radius: 50%;
+  color: var(--accent-cyan);
+}
+
+@media (max-width: 1400px) {
+  .flight-quick-controls .btn:nth-child(n + 5) {
+    font-size: 0;
+  }
+
+  .flight-quick-controls .btn:nth-child(5)::after { content: 'O'; font-size: 10px; }
+  .flight-quick-controls .btn:nth-child(6)::after { content: 'F'; font-size: 10px; }
+  .flight-quick-controls .btn:nth-child(7)::after { content: 'P'; font-size: 10px; }
+}
+
+@media (max-width: 1050px) {
+  .flight-quick-controls {
+    display: none;
+  }
 }
 
 .tab-bar {

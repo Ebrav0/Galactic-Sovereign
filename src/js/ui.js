@@ -81,17 +81,33 @@ import {
   hasSeenBriefing,
   loadProfile,
   markBriefingSeen,
+  setTutorialChapterStatus,
+  tutorialChapterStatus,
   tutorialGraduated,
+  foundationsStatus,
+  waiveFoundations,
 } from './profile.js';
 import {
   academyUnlocked,
   tutorialSessionOverrideEnabled,
 } from './tutorial-access.js';
 import {
+  advanceCoopTutorial,
+  dismissCoopTutorial,
+  getCoopTutorialState,
+  markCoopTutorialEvent,
+  restartCoopTutorial,
+} from './coop-tutorial.js';
+import {
   FIELD_MANUAL_ENTRIES,
   fieldManualEntry,
   newlyUnlockedBriefings,
 } from './field-manual.js';
+import {
+  controlReferenceRows,
+  detectControlPlatform,
+  formatControlAction,
+} from './control-registry.js';
 import { milestonesSummary } from './milestones.js';
 import {
   installSuperweaponPart,
@@ -345,10 +361,12 @@ function escapeMarkup(value) {
   }[char]));
 }
 
-const HINTS = {
-  system: 'WASD / arrows: fly · O: orbit · F: follow · P: ping · drag: pan · M: galaxy map',
-  galaxy: 'Helioclast: choose command, then star · Click star: travel · Ctrl/Cmd+click: drone · Tab+click: fleet · Shift+click: scout · P / right-click: ping · double-click: view · M: system',
-};
+function controlHints() {
+  return {
+    system: `${formatControlAction('move_up')}: fly · ${formatControlAction('orbit')}: orbit · ${formatControlAction('follow')}: follow · ${formatControlAction('ping')}: ping · ${formatControlAction('pan')}: pan · ${formatControlAction('toggle_view')}: Galaxy map`,
+    galaxy: `Click star: travel · ${formatControlAction('drone_dispatch')}: drone · ${formatControlAction('fleet_dispatch')}: fleet · ${formatControlAction('scout_dispatch')}: scout · ${formatControlAction('ping')} / right-click: ping · double-click: inspect · ${formatControlAction('toggle_view')}: System`,
+  };
+}
 
 const PLANET_DOT = {
   habitable: 'planet-dot--habitable',
@@ -1323,11 +1341,13 @@ function renderCampaignPanel(container, state, ctx = {}) {
   manual.className = 'field-manual-list';
   for (const entry of FIELD_MANUAL_ENTRIES) {
     const seen = hasSeenBriefing(entry.id);
+    const unlocked = entry.optional || entry.unlocked(state) || seen;
+    const chapterStatus = tutorialChapterStatus(entry.id);
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `field-manual-entry${seen || entry.optional ? ' field-manual-entry--available' : ''}`;
-    btn.disabled = !seen && !entry.optional;
-    btn.innerHTML = `<span>${seen || entry.optional ? '◆' : '🔒'} ${entry.title}</span><small>${seen ? 'Replay briefing' : entry.optional ? 'Reference' : 'Unlock to reveal'}</small>`;
+    btn.className = `field-manual-entry${unlocked ? ' field-manual-entry--available' : ''}`;
+    btn.disabled = !unlocked;
+    btn.innerHTML = `<span>${unlocked ? '◆' : '🔒'} ${entry.title}</span><small>${unlocked ? `${chapterStatus} · open lesson` : 'Unlock to reveal'}</small>`;
     btn.onclick = () => ctx.openFieldManualBriefing?.(entry.id, { replay: true });
     manual.appendChild(btn);
   }
@@ -3249,6 +3269,10 @@ export function initUi(ctx) {
     doQueueHull,
     doTogglePause,
     doToggleView,
+    doMapPing,
+    doFlagshipInput,
+    doToggleOrbit,
+    doFollowFlagship,
     doToggleWingHangar,
     doSaveSlot,
     doLoadSlot,
@@ -3283,6 +3307,7 @@ export function initUi(ctx) {
     doCompleteTutorialGraduation,
     doRetryTutorialBattle,
     tutorialAccess,
+    recordTutorialEvent: emitTutorialEvent,
     executeSolRecommendation,
     validateSolRecommendation,
     issueTacticalOrder,
@@ -3425,8 +3450,21 @@ export function initUi(ctx) {
     players: ctx.getCoopPlayers ?? (() => []),
     playerId: ctx.getCoopPlayerId ?? (() => null),
   };
+  const replayCoopTutorial = el('coop-replay-tutorial');
+  if (replayCoopTutorial) {
+    replayCoopTutorial.onclick = () => {
+      restartCoopTutorial();
+      const roster = el('coop-roster');
+      if (roster) {
+        roster.hidden = true;
+        roster.classList.add('hidden');
+      }
+      toast('Crew orientation restarted', 'info');
+    };
+  }
 
   let activeBriefingId = null;
+  let activeBriefingReplay = false;
   let briefingWasPaused = null;
   let fleetSubTab = 'ships';
 
@@ -3436,12 +3474,20 @@ export function initUi(ctx) {
     getState().paused = !!paused;
   }
 
-  function closeFieldManualBriefing({ acknowledge = true } = {}) {
+  function closeFieldManualBriefing({ resolution = 'completed' } = {}) {
     const id = activeBriefingId;
     activeBriefingId = null;
     el('field-manual-modal')?.classList.add('hidden');
     el('field-manual-backdrop')?.classList.add('hidden');
-    if (acknowledge && id) markBriefingSeen(id);
+    if (id && resolution === 'completed') {
+      markBriefingSeen(id);
+      setTutorialChapterStatus(id, 'completed');
+    } else if (id && resolution === 'deferred' && !activeBriefingReplay) {
+      setTutorialChapterStatus(id, 'deferred');
+    } else if (id && resolution === 'in_progress') {
+      setTutorialChapterStatus(id, 'in_progress');
+    }
+    activeBriefingReplay = false;
     if (briefingWasPaused != null) {
       setLocalPresentationPause(briefingWasPaused);
       briefingWasPaused = null;
@@ -3452,6 +3498,10 @@ export function initUi(ctx) {
     const entry = fieldManualEntry(id);
     if (!entry) return { ok: false, reason: 'Unknown Field Manual entry' };
     activeBriefingId = id;
+    activeBriefingReplay = replay;
+    if (!replay && tutorialChapterStatus(id) === 'unseen') {
+      setTutorialChapterStatus(id, 'prompted');
+    }
     if (briefingWasPaused == null) briefingWasPaused = getState().paused;
     setLocalPresentationPause(true);
     const title = el('field-manual-title');
@@ -3471,7 +3521,7 @@ export function initUi(ctx) {
     if (show) {
       show.classList.toggle('hidden', !entry.targetId);
       show.onclick = () => {
-        closeFieldManualBriefing({ acknowledge: !replay });
+        closeFieldManualBriefing({ resolution: 'in_progress' });
         const target = entry.targetId ? el(entry.targetId) : null;
         if (!target) {
           toast('That control is not currently available', 'info');
@@ -3482,9 +3532,17 @@ export function initUi(ctx) {
       };
     }
     const ack = el('field-manual-ack');
-    if (ack) ack.onclick = () => closeFieldManualBriefing({ acknowledge: true });
-    el('field-manual-close').onclick = () => closeFieldManualBriefing({ acknowledge: true });
-    el('field-manual-backdrop').onclick = () => closeFieldManualBriefing({ acknowledge: true });
+    if (ack) {
+      ack.textContent = replay ? 'Close lesson' : 'Mark complete';
+      ack.onclick = () => closeFieldManualBriefing({ resolution: 'completed' });
+    }
+    const later = el('field-manual-later');
+    if (later) {
+      later.classList.toggle('hidden', replay);
+      later.onclick = () => closeFieldManualBriefing({ resolution: 'deferred' });
+    }
+    el('field-manual-close').onclick = () => closeFieldManualBriefing({ resolution: replay ? 'none' : 'deferred' });
+    el('field-manual-backdrop').onclick = () => closeFieldManualBriefing({ resolution: replay ? 'none' : 'deferred' });
     el('field-manual-modal')?.classList.remove('hidden');
     el('field-manual-backdrop')?.classList.remove('hidden');
     return { ok: true, id };
@@ -3492,9 +3550,131 @@ export function initUi(ctx) {
 
   function renderFieldManualUnlocks(state, phase) {
     if (phase !== 'playing' || activeBriefingId || !tutorialGraduated()) return;
-    const next = newlyUnlockedBriefings(state, currentProfile().briefingsSeen)[0];
+    const next = newlyUnlockedBriefings(state, currentProfile().briefingsSeen)
+      .find((entry) => tutorialChapterStatus(entry.id) === 'unseen');
     if (next) openFieldManualBriefing(next.id);
   }
+
+  function closeTutorialLibrary() {
+    el('tutorial-library-modal')?.classList.add('hidden');
+    el('tutorial-library-backdrop')?.classList.add('hidden');
+  }
+
+  function renderTutorialLibrary(query = '') {
+    const container = el('tutorial-library-content');
+    if (!container) return;
+    clearChildren(container);
+    const state = getState();
+    const term = String(query).trim().toLowerCase();
+    const matches = (...parts) => !term || parts.join(' ').toLowerCase().includes(term);
+    const section = (title) => {
+      const heading = document.createElement('h3');
+      heading.className = 'tutorial-library__heading';
+      heading.textContent = title;
+      container.appendChild(heading);
+    };
+
+    section('Courses');
+    const courses = document.createElement('div');
+    courses.className = 'tutorial-library__grid';
+    const foundationCard = document.createElement('article');
+    foundationCard.className = 'tutorial-library__card';
+    const foundation = foundationsStatus();
+    foundationCard.innerHTML = `
+      <div><strong>Sovereign Foundations</strong><span class="badge">${foundation.replaceAll('_', ' ')}</span></div>
+      <p>Flight, orbit, camera, maps, economy, scouting, fleets, combat, and capture.</p>`;
+    const foundationAction = document.createElement('button');
+    foundationAction.type = 'button';
+    foundationAction.className = 'btn btn--ghost btn--sm';
+    foundationAction.textContent = getState().campaign?.mode === 'tutorial' ? 'Return to current lesson' : 'Replay in new Academy save';
+    foundationAction.onclick = () => {
+      closeTutorialLibrary();
+      if (getState().campaign?.mode === 'tutorial') {
+        ctx.doFocusTutorial?.();
+        return;
+      }
+      if (window.confirm('Start a new Academy save? Unsaved progress in this session will be replaced.')) {
+        ctx.doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', replay: true });
+      }
+    };
+    foundationCard.appendChild(foundationAction);
+    courses.appendChild(foundationCard);
+
+    const coopCard = document.createElement('article');
+    coopCard.className = 'tutorial-library__card';
+    const coopStatus = currentProfile()?.tutorialProgress?.coop?.status ?? 'not_started';
+    coopCard.innerHTML = `
+      <div><strong>Crew Foundations</strong><span class="badge">${coopStatus.replaceAll('_', ' ')}</span></div>
+      <p>Personal flight, safe pings, roster/follow, ownership, shared time, and resource etiquette.</p>`;
+    const coopAction = document.createElement('button');
+    coopAction.type = 'button';
+    coopAction.className = 'btn btn--ghost btn--sm';
+    coopAction.textContent = coopHooks.active() ? 'Start crew tour' : 'Available while connected';
+    coopAction.disabled = !coopHooks.active();
+    coopAction.onclick = () => {
+      restartCoopTutorial();
+      closeTutorialLibrary();
+    };
+    coopCard.appendChild(coopAction);
+    courses.appendChild(coopCard);
+    container.appendChild(courses);
+
+    section('Feature lessons');
+    const chapters = document.createElement('div');
+    chapters.className = 'tutorial-library__chapters';
+    for (const entry of FIELD_MANUAL_ENTRIES) {
+      const unlocked = entry.optional || entry.unlocked(state) || hasSeenBriefing(entry.id);
+      const status = tutorialChapterStatus(entry.id);
+      if (!matches(entry.title, entry.summary, ...(entry.steps ?? []))) continue;
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'tutorial-library__chapter';
+      row.disabled = !unlocked;
+      row.innerHTML = `<span><strong>${unlocked ? '◆' : '🔒'} ${entry.title}</strong><small>${entry.summary}</small></span><em>${unlocked ? status : 'locked'}</em>`;
+      row.onclick = () => {
+        closeTutorialLibrary();
+        openFieldManualBriefing(entry.id, { replay: true });
+      };
+      chapters.appendChild(row);
+    }
+    if (!chapters.children.length) {
+      const empty = document.createElement('p');
+      empty.className = 'empty-state';
+      empty.textContent = 'No feature lessons match that search.';
+      chapters.appendChild(empty);
+    }
+    container.appendChild(chapters);
+
+    section(`Controls · ${detectControlPlatform() === 'macos' ? 'macOS' : detectControlPlatform() === 'windows' ? 'Windows' : 'Linux / desktop'}`);
+    const controls = document.createElement('div');
+    controls.className = 'tutorial-library__controls';
+    for (const row of controlReferenceRows()) {
+      if (!matches(row.label, row.input, ...row.contexts)) continue;
+      const item = document.createElement('div');
+      item.className = 'tutorial-library__control';
+      item.innerHTML = `<span>${row.label}</span><kbd>${row.input}</kbd>`;
+      controls.appendChild(item);
+    }
+    container.appendChild(controls);
+  }
+
+  function openTutorialLibrary() {
+    renderTutorialLibrary(el('tutorial-library-search')?.value ?? '');
+    el('tutorial-library-modal')?.classList.remove('hidden');
+    el('tutorial-library-backdrop')?.classList.remove('hidden');
+    el('tutorial-library-search')?.focus({ preventScroll: true });
+  }
+
+  el('tutorial-library-btn')?.addEventListener('click', openTutorialLibrary);
+  el('title-tutorial-btn')?.addEventListener('click', openTutorialLibrary);
+  el('tutorial-library-close')?.addEventListener('click', closeTutorialLibrary);
+  el('tutorial-library-backdrop')?.addEventListener('click', closeTutorialLibrary);
+  el('tutorial-library-search')?.addEventListener('input', (event) => renderTutorialLibrary(event.target.value));
+  window.addEventListener('keydown', (event) => {
+    if (event.code === 'Escape' && !el('tutorial-library-modal')?.classList.contains('hidden')) {
+      closeTutorialLibrary();
+    }
+  });
 
   function setTutorialLock(elementId, featureId, state) {
     const node = el(elementId);
@@ -3875,21 +4055,36 @@ export function initUi(ctx) {
   function renderTutorialGuide(state, phase) {
     const coach = el('tutorial-coach');
     if (!coach) return;
-    const tutorial = getTutorialState(state);
+    const soloTutorial = getTutorialState(state);
+    if (coopHooks.active()) {
+      if (getView?.() === 'galaxy') markCoopTutorialEvent('galaxy_view');
+      if (sidePanel === 'fleet') markCoopTutorialEvent('fleet_opened');
+      if (!el('coop-roster')?.classList.contains('hidden')) markCoopTutorialEvent('roster_opened');
+    }
+    const coopTutorial = coopHooks.active() ? getCoopTutorialState() : null;
+    const isCoopGuide = !soloTutorial.active && coopTutorial?.active;
+    const tutorial = isCoopGuide ? coopTutorial : soloTutorial;
     if (phase !== 'playing' || !tutorial.active || !tutorial.current) {
       coach.classList.add('hidden');
+      coach.classList.remove('tutorial-coach--coop');
       setTutorialTarget(null);
       uiSnapshots.tutorialGuide = '';
       return;
     }
 
     const current = tutorial.current;
+    coach.classList.toggle('tutorial-coach--coop', isCoopGuide);
     const anchor = setTutorialTarget(current.uiTargetId);
     const snapshot = JSON.stringify({
+      kind: isCoopGuide ? 'coop' : 'solo',
       step: tutorial.step,
       title: current.title,
+      instruction: current.instruction,
+      why: current.why,
+      expected: current.expected,
+      recovery: current.recovery,
       status: current.status,
-      canConfirm: current.canConfirm,
+      canContinue: isCoopGuide ? tutorial.canContinue : current.canConfirm,
       readyToFinish: current.readyToFinish,
       target: current.uiTargetId,
       anchorVisible: !!anchor,
@@ -3900,30 +4095,99 @@ export function initUi(ctx) {
 
       const meta = document.createElement('div');
       meta.className = 'tutorial-coach__meta';
+      const track = document.createElement('span');
+      track.className = 'tutorial-coach__track';
+      track.textContent = current.module ?? (isCoopGuide ? 'Crew orientation' : 'Sovereign Academy');
       const step = document.createElement('span');
       step.className = 'tutorial-coach__step';
       step.textContent = `${current.index + 1}/${tutorial.totalSteps}`;
-      meta.appendChild(step);
+      meta.append(track, step);
+
+      const progress = document.createElement('div');
+      progress.className = 'tutorial-coach__progress';
+      const progressFill = document.createElement('span');
+      progressFill.style.width = `${Math.round(((current.index + 1) / tutorial.totalSteps) * 100)}%`;
+      progress.appendChild(progressFill);
 
       const title = document.createElement('h2');
       title.className = 'tutorial-coach__title';
       title.textContent = current.title;
 
       const copy = document.createElement('p');
-      copy.className = 'tutorial-coach__copy';
+      copy.className = 'tutorial-coach__copy tutorial-coach__objective';
       copy.textContent = current.objective;
 
+      const instruction = document.createElement('p');
+      instruction.className = 'tutorial-coach__input';
+      instruction.innerHTML = `<span>Input</span><kbd>${current.instruction || 'No action required'}</kbd>`;
+
+      const why = document.createElement('p');
+      why.className = 'tutorial-coach__detail';
+      why.innerHTML = `<strong>Why:</strong> ${current.why ?? ''}`;
+
+      const expected = document.createElement('p');
+      expected.className = 'tutorial-coach__detail';
+      expected.innerHTML = `<strong>Expected:</strong> ${current.expected ?? ''}`;
+
+      const recovery = document.createElement('p');
+      recovery.className = 'tutorial-coach__recovery';
+      recovery.innerHTML = `<strong>Stuck?</strong> ${current.recovery ?? 'Use Show me to restore the lesson.'}`;
+
       const status = document.createElement('p');
-      status.className = 'tutorial-coach__copy';
+      const objectiveConfirmed = isCoopGuide && tutorial.canContinue && current.requiredEvent;
+      status.className = `tutorial-coach__status${objectiveConfirmed ? ' tutorial-coach__status--complete' : ''}`;
       status.textContent = current.status;
 
       const actions = document.createElement('div');
       actions.className = 'tutorial-coach__actions';
-      if (current.readyToFinish) {
+      if (isCoopGuide && current.action && (!current.requiredEvent || !tutorial.canContinue)) {
+        const act = document.createElement('button');
+        act.type = 'button';
+        act.className = 'btn btn--ghost btn--xs';
+        act.textContent = current.actionLabel ?? 'Show';
+        act.onclick = () => {
+          if (current.action === 'roster') el('coop-banner')?.click();
+          else if (current.action === 'galaxy' && getView?.() !== 'galaxy') doToggleView?.();
+          else if (current.action === 'ping') doMapPing?.({ source: 'tutorial' });
+          else if (current.action === 'fleet') {
+            if (!el('coop-roster')?.classList.contains('hidden')) el('coop-banner')?.click();
+            el('tab-fleet')?.click();
+          }
+        };
+        actions.appendChild(act);
+      }
+
+      if (isCoopGuide && current.allowUnavailable && !tutorial.canContinue) {
+        const unavailable = document.createElement('button');
+        unavailable.type = 'button';
+        unavailable.className = 'btn btn--ghost btn--xs';
+        unavailable.textContent = 'Cannot practice now';
+        unavailable.title = 'Continue without changing the shared world; replay this lesson later.';
+        unavailable.onclick = () => {
+          markCoopTutorialEvent(current.requiredEvent);
+          toast('Lesson deferred safely — replay it when conditions allow', 'info');
+        };
+        actions.appendChild(unavailable);
+      }
+
+      if (isCoopGuide && tutorial.canContinue) {
+        const next = document.createElement('button');
+        next.type = 'button';
+        next.className = 'btn btn--primary btn--xs';
+        next.textContent = current.readyToFinish ? 'Finish tour' : 'Continue';
+        next.onclick = () => {
+          const result = advanceCoopTutorial();
+          toast(
+            result.ok ? (result.complete ? 'Crew orientation complete' : 'Objective confirmed') : result.reason,
+            result.ok ? 'ok' : 'error',
+          );
+        };
+        actions.appendChild(next);
+      } else if (!isCoopGuide && current.readyToFinish) {
         const finish = document.createElement('button');
         finish.type = 'button';
         finish.className = 'btn btn--primary btn--xs';
-        finish.textContent = 'Graduate';
+        finish.textContent = 'Finish Foundations';
         finish.onclick = async () => {
           const result = await doBeginTutorialGraduation?.();
           if (result?.ok) openGraduationModal();
@@ -3940,20 +4204,31 @@ export function initUi(ctx) {
           toast(result.ok ? 'Continue' : result.reason, result.ok ? 'ok' : 'error');
         };
         actions.appendChild(confirm);
-      } else if (current.actionLabel) {
+      } else if (!isCoopGuide && current.actionLabel) {
         const focus = document.createElement('button');
         focus.type = 'button';
         focus.className = 'btn btn--primary btn--xs';
-        focus.textContent = 'Show';
+        focus.textContent = current.actionLabel ?? 'Show objective';
         focus.onclick = () => {
           closeSidePanel();
           const result = doFocusTutorial?.();
+          anchor?.focus?.({ preventScroll: true });
           if (!result?.ok) toast(result?.reason ?? 'Tutorial target unavailable', 'error');
         };
         actions.appendChild(focus);
       }
 
-      if (!current.readyToFinish && tutorialGraduated() && getState().campaign?.tutorial?.replay) {
+      if (isCoopGuide) {
+        const skip = document.createElement('button');
+        skip.type = 'button';
+        skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip';
+        skip.textContent = 'End tour';
+        skip.onclick = () => {
+          dismissCoopTutorial();
+          toast('Crew tour dismissed — replay it from the CO-OP roster', 'info');
+        };
+        actions.appendChild(skip);
+      } else if (!current.readyToFinish && tutorialGraduated() && getState().campaign?.tutorial?.replay) {
         const skip = document.createElement('button');
         skip.type = 'button';
         skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip';
@@ -3963,9 +4238,66 @@ export function initUi(ctx) {
           toast(result.ok ? 'Tutorial replay ended' : result.reason, result.ok ? 'info' : 'error');
         };
         actions.appendChild(skip);
+      } else if (!current.readyToFinish) {
+        const skip = document.createElement('button');
+        skip.type = 'button';
+        skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip tutorial-coach__hold';
+        skip.textContent = 'Hold to skip Foundations';
+        skip.setAttribute('aria-label', 'Hold for one and a half seconds to skip Foundations');
+        let holdFrame = null;
+        let holdStart = 0;
+        const cancelHold = () => {
+          if (holdFrame) cancelAnimationFrame(holdFrame);
+          holdFrame = null;
+          skip.style.setProperty('--hold-progress', '0%');
+        };
+        const completeSkip = async () => {
+          cancelHold();
+          const saved = await waiveFoundations();
+          if (!saved.ok) {
+            toast(saved.reason ?? 'Could not save tutorial choice', 'error');
+            return;
+          }
+          const result = finishTutorial(getState(), { skipped: true, allowReplayExit: true });
+          if (result.ok) {
+            el('tutorial-coach')?.classList.add('hidden');
+            setTutorialTarget(null);
+            uiSnapshots.tutorialGuide = '';
+          }
+          toast(
+            result.ok
+              ? 'Foundations waived — replay it anytime from Controls & Tutorials'
+              : result.reason,
+            result.ok ? 'info' : 'error',
+          );
+        };
+        const tickHold = () => {
+          const amount = Math.min(1, (performance.now() - holdStart) / 1500);
+          skip.style.setProperty('--hold-progress', `${Math.round(amount * 100)}%`);
+          if (amount >= 1) {
+            completeSkip();
+            return;
+          }
+          holdFrame = requestAnimationFrame(tickHold);
+        };
+        const beginHold = (event) => {
+          if (event.type === 'keydown' && !['Space', 'Enter'].includes(event.code)) return;
+          event.preventDefault();
+          if (holdFrame) return;
+          holdStart = performance.now();
+          holdFrame = requestAnimationFrame(tickHold);
+        };
+        skip.addEventListener('pointerdown', beginHold);
+        skip.addEventListener('pointerup', cancelHold);
+        skip.addEventListener('pointerleave', cancelHold);
+        skip.addEventListener('pointercancel', cancelHold);
+        skip.addEventListener('keydown', beginHold);
+        skip.addEventListener('keyup', cancelHold);
+        skip.addEventListener('blur', cancelHold);
+        actions.appendChild(skip);
       }
 
-      coach.append(meta, title, copy, status, actions);
+      coach.append(meta, progress, title, copy, instruction, why, expected, recovery, status, actions);
     }
 
     if (anchor) {
@@ -4141,6 +4473,19 @@ export function initUi(ctx) {
 
   el('pause-btn').addEventListener('click', doTogglePause);
   el('view-toggle-btn').addEventListener('click', doToggleView);
+  el('flight-quick-controls')?.querySelectorAll('[data-flight-x]')?.forEach((button) => {
+    const stop = () => doFlagshipInput?.(0, 0);
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      doFlagshipInput?.(Number(button.dataset.flightX), Number(button.dataset.flightY));
+    });
+    button.addEventListener('pointerup', stop);
+    button.addEventListener('pointerleave', stop);
+    button.addEventListener('pointercancel', stop);
+  });
+  el('quick-orbit-btn')?.addEventListener('click', () => doToggleOrbit?.());
+  el('quick-follow-btn')?.addEventListener('click', () => doFollowFlagship?.());
+  el('quick-ping-btn')?.addEventListener('click', () => doMapPing?.({ source: 'button' }));
   el('tab-galaxy').addEventListener('click', () => {
     closeSidePanel();
     if (getView() !== 'galaxy') doToggleView();
@@ -4165,6 +4510,10 @@ export function initUi(ctx) {
   el('tab-fleet')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'fleet' ? null : 'fleet';
+    if (sidePanel === 'fleet') {
+      if (coopHooks.active()) markCoopTutorialEvent('fleet_opened');
+      else emitTutorialEvent?.('fleet_opened');
+    }
   });
   el('tab-logistics')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
@@ -4640,7 +4989,14 @@ export function initUi(ctx) {
     el('notification-log').classList.toggle('collapsed');
     el('notification-toggle').textContent =
       el('notification-log').classList.contains('collapsed') ? '+' : '−';
+    emitTutorialEvent?.('notification_opened');
   });
+
+  const inspectResources = () => {
+    emitTutorialEvent?.('resources_inspected');
+    toast('Credits pay costs · income replenishes credits each second · disabled actions explain what is missing', 'info');
+  };
+  el('resource-explain-btn')?.addEventListener('click', inspectResources);
 
   el('export-save-btn').addEventListener('click', () => {
     if (coopHooks.active?.()) {
@@ -4715,7 +5071,7 @@ export function initUi(ctx) {
     const logistics = logisticsSummary(state);
     el('income-value').textContent = incomePerSecond(state).toFixed(1);
 
-    let contextualViewHint = HINTS[view];
+    let contextualViewHint = controlHints()[view];
     if (view === 'system' && viewedSystemId && isPlayerOwned(state, viewedSystemId)) {
       const ds = droneSummaryForSystem(state, viewedSystemId);
       const jobs = activeJobsInSystem(state, viewedSystemId);

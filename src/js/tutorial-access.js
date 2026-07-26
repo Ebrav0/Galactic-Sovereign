@@ -2,16 +2,30 @@
 // This module intentionally has no imports so gameplay modules can consult it
 // without creating dependency cycles.
 
-export const TUTORIAL_CURRICULUM_VERSION = 2;
+export const TUTORIAL_CURRICULUM_VERSION = 3;
 
 export const TUTORIAL_STEP_IDS = Object.freeze([
-  'command_basics',
+  'command_overview',
+  'time_controls',
+  'movement',
+  'select_orbit_body',
+  'enter_orbit',
+  'exit_orbit',
+  'camera_pan',
+  'camera_zoom',
+  'camera_follow',
+  'galaxy_view',
+  'inspect_star',
+  'map_ping',
+  'system_return',
+  'resources_costs',
   'build_outpost',
   'review_logistics',
   'build_shipyard',
   'launch_scout',
   'scout_frontier',
   'assemble_escort',
+  'open_fleet',
   'travel_to_battle',
   'win_first_battle',
   'capture_first_system',
@@ -34,6 +48,7 @@ export function createTutorialCampaignState() {
       battleWon: false,
       battleFailed: false,
     },
+    events: {},
     graduationPending: false,
     completedAt: null,
     replay: false,
@@ -43,17 +58,17 @@ export function createTutorialCampaignState() {
 const STEP_INDEX = new Map(TUTORIAL_STEP_IDS.map((id, index) => [id, index]));
 
 export const TUTORIAL_FEATURE_UNLOCK_STEP = Object.freeze({
-  system_view: 'command_basics',
-  time_controls: 'command_basics',
-  save_load: 'command_basics',
-  campaign_help: 'command_basics',
+  system_view: 'command_overview',
+  time_controls: 'time_controls',
+  save_load: 'command_overview',
+  campaign_help: 'command_overview',
   outpost: 'build_outpost',
   logistics: 'review_logistics',
   shipyard: 'build_shipyard',
   scout_queue: 'launch_scout',
-  galaxy_view: 'scout_frontier',
+  galaxy_view: 'galaxy_view',
   scout_travel: 'scout_frontier',
-  fleet: 'assemble_escort',
+  fleet: 'open_fleet',
   combat_ship_queue: 'assemble_escort',
   flagship_travel: 'travel_to_battle',
   tactical_combat: 'win_first_battle',
