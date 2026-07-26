@@ -2189,3 +2189,9 @@ Never delete prior entries.
 - Chromium was exercised through the working in-app browser at 1280×720. Standalone Chromium remains unavailable in this macOS sandbox because its bootstrap helper is denied before page launch; Firefox similarly cannot launch here because Mozilla's macOS sandbox-extension bootstrap is denied. Both engines remain configured in the verifier for supported release hosts.
 - Visual evidence is under `output/tutorial-foundations/cross-browser/`; the orbit target and Galaxy targets remain outside the coach and side panels at the minimum supported viewport.
 - Module syntax checks, `git diff --check`, and the full production/standalone/Admin build pass. The existing large-bundle warning remains non-blocking.
+
+### Production deployment
+- Committed the exact tutorial source as `656f0e0` and deployed immutable release `tutorial-foundations-656f0e0-20260726-r1` through the guarded production workflow.
+- Completed a 2.01 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
+- Confirmed the active production release, gateway/co-op/Cloudflare tunnel services, loopback health endpoints, public `https://play.galacticsovereign.xyz/healthz`, HTTP 200 for the live site, and unique Foundations/orbit copy in the CDN-served JavaScript bundle.
+- GitHub source push was denied by the execution environment's code-export policy. The existing private Sites project ID also returned `project_not_found`, so the Sites mirror was not changed; no alternate source-export path was attempted.
