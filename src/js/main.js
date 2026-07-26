@@ -185,6 +185,12 @@ import {
   warpIntroState,
 } from './warp-intro.js';
 import {
+  startCoopIntro,
+  drawCoopIntro,
+  setCoopIntroElapsedForTest,
+  coopIntroState,
+} from './coop-intro.js';
+import {
   devAction,
   devGrantCredits,
   devForceShellProgress as devForceShell,
@@ -354,7 +360,7 @@ import { AUDIO_CATALOG, AUDIO_PRELOAD_CUES } from './audio-catalog.js';
 import { createAudioEngine } from './audio-engine.js';
 import { createAudioDirector } from './audio-director.js';
 import { initAudioUi } from './audio-ui.js';
-import { createCoopClient, coopQueryEnabled, coopQueryAllowsAutoJoin, defaultWsUrl, confirmCustomCoopServer } from './coop-client.js';
+import { createCoopClient, coopQueryEnabled, defaultWsUrl } from './coop-client.js';
 import { currentAccountSession, discoverAccountSession, hostedMultiplayerUrl, isHostedMode } from './account-client.js';
 import { initAccountUi, setHostedSaveFlushHandler } from './account-ui.js';
 import { applyCombatSummary, applyFleetsSummary } from './coop-protocol.js';
@@ -973,7 +979,10 @@ function updateCoopBanner() {
     ?? 1;
   const pausedBy = state.paused ? (state.pausedBy ?? summary?.pausedBy) : null;
   const pauseNote = pausedBy ? ` · Paused by ${callsignForCoop(pausedBy)}` : '';
-  el.textContent = `CO-OP · ${coop.getPlayerId() ?? 'pilot'} · ${online} online${pauseNote}`;
+  const localPilot = (summary?.players ?? []).find((player) => player?.id === coop.getPlayerId());
+  const pilotName = localPilot?.callsign ?? coopStatus.displayName ?? coop.getPlayerId() ?? 'pilot';
+  const serverName = summary?.serverName ? ` · ${summary.serverName}` : '';
+  el.textContent = `CO-OP · ${pilotName}${serverName} · ${online} online${pauseNote}`;
   if (!document.getElementById('coop-roster')?.classList.contains('hidden')) {
     renderCoopRoster();
   }
@@ -2738,16 +2747,13 @@ function runDevAction(action, params = {}) {
   return result;
 }
 
-/** Dev Panel stays available for personal/local use (`?dev=0` to hide). Co-op cheats still blocked server-side in production/gateway. */
+/** Keep the backtick Dev Panel on shipped CT builds until we lock it down. */
 function shouldEnableDevPanel() {
   if (import.meta.env.DEV) return true;
   try {
     const params = new URLSearchParams(window.location.search);
     const q = params.get('dev');
-    if (q === '0' || q === 'false') {
-      try { localStorage.setItem('gs-dev-panel', '0'); } catch { /* ignore */ }
-      return false;
-    }
+    if (q === '0' || q === 'false') return false;
     if (q === '1' || q === 'true') {
       try { localStorage.setItem('gs-dev-panel', '1'); } catch { /* ignore */ }
       return true;
@@ -2756,6 +2762,7 @@ function shouldEnableDevPanel() {
     if (stored === '0') return false;
     if (stored === '1') return true;
   } catch { /* ignore */ }
+  // Default ON for home testing builds; set localStorage gs-dev-panel=0 to disable.
   return true;
 }
 
@@ -2876,6 +2883,14 @@ function runFrame(now) {
       now,
       cameraX: camera.x,
     });
+    scheduleNextFrame();
+    return;
+  }
+
+  if (phase === BOOT_PHASE.COOP_INTRO) {
+    drawCoopIntro(ctx2d, canvas, now);
+    maybeUpdateUi(now);
+    audioDirector.syncFrame({ state, view, viewedSystemId, phase, intro: coopIntroState(now), now, cameraX: camera.x });
     scheduleNextFrame();
     return;
   }
@@ -3108,6 +3123,10 @@ window.advanceTime = (ms) => {
     const intro = warpIntroState();
     return setWarpIntroElapsedForTest(intro.elapsedMs + Math.max(0, Number(ms) || 0));
   }
+  if (getBootPhase() === BOOT_PHASE.COOP_INTRO) {
+    const intro = coopIntroState();
+    return setCoopIntroElapsedForTest(intro.elapsedMs + Math.max(0, Number(ms) || 0));
+  }
   const events = advance(state, ms);
   for (const wh of events.wormholeArrivals ?? []) {
     triggerWormholeArrivalFx(state, wh);
@@ -3170,6 +3189,14 @@ window.render_game_to_text = () => {
   return JSON.stringify({
     bootPhase: getBootPhase(),
     intro: getBootPhase() === BOOT_PHASE.WARP_INTRO ? warpIntroState() : null,
+    coopIntro: getBootPhase() === BOOT_PHASE.COOP_INTRO ? coopIntroState() : null,
+    coop: coop.isActive() ? {
+      playerId: coop.getPlayerId(),
+      worldId: coop.getWorldId(),
+      serverName: coop.getSummary()?.serverName ?? null,
+      playersOnline: coop.getSummary()?.playersOnline ?? 0,
+      players: coopPlayers.map((player) => ({ id: player.id, callsign: player.callsign, online: !!player.online })),
+    } : null,
     saveVersion: SAVE_VERSION,
     time: state.time,
     paused: state.paused,
@@ -3792,14 +3819,16 @@ async function joinCoopSession(opts = {}) {
   try {
     await discoverAccountSession();
     const params = new URLSearchParams(window.location.search);
-    // Never accept passwords from the query string (history / Referer leakage).
-    let password = opts.password;
+    let password = opts.password ?? params.get('coopPass');
     if (password == null && opts.promptPassword) {
       password = window.prompt('Co-op password (leave blank if none)', '') ?? '';
     }
     password = password ?? '';
 
     let playerName = opts.playerName ?? params.get('coopName');
+    if (!playerName) {
+      try { playerName = localStorage.getItem('gs.coop.callsign'); } catch { /* private mode */ }
+    }
     if (!playerName && opts.promptPassword) {
       playerName = window.prompt('Pilot callsign', 'pilot') ?? 'pilot';
     }
@@ -3812,23 +3841,15 @@ async function joinCoopSession(opts = {}) {
       }
       opts.url = hostedMultiplayerUrl();
       password = '';
-      playerName = account.user.displayName;
+      playerName = String(playerName || account.user.displayName).slice(0, 32) || account.user.displayName;
     }
 
-    const targetUrl = opts.url || defaultWsUrl();
-    const confirmed = await confirmCustomCoopServer(targetUrl, {
-      forcePrompt: opts.confirmCustom === true,
-    });
-    if (!confirmed) {
-      return { ok: false, reason: 'Connection to custom server cancelled' };
-    }
-
-    toast(`Connecting to ${targetUrl}…`, 'info');
+    toast(`Connecting to ${opts.url || defaultWsUrl()}…`, 'info');
     coopAwaitingFirstFocus = true;
     coopClock.ready = false;
     try {
       await coop.connect({
-        url: targetUrl,
+        url: opts.url,
         password,
         playerName,
       });
@@ -3863,7 +3884,28 @@ async function joinCoopSession(opts = {}) {
     }
 
     document.getElementById('title-screen')?.classList.add('hidden');
-    setBootPhase(BOOT_PHASE.PLAYING);
+    const serverSummary = coop.getSummary() ?? {};
+    setBootPhase(BOOT_PHASE.COOP_INTRO);
+    startCoopIntro(ctx2d, canvas, {
+      serverName: serverSummary.serverName ?? 'UNKNOWN RELAY',
+      playerName,
+      playersOnline: serverSummary.playersOnline ?? serverSummary.players?.filter((player) => player?.online).length ?? 1,
+      worldId: serverSummary.worldId ?? coop.getWorldId?.() ?? '',
+      onComplete: () => {
+        setBootPhase(BOOT_PHASE.PLAYING);
+        state.paused = false;
+        updateCoopBanner();
+      },
+      drawGameFrame: (ctx, fade) => {
+        const savedZoom = camera.zoom;
+        camera.zoom = 0.3 + (CAMERA_DEFAULT_ZOOM - 0.3) * fade;
+        ctx.save();
+        ctx.globalAlpha = fade;
+        drawSystem(ctx, state, viewedSystemId, selection, 0, combatOverlayForRender());
+        ctx.restore();
+        camera.zoom = savedZoom;
+      },
+    });
     selection = null;
     updateCoopBanner();
     stripCoopQueryParams();
@@ -3936,6 +3978,8 @@ function doStartNewGame(opts = {}) {
 window.__setBootPhase = (phase) => setBootPhase(phase);
 window.__getBootPhase = () => getBootPhase();
 window.__getWarpIntroState = () => warpIntroState();
+window.__getCoopIntroState = () => coopIntroState();
+window.__setCoopIntroElapsed = (ms) => setCoopIntroElapsedForTest(ms);
 window.__setWarpIntroElapsed = (ms) => setWarpIntroElapsedForTest(ms);
 window.__startWarpIntro = () => {
   document.getElementById('title-screen')?.classList.add('hidden');
@@ -4158,11 +4202,7 @@ window.__fps = () => lastFps;
 
 queueMicrotask(async () => {
   if (coopQueryEnabled()) {
-    // Auto-join only for flag-style ?coop / ?coop=1 — never for endpoint-shaped URLs.
-    if (!coopQueryAllowsAutoJoin()) {
-      toast('Custom co-op server in URL — open Multiplayer and confirm before joining', 'info');
-      return;
-    }
+    // Auto-join when opened as http://localhost:5173/?coop=1 (or ?coop=2, ?coop=true, …)
     await joinCoopSession({ promptPassword: false });
     return;
   }

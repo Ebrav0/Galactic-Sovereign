@@ -1,11 +1,11 @@
 [Unit]
-Description=Hourly encrypted Galactic Sovereign offsite backup of latest local snapshots
+Description=Quarter-hour encrypted Galactic Sovereign offsite snapshot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/galactic-sovereign/gs-offsite-backup hourly
+ExecStart=/usr/local/libexec/galactic-sovereign/gs-offsite-backup interval
 Nice=10
 ProtectSystem=strict
 ProtectHome=true

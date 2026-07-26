@@ -1,0 +1,44 @@
+[Unit]
+Description=Galactic Sovereign public website
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=180
+StartLimitBurst=8
+
+[Service]
+Type=simple
+User=galactic-sovereign-site
+Group=galactic-sovereign-site
+WorkingDirectory=/opt/galactic-sovereign/site-current
+ExecStart=/usr/bin/node /opt/galactic-sovereign/site-current/server.mjs
+Environment=NODE_ENV=production
+Environment=GS_SITE_HOST=127.0.0.1
+Environment=GS_SITE_PORT=8081
+Restart=always
+RestartSec=4
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# V8 needs writable executable memory for JIT compilation; the remaining
+# sandboxing directives still isolate this static-site process.
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+UMask=0077
+MemoryHigh=128M
+MemoryMax=192M
+TasksMax=48
+
+[Install]
+WantedBy=multi-user.target

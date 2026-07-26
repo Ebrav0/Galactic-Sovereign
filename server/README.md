@@ -7,30 +7,7 @@ The production runtime has two loopback-only Node processes:
 | Authenticated gateway | `127.0.0.1:8080` | Static build, accounts, solo saves, admin API, WebSocket relay |
 | Persistent co-op host | `127.0.0.1:9090` | Continuously ticking server-authoritative universe |
 
-Only the gateway is published, through an outbound Cloudflare Tunnel. Public hostnames:
-
-| Hostname | Purpose |
-|---|---|
-| `https://play.galacticsovereign.xyz` | Game client |
-| `https://admin.galacticsovereign.xyz` | Owner ops dashboard (Cloudflare Access + app owner role) |
-
-The co-op port, databases, SSH, and hypervisor are never Cloudflare or router ingress targets.
-
-## Owner admin dashboard
-
-Owners who sign in on play are handed off to `GS_ADMIN_ORIGIN` via a one-time token (cookies are `__Host-` scoped and cannot cross subdomains).
-
-Provision / repair the admin hostname:
-
-```bash
-export CLOUDFLARE_API_TOKEN=...   # Tunnel Edit + DNS Edit + Access apps
-export CF_ACCESS_OWNER_EMAIL=you@example.com   # if Access app must be created
-node deploy/cloudflare/provision-admin-hostname.mjs
-```
-
-See [deploy/cloudflare/README.md](../deploy/cloudflare/README.md).
-
-Local same-origin admin UI (no DNS): leave `GS_ADMIN_ORIGIN` empty and open `/admin.html` on the gateway.
+Only the gateway is published, through an outbound Cloudflare Tunnel at the canonical HTTPS hostname. The co-op port, databases, SSH, and hypervisor are never Cloudflare or router ingress targets.
 
 ## Local development
 
@@ -44,8 +21,11 @@ Direct co-op mode without a gateway is deliberately a local-development compatib
 ## Production deployment
 
 1. Copy `.deploy.local.env.example` to the ignored `.deploy.local.env` and fill in the private Proxmox route.
-2. Run `scripts/deploy-secure-home.sh <release-id>`.
-3. Create the first owner locally through the recovery console. Read the
+2. Copy `deploy/gateway.env.example` to `/etc/galactic-sovereign/gateway.env`,
+   fill in the production origins and Cloudflare Access values, then set owner
+   `root`, group `galactic-sovereign`, and mode `0640`.
+3. Run `scripts/deploy-secure-home.sh <release-id>`.
+4. Create the first owner locally through the recovery console. Read the
    temporary password without echoing it, pass it on standard input, and clear
    the shell variable immediately:
 
@@ -60,8 +40,8 @@ Direct co-op mode without a gateway is deliberately a local-development compatib
 
    The owner must replace that temporary password on first login.
 
-4. Verify loopback health, direct Tailscale SSH as `gs-admin`, and rollback before disabling traditional SSH.
-5. Add the root-owned Cloudflare Tunnel credential, then run `sudo gsctl ensure-units` so gateway, coop, tunnel, health watch, and backup timers are enabled for boot.
+5. Verify loopback health, direct Tailscale SSH as `gs-admin`, and rollback before disabling traditional SSH.
+6. Add the root-owned Cloudflare Tunnel credential, then run `sudo gsctl ensure-units` so gateway, coop, tunnel, health watch, and backup timers are enabled for boot.
 
 Routine administrators can run only the root-owned `sudo gsctl` wrapper. Valid commands are `deploy`, `rollback`, `ensure-units`, `status`, `logs`, `backup`, `restore-test`, `restore`, and `restart`.
 

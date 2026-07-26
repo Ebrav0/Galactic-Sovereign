@@ -146,7 +146,7 @@ export function adoptOrSpawnPilotFlagship(state, pilotId, callsign = pilotId) {
   const roster = ensurePlayerFlagships(state);
   const existing = roster.find((f) => f.pilotId === pilotId);
   if (existing) {
-    if (callsign && !existing.callsign) existing.callsign = callsign;
+    if (callsign) existing.callsign = callsign;
     return { flagship: existing, spawned: false };
   }
   const solo = roster.find((f) => f.pilotId === 'solo');

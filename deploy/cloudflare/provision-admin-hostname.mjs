@@ -5,8 +5,8 @@
  *
  * Env:
  *   CLOUDFLARE_API_TOKEN   (required)
- *   CF_ACCOUNT_ID          (default: galactic-sovereign account)
- *   CF_TUNNEL_ID           (default: galactic-sovereign tunnel)
+ *   CF_ACCOUNT_ID          (required)
+ *   CF_TUNNEL_ID           (required)
  *   CF_ACCESS_OWNER_EMAIL  (required when creating an Access app)
  *
  * Never prints the API token. Exits non-zero on API failures.
@@ -19,9 +19,6 @@ const PLAY_HOST = 'play.galacticsovereign.xyz';
 const ADMIN_HOST = 'admin.galacticsovereign.xyz';
 const ORIGIN_SERVICE = 'http://127.0.0.1:8080';
 const CATCH_ALL = { service: 'http_status:404' };
-
-const DEFAULT_ACCOUNT_ID = 'c5622d4df2987b072f2316b48515aa66';
-const DEFAULT_TUNNEL_ID = 'd4b4a4ea-ddaf-4bec-bc97-8f9155d56d06';
 
 function die(message, detail) {
   const err = { ok: false, error: message };
@@ -225,8 +222,8 @@ async function getAppPolicies(token, accountId, appId) {
 
 async function main() {
   const token = requireEnv('CLOUDFLARE_API_TOKEN');
-  const accountId = process.env.CF_ACCOUNT_ID?.trim() || DEFAULT_ACCOUNT_ID;
-  const tunnelId = process.env.CF_TUNNEL_ID?.trim() || DEFAULT_TUNNEL_ID;
+  const accountId = requireEnv('CF_ACCOUNT_ID');
+  const tunnelId = requireEnv('CF_TUNNEL_ID');
   const tunnelCnameTarget = `${tunnelId}.cfargotunnel.com`;
 
   const summary = {

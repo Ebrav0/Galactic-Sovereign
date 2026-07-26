@@ -3376,7 +3376,17 @@ export function initUi(ctx) {
       const timer = setTimeout(() => ctrl.abort(), 2500);
       const res = await fetch(health, { signal: ctrl.signal, cache: 'no-store' });
       clearTimeout(timer);
-      if (res.ok) setMpStatus('online', 'Host online');
+      if (res.ok) {
+        setMpStatus('online', 'Host online');
+        try {
+          const healthPayload = await res.json();
+          const serverName = String(healthPayload?.serverName || '').trim();
+          if (serverName) {
+            const name = el('title-mp-server-name');
+            if (name) name.textContent = serverName;
+          }
+        } catch { /* health is still usable without optional metadata */ }
+      }
       else setMpStatus('offline', `Host returned ${res.status}`);
     } catch {
       setMpStatus('offline', 'Host unreachable');

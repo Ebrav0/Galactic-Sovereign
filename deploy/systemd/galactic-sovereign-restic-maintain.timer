@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Galactic Sovereign Restic maintenance
+
+[Timer]
+OnCalendar=*-*-* 06:20:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

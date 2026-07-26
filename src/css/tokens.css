@@ -2,31 +2,31 @@
 
 :root {
   /* Backgrounds */
-  --bg-deep: #02040b;
-  --bg-galaxy: #01030a;
-  --bg-panel: rgba(8, 12, 27, 0.72);
-  --bg-panel-raised: rgba(15, 21, 42, 0.9);
-  --bg-panel-solid: #090d1b;
-  --bg-chip: rgba(15, 23, 48, 0.62);
-  --bg-inset: rgba(4, 7, 16, 0.65);
+  --bg-deep: #020817;
+  --bg-galaxy: #010512;
+  --bg-panel: rgba(5, 17, 45, 0.8);
+  --bg-panel-raised: rgba(9, 27, 64, 0.94);
+  --bg-panel-solid: #06132f;
+  --bg-chip: rgba(12, 34, 72, 0.72);
+  --bg-inset: rgba(2, 9, 27, 0.78);
 
   /* Borders */
-  --border-subtle: rgba(120, 170, 255, 0.10);
-  --border-default: rgba(120, 170, 255, 0.22);
-  --border-accent: rgba(120, 170, 255, 0.45);
-  --border-gold: rgba(255, 205, 120, 0.45);
+  --border-subtle: rgba(242, 197, 92, 0.12);
+  --border-default: rgba(242, 197, 92, 0.26);
+  --border-accent: rgba(242, 197, 92, 0.56);
+  --border-gold: rgba(242, 197, 92, 0.58);
 
   /* Text */
-  --text-primary: #dbe8ff;
-  --text-secondary: rgba(219, 232, 255, 0.78);
-  --text-muted: #7e91ba;
-  --text-dim: rgba(126, 145, 186, 0.85);
+  --text-primary: #f5f1e7;
+  --text-secondary: rgba(226, 232, 242, 0.8);
+  --text-muted: #98a7bf;
+  --text-dim: rgba(152, 167, 191, 0.84);
 
   /* Accents */
-  --accent-gold: #ffcf7a;
-  --accent-cyan: #6fd6ff;
+  --accent-gold: #f2c55c;
+  --accent-cyan: #d9b867;
   --accent-green: #7dffa8;
-  --accent-violet: #a78bff;
+  --accent-violet: #809bd3;
   --accent-rose: #ff6b9a;
   --danger: #ff7d7d;
   --danger-hot: #ff3f5f;
@@ -41,10 +41,10 @@
   --panel-blur: 14px;
   --panel-shadow:
     0 14px 42px rgba(0, 0, 0, 0.62),
-    0 0 0 1px rgba(120, 170, 255, 0.08),
-    inset 0 0 34px rgba(74, 118, 255, 0.055);
-  --glow-accent: 0 0 20px rgba(111, 214, 255, 0.34), 0 0 42px rgba(167, 139, 255, 0.12);
-  --glow-gold: 0 0 20px rgba(255, 207, 122, 0.36), 0 0 46px rgba(255, 107, 154, 0.11);
+    0 0 0 1px rgba(242, 197, 92, 0.09),
+    inset 0 0 34px rgba(37, 86, 156, 0.08);
+  --glow-accent: 0 0 20px rgba(242, 197, 92, 0.3), 0 0 42px rgba(65, 112, 180, 0.12);
+  --glow-gold: 0 0 20px rgba(242, 197, 92, 0.38), 0 0 46px rgba(155, 112, 36, 0.12);
 
   /* Angular corner cuts */
   --cut: 10px;
@@ -84,7 +84,7 @@
   --text-xl: 21px;
 
   /* Layout */
-  --header-height: 58px;
+  --header-height: 104px;
   --footer-height: 52px;
   --rail-width: 292px;
   --rail-gap: var(--space-3);

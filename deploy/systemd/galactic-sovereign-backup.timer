@@ -1,9 +1,10 @@
 [Unit]
-Description=Hourly Galactic Sovereign backups
+Description=Quarter-hour Galactic Sovereign application-consistent backups
 
 [Timer]
-OnCalendar=hourly
-RandomizedDelaySec=5m
+OnCalendar=*:0/15
+RandomizedDelaySec=45s
+AccuracySec=15s
 Persistent=true
 Unit=galactic-sovereign-backup.service
 

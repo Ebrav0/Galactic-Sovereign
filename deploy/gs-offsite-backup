@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mode="${1:-daily}"
-case "$mode" in hourly|daily) ;; *) echo 'usage: gs-offsite-backup [hourly|daily]' >&2; exit 2 ;; esac
+mode="${1:-interval}"
+case "$mode" in interval|daily) ;; *) echo 'usage: gs-offsite-backup [interval|daily]' >&2; exit 2 ;; esac
 
 credentials=/etc/galactic-sovereign/credentials
 repository_file="$credentials/restic-repository"
@@ -22,12 +22,10 @@ install -d -m 0700 "$RESTIC_CACHE_DIR"
 
 /usr/local/libexec/galactic-sovereign/gs-backup "$mode"
 
-if [[ "$mode" == hourly ]]; then
-  restic backup /var/lib/galactic-sovereign/backups/hourly \
-    --tag galactic-sovereign --tag hourly
-  restic forget --prune --keep-hourly 48 --keep-daily 14 --tag galactic-sovereign --tag hourly
+if [[ "$mode" == interval ]]; then
+  restic backup /var/lib/galactic-sovereign/backups/interval \
+    --tag galactic-sovereign --tag interval
 else
   restic backup /var/lib/galactic-sovereign/backups/daily /var/lib/galactic-sovereign/pre-migration \
     --tag galactic-sovereign --tag daily
-  restic forget --prune --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --tag galactic-sovereign --tag daily
 fi

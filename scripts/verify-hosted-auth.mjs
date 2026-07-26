@@ -140,9 +140,10 @@ async function main() {
   });
   assert(staleWrite.response.status === 409 && staleWrite.payload.currentRevision === 1, 'Stale save did not return 409');
 
-  const ownerMultiplayer = await connectMultiplayer(ownerSession);
+  const ownerMultiplayer = await connectMultiplayer(ownerSession, { playerName: 'Nova Relay' });
   assert(ownerMultiplayer.welcome.playerId === owner.id, 'Gateway did not replace spoofed multiplayer playerId');
-  assert(ownerMultiplayer.welcome.displayName === owner.displayName, 'Gateway did not replace spoofed display name');
+  assert(ownerMultiplayer.welcome.displayName === 'Nova Relay', 'Gateway did not preserve the selected pilot name');
+  assert(ownerMultiplayer.welcome.summary.players.find((pilot) => pilot.id === owner.id)?.callsign === 'Nova Relay', 'Flagship roster did not use the selected pilot name');
   assert(!ownerMultiplayer.welcome.reconnectToken, 'Authenticated welcome leaked a reconnect token');
   ownerMultiplayer.socket.close();
 
@@ -151,10 +152,13 @@ async function main() {
     const timer = setTimeout(() => reject(new Error('Disabled user WebSocket was not revoked')), 8_000);
     playerMultiplayer.socket.once('close', (code) => { clearTimeout(timer); resolve(code); });
   });
-  const disable = await request(`/api/v1/admin/users/${player.id}/status`, {
+  const playAdmin = await request(`/api/v1/admin/users/${player.id}/status`, {
     method: 'PATCH', session: ownerSession, csrf: true, body: { status: 'disabled' },
   });
-  assert(disable.response.status === 200, `Disable failed: ${JSON.stringify(disable.payload)}`);
+  assert(playAdmin.response.status === 404, 'Play origin exposed an Admin API route');
+  const adminStore = new AuthStore({ dataDir: accountDir });
+  adminStore.setUserStatus(player.id, 'disabled', 'access:test-owner');
+  adminStore.close();
   const closeCode = await closePromise;
   assert(closeCode === 4003, `Disabled WebSocket closed with unexpected code ${closeCode}`);
   const revokedApi = await request('/api/v1/saves', { session: playerSession });

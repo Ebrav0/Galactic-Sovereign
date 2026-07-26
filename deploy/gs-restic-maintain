@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+credentials=/etc/galactic-sovereign/credentials
+export RESTIC_REPOSITORY="$(<"$credentials/restic-repository")"
+export RESTIC_PASSWORD_FILE="$credentials/restic-password"
+export AWS_ACCESS_KEY_ID="$(<"$credentials/r2-access-key-id")"
+export AWS_SECRET_ACCESS_KEY="$(<"$credentials/r2-secret-access-key")"
+export RESTIC_CACHE_DIR=/var/lib/galactic-sovereign/backups/restic-cache
+restic forget --prune --keep-within 48h --keep-daily 30 --keep-weekly 12 --keep-monthly 12 --tag galactic-sovereign
+restic check --read-data-subset=5%

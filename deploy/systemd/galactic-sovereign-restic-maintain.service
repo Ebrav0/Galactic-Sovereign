@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily Galactic Sovereign Restic retention, prune, and integrity check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/galactic-sovereign/gs-restic-maintain
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/galactic-sovereign/backups
+UMask=0077

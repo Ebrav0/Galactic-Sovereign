@@ -16,4 +16,6 @@ fi
 if [[ -f "$work/world.json" ]]; then
   GS_WORLD_RESTORE_TEST="$work/world.json" node --input-type=module -e "import fs from 'node:fs'; import { deserialize } from '/opt/galactic-sovereign/current/src/js/save.js'; const r=deserialize(fs.readFileSync(process.env.GS_WORLD_RESTORE_TEST,'utf8')); if(!r.ok) throw new Error(r.error);"
 fi
+install -d -m 0700 /var/lib/galactic-sovereign/backups/status
+date -u +%s > /var/lib/galactic-sovereign/backups/status/local-restore-test.ok
 echo "restore test passed: $archive"

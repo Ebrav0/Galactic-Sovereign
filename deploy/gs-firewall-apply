@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source_rules=/opt/galactic-sovereign/current/deploy/nftables-galactic-sovereign.nft
+state=/var/lib/galactic-sovereign/firewall
+install -d -o root -g root -m 0700 "$state"
+nft list ruleset > "$state/rollback.nft"
+chmod 0600 "$state/rollback.nft"
+if command -v ufw >/dev/null && ufw status | grep -q '^Status: active'; then : > "$state/ufw-was-active"; else rm -f "$state/ufw-was-active"; fi
+nft -c -f "$source_rules"
+systemctl stop gs-firewall-rollback.timer gs-firewall-rollback.service 2>/dev/null || true
+systemd-run --unit=gs-firewall-rollback --on-active=3m /usr/local/libexec/galactic-sovereign/gs-firewall-rollback >/dev/null
+nft delete table inet gs_filter 2>/dev/null || true
+nft -f "$source_rules"
+install -o root -g root -m 0600 "$source_rules" /etc/nftables.conf
+systemctl enable nftables.service
+: > "$state/pending"
+sha256sum "$source_rules" | cut -d' ' -f1 > "$state/expected.sha256"
+getent hosts galactic-sovereign.cloudflareaccess.com >/dev/null
+curl --fail --silent --max-time 8 https://play.galacticsovereign.xyz/healthz >/dev/null
+curl --fail --silent --max-time 3 http://127.0.0.1:8080/healthz >/dev/null
+curl --fail --silent --max-time 3 http://127.0.0.1:9090/health >/dev/null
+if systemctl is-enabled --quiet galactic-sovereign-site.service 2>/dev/null; then curl --fail --silent --max-time 3 http://127.0.0.1:8081/healthz >/dev/null; fi
+tailscale status --json | grep -q '"BackendState": "Running"'
+echo 'firewall staged; external verification must pass within 3 minutes, then run gsctl firewall-confirm'

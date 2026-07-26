@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Galactic Sovereign</title>
-  <link rel="icon" href="data:," />
+  <link rel="icon" type="image/png" href="./assets/galactic-sovereign-logo.png" />
   <meta name="gs-admin-origin" content="https://admin.galacticsovereign.xyz" />
   <meta name="gs-play-origin" content="https://play.galacticsovereign.xyz" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -28,9 +28,7 @@
 
     <header id="top-bar" class="hud-header">
       <div class="hud-header__brand hud-group">
-        <div class="brand-sigil" aria-hidden="true">
-          <svg viewBox="0 0 32 32"><path fill="currentColor" d="M16 1 30 9v14L16 31 2 23V9L16 1zm0 4.6L6 11.3v9.4l10 5.7 10-5.7v-9.4L16 5.6zM16 10a6 6 0 110 12 6 6 0 010-12zm0 3.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z"/></svg>
-        </div>
+        <img class="brand-sigil brand-logo brand-logo--hud" src="./assets/galactic-sovereign-logo.png" alt="" />
         <div class="brand-block">
           <span class="brand-title">Galactic Sovereign</span>
           <div class="brand-sub">
@@ -430,10 +428,8 @@
         <div class="title-screen__bar title-screen__bar--top" aria-hidden="true"></div>
         <div class="title-screen__center">
           <div class="title-screen__brand title-screen__enter" style="--enter-delay: 0ms">
-            <div class="brand-sigil title-screen__sigil" aria-hidden="true">
-              <svg viewBox="0 0 32 32"><path fill="currentColor" d="M16 1 30 9v14L16 31 2 23V9L16 1zm0 4.6L6 11.3v9.4l10 5.7 10-5.7v-9.4L16 5.6zM16 10a6 6 0 110 12 6 6 0 010-12zm0 3.4a2.6 2.6 0 100 5.2 2.6 2.6 0 000-5.2z"/></svg>
-            </div>
-            <h1 class="title-screen__title">Galactic Sovereign</h1>
+            <img class="title-screen__logo" src="./assets/galactic-sovereign-logo.png" alt="Galactic Sovereign" />
+            <h1 class="visually-hidden">Galactic Sovereign</h1>
             <p class="title-screen__tagline">Forge your empire across the stars</p>
           </div>
 
@@ -507,20 +503,20 @@
                   <span class="title-server-card__rail" aria-hidden="true"></span>
                   <span class="title-server-card__top">
                     <span class="title-server-card__status" id="title-mp-status-pip" data-status="unknown" title="Host status"></span>
-                    <span class="title-server-card__name">Shared Empire</span>
-                    <span class="title-server-card__badge">Testing</span>
+                    <span class="title-server-card__name" id="title-mp-server-name">Solara Prime</span>
+                    <span class="title-server-card__badge">Live Relay</span>
                   </span>
                   <span class="title-server-card__endpoint" id="title-mp-endpoint">—</span>
                   <span class="title-server-card__desc">Join anytime while the host is online</span>
                 </button>
-                <p class="title-mp-footnote">Custom &amp; public servers coming later</p>
+                <p class="title-mp-footnote">Choose your pilot name before requesting docking clearance</p>
               </div>
               <div id="title-mp-clearance" class="title-mp-clearance hidden" aria-hidden="true" hidden>
                 <p class="title-screen__section-label">Pilot Clearance</p>
                 <form id="title-mp-join-form" class="title-clearance-form" autocomplete="off">
                   <label class="title-clearance-field" for="title-mp-callsign">
-                    <span>Callsign</span>
-                    <input id="title-mp-callsign" name="callsign" type="text" maxlength="32" required placeholder="Pilot designation" spellcheck="false" />
+                    <span>Pilot name</span>
+                    <input id="title-mp-callsign" name="callsign" type="text" maxlength="32" required placeholder="e.g. Nova" spellcheck="false" autocomplete="nickname" />
                   </label>
                   <label class="title-clearance-field" for="title-mp-password">
                     <span>Access Code</span>

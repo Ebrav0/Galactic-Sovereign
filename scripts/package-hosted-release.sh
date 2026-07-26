@@ -13,7 +13,7 @@ COPYFILE_DISABLE=1 tar --no-xattrs -C "$root" -czf "$archive" \
   --exclude=.git --exclude=.github --exclude=.playwright-mcp --exclude=.deploy.local.env \
   --exclude=node_modules --exclude=release --exclude=output --exclude='*.log' \
   --exclude='*.sqlite*' --exclude='world.json*' --exclude='server/data' \
-  package.json package-lock.json dist server src/js deploy \
+  package.json package-lock.json dist admin-dist server src/js deploy \
   scripts/migrate-multiplayer-world.mjs scripts/verify-live-world-migration.mjs
 (cd "$out" && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
 echo "$archive"

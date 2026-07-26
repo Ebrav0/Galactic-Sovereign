@@ -1,0 +1,2 @@
+HEARTBEAT_SECRET=development-only-placeholder-never-use-in-production
+ARCHIVE_UPLOAD_SECRET=development-only-placeholder-never-use-in-production

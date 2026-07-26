@@ -8,6 +8,7 @@ const crypto = require('crypto');
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+const APP_ICON_PATH = path.join(__dirname, '..', 'src', 'public', 'assets', 'galactic-sovereign-logo.png');
 
 // Slot whitelist enforced here — never trust the renderer.
 const VALID_SLOTS = ['autosave', 'slot-1', 'slot-2', 'slot-3', 'exit-save'];
@@ -410,6 +411,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     title: 'Galactic Sovereign',
+    icon: APP_ICON_PATH,
     backgroundColor: '#05070f', // sync with --bg-deep in src/css/tokens.css
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -449,6 +451,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (app.dock) app.dock.setIcon(APP_ICON_PATH);
   await ensureSaveDir();
   registerSaveIpc();
   registerProfileIpc();

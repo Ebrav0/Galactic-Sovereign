@@ -325,6 +325,15 @@ export function createCoopClient({
       return;
     }
 
+    if (msg.type === 'adminNotice') {
+      const notice = String(msg.notice || '').trim().slice(0, 220);
+      if (notice) {
+        notices.push(notice);
+        onNotice?.(notice);
+      }
+      return;
+    }
+
     if (msg.type === 'checkpoint') {
       if (!acceptsEnvelope(msg, 'checkpoint')) return;
       if (msg.snapshotJson) {

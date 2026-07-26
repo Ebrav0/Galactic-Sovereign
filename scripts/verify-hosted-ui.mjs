@@ -76,10 +76,17 @@ try {
 
   await page.locator('#title-multiplayer-door').click();
   await page.locator('#title-mp-server-card').click();
+  await page.locator('#title-mp-callsign').waitFor({ state: 'visible' });
+  await page.locator('#title-mp-callsign').fill('Aurora Vector');
   await page.locator('#title-mp-join-btn').click();
   await page.waitForFunction(() => window.__coopStatus?.().active === true, null, { timeout: 15_000 });
   const firstIdentity = await page.evaluate(() => window.__coopStatus().playerId);
   assert(/^[0-9a-f-]{36}$/i.test(firstIdentity), `Expected account UUID identity, got ${firstIdentity}`);
+  const joinedPilot = await page.evaluate(() => {
+    const status = window.__coopStatus();
+    return status.summary?.players?.find((player) => player.id === status.playerId)?.callsign;
+  });
+  assert(joinedPilot === 'Aurora Vector', `Selected pilot name was not preserved: ${joinedPilot}`);
   await page.waitForTimeout(750);
   await screenshot(page, '05-multiplayer');
 

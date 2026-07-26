@@ -71,6 +71,21 @@ const MAX_WS_PAYLOAD = Number(process.env.GS_COOP_MAX_PAYLOAD || 256 * 1024);
 const HELLO_WINDOW_MS = 15 * 60 * 1000;
 const HELLO_MAX_ATTEMPTS = 5;
 
+const SERVER_NAME_ADJECTIVES = Object.freeze([
+  'SOLARA', 'NEBULA', 'ORION', 'CELESTIAL', 'LUMINOUS', 'STARFALL', 'AURORA', 'NOVA',
+]);
+const SERVER_NAME_NOUNS = Object.freeze([
+  'PRIME', 'CROWN', 'VEIL', 'REACH', 'BASTION', 'ASCENDANT', 'HORIZON', 'CITADEL',
+]);
+
+function generatedServerName(seed) {
+  const text = String(seed || 'galactic-sovereign');
+  let hash = 2166136261;
+  for (const char of text) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  const safe = hash >>> 0;
+  return `${SERVER_NAME_ADJECTIVES[safe % SERVER_NAME_ADJECTIVES.length]} ${SERVER_NAME_NOUNS[(safe >>> 8) % SERVER_NAME_NOUNS.length]}`;
+}
+
 function readCredential(name, fileName) {
   if (process.env[name]) return process.env[name];
   const credentialsDir = process.env.CREDENTIALS_DIRECTORY;
@@ -140,6 +155,10 @@ let lastPauseBy = null;
 function ensureCoopMetadata() {
   if (!state.coopMeta || typeof state.coopMeta !== 'object') state.coopMeta = {};
   if (!state.coopMeta.worldId) state.coopMeta.worldId = crypto.randomUUID();
+  if (!state.coopMeta.serverName) {
+    state.coopMeta.serverName = String(process.env.GS_COOP_SERVER_NAME || generatedServerName(state.coopMeta.worldId));
+    dirty = true;
+  }
   if (!state.coopMeta.identities || typeof state.coopMeta.identities !== 'object') {
     state.coopMeta.identities = {};
   }
@@ -623,13 +642,14 @@ function resolveIdentity(msg, trustedIdentity = null) {
   const coopMeta = ensureCoopMetadata();
   if (trustedIdentity) {
     const known = coopMeta.identities[trustedIdentity.id] ?? {};
+    const displayName = sanitizePlayerName(msg.playerName || trustedIdentity.displayName);
     coopMeta.identities[trustedIdentity.id] = {
-      displayName: trustedIdentity.displayName,
+      displayName,
       accountId: trustedIdentity.accountId,
       createdAt: Number(known.createdAt) || Date.now(),
     };
     dirty = true;
-    return { id: trustedIdentity.id, displayName: trustedIdentity.displayName, reconnectToken: null };
+    return { id: trustedIdentity.id, displayName, reconnectToken: null };
   }
   const token = String(msg.reconnectToken ?? '').slice(0, 128);
   const requestedId = msg.playerId ? String(msg.playerId).slice(0, 64) : null;
@@ -733,7 +753,7 @@ function handleMessage(ws, raw, req) {
     }
     // Personal capital: bind (or spawn) this pilot's own flagship before the
     // welcome snapshot so every client sees the full roster immediately.
-    const pilotShip = adoptOrSpawnPilotFlagship(state, meta.id, meta.id);
+    const pilotShip = adoptOrSpawnPilotFlagship(state, meta.id, meta.displayName);
     if (pilotShip.spawned || pilotShip.adopted) {
       dirty = true;
       snapshotCacheTick = -1;
@@ -926,6 +946,7 @@ function healthPayload() {
     mode: 'coop',
     protocolVersion: PROTOCOL_VERSION,
     worldId: ensureCoopMetadata().worldId,
+    serverName: ensureCoopMetadata().serverName,
     tick: tickCount,
     revisions: currentManifest(),
     playersOnline: onlineCount(),
@@ -1015,3 +1036,6 @@ function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGUSR1', () => {
+  try { saveWorld('snapshot'); } catch (error) { console.error('[coop] snapshot flush failed', error); }
+});

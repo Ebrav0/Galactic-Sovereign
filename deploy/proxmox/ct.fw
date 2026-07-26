@@ -1,0 +1,14 @@
+[OPTIONS]
+# Install this template as /etc/pve/firewall/${GS_PVE_CT_ID}.fw.
+enable: 1
+policy_in: DROP
+policy_out: ACCEPT
+log_level_in: info
+log_level_out: info
+
+[RULES]
+IN ACCEPT -p udp -dport 41641 -log nolog # Tailscale direct transport
+OUT ACCEPT -p udp -dport 41641 -dest 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 -log nolog # Tailscale LAN peers
+OUT DROP -dest 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 -log warning # Block private IPv4
+OUT DROP -dest 100.64.0.0/10,169.254.0.0/16 -log warning # Block CGNAT and link-local
+OUT DROP -dest fc00::/7,fe80::/10 -log warning # Block private IPv6

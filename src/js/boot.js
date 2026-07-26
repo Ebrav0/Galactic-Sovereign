@@ -3,10 +3,11 @@
 export const BOOT_PHASE = {
   TITLE: 'title',
   WARP_INTRO: 'warpIntro',
+  COOP_INTRO: 'coopIntro',
   PLAYING: 'playing',
 };
 
-/** @type {'title' | 'warpIntro' | 'playing'} */
+/** @type {'title' | 'warpIntro' | 'coopIntro' | 'playing'} */
 let bootPhase = BOOT_PHASE.TITLE;
 
 export function getBootPhase() {

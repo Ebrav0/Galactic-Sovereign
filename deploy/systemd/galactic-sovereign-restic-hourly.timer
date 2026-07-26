@@ -1,9 +1,10 @@
 [Unit]
-Description=Hourly encrypted Galactic Sovereign offsite backup
+Description=Quarter-hour encrypted Galactic Sovereign offsite backup
 
 [Timer]
-OnCalendar=hourly
-RandomizedDelaySec=12m
+OnCalendar=*:3/15
+RandomizedDelaySec=45s
+AccuracySec=15s
 Persistent=true
 Unit=galactic-sovereign-restic-hourly.service
 

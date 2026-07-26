@@ -1,33 +1,32 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import { AuthStore, generateTemporaryPassword } from './auth-store.mjs';
+import { createAccessAuth } from './access-auth.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.GS_APP_PORT || 8080);
 const HOST = process.env.GS_APP_HOST || '127.0.0.1';
 const PUBLIC_ORIGIN = String(process.env.GS_PUBLIC_ORIGIN || `http://${HOST}:${PORT}`).replace(/\/$/, '');
 const ADMIN_ORIGIN = String(process.env.GS_ADMIN_ORIGIN || '').replace(/\/$/, '');
-const ALLOWED_ORIGINS = new Set([PUBLIC_ORIGIN, ADMIN_ORIGIN].filter(Boolean));
 const DATA_DIR = path.resolve(process.env.GS_DATA_DIR || path.join(__dirname, 'data'));
 const DIST_DIR = path.resolve(process.env.GS_DIST_DIR || path.join(__dirname, '..', 'dist'));
+const ADMIN_DIST_DIR = path.resolve(process.env.GS_ADMIN_DIST_DIR || path.join(__dirname, '..', 'admin-dist'));
 const COOP_URL = process.env.GS_COOP_INTERNAL_URL || 'ws://127.0.0.1:9090';
 const COOP_HEALTH_URL = COOP_URL.replace(/^ws/i, 'http').replace(/\/$/, '') + '/health';
 const COOKIE_SECURE = process.env.GS_COOKIE_SECURE != null
   ? process.env.GS_COOKIE_SECURE === '1'
-  : PUBLIC_ORIGIN.startsWith('https://') || ADMIN_ORIGIN.startsWith('https://');
+  : PUBLIC_ORIGIN.startsWith('https://');
 const COOKIE_NAME = COOKIE_SECURE ? '__Host-gs_session' : 'gs_session';
 const MAX_JSON_BYTES = 8 * 1024 * 1024 + 64 * 1024;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 5;
-const LAST_SERVER = (() => {
-  try { return new URL(PUBLIC_ORIGIN).host; } catch { return 'play.galacticsovereign.xyz'; }
-})();
 
 function readCredential(name, fileName) {
   const direct = process.env[name];
@@ -43,6 +42,19 @@ function readCredential(name, fileName) {
 
 const GATEWAY_SECRET = readCredential('GS_GATEWAY_SECRET', 'gateway-secret');
 const SESSION_PEPPER = readCredential('GS_SESSION_PEPPER', 'session-pepper');
+const ADMIN_CSRF_SECRET = readCredential('GS_ADMIN_CSRF_SECRET', 'admin-csrf-secret') || (
+  SESSION_PEPPER
+    ? crypto.createHmac('sha256', SESSION_PEPPER)
+      .update('galactic-sovereign-admin-csrf-v1')
+      .digest('base64url')
+    : ''
+);
+const ACCESS_AUTH = createAccessAuth({
+  teamDomain: process.env.GS_ACCESS_TEAM_DOMAIN,
+  audience: readCredential('GS_ACCESS_AUD', 'access-audience'),
+  adminOrigin: ADMIN_ORIGIN,
+  csrfSecret: ADMIN_CSRF_SECRET,
+});
 if ((process.env.NODE_ENV === 'production' || GATEWAY_SECRET) && !SESSION_PEPPER) {
   throw new Error('Missing session-pepper credential (required in production and whenever gateway secret is configured)');
 }
@@ -50,35 +62,203 @@ const store = new AuthStore({ dataDir: DATA_DIR, sessionPepper: SESSION_PEPPER }
 const loginAttempts = new Map();
 const liveSockets = new Set();
 const BACKUP_DIR = path.resolve(process.env.GS_BACKUP_DIR || '/var/lib/galactic-sovereign/backups');
+const HEALTH_DIR = path.resolve(process.env.GS_HEALTH_DIR || '/var/lib/galactic-sovereign/health');
+const ADMIN_OPS_SOCKET = process.env.GS_ADMIN_OPS_SOCKET || '/run/galactic-sovereign/admin-ops.sock';
+const GAME_RELEASES_DIR = path.resolve(process.env.GS_RELEASES_DIR || '/opt/galactic-sovereign/releases');
+const SITE_RELEASES_DIR = path.resolve(process.env.GS_SITE_RELEASES_DIR || '/opt/galactic-sovereign/site-releases');
+const GAME_CURRENT_LINK = path.resolve(process.env.GS_CURRENT_LINK || '/opt/galactic-sovereign/current');
+const SITE_CURRENT_LINK = path.resolve(process.env.GS_SITE_CURRENT_LINK || '/opt/galactic-sovereign/site-current');
+
+function requestHost(req) {
+  return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',', 1)[0].trim().toLowerCase();
+}
+
+function isAdminHost(req) {
+  return Boolean(ACCESS_AUTH.adminHost && requestHost(req) === ACCESS_AUTH.adminHost);
+}
 
 function listBackupMetadata() {
-  const out = [];
-  if (!fs.existsSync(BACKUP_DIR)) return out;
+  const files = [];
   const walk = (dir, depth = 0) => {
     if (depth > 3) return;
     let entries = [];
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full, depth + 1);
-        continue;
+      if (entry.isDirectory()) walk(full, depth + 1);
+      else if (entry.isFile() && !/\.(env|pem|key|token|secret)$/i.test(entry.name)) {
+        try {
+          const stat = fs.statSync(full);
+          files.push({ name: path.relative(BACKUP_DIR, full), sizeBytes: stat.size, modifiedAt: stat.mtimeMs });
+        } catch { /* file changed during scan */ }
       }
-      if (!entry.isFile()) continue;
-      if (/\.(env|pem|key|token|secret)$/i.test(entry.name)) continue;
-      try {
-        const st = fs.statSync(full);
-        out.push({
-          name: path.relative(BACKUP_DIR, full),
-          sizeBytes: st.size,
-          modifiedAt: st.mtimeMs,
-        });
-      } catch { /* skip */ }
     }
   };
   walk(BACKUP_DIR);
-  out.sort((a, b) => b.modifiedAt - a.modifiedAt);
-  return out.slice(0, 100);
+  return files.sort((a, b) => b.modifiedAt - a.modifiedAt).slice(0, 200);
+}
+
+async function fetchCoopHealth() {
+  try {
+    const response = await fetch(COOP_HEALTH_URL, { signal: AbortSignal.timeout(2_000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return { ok: true, ...await response.json() };
+  } catch (error) {
+    return { ok: false, error: String(error.message || error) };
+  }
+}
+
+function safeReadJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function healthFindings(health, nowSeconds = Math.floor(Date.now() / 1000)) {
+  if (!health) return [{ key: 'telemetry-unavailable', severity: 'warning', message: 'Operations telemetry is not available yet' }];
+  const findings = [];
+  for (const [name, ok] of Object.entries(health.services || {})) {
+    if (ok === false) findings.push({ key: `service-${name}`, severity: 'critical', message: `${name} service is unavailable` });
+  }
+  if (Number(health.backupAgeSeconds) > 1800) findings.push({ key: 'backup-stale', severity: 'critical', message: 'Newest backup is older than 30 minutes' });
+  if (Number(health.diskUsePercent) >= 90) findings.push({ key: 'disk-critical', severity: 'critical', message: `Disk use is ${health.diskUsePercent}%` });
+  else if (Number(health.diskUsePercent) >= 80) findings.push({ key: 'disk-warning', severity: 'warning', message: `Disk use is ${health.diskUsePercent}%` });
+  if (health.firewallOk === false) findings.push({ key: 'firewall-drift', severity: 'critical', message: 'Firewall differs from the approved policy' });
+  if (health.restoreTestAt && nowSeconds - Number(health.restoreTestAt) > 8 * 86400) findings.push({ key: 'restore-stale', severity: 'critical', message: 'Local restore verification is overdue' });
+  if (health.offsiteRestoreTestAt && nowSeconds - Number(health.offsiteRestoreTestAt) > 35 * 86400) findings.push({ key: 'offsite-restore-stale', severity: 'critical', message: 'Offsite restore verification is overdue' });
+  if (/\bLB\b|LOW/i.test(String(health.upsState || ''))) findings.push({ key: 'ups-low', severity: 'critical', message: `UPS reports ${health.upsState}` });
+  const age = nowSeconds - Number(health.timestamp || 0);
+  if (age > 300) findings.push({ key: 'telemetry-stale', severity: 'critical', message: 'Operations telemetry is more than five minutes old' });
+  return findings;
+}
+
+function operationsState() {
+  const health = safeReadJson(path.join(HEALTH_DIR, 'latest.json'));
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const findings = healthFindings(health, nowSeconds);
+  const critical = findings.filter((item) => item.severity === 'critical').length;
+  const warnings = findings.filter((item) => item.severity === 'warning').length;
+  return {
+    ok: critical === 0,
+    readiness: health ? Math.max(0, 100 - critical * 25 - warnings * 8) : null,
+    telemetry: health,
+    telemetryAgeSeconds: health ? Math.max(0, nowSeconds - Number(health.timestamp || 0)) : null,
+    findings,
+  };
+}
+
+function telemetrySeries(period = '24h') {
+  const windows = { '24h': { seconds: 86400, bucket: 900 }, '7d': { seconds: 7 * 86400, bucket: 3600 }, '30d': { seconds: 30 * 86400, bucket: 6 * 3600 } };
+  const config = windows[period] || windows['24h'];
+  const cutoff = Math.floor(Date.now() / 1000) - config.seconds;
+  const files = (() => {
+    try { return fs.readdirSync(HEALTH_DIR).filter((name) => /^metrics-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)).sort(); }
+    catch { return []; }
+  })();
+  const buckets = new Map();
+  for (const name of files) {
+    let lines = [];
+    try { lines = fs.readFileSync(path.join(HEALTH_DIR, name), 'utf8').split('\n'); } catch { continue; }
+    for (const line of lines) {
+      if (!line) continue;
+      let point;
+      try { point = JSON.parse(line); } catch { continue; }
+      const timestamp = Number(point.timestamp || 0);
+      if (timestamp < cutoff) continue;
+      const bucketAt = Math.floor(timestamp / config.bucket) * config.bucket;
+      const entry = buckets.get(bucketAt) || { timestamp: bucketAt, samples: 0, diskUsePercent: 0, backupAgeSeconds: 0, playersOnline: 0, availableServices: 0 };
+      entry.samples += 1;
+      entry.diskUsePercent += Number(point.diskUsePercent || 0);
+      entry.backupAgeSeconds += Number(point.backupAgeSeconds || 0);
+      entry.playersOnline += Number(point.playersOnline || 0);
+      entry.availableServices += Object.values(point.services || {}).filter(Boolean).length;
+      buckets.set(bucketAt, entry);
+    }
+  }
+  return [...buckets.values()].sort((a, b) => a.timestamp - b.timestamp).map((entry) => ({
+    timestamp: entry.timestamp,
+    diskUsePercent: Number((entry.diskUsePercent / entry.samples).toFixed(2)),
+    backupAgeSeconds: Math.round(entry.backupAgeSeconds / entry.samples),
+    playersOnline: Number((entry.playersOnline / entry.samples).toFixed(2)),
+    availableServices: Number((entry.availableServices / entry.samples).toFixed(2)),
+  }));
+}
+
+function releaseInventory(root, currentLink, surface) {
+  let currentPath = null;
+  try { currentPath = fs.realpathSync(currentLink); } catch { /* unavailable locally */ }
+  const releases = [];
+  let entries = [];
+  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { /* unavailable locally */ }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const full = path.join(root, entry.name);
+    try {
+      const stat = fs.statSync(full);
+      releases.push({ id: entry.name, surface, installedAt: stat.mtimeMs, current: currentPath === full });
+    } catch { /* release changed during read */ }
+  }
+  releases.sort((a, b) => b.installedAt - a.installedAt);
+  return { current: releases.find((release) => release.current)?.id || null, releases: releases.slice(0, 12) };
+}
+
+function liveMultiplayerRows() {
+  const byAccount = new Map();
+  for (const socket of liveSockets) {
+    const user = socket.gsUser;
+    if (!user?.id) continue;
+    const row = byAccount.get(user.id) || {
+      userId: user.id,
+      username: user.username,
+      displayName: user.displayName,
+      connectedAt: socket.gsConnectedAt || null,
+      lastActivityAt: socket.gsLastActivityAt || socket.gsConnectedAt || null,
+      connections: 0,
+    };
+    row.connections += 1;
+    row.connectedAt = Math.min(row.connectedAt || Infinity, socket.gsConnectedAt || Infinity);
+    row.lastActivityAt = Math.max(row.lastActivityAt || 0, socket.gsLastActivityAt || 0);
+    byAccount.set(user.id, row);
+  }
+  return [...byAccount.values()].sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
+}
+
+function adminOpsRequest(payload) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(ADMIN_OPS_SOCKET);
+    const chunks = [];
+    let bytes = 0;
+    let settled = false;
+    const fail = (message) => {
+      if (settled) return;
+      settled = true;
+      const error = new Error(message);
+      error.statusCode = 503;
+      reject(error);
+    };
+    socket.setTimeout(150_000);
+    socket.on('connect', () => socket.end(`${JSON.stringify(payload)}\n`));
+    socket.on('data', (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 64 * 1024) { socket.destroy(); fail('Operations broker returned too much data'); return; }
+      chunks.push(chunk);
+    });
+    socket.on('timeout', () => { socket.destroy(); fail('Operations broker timed out'); });
+    socket.on('error', () => fail('Operations broker is unavailable'));
+    socket.on('end', () => {
+      if (settled) return;
+      try {
+        const response = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!response.ok) {
+          settled = true;
+          const error = new Error(response.error || 'Operations broker rejected the request');
+          error.statusCode = Number(response.statusCode) || 409;
+          reject(error);
+          return;
+        }
+        settled = true;
+        resolve(response);
+      } catch { fail('Operations broker returned an invalid response'); }
+    });
+  });
 }
 
 function json(res, status, payload, headers = {}) {
@@ -97,7 +277,7 @@ function securityHeaders(res) {
   res.setHeader('referrer-policy', 'same-origin');
   res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
   res.setHeader('content-security-policy', "default-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
-  if (PUBLIC_ORIGIN.startsWith('https://') || ADMIN_ORIGIN.startsWith('https://')) {
+  if (PUBLIC_ORIGIN.startsWith('https://')) {
     res.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
   }
 }
@@ -106,24 +286,10 @@ function forwardedProtocol(req) {
   return String(req.headers['x-forwarded-proto'] || '').split(',', 1)[0].trim().toLowerCase();
 }
 
-function requestHost(req) {
-  return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',', 1)[0].trim().toLowerCase();
-}
-
-function isAdminHost(req) {
-  if (!ADMIN_ORIGIN) return false;
-  try { return requestHost(req) === new URL(ADMIN_ORIGIN).host; } catch { return false; }
-}
-
-function canonicalOriginFor(req) {
-  if (isAdminHost(req) && ADMIN_ORIGIN) return ADMIN_ORIGIN;
-  return PUBLIC_ORIGIN;
-}
-
 function redirectForwardedHttp(req, res) {
-  const origin = canonicalOriginFor(req);
-  if (!origin.startsWith('https://') || forwardedProtocol(req) !== 'http') return false;
-  const location = new URL(req.url || '/', origin).toString();
+  const canonicalOrigin = isAdminHost(req) ? ADMIN_ORIGIN : PUBLIC_ORIGIN;
+  if (!canonicalOrigin.startsWith('https://') || forwardedProtocol(req) !== 'http') return false;
+  const location = new URL(req.url || '/', canonicalOrigin).toString();
   res.writeHead(308, { location, 'cache-control': 'no-store' });
   res.end();
   return true;
@@ -160,11 +326,6 @@ function requestOrigin(req) {
 }
 
 function validOrigin(req) {
-  const origin = requestOrigin(req);
-  return Boolean(origin && ALLOWED_ORIGINS.has(origin));
-}
-
-function validPlayOrigin(req) {
   return requestOrigin(req) === PUBLIC_ORIGIN;
 }
 
@@ -241,82 +402,16 @@ function parseExpectedRevision(req, body) {
 }
 
 function publicSession(session) {
-  return {
-    ok: true,
-    authenticated: true,
-    user: session.user,
-    csrfToken: session.csrfToken,
-    expiresAt: session.expiresAt,
-    adminOrigin: ADMIN_ORIGIN || null,
-    playOrigin: PUBLIC_ORIGIN,
-  };
-}
-
-function liveMultiplayerByAccount() {
-  const map = new Map();
-  for (const socket of liveSockets) {
-    const accountId = socket.gsUser?.id;
-    if (!accountId) continue;
-    const current = map.get(accountId);
-    const next = {
-      accountId,
-      displayName: socket.gsUser?.displayName || null,
-      connectedAt: socket.gsConnectedAt || null,
-      lastRttMs: Number.isFinite(socket.gsLastRttMs) ? socket.gsLastRttMs : null,
-    };
-    if (!current || (next.lastRttMs != null && (current.lastRttMs == null || next.lastRttMs < current.lastRttMs))) {
-      map.set(accountId, next);
-    }
-  }
-  return map;
-}
-
-function enrichUsersWithLive(users) {
-  const live = liveMultiplayerByAccount();
-  return users.map((user) => {
-    const mp = live.get(user.id);
-    return {
-      ...user,
-      multiplayerOnline: Boolean(mp),
-      multiplayerRttMs: mp?.lastRttMs ?? null,
-      lastServer: LAST_SERVER,
-    };
-  });
-}
-
-async function fetchCoopHealth() {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1000);
-  try {
-    const response = await fetch(COOP_HEALTH_URL, { signal: controller.signal });
-    if (!response.ok) throw new Error(`coop health ${response.status}`);
-    return await response.json();
-  } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function maybeTrackClientRtt(client, raw) {
-  try {
-    const text = typeof raw === 'string' ? raw : Buffer.isBuffer(raw) ? raw.toString('utf8') : '';
-    if (!text || text[0] !== '{') return;
-    const message = JSON.parse(text);
-    if (message?.type === 'ping' && Number.isFinite(Number(message.t))) {
-      client.gsLastRttMs = Math.max(0, Date.now() - Number(message.t));
-      return;
-    }
-    if (message?.type === 'pong' && Number.isFinite(Number(message.clientTime))) {
-      client.gsLastRttMs = Math.max(0, Date.now() - Number(message.clientTime));
-    }
-  } catch { /* ignore non-json frames */ }
+  return { ok: true, authenticated: true, user: session.user, csrfToken: session.csrfToken, expiresAt: session.expiresAt };
 }
 
 async function handleApi(req, res, url) {
+  if (url.pathname.startsWith('/api/v1/admin')) {
+    return json(res, 404, { ok: false, error: 'API route not found' });
+  }
   if (req.method === 'GET' && url.pathname === '/api/v1/session') {
     const session = sessionFor(req);
-    if (!session) return json(res, 200, { ok: true, authenticated: false, adminOrigin: ADMIN_ORIGIN || null, playOrigin: PUBLIC_ORIGIN });
+    if (!session) return json(res, 200, { ok: true, authenticated: false });
     return json(res, 200, publicSession(session));
   }
 
@@ -351,32 +446,6 @@ async function handleApi(req, res, url) {
     await store.changePassword(session.user.id, body.currentPassword, body.newPassword);
     setSessionCookie(res, '', 0);
     return json(res, 200, { ok: true, reloginRequired: true });
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/auth/admin-handoff') {
-    const session = requireSession(req, res, { ready: true, owner: true, csrf: true });
-    if (!session) return;
-    if (!ADMIN_ORIGIN) return json(res, 503, { ok: false, error: 'Admin origin is not configured' });
-    if (requestOrigin(req) !== PUBLIC_ORIGIN && ADMIN_ORIGIN !== PUBLIC_ORIGIN) {
-      return json(res, 403, { ok: false, error: 'Handoff must be created from the play origin' });
-    }
-    const handoff = store.createAdminHandoff(session.user.id);
-    return json(res, 200, { ok: true, handoffToken: handoff.token, expiresAt: handoff.expiresAt, adminOrigin: ADMIN_ORIGIN });
-  }
-
-  if (req.method === 'POST' && url.pathname === '/api/v1/auth/admin-handoff/redeem') {
-    if (!validOrigin(req)) return json(res, 403, { ok: false, error: 'Invalid origin' });
-    if (ADMIN_ORIGIN && requestOrigin(req) !== ADMIN_ORIGIN && ADMIN_ORIGIN !== PUBLIC_ORIGIN) {
-      return json(res, 403, { ok: false, error: 'Handoff must be redeemed on the admin origin' });
-    }
-    const body = await readJson(req, 8 * 1024);
-    try {
-      const created = store.redeemAdminHandoff(body.token);
-      setSessionCookie(res, created.token);
-      return json(res, 200, publicSession(created));
-    } catch (error) {
-      return json(res, 400, { ok: false, error: String(error.message || error) });
-    }
   }
 
   if (url.pathname === '/api/v1/saves' && req.method === 'GET') {
@@ -415,27 +484,10 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, deleted });
   }
 
-  if (url.pathname === '/api/v1/admin/overview' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    const counts = store.adminOverviewCounts();
-    const multiplayer = await fetchCoopHealth();
-    return json(res, 200, {
-      ok: true,
-      gateway: { ok: true },
-      ...counts,
-      multiplayer,
-      liveRelayCount: liveSockets.size,
-    });
-  }
-
   if (url.pathname === '/api/v1/admin/users' && req.method === 'GET') {
     const session = requireSession(req, res, { ready: true, owner: true });
     if (!session) return;
-    return json(res, 200, {
-      ok: true,
-      users: enrichUsersWithLive(store.listUsersEnriched({ lastServer: LAST_SERVER })),
-    });
+    return json(res, 200, { ok: true, users: store.listUsers() });
   }
   if (url.pathname === '/api/v1/admin/users' && req.method === 'POST') {
     const session = requireSession(req, res, { ready: true, owner: true, csrf: true });
@@ -453,37 +505,12 @@ async function handleApi(req, res, url) {
     return json(res, 201, { ok: true, user, temporaryPassword });
   }
 
-  const userDetailMatch = /^\/api\/v1\/admin\/users\/([^/]+)$/.exec(url.pathname);
-  if (userDetailMatch && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    const detail = store.getUserDetail(decodeURIComponent(userDetailMatch[1]), { lastServer: LAST_SERVER });
-    if (!detail) return json(res, 404, { ok: false, error: 'User not found' });
-    detail.user = enrichUsersWithLive([detail.user])[0];
-    return json(res, 200, { ok: true, ...detail });
-  }
-  if (userDetailMatch && req.method === 'PATCH') {
-    const session = requireSession(req, res, { ready: true, owner: true, csrf: true });
-    if (!session) return;
-    const body = await readJson(req, 8 * 1024);
-    const user = store.updateDisplayName(decodeURIComponent(userDetailMatch[1]), body.displayName, session.user.id);
-    return json(res, 200, { ok: true, user });
-  }
-
-  return await handleAdminMutations(req, res, url);
-}
-
-async function handleAdminMutations(req, res, url) {
   const statusMatch = /^\/api\/v1\/admin\/users\/([^/]+)\/status$/.exec(url.pathname);
   if (statusMatch && req.method === 'PATCH') {
     const session = requireSession(req, res, { ready: true, owner: true, csrf: true });
     if (!session) return;
     const body = await readJson(req, 8 * 1024);
-    const userId = decodeURIComponent(statusMatch[1]);
-    if (userId === session.user.id && body.status === 'disabled') {
-      return json(res, 400, { ok: false, error: 'Cannot disable your own account' });
-    }
-    const user = store.setUserStatus(userId, body.status, session.user.id);
+    const user = store.setUserStatus(decodeURIComponent(statusMatch[1]), body.status, session.user.id);
     return json(res, 200, { ok: true, user });
   }
 
@@ -505,37 +532,6 @@ async function handleAdminMutations(req, res, url) {
     return json(res, 200, { ok: true, revoked });
   }
 
-  if (url.pathname === '/api/v1/admin/multiplayer' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    const health = await fetchCoopHealth();
-    const live = [...liveMultiplayerByAccount().values()];
-    return json(res, 200, { ok: true, health, live });
-  }
-
-  const kickMatch = /^\/api\/v1\/admin\/multiplayer\/([^/]+)\/kick$/.exec(url.pathname);
-  if (kickMatch && req.method === 'POST') {
-    const session = requireSession(req, res, { ready: true, owner: true, csrf: true });
-    if (!session) return;
-    const userId = decodeURIComponent(kickMatch[1]);
-    let closed = 0;
-    for (const socket of [...liveSockets]) {
-      if (socket.gsUser?.id === userId) {
-        socket.close(4001, 'Removed by administrator');
-        closed += 1;
-      }
-    }
-    store.audit('multiplayer.kicked', { actorUserId: session.user.id, targetUserId: userId, detail: { closed } });
-    return json(res, 200, { ok: true, closed });
-  }
-
-  if (url.pathname === '/api/v1/admin/audit' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    const limit = Number(url.searchParams.get('limit') || 50);
-    return json(res, 200, { ok: true, events: store.listAuditEvents(limit) });
-  }
-
   if (url.pathname === '/api/v1/admin/legacy-pilots' && req.method === 'GET') {
     const session = requireSession(req, res, { ready: true, owner: true });
     if (!session) return;
@@ -550,46 +546,164 @@ async function handleAdminMutations(req, res, url) {
     return json(res, 200, { ok: true, pilot });
   }
 
-  if (url.pathname === '/api/v1/admin/sessions' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    return json(res, 200, { ok: true, sessions: store.listActiveSessions() });
-  }
+  return json(res, 404, { ok: false, error: 'API route not found' });
+}
 
-  if (url.pathname === '/api/v1/admin/saves' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    return json(res, 200, { ok: true, saves: store.listAllSaveSummaries({ limit: 100 }) });
-  }
+function adminActor(identity) {
+  return `access:${identity.email || identity.sub}`.slice(0, 180);
+}
 
-  if (url.pathname === '/api/v1/admin/backups' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    return json(res, 200, { ok: true, backups: listBackupMetadata() });
-  }
+function adminRequestId(req) {
+  return String(req.headers['cf-ray'] || req.headers['x-request-id'] || crypto.randomUUID()).slice(0, 120);
+}
 
-  if (url.pathname === '/api/v1/admin/analytics' && req.method === 'GET') {
-    const session = requireSession(req, res, { ready: true, owner: true });
-    if (!session) return;
-    const counts = store.adminOverviewCounts();
-    const coop = await fetchCoopHealth();
-    const users = enrichUsersWithLive(store.listUsersEnriched({ lastServer: LAST_SERVER }));
+async function adminMutation(req, res, identity, { action, resource, targetUserId = null }, operation) {
+  const requestId = adminRequestId(req);
+  ACCESS_AUTH.verifyMutation(req, identity);
+  try {
+    const result = await operation(adminActor(identity));
+    store.audit(`admin.${action}`, {
+      actorUserId: adminActor(identity), targetUserId,
+      detail: { result: 'success', requestId, resource },
+    });
+    return json(res, result.status || 200, { ok: true, requestId, ...result.payload });
+  } catch (error) {
+    store.audit(`admin.${action}`, {
+      actorUserId: adminActor(identity), targetUserId,
+      detail: { result: 'failure', requestId, resource, error: String(error.message || error).slice(0, 240) },
+    });
+    throw error;
+  }
+}
+
+async function handleAdminApi(req, res, url, identity) {
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/session') {
     return json(res, 200, {
       ok: true,
-      analytics: {
-        accounts: counts.users,
-        activeSessions: counts.activeSessions,
-        soloSaves: counts.soloSaves,
-        approxOnlineAccounts: users.filter((u) => u.approxOnline).length,
-        coopPlayersOnline: coop?.playersOnline ?? null,
-        coopTick: coop?.tick ?? null,
-        coopWorldId: coop?.worldId ?? null,
-        gatewayLiveSockets: liveSockets.size,
-      },
+      identity: { sub: identity.sub, email: identity.email },
+      capabilities: [
+        'operations:read', 'analytics:read', 'players:read', 'players:write',
+        'sessions:read', 'sessions:write', 'saves:read', 'backups:read',
+        'releases:read', 'releases:write', 'audit:read', 'multiplayer:read', 'multiplayer:write',
+      ],
+      csrfToken: ACCESS_AUTH.csrfFor(identity),
+      expiresAt: identity.expiresAt,
+      playOrigin: PUBLIC_ORIGIN,
     });
   }
-
-  return json(res, 404, { ok: false, error: 'API route not found' });
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/overview') {
+    const multiplayer = await fetchCoopHealth();
+    return json(res, 200, {
+      ok: true, gateway: { ok: true }, multiplayer, liveRelayCount: liveSockets.size,
+      releaseId: process.env.GS_RELEASE_ID || null,
+      ...store.adminOverviewCounts(),
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/operations') {
+    return json(res, 200, { ok: true, operations: operationsState() });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/telemetry') {
+    const requestedPeriod = url.searchParams.get('period');
+    if (requestedPeriod && !['24h', '7d', '30d'].includes(requestedPeriod)) throw new Error('Telemetry period must be 24h, 7d, or 30d');
+    const period = requestedPeriod || '24h';
+    return json(res, 200, { ok: true, period, points: telemetrySeries(period) });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/multiplayer') {
+    return json(res, 200, { ok: true, health: await fetchCoopHealth(), live: liveMultiplayerRows() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/v1/admin/multiplayer/notice') {
+    return adminMutation(req, res, identity, { action: 'multiplayer.notice', resource: 'multiplayer' }, async () => {
+      const body = await readJson(req, 8 * 1024);
+      const message = String(body.message || '').trim().replace(/\s+/g, ' ').slice(0, 180);
+      if (message.length < 3) throw new Error('Maintenance notice must be at least 3 characters');
+      let delivered = 0;
+      for (const socket of liveSockets) {
+        if (socket.readyState !== WebSocket.OPEN) continue;
+        socket.send(JSON.stringify({ type: 'adminNotice', notice: `Owner notice: ${message}` }));
+        delivered += 1;
+      }
+      return { payload: { delivered, message } };
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/users') {
+    return json(res, 200, { ok: true, users: store.listUsers() });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/v1/admin/users') {
+    return adminMutation(req, res, identity, { action: 'player.create', resource: 'player' }, async (actor) => {
+      const body = await readJson(req, 32 * 1024);
+      const temporaryPassword = generateTemporaryPassword();
+      const user = await store.createUser({ username: body.username, displayName: body.displayName, password: temporaryPassword, role: 'player', mustChangePassword: true, actorUserId: actor });
+      return { status: 201, payload: { user, temporaryPassword } };
+    });
+  }
+  const statusMatch = /^\/api\/v1\/admin\/users\/([^/]+)\/status$/.exec(url.pathname);
+  if (statusMatch && req.method === 'PATCH') {
+    const userId = decodeURIComponent(statusMatch[1]);
+    return adminMutation(req, res, identity, { action: 'player.status', resource: `player:${userId}`, targetUserId: userId }, async (actor) => {
+      const body = await readJson(req, 8 * 1024);
+      return { payload: { user: store.setUserStatus(userId, body.status, actor) } };
+    });
+  }
+  const resetMatch = /^\/api\/v1\/admin\/users\/([^/]+)\/reset-password$/.exec(url.pathname);
+  if (resetMatch && req.method === 'POST') {
+    const userId = decodeURIComponent(resetMatch[1]);
+    return adminMutation(req, res, identity, { action: 'player.reset_password', resource: `player:${userId}`, targetUserId: userId }, async (actor) => {
+      const temporaryPassword = generateTemporaryPassword();
+      const user = await store.resetPassword(userId, temporaryPassword, actor);
+      return { payload: { user, temporaryPassword } };
+    });
+  }
+  const revokeMatch = /^\/api\/v1\/admin\/users\/([^/]+)\/revoke-sessions$/.exec(url.pathname);
+  if (revokeMatch && req.method === 'POST') {
+    const userId = decodeURIComponent(revokeMatch[1]);
+    return adminMutation(req, res, identity, { action: 'player.revoke_sessions', resource: `player:${userId}`, targetUserId: userId }, async (actor) => ({ payload: { revoked: store.revokeUserSessions(userId, actor) } }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/sessions') return json(res, 200, { ok: true, sessions: store.listActiveSessions() });
+  const sessionMatch = /^\/api\/v1\/admin\/sessions\/([a-f0-9]{12})$/.exec(url.pathname);
+  if (sessionMatch && req.method === 'DELETE') {
+    const sessionId = sessionMatch[1];
+    return adminMutation(req, res, identity, { action: 'session.revoke', resource: `session:${sessionId}` }, async (actor) => ({ payload: store.revokeSessionPrefix(sessionId, actor) }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/saves') return json(res, 200, { ok: true, saves: store.listAllSaveSummaries({ limit: 200 }) });
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/backups') return json(res, 200, { ok: true, backups: listBackupMetadata() });
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/audit') return json(res, 200, { ok: true, events: store.listAuditEvents(Number(url.searchParams.get('limit') || 100)) });
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/releases') {
+    return json(res, 200, {
+      ok: true,
+      game: releaseInventory(GAME_RELEASES_DIR, GAME_CURRENT_LINK, 'game'),
+      site: releaseInventory(SITE_RELEASES_DIR, SITE_CURRENT_LINK, 'site'),
+      rollbackAvailable: fs.existsSync(ADMIN_OPS_SOCKET),
+    });
+  }
+  const rollbackMatch = /^\/api\/v1\/admin\/releases\/(game|site)\/([A-Za-z0-9][A-Za-z0-9._-]{5,79})\/rollback$/.exec(url.pathname);
+  if (rollbackMatch && req.method === 'POST') {
+    const [, surface, releaseId] = rollbackMatch;
+    return adminMutation(req, res, identity, { action: 'release.rollback', resource: `${surface}-release:${releaseId}` }, async () => {
+      const body = await readJson(req, 8 * 1024);
+      if (body.confirmation !== releaseId) throw new Error('Typed confirmation does not match the release ID');
+      const result = await adminOpsRequest({ operation: 'rollback', surface, releaseId, requestId: adminRequestId(req) });
+      return { payload: { surface, releaseId, health: result.health } };
+    });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/legacy-pilots') return json(res, 200, { ok: true, pilots: store.listLegacyPilots() });
+  const legacyMatch = /^\/api\/v1\/admin\/legacy-pilots\/([^/]+)\/claim$/.exec(url.pathname);
+  if (legacyMatch && req.method === 'POST') {
+    const pilotId = decodeURIComponent(legacyMatch[1]);
+    return adminMutation(req, res, identity, { action: 'legacy_pilot.claim', resource: `legacy-pilot:${pilotId}` }, async (actor) => {
+      const body = await readJson(req, 8 * 1024);
+      return { payload: { pilot: store.claimLegacyPilot(pilotId, body.userId, actor) } };
+    });
+  }
+  const kickMatch = /^\/api\/v1\/admin\/multiplayer\/([^/]+)\/kick$/.exec(url.pathname);
+  if (kickMatch && req.method === 'POST') {
+    const userId = decodeURIComponent(kickMatch[1]);
+    return adminMutation(req, res, identity, { action: 'multiplayer.kick', resource: `player:${userId}`, targetUserId: userId }, async () => {
+      let closed = 0;
+      for (const socket of liveSockets) if (socket.gsUser?.id === userId) { socket.close(4001, 'Removed by administrator'); closed += 1; }
+      return { payload: { closed } };
+    });
+  }
+  return json(res, 404, { ok: false, error: 'Admin API route not found' });
 }
 
 const MIME = {
@@ -605,27 +719,14 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 
-function serveStatic(req, res, url) {
-  const adminHost = isAdminHost(req);
-  if (!adminHost && ADMIN_ORIGIN && ['GET', 'HEAD'].includes(req.method) && (url.pathname === '/admin' || url.pathname === '/admin/')) {
-    res.writeHead(302, { location: `${ADMIN_ORIGIN}/`, 'cache-control': 'no-store' });
-    return res.end();
-  }
-
-  let requested;
-  if (adminHost) {
-    if (url.pathname === '/' || !path.extname(url.pathname)) requested = '/admin.html';
-    else requested = decodeURIComponent(url.pathname);
-  } else {
-    requested = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
-  }
+function serveStatic(req, res, url, rootDir = DIST_DIR) {
+  const requested = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
   const relative = requested.replace(/^\/+/, '');
-  let target = path.resolve(DIST_DIR, relative);
-  if (!target.startsWith(`${DIST_DIR}${path.sep}`) && target !== DIST_DIR) return json(res, 400, { ok: false, error: 'Invalid path' });
+  let target = path.resolve(rootDir, relative);
+  if (!target.startsWith(`${rootDir}${path.sep}`) && target !== rootDir) return json(res, 400, { ok: false, error: 'Invalid path' });
   if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
-    if (['GET', 'HEAD'].includes(req.method) && !path.extname(relative)) {
-      target = path.join(DIST_DIR, adminHost ? 'admin.html' : 'index.html');
-    } else return json(res, 404, { ok: false, error: 'Not found' });
+    if (req.method === 'GET' && !path.extname(relative)) target = path.join(rootDir, 'index.html');
+    else return json(res, 404, { ok: false, error: 'Not found' });
   }
   const ext = path.extname(target).toLowerCase();
   const fingerprinted = /\/assets\/[^/]+-[A-Za-z0-9_-]{6,}\./.test(target);
@@ -640,8 +741,19 @@ function serveStatic(req, res, url) {
 const server = http.createServer(async (req, res) => {
   securityHeaders(res);
   if (redirectForwardedHttp(req, res)) return;
-  const url = new URL(req.url || '/', canonicalOriginFor(req));
+  const url = new URL(req.url || '/', PUBLIC_ORIGIN);
   try {
+    if (isAdminHost(req)) {
+      const identity = await ACCESS_AUTH.authenticate(req);
+      if (url.pathname === '/healthz') return json(res, 200, { ok: true, service: 'galactic-sovereign-admin' });
+      if (url.pathname.startsWith('/api/v1/admin')) return await handleAdminApi(req, res, url, identity);
+      if (url.pathname.startsWith('/api/')) return json(res, 404, { ok: false, error: 'API route not found' });
+      if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { ok: false, error: 'Method not allowed' });
+      return serveStatic(req, res, url, ADMIN_DIST_DIR);
+    }
+    if (url.pathname.startsWith('/admin') || url.pathname.startsWith('/api/v1/admin')) {
+      return json(res, 404, { ok: false, error: 'Not found' });
+    }
     if (url.pathname === '/healthz') return json(res, 200, { ok: true, service: 'galactic-sovereign' });
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -667,20 +779,20 @@ server.on('upgrade', (req, socket, head) => {
   }
   const url = new URL(req.url || '/', PUBLIC_ORIGIN);
   if (url.pathname !== '/ws/multiplayer') return rejectUpgrade(socket, 404, 'Not Found');
-  if (!validPlayOrigin(req)) return rejectUpgrade(socket, 403, 'Forbidden');
+  if (!validOrigin(req)) return rejectUpgrade(socket, 403, 'Forbidden');
   const session = sessionFor(req, { touch: false });
   if (!session || session.user.mustChangePassword) return rejectUpgrade(socket, 401, 'Unauthorized');
   if (!GATEWAY_SECRET) return rejectUpgrade(socket, 503, 'Gateway Not Configured');
   relayServer.handleUpgrade(req, socket, head, (client) => {
     client.gsSessionHash = session.tokenHash;
     client.gsUser = session.user;
-    client.gsConnectedAt = Date.now();
-    client.gsLastRttMs = null;
     relayServer.emit('connection', client, req);
   });
 });
 
 relayServer.on('connection', (client) => {
+  client.gsConnectedAt = Date.now();
+  client.gsLastActivityAt = client.gsConnectedAt;
   liveSockets.add(client);
   const pending = [];
   let pendingBytes = 0;
@@ -696,8 +808,8 @@ relayServer.on('connection', (client) => {
   });
 
   client.on('message', (data, binary) => {
+    client.gsLastActivityAt = Date.now();
     if (data.length > 256 * 1024) return client.close(1009, 'Message too large');
-    maybeTrackClientRtt(client, data);
     if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary });
     else if (pendingBytes + data.length <= 512 * 1024) {
       pending.push([data, binary]);
@@ -709,6 +821,7 @@ relayServer.on('connection', (client) => {
     pending.length = 0;
   });
   upstream.on('message', (data, binary) => {
+    client.gsLastActivityAt = Date.now();
     if (client.readyState === WebSocket.OPEN) client.send(data, { binary });
   });
   upstream.on('close', (code, reason) => {
@@ -736,7 +849,6 @@ sessionAuditTimer.unref();
 server.listen(PORT, HOST, () => {
   console.log(`[app] listening on http://${HOST}:${PORT}`);
   console.log(`[app] public origin ${PUBLIC_ORIGIN}`);
-  if (ADMIN_ORIGIN) console.log(`[app] admin origin ${ADMIN_ORIGIN}`);
   console.log(`[app] data ${DATA_DIR}`);
 });
 

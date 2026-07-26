@@ -3,8 +3,14 @@ dist/
 release/
 output/
 .playwright-mcp/
+.playwright-cli/
 playwright-report/
 test-results/
+admin-dist/
+website/qa/
+monitor-worker/worker-configuration.d.ts
+monitor-worker/wrangler.production.jsonc
+deploy/private/
 .DS_Store
 Thumbs.db
 *.log

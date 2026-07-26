@@ -1,9 +1,9 @@
 [Unit]
-Description=Monthly Galactic Sovereign restore validation
+Description=Weekly Galactic Sovereign local restore validation
 
 [Timer]
-OnCalendar=monthly
-RandomizedDelaySec=6h
+OnCalendar=Sun *-*-* 03:15:00
+RandomizedDelaySec=2h
 Persistent=true
 Unit=galactic-sovereign-restore-test.service
 

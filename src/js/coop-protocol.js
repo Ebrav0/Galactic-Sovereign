@@ -441,6 +441,8 @@ export function summaryFromState(state, extras = {}) {
   }
 
   return {
+    serverName: state.coopMeta?.serverName ?? extras.serverName ?? null,
+    worldId: state.coopMeta?.worldId ?? extras.worldId ?? null,
     time: state.time ?? 0,
     paused: !!state.paused,
     credits: state.credits ?? 0,

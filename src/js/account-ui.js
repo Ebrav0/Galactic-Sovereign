@@ -1,8 +1,6 @@
 import {
   accountApi,
-  adminOrigin,
   changeAccountPassword,
-  createAdminHandoff,
   currentAccountSession,
   discoverAccountSession,
   loginAccount,
@@ -20,34 +18,12 @@ export function setHostedSaveFlushHandler(handler) {
   hostedSaveFlushHandler = typeof handler === 'function' ? handler : null;
 }
 
-function resolveAdminTarget(session = currentAccountSession()) {
-  if (session?.adminOrigin) return session.adminOrigin;
-  // Without a server-advertised admin host, stay same-origin (local /admin.html).
-  if (window.location.hostname === 'play.galacticsovereign.xyz') return adminOrigin();
-  return window.location.origin;
-}
-
-async function redirectOwnerToAdmin(session = currentAccountSession()) {
-  if (!session?.authenticated || session.user?.role !== 'owner' || session.user?.mustChangePassword) {
-    return false;
-  }
-  const target = resolveAdminTarget(session);
-  if (target && target !== window.location.origin) {
-    const handoff = await createAdminHandoff();
-    const admin = handoff.adminOrigin || target;
-    window.location.assign(`${admin}/?handoff=${encodeURIComponent(handoff.handoffToken)}`);
-    return true;
-  }
-  window.location.assign('/admin.html');
-  return true;
-}
-
 function installMarkup() {
   if (byId('account-gate')) return;
   document.body.insertAdjacentHTML('beforeend', `
     <div id="account-gate" class="account-gate hidden" role="dialog" aria-modal="true" aria-labelledby="account-gate-title">
       <div class="account-card">
-        <div class="account-card__sigil" aria-hidden="true">⬡</div>
+        <img class="account-card__sigil" src="/assets/galactic-sovereign-logo.png" alt="" />
         <p class="account-card__eyebrow">Sovereign Identity Network</p>
         <h2 id="account-gate-title">Command authorization</h2>
         <p class="account-card__copy">Sign in with the account issued by the server owner. Solo saves and multiplayer identity stay attached to this account.</p>
@@ -81,13 +57,11 @@ function installMarkup() {
     <section id="account-admin" class="panel panel--modal account-admin hidden" role="dialog" aria-modal="true" aria-labelledby="account-admin-title">
       <div class="panel__header">
         <span class="panel__marker" aria-hidden="true"></span>
-        <span class="panel__title" id="account-admin-title">Operations Dashboard</span>
+        <span class="panel__title" id="account-admin-title">Account Administration</span>
         <span class="panel__trace" aria-hidden="true"></span>
         <button id="account-admin-close" class="btn btn--ghost btn--xs" type="button">Close</button>
       </div>
       <div class="panel__body account-admin__body">
-        <p class="account-card__notice">Intended to run behind Cloudflare Access. Passwords and secrets are never listed here.</p>
-        <div id="account-admin-overview" class="account-admin__overview" aria-live="polite"></div>
         <form id="account-create-form" class="account-form account-form--row">
           <label><span>Username</span><input id="account-create-username" maxlength="32" required /></label>
           <label><span>Display name</span><input id="account-create-display" maxlength="32" required /></label>
@@ -95,18 +69,7 @@ function installMarkup() {
         </form>
         <p id="account-admin-status" class="account-status" aria-live="polite"></p>
         <div id="account-temp-password" class="account-temp-password hidden"></div>
-        <h3 class="account-admin__section-title">Players</h3>
         <div id="account-user-list" class="account-user-list"></div>
-        <h3 class="account-admin__section-title">Active sessions</h3>
-        <div id="account-session-list" class="account-user-list"></div>
-        <h3 class="account-admin__section-title">Multiplayer</h3>
-        <div id="account-mp-status" class="account-user-list"></div>
-        <h3 class="account-admin__section-title">Save files (metadata)</h3>
-        <div id="account-save-list" class="account-user-list"></div>
-        <h3 class="account-admin__section-title">Backups</h3>
-        <div id="account-backup-list" class="account-user-list"></div>
-        <h3 class="account-admin__section-title">Audit log</h3>
-        <div id="account-audit-list" class="account-user-list"></div>
         <div id="account-legacy-section" class="account-legacy-section hidden">
           <h3>Legacy multiplayer pilots</h3>
           <p>Attach each preserved pilot identity to one account. Claims are one-time.</p>
@@ -115,6 +78,7 @@ function installMarkup() {
       </div>
     </section>
   `);
+  document.querySelector('.hud-header__actions')?.append(byId('account-chip'));
 }
 
 function setStatus(id, message, kind = '') {
@@ -127,15 +91,18 @@ function setStatus(id, message, kind = '') {
 function configureHostedMultiplayer(session) {
   const callsign = byId('title-mp-callsign');
   const password = byId('title-mp-password');
-  callsign?.closest('label')?.classList.add('hidden');
+  callsign?.closest('label')?.classList.remove('hidden');
   password?.closest('label')?.classList.add('hidden');
   if (callsign) {
-    callsign.value = session.user.displayName;
-    callsign.required = false;
+    callsign.required = true;
+    if (!callsign.value) {
+      try { callsign.value = localStorage.getItem('gs.coop.callsign') || ''; } catch { /* private mode */ }
+      if (!callsign.value) callsign.value = session.user.displayName;
+    }
   }
   if (password) password.value = '';
   const join = byId('title-mp-join-btn');
-  if (join) join.textContent = 'Join persistent universe';
+  if (join) join.textContent = 'Join as pilot';
 }
 
 async function renderAccount() {
@@ -159,93 +126,19 @@ async function renderAccount() {
   }
 }
 
-function formatWhen(ts) {
-  if (!ts) return '—';
-  try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
-}
-
-function formatBytes(n) {
-  const value = Number(n);
-  if (!Number.isFinite(value) || value < 0) return '—';
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function fillSimpleList(elementId, rows) {
-  const list = byId(elementId);
-  if (!list) return;
-  list.replaceChildren();
-  if (!rows.length) {
-    const empty = document.createElement('p');
-    empty.className = 'account-card__notice';
-    empty.textContent = 'None';
-    list.append(empty);
-    return;
-  }
-  for (const row of rows) {
-    const article = document.createElement('article');
-    article.className = 'account-user-row';
-    const identity = document.createElement('div');
-    const title = document.createElement('strong');
-    title.textContent = row.title;
-    const meta = document.createElement('span');
-    meta.textContent = row.meta;
-    identity.append(title, meta);
-    article.append(identity);
-    list.append(article);
-  }
-}
-
 async function renderUsers() {
-  const [usersResult, overviewResult, sessionsResult, savesResult, backupsResult, auditResult, mpResult] = await Promise.all([
-    accountApi('/api/v1/admin/users'),
-    accountApi('/api/v1/admin/overview'),
-    accountApi('/api/v1/admin/sessions'),
-    accountApi('/api/v1/admin/saves'),
-    accountApi('/api/v1/admin/backups'),
-    accountApi('/api/v1/admin/audit?limit=40'),
-    accountApi('/api/v1/admin/multiplayer'),
-  ]);
-  if (!usersResult.response.ok) throw new Error(usersResult.payload.error || 'Could not load users');
-
-  const overview = byId('account-admin-overview');
-  if (overview && overviewResult.response.ok) {
-    const o = overviewResult.payload;
-    const mp = o.multiplayer || {};
-    overview.replaceChildren();
-    const line = document.createElement('p');
-    line.textContent = [
-      `Accounts ${o.users?.active ?? '—'}/${o.users?.total ?? '—'} active`,
-      `Sessions ${o.activeSessions ?? '—'}`,
-      `Solo saves ${o.soloSaves ?? '—'}`,
-      `Relay sockets ${o.liveRelayCount ?? '—'}`,
-      `Co-op online ${mp.playersOnline ?? '—'} · tick ${mp.tick ?? '—'}`,
-      mp.ok === false ? `Co-op health: ${mp.error || 'down'}` : 'Co-op health: ok',
-    ].join(' · ');
-    overview.append(line);
-  }
-
+  const result = await accountApi('/api/v1/admin/users');
+  if (!result.response.ok) throw new Error(result.payload.error || 'Could not load users');
   const list = byId('account-user-list');
   list.replaceChildren();
-  for (const user of usersResult.payload.users ?? []) {
+  for (const user of result.payload.users ?? []) {
     const row = document.createElement('article');
     row.className = 'account-user-row';
     const identity = document.createElement('div');
     const name = document.createElement('strong');
     name.textContent = user.displayName;
     const meta = document.createElement('span');
-    meta.textContent = [
-      user.username,
-      user.role,
-      user.status,
-      user.mustChangePassword ? 'password change required' : null,
-      `last login ${formatWhen(user.lastLoginAt)}`,
-      `last seen ${formatWhen(user.lastSeenAt)}`,
-      `${user.activeSessionCount || 0} session(s)`,
-      user.multiplayerOnline ? 'MP online' : 'MP offline',
-      `${user.soloSaveCount || 0} save(s)`,
-    ].filter(Boolean).join(' · ');
+    meta.textContent = `${user.username} · ${user.role} · ${user.status}${user.mustChangePassword ? ' · password change required' : ''}`;
     identity.append(name, meta);
     row.append(identity);
     if (user.role !== 'owner') {
@@ -266,39 +159,6 @@ async function renderUsers() {
     }
     list.append(row);
   }
-
-  fillSimpleList('account-session-list', (sessionsResult.payload?.sessions ?? []).map((s) => ({
-    title: `${s.displayName || s.username} · ${s.sessionId}`,
-    meta: `created ${formatWhen(s.createdAt)} · last seen ${formatWhen(s.lastSeenAt)} · expires ${formatWhen(s.expiresAt)}`,
-  })));
-
-  const mpLive = mpResult.payload?.live ?? [];
-  const mpHealth = mpResult.payload?.health ?? {};
-  fillSimpleList('account-mp-status', [
-    {
-      title: `World ${mpHealth.worldId || '—'}`,
-      meta: `online ${mpHealth.playersOnline ?? '—'} · tick ${mpHealth.tick ?? '—'} · saved ${formatWhen(mpHealth.lastSavedAt)}`,
-    },
-    ...mpLive.map((p) => ({
-      title: p.displayName || p.userId,
-      meta: `RTT ${p.lastRttMs ?? '—'} ms`,
-    })),
-  ]);
-
-  fillSimpleList('account-save-list', (savesResult.payload?.saves ?? []).map((s) => ({
-    title: `${s.displayName || s.username} · ${s.slot}`,
-    meta: `rev ${s.revision} · ${formatBytes(s.sizeBytes)} · ${formatWhen(s.savedAt)} · credits ${s.credits ?? '—'}`,
-  })));
-
-  fillSimpleList('account-backup-list', (backupsResult.payload?.backups ?? []).map((b) => ({
-    title: b.name,
-    meta: `${formatBytes(b.sizeBytes)} · ${formatWhen(b.modifiedAt)}`,
-  })));
-
-  fillSimpleList('account-audit-list', (auditResult.payload?.events ?? []).map((e) => ({
-    title: e.action,
-    meta: `${e.actorUsername || 'system'} → ${e.targetUsername || '—'} · ${formatWhen(e.createdAt)}`,
-  })));
 
   const legacyResult = await accountApi('/api/v1/admin/legacy-pilots');
   if (!legacyResult.response.ok) throw new Error(legacyResult.payload.error || 'Could not load legacy pilots');
@@ -321,7 +181,7 @@ async function renderUsers() {
       const select = document.createElement('select');
       select.className = 'menu-select';
       select.setAttribute('aria-label', `Account for ${pilot.displayName}`);
-      for (const user of usersResult.payload.users ?? []) {
+      for (const user of result.payload.users ?? []) {
         if (user.status !== 'active') continue;
         const option = document.createElement('option');
         option.value = user.id;
@@ -363,14 +223,9 @@ export async function initAccountUi() {
     event.preventDefault();
     setStatus('account-login-status', 'Authorizing…', 'busy');
     try {
-      const session = await loginAccount(byId('account-username').value, byId('account-password').value);
+      await loginAccount(byId('account-username').value, byId('account-password').value);
       byId('account-password').value = '';
       setStatus('account-login-status', '');
-      if (session?.user?.role === 'owner' && !session.user.mustChangePassword) {
-        setStatus('account-login-status', 'Opening admin…', 'busy');
-        await redirectOwnerToAdmin(session);
-        return;
-      }
       await renderAccount();
     } catch (error) {
       setStatus('account-login-status', error.message, 'error');
@@ -426,14 +281,13 @@ export async function initAccountUi() {
     byId('account-admin-backdrop')?.classList.add('hidden');
   };
   const openAdmin = async () => {
-    try {
-      await redirectOwnerToAdmin();
-    } catch (error) {
-      setStatus('account-login-status', error.message || 'Could not open admin', 'error');
-    }
+    window.location.assign('https://admin.galacticsovereign.xyz');
   };
   byId('account-admin-open')?.addEventListener('click', openAdmin);
-  byId('account-admin-close')?.addEventListener('click', closeAdmin);
+  byId('account-admin-close')?.addEventListener('click', () => {
+    closeAdmin();
+    if (window.location.pathname.startsWith('/admin')) window.location.assign('/');
+  });
   byId('account-admin-backdrop')?.addEventListener('click', closeAdmin);
 
   byId('account-create-form')?.addEventListener('submit', async (event) => {
@@ -498,14 +352,7 @@ export async function initAccountUi() {
     await renderUsers();
   });
 
-  if (window.location.pathname.startsWith('/admin')) {
-    const session = currentAccountSession();
-    if (session?.user?.role === 'owner' && !session.user.mustChangePassword) {
-      try {
-        await redirectOwnerToAdmin(session);
-      } catch (error) {
-        setStatus('account-login-status', error.message || 'Could not open admin', 'error');
-      }
-    }
+  if (window.location.pathname.startsWith('/admin') && currentAccountSession()?.user?.role === 'owner') {
+    await openAdmin();
   }
 }

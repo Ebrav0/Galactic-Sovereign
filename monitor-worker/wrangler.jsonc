@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "replace-with-worker-name",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [
+    { "pattern": "monitor.example.com", "custom_domain": true }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "kv_namespaces": [
+    { "binding": "HEALTH", "id": "00000000000000000000000000000000" }
+  ],
+  "r2_buckets": [
+    { "binding": "ARCHIVE", "bucket_name": "replace-with-archive-bucket" }
+  ],
+  "send_email": [
+    {
+      "name": "ALERT_EMAIL",
+      "destination_address": "owner@example.com",
+      "allowed_sender_addresses": ["alerts@example.com"]
+    }
+  ],
+  "vars": {
+    "ALERT_TO": "owner@example.com",
+    "ALERT_FROM": "alerts@example.com"
+  }
+}

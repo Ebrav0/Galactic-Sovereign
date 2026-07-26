@@ -10,6 +10,27 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-26 — Solo command HUD cleanup
+
+**Task claimed:** Clean up the overlapping, crowded top UI shown in the solo-mode screenshot.
+
+### Done
+- Split the solo HUD header into a stable command row and a dedicated resource/status strip so resource chips cannot wrap through the flagship/scout area.
+- Moved hosted account controls into the command row instead of floating over the playfield and side panels.
+- Increased the wide-layout header safe area so both HUD rails begin below all top controls.
+- Added medium and compact breakpoints: action labels collapse at 1360px, while the resource strip collapses and the header returns to one row at 1100px.
+
+### Verification
+- `npm run build` passes.
+- Required web-game client produced a valid title-state capture; its legacy start selector was absent in the current title flow.
+- `node output/verify_solo_hud_layout.mjs http://127.0.0.1:5173/` passes overlap, wrapping, rail-offset, account-parent, and browser-error checks at 1586×900, 1280×720, and 1024×720.
+- Visually inspected all three captures under `output/solo-hud-cleanup/layout/`; the wide and medium layouts retain the complete resource strip, while compact mode cleanly prioritizes navigation.
+
+### Next TODOs
+- None for this HUD cleanup.
+
+---
+
 ## Session 2026-07-20 — System jump SFX + richer intro audio
 
 **Task claimed:** Add audio when jumping between systems, and enhance the warp intro sequence.
@@ -1897,3 +1918,159 @@ Never delete prior entries.
 - Consolidated both protected paths into one owner-only Access application while retaining the owner email allowlist, binding cookie, HttpOnly cookie, 12-hour session, application owner-role check, and `SameSite=Lax` callback compatibility.
 - Hardened account API calls with a 15-second abort and explicit rejection of non-JSON Access responses. Account creation now restores its button and shows an authorization/timeout error instead of remaining on `Creating account…`.
 - Confirmed the failed `charlie` submission did not create an account. Hosted auth and the full browser flow pass, including owner login, account creation, one-time temporary password, forced password replacement, multiplayer join, and reload.
+
+---
+
+## Session 2026-07-22 — Website, Admin, security, and recovery overhaul
+
+**Task claimed:** Implement the full public website, separate Access-protected Admin surface, CT/network hardening, backup/recovery, monitoring, and production rollout while preserving Play.
+
+### Baseline and safety completed
+- Preserved the existing dirty worktree and recorded source/build hashes before any implementation change.
+- Captured the live Play browser baseline at `output/overhaul-baseline/play-production-before.png`.
+- Verified the current production gateway, co-op host, Cloudflare Tunnel, SQLite database, multiplayer world, local snapshot, and isolated restore test.
+- Created a fresh local production snapshot: `snapshot-20260722T210907Z.tar.gz`.
+
+### Public website completed locally
+- Built an independent website application under `website/`, with its own dependencies, Vite build, hardened loopback server, tests, and deployment-ready output.
+- Implemented the approved centered-beacon visual direction with a generated cinematic hero background, exact existing Galactic Sovereign sigil, and a real in-game Dyson-sphere screenshot.
+- Added the homepage, curated July 14/16/20/22 development-build changelog, privacy page, branded 404, and `/healthz`.
+- Verified responsive desktop/mobile layouts, keyboard/accessibility structure, reduced motion, production links, security headers, cache policy, and route behavior.
+- Fixed the one P1 visual finding (mobile headline overflow); the final visual comparison and QA record are in `website/qa/hero-comparison.png` and `website/design-qa.md`.
+- `npm run build`, `npm test`, and `npm run test:sites` pass in `website/`.
+
+### In progress
+- Build the standalone Admin frontend and replace player/owner handoff with origin-side Cloudflare Access JWT validation, exact-origin CSRF, and append-only mutation audit records.
+- Extend CT deployment, backup, recovery, firewall, monitoring, and rollback tooling before live rollout.
+
+### Production implementation update
+- Deployed the independent public site as `galactic-sovereign-site.service` on `127.0.0.1:8081` with atomic releases under `/opt/galactic-sovereign/site-releases/`; `gsctl` now supports site deploy/status/logs/restart/health/rollback/cleanup.
+- Deployed the separate Admin build through the gateway only on `admin.galacticsovereign.xyz`. Origin validation verifies the Cloudflare Access JWT signature/JWKS, issuer, audience, expiry, and exact host; Admin mutations require the exact origin plus deterministic HMAC CSRF and append request/result/resource records to a SQLite log protected by update/delete-denial triggers.
+- Play source comparison against the pre-overhaul snapshot found only the approved Admin destination change plus removal of the old Admin entry from the Play bundle. Hosted authentication, security, Access, Admin-host, Admin frontend, website, monitor, co-op smoke/gate, and four-player functional suites pass. The synthetic four-player command sweep requires its documented elevated test burst; production co-op limits and behavior are unchanged.
+- Deployed final game/Admin/ops release `production-overhaul-20260722T223000Z`; Play, co-op, site, and Tunnel all use bounded systemd restart policies. SIGKILL drills proved automatic recovery for each service.
+- Replaced permissive CT networking with nftables default-deny input/forward/output, private/link-local egress denial, Tailscale management allowance, and explicit public DNS/HTTPS/NTP/QUIC/Tunnel traffic. A three-minute automatic rollback remained armed until Play, co-op, site, Tunnel, Tailscale SSH, DNS, Debian package access, and R2 backup passed. UFW is disabled.
+- Enabled the Proxmox guest firewall for CT 909 as a second barrier with default-deny input and private-network egress drops. Its own three-minute rollback was cancelled only after the same service checks, direct-LAN denial, and Proxmox packet simulation passed.
+- Direct LAN probes to CT ports 22/8080/8081/9090 are denied; an in-CT probe cannot reach the home gateway; root Tailscale SSH is denied; `gs-admin` Tailscale SSH works. Application listeners remain loopback-only.
+- CT 909 remains `onboot=1` and now has startup order `order=2,up=30,down=60`. A cold-start drill exposed inherited Tailscale DNS from the Proxmox host; CT 909 now has persistent explicit resolvers `1.1.1.1 8.8.8.8` with the tailnet search domain. The repeated full stop/start restored all services and public Play automatically.
+- Enabled unattended security updates without automatic reboot on both Proxmox and the CT. Installed NUT server/client on Proxmox in inactive `MODE=none`; UPS activation templates and final-backup/shutdown scripts are staged but intentionally not enabled until the physical UPS driver, identifier, and monitor credential exist.
+- Enabled 15-minute application-consistent snapshots with SIGUSR1 world flush, SQLite online backup, atomic save capture, release/schema/file manifest, SHA-256 inventory, 96 interval + 14 daily local retention, and encrypted Restic R2 retention/maintenance. Local and clean offsite restore tests pass.
+- Created `galactic-sovereign-backup-immutable` with a 30-day `daily/` bucket lock. Daily signed uploads reject overwrite; two remote downloads matched CT SHA-256 values.
+- Deployed `galactic-sovereign-monitor` with one-minute cron, signed heartbeats, five-miss detection, 30-minute deduplication, recovery mail, service/backup/disk/firewall/restore/UPS/release findings, and a verified owner email destination. Alert/recovery and post-reboot heartbeat drills completed; current `/healthz` is green.
+- Recovery snapshots now include redacted Proxmox CT/firewall config, current Tunnel ingress export, exact game/site release IDs, systemd/nftables configuration, recovery inventory, maintenance policy, and restore runbook. Secrets remain outside repositories and backup buckets.
+- Tunnel ingress is live in the required order: apex → Play → Admin → catch-all 404. The proxied apex CNAME now targets the healthy production Tunnel; public A/AAAA resolution, HTTPS, the cinematic homepage, and `/healthz` all pass. Remaining zone/Access hardening still requires the interactive Cloudflare dashboard session.
+
+### Awaiting owner interaction / physical prerequisites
+- Sign in to the Cloudflare dashboard tab so Admin-only Access scope, Full Strict/DNSSEC/WAF/rate limits/HSTS/offline page, and live owner/unapproved-identity tests can be completed.
+- Connect the NUT-compatible UPS, provide its driver/identifier, set BIOS `Restore on AC Power Loss`, and store recovery credentials in the password manager plus encrypted offline copy.
+- A Proxmox-host reboot was not run because four unrelated VMs (`jamestown`, `OpenClawandCyber`, `n8n`, and VM 999) are active and would be interrupted; explicit confirmation is required for that shared-host outage drill.
+
+## Session 2026-07-22 — Multiplayer docking intro and pilot identity
+
+**Task claimed:** Keep an intro animation when joining multiplayer, make it distinct from the campaign warp intro, allow a chosen pilot name, and use space-themed server names.
+
+### Done
+- Added a dedicated `COOP_INTRO` boot phase with a docking-corridor cinematic: world handshake, rotating gate, arriving escort silhouettes, pilot clearance, relay name, online count, and skip-to-handoff behavior.
+- Added deterministic browser hooks (`__getCoopIntroState`, `__setCoopIntroElapsed`) and included multiplayer metadata in `render_game_to_text`.
+- Persisted a generated server name in `coopMeta.serverName`, exposed it from `/health` and co-op summaries, and updated the multiplayer server card from live relay metadata.
+- Clarified the join form as `Pilot name`, kept the chosen name in the existing reconnect identity flow, and surfaced the chosen pilot/server name in the co-op HUD banner and cinematic.
+
+### Verification
+- `npm run build` passes.
+- Required web-game Playwright client joined a live isolated relay; state reported `bootPhase: "coopIntro"`, `serverName: "SOLARA CROWN"`, `playerName: "NOVA QUILL"`, and then reached `bootPhase: "playing"` after the cinematic.
+- Visually inspected the docking cinematic and multiplayer clearance form; no new feature error was observed. The remaining browser 404 is the existing local `/api/v1/session` probe when no hosted account gateway is running.
+
+### Next TODOs
+- Optional: expose a server-name override in an owner/admin server configuration panel if custom relay branding is desired.
+
+## Session 2026-07-22 — Unified Galactic Sovereign logo
+
+**Task claimed:** Replace every app logo with the supplied Galactic Sovereign artwork.
+
+### Done
+- Replaced the game, standalone Admin, public website, and shared sigil source assets with byte-identical copies of the supplied 1254 × 1254 PNG.
+- Updated the legacy Admin login/header marks and favicon to use the same artwork instead of the old inline hex sigil.
+- Added the public website favicon and configured the Electron window plus macOS Dock icon to use the unified logo.
+
+### Verification
+- Root production build (standalone game, game client, Admin, Sites worker) and the public website production build pass.
+- Built game, Admin, and website logo assets match the supplied image SHA-256 exactly.
+- Required web-game Playwright client completed at the title screen; the new logo is fully visible and uncropped. The only console error is the existing local hosted-session 404 when no account gateway is running.
+- Visually inspected desktop/mobile website, standalone Admin, legacy Admin login, and game title captures; large and compact placements render without distortion or clipping.
+- Public website server tests pass 5/5.
+
+### Next TODOs
+- None for the logo replacement.
+
+## Session 2026-07-22 — Hosted multiplayer pilot-name correction
+
+### Done
+- Kept the hosted Multiplayer clearance field visible for authenticated players, prefilled with the account display name or the last selected callsign.
+- Preserved the selected callsign through the authenticated gateway while keeping the account UUID as the immutable multiplayer identity.
+- Bound the selected callsign to the pilot flagship roster so the banner, roster, intro, and comms log agree.
+
+### Verification
+- `npm run build` passes.
+- `node scripts/verify-hosted-auth.mjs` passes, including selected-name and UUID assertions.
+- Focused hosted Playwright flow passes with `Aurora Vector`, `AURORA CITADEL`, `bootPhase: "coopIntro"`, and no browser errors. Screenshot: `/tmp/hosted-pilot-name-intro.png`.
+
+### Deployment
+- Deployed release `galactic-sovereign-hosted-pilot-name-20260722T210500Z` through the guarded Proxmox/CT release path.
+- Public `https://play.galacticsovereign.xyz/healthz` is green and the live bundle contains the pilot-name field, `Join as pilot`, and multiplayer server metadata.
+
+---
+
+## Session 2026-07-22 — Navy-and-gold brand system and owner mission board
+
+**Task claimed:** Implement the selected Admin direction with Operations Center, live multiplayer controls, session management, guarded releases/rollback, capacity charts, and apply the supplied navy-and-gold logo system across the game UI without altering gameplay.
+
+### Done
+- Rebuilt the standalone Admin frontend as a responsive tactical mission board using the supplied Galactic Sovereign logo, navy/gold tokens, Orbitron/Inter typography, and Phosphor icons.
+- Added Command, Live, Sessions, Releases, Analytics, Players, Recovery, and Audit sections. Live operations can kick a connected account or broadcast a bounded owner notice; session rows support individual revocation; telemetry supports 24-hour, 7-day, and 30-day periods.
+- Added Access-verified Admin APIs for operations health, telemetry, live multiplayer, notices, releases, individual session revocation, and guarded rollback. Every mutation still uses exact-origin CSRF and append-only auditing.
+- Added a root-only Unix-socket rollback broker with an operation allowlist, strict release validation, mandatory preflight backup, atomic symlink switch, fixed service restart list, post-switch health validation, and automatic return to the previous release on failure.
+- Extended the one-minute health writer to retain 31 days of local metric samples for capacity charts and include current multiplayer presence.
+- Applied the supplied exact logo to the game favicon, title screen, hosted identity gate, and in-game command header. Migrated interface surfaces, borders, typography, controls, and focus states to navy and gold while preserving green health, red danger, planet types, faction identity, weapon effects, and other gameplay semantics.
+- Kept the game mechanics, save schema, bootstrap, multiplayer protocol, world simulation, and Play deployment topology unchanged.
+
+### Verification
+- Production and standalone game builds pass; Admin build and tests pass.
+- Hosted authentication, Access validation, security hardening, and expanded Admin-host integration checks pass.
+- Required web-game Playwright client rendered the branded title flow, and the in-app browser reached a live Academy HUD at 1280 x 720 with the new logo and palette intact.
+- Admin desktop (1440 x 1024 target) and mobile (390 x 844 target) states were inspected; mobile navigation, maintenance notice delivery, release screens, and exact typed rollback confirmation were exercised.
+- Side-by-side design evidence is in `output/brand-overhaul/admin-design-comparison.png`; `design-qa.md` records `final result: passed`.
+
+### Deployment note
+- This session intentionally stopped at a verified local build. The new Admin/game release and rollback broker have not been pushed to the production CT in this session.
+
+---
+
+## Session 2026-07-22 — Multiplayer flight stutter investigation (in progress)
+
+**Task claimed:** Reproduce, measure, diagnose, permanently fix, and regression-test recurring multiplayer flight stutter while preserving responsive local control, host authority, tight synchronization, authentication, and cleanup safety.
+
+### Baseline and safety
+- Preserving the existing dirty worktree; no reset or unrelated cleanup will be performed.
+- Test accounts and worlds will exist only inside a fresh task-owned temporary root. Every generated username/UUID will be recorded, the isolated database will be checked before deletion, and the whole root will be removed and verified absent after each run.
+- Existing local, hosted, production, and unrelated test accounts/worlds are explicitly out of scope.
+
+### Architecture evidence collected
+- The co-op host is authoritative at a 50 ms fixed simulation step; clients relay input, predict their local flagship every render frame, dead-reckon remotes, and reconcile against nominal 10 Hz pose summaries. There is no rollback or interpolation buffer.
+- The host currently passes each individual `setInterval` elapsed time to `step()` but discards `remainingMs`, unlike the solo loop. Sub-50 ms timer intervals can therefore advance zero simulation ticks while pose ordering still advances.
+- Rapid changed nonzero inputs inside the 50 ms client relay window are dropped without a trailing send, allowing local prediction and host input to disagree until another key transition.
+- These are testable hypotheses, not yet the accepted final diagnosis. The authenticated browser baseline will measure authoritative time drift, pose timing, input fidelity, rendered continuity, corrections, frame stalls, and cross-client divergence before any movement fix.
+
+### Next
+- Complete the three-client authenticated record-mode baseline under normal and degraded network conditions.
+- Instrument host/projection timing only if the external measurements cannot distinguish timer drift from synchronous replication/event-loop stalls.
+- Apply one targeted change at a time and rerun the identical scenario after each change.
+
+### Baseline harness prepared; runtime approval blocked
+- Added `scripts/verify-coop-movement-quality.mjs` and `npm run verify:coop-movement`: three isolated authenticated browser contexts, real keyboard flight, active-session join, deceleration, 15 ms diagonal input changes, reversal, changing latency/jitter/requested packet loss, reconnect, WebSocket frame capture, RAF continuity samples, host-clock drift, cross-client pose/velocity/heading divergence, screenshots, and strict task-root cleanup.
+- Credentials/passwords are generated per run and never printed. The harness verifies that its isolated database contains exactly its recorded UUIDs before deleting the complete task root and confirming it is absent.
+- The sandboxed record attempt could not bind a loopback port (`listen EPERM`) and created zero accounts; cleanup verified its fresh temporary root was removed.
+- The required elevated loopback/Chromium run was rejected by the execution approval service because its usage limit was exhausted. No workaround was attempted. The exact pending action is explicit user approval to run `GS_MOVEMENT_MODE=record ... npm run verify:coop-movement` outside the sandbox.
+
+### Additional deterministic evidence
+- Fixed-step sequence `[49, 51, 49, 51, 49, 51, 49, 51]` represents 400 ms wall time: current host-style calls advance only 200 ms, while retaining `remainingMs` advances 400 ms with zero remainder.
+- Current retained-world projection benchmark: ~1.435 MB projection; projection mean 7.08 ms / p95 8.32 ms; fresh projection plus unchanged deep diff 15.84 ms. This is a meaningful 4 Hz event-loop cost but is not accepted as the stutter root without the live trace.
+- `output/verify_combat_steering.mjs` currently fails its solo fixed-tick boundary check: display x samples `1.0500, 0.0210, 0.2625, 0.5250, 0.7875, 1.0290`. Its browser portion also hit the known sandboxed Chromium permission failure.
