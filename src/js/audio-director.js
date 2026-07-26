@@ -16,6 +16,7 @@ export function createAudioDirector(engine) {
   let lastPhase = null;
   let lastView = null;
   let lastIntroPhase = null;
+  let lastIntroKind = null;
   let lastSequenceKey = null;
   let lastSequencePhase = null;
   let primedBattle = null;
@@ -133,12 +134,22 @@ export function createAudioDirector(engine) {
     if (!intro?.active || !intro.phase) {
       if (lastIntroPhase != null) {
         engine.stopLoop('intro');
-        lastIntroPhase = null;
       }
       return;
     }
     if (!engine.isUnlocked()) return;
+    const kind = ['signal', 'corridor', 'docking', 'handoff'].includes(intro.phase) ? 'coop' : 'warp';
+    if (kind !== lastIntroKind) {
+      engine.stopLoop('intro');
+      lastIntroPhase = null;
+      lastIntroKind = kind;
+    }
     if (intro.phase === lastIntroPhase) {
+      if (kind === 'coop' && intro.phase !== 'handoff') {
+        const gains = { signal: 0.42, corridor: 0.68, docking: 0.82 };
+        engine.startLoop('intro', 'coop.link_bed', { gain: gains[intro.phase] ?? 0.5 });
+        return;
+      }
       if (intro.phase === 'awakening' || intro.phase === 'ignition') {
         engine.startLoop('intro', 'intro.bed', {
           gain: intro.phase === 'ignition' ? 0.7 : 0.5,
@@ -151,6 +162,28 @@ export function createAudioDirector(engine) {
       return;
     }
     lastIntroPhase = intro.phase;
+    if (kind === 'coop') {
+      if (intro.phase === 'signal') {
+        engine.startLoop('intro', 'coop.link_bed', { gain: 0.42, fadeSeconds: 0.45 });
+        play('coop.signal', { force: true });
+        return;
+      }
+      if (intro.phase === 'corridor') {
+        engine.startLoop('intro', 'coop.link_bed', { gain: 0.68, fadeSeconds: 0.28 });
+        play('coop.corridor', { force: true });
+        return;
+      }
+      if (intro.phase === 'docking') {
+        engine.startLoop('intro', 'coop.link_bed', { gain: 0.82, fadeSeconds: 0.22 });
+        play('coop.docking', { force: true });
+        return;
+      }
+      if (intro.phase === 'handoff') {
+        engine.stopLoop('intro');
+        play('coop.handoff', { force: true });
+        return;
+      }
+    }
     if (intro.phase === 'awakening') {
       engine.startLoop('intro', 'intro.bed', { gain: 0.5, fadeSeconds: 0.55 });
       play('intro.awakening', { force: true });
@@ -287,11 +320,15 @@ export function createAudioDirector(engine) {
     }) {
       // Prefer the live cinematic clock: boot phase can briefly desync around
       // campaign start (import sets playing, then warpIntro begins).
-      const cinematic = phase === 'warpIntro' || intro?.active === true;
-      const audioPhase = cinematic ? 'warpIntro' : phase;
+      const cinematic = phase === 'warpIntro' || phase === 'coopIntro' || intro?.active === true;
+      const introKind = phase === 'coopIntro'
+        || ['signal', 'corridor', 'docking', 'handoff'].includes(intro?.phase)
+        ? 'coop'
+        : 'warp';
+      const audioPhase = cinematic ? `${introKind}Intro` : phase;
 
       if (lastPhase != null && audioPhase !== lastPhase) {
-        if (audioPhase === 'warpIntro') {
+        if (audioPhase === 'warpIntro' || audioPhase === 'coopIntro') {
           engine.stopLoop('primary');
           engine.stopLoop('flagship');
           // Do not stamp lastIntroPhase here — syncIntro owns phase cues so
@@ -303,8 +340,19 @@ export function createAudioDirector(engine) {
           // cover the skip-to-end path that jumps straight into gameplay.
           if (lastIntroPhase !== 'arrival') play('intro.arrival', { force: true });
           lastIntroPhase = null;
+          lastIntroKind = null;
         }
-        if (audioPhase === 'title') lastIntroPhase = null;
+        if (lastPhase === 'coopIntro' && audioPhase === 'playing') {
+          engine.stopLoop('intro');
+          // A skip can jump directly from any handshake stage to gameplay.
+          if (lastIntroPhase !== 'handoff') play('coop.handoff', { force: true });
+          lastIntroPhase = null;
+          lastIntroKind = null;
+        }
+        if (audioPhase === 'title') {
+          lastIntroPhase = null;
+          lastIntroKind = null;
+        }
       }
       if (lastView != null && view !== lastView && audioPhase === 'playing') play('navigation.view');
       lastPhase = audioPhase;
@@ -330,6 +378,7 @@ export function createAudioDirector(engine) {
       lastSequenceKey = null;
       lastSequencePhase = null;
       lastIntroPhase = null;
+      lastIntroKind = null;
       lastFlagshipSystemId = undefined;
       lastFlagshipTraveling = false;
       primedBattle = null;

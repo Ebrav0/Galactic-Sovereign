@@ -10,6 +10,28 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-26 — Multiplayer intro audio
+
+**Task claimed:** Add sound to the multiplayer join animation.
+
+### Done
+- Added a distinct multiplayer handshake palette: relay telemetry for `signal`, energized gate sweeps for `corridor`, pass-by/engine layers for `docking`, and an impact-confirmation resolve for `handoff`.
+- Added a high-tech relay bed that rises through the first three phases and stops cleanly at handoff.
+- Taught the audio director to distinguish solo warp and multiplayer docking cinematics so skip/completion paths use the correct final cue and never leak the solo arrival sound.
+- Added a deterministic multiplayer-intro test hook and documented the new semantic cue IDs.
+
+### Verification
+- `node output/verify_coop_intro_audio.mjs http://127.0.0.1:5173/` passes all four phases, text-state parity, title-ambience suppression, loop cleanup, normal-completion de-duplication, and skip-to-handoff audio with no page, asset, or console errors.
+- Visually inspected unobstructed corridor and handoff captures; animation state and phase labels match the audio phase under test.
+- Required web-game client completed with a valid state capture.
+- Existing solo title/warp intro audio regression passes after waiting on the director rather than only the headless animation clock.
+- `npm run build`, syntax checks, and `git diff --check` pass.
+
+### Next TODOs
+- Optional: tune individual phase gains after a live multiplayer playtest on speakers/headphones.
+
+---
+
 ## Session 2026-07-26 — Production login origin recovery
 
 **Task claimed:** Diagnose and fix the live login form rejecting correct credentials with `Invalid origin` after deployment.

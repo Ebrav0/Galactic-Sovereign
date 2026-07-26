@@ -3981,6 +3981,26 @@ window.__getWarpIntroState = () => warpIntroState();
 window.__getCoopIntroState = () => coopIntroState();
 window.__setCoopIntroElapsed = (ms) => setCoopIntroElapsedForTest(ms);
 window.__setWarpIntroElapsed = (ms) => setWarpIntroElapsedForTest(ms);
+window.__startCoopIntro = (opts = {}) => {
+  document.getElementById('title-screen')?.classList.add('hidden');
+  setBootPhase(BOOT_PHASE.COOP_INTRO);
+  startCoopIntro(ctx2d, canvas, {
+    serverName: opts.serverName ?? 'STARFALL PRIME',
+    playerName: opts.playerName ?? 'TEST PILOT',
+    playersOnline: opts.playersOnline ?? 3,
+    worldId: opts.worldId ?? 'audio-verification-world',
+    onComplete: () => {
+      setBootPhase(BOOT_PHASE.PLAYING);
+      state.paused = false;
+    },
+    drawGameFrame: (ctx, fade) => {
+      ctx.save();
+      ctx.globalAlpha = fade;
+      drawSystem(ctx, state, viewedSystemId, selection, 0, combatOverlayForRender());
+      ctx.restore();
+    },
+  });
+};
 window.__startWarpIntro = () => {
   document.getElementById('title-screen')?.classList.add('hidden');
   setBootPhase(BOOT_PHASE.WARP_INTRO);

@@ -192,6 +192,49 @@ export const AUDIO_CATALOG = Object.freeze({
       { files: numbered('sci-fi', 'forceField_', 5), gain: 0.14, rateMin: 0.7, rateMax: 0.9, delayMs: 210 },
     ],
   },
+
+  // Multiplayer docking handshake — precise relay telemetry and machinery,
+  // distinct from the solo campaign's large warp-cinematic palette.
+  'coop.signal': {
+    bus: 'world', priority: 6, cooldownMs: 650,
+    layers: [
+      { files: mix('notify_tech.mp3', 'notify_bleep.mp3'), gain: 0.24, rateMin: 0.86, rateMax: 0.96 },
+      { files: mix('cinematic_electric.mp3'), gain: 0.22, rateMin: 0.78, rateMax: 0.9, delayMs: 80 },
+      { files: duck('sfx_19a.mp3', 'sfx_19b.mp3'), gain: 0.1, rateMin: 0.9, rateMax: 1.02, delayMs: 170 },
+    ],
+  },
+  'coop.corridor': {
+    bus: 'world', priority: 6, cooldownMs: 650,
+    layers: [
+      { files: mix('trans_sweep_robot.mp3', 'trans_warp_slide.mp3'), gain: 0.34, rateMin: 0.78, rateMax: 0.92 },
+      { files: numbered('sci-fi', 'forceField_', 5), gain: 0.2, rateMin: 0.7, rateMax: 0.86, delayMs: 70 },
+      { files: mix('cinematic_tunnel.mp3'), gain: 0.18, rateMin: 0.72, rateMax: 0.84, delayMs: 130 },
+    ],
+  },
+  'coop.docking': {
+    bus: 'world', priority: 6, cooldownMs: 650,
+    layers: [
+      { files: mix('trans_passby.mp3', 'cinematic_whoosh_fast.mp3'), gain: 0.34, rateMin: 0.82, rateMax: 0.96 },
+      { files: numbered('sci-fi', 'spaceEngineLarge_', 5), gain: 0.15, rateMin: 0.66, rateMax: 0.8, delayMs: 80 },
+      { files: mix('ui_confirm_a.mp3'), gain: 0.16, rateMin: 0.8, rateMax: 0.9, delayMs: 220 },
+    ],
+  },
+  'coop.handoff': {
+    bus: 'world', priority: 7, cooldownMs: 800,
+    layers: [
+      { files: mix('cinematic_impact.mp3'), gain: 0.4, rateMin: 0.82, rateMax: 0.94 },
+      { files: mix('notify_bleep_confirm.mp3', 'ui_confirm_b.mp3'), gain: 0.25, delayMs: 80 },
+      { files: mix('trans_sweep_robot.mp3'), gain: 0.22, rateMin: 0.88, rateMax: 1, delayMs: 170 },
+    ],
+  },
+  'coop.link_bed': {
+    bus: 'ambience',
+    files: mix('ambience_high_tech.mp3'),
+    gain: 0.22,
+    rateMin: 0.82,
+    rateMax: 0.9,
+    loop: true,
+  },
 });
 
 export const AUDIO_PRELOAD_CUES = Object.freeze([
@@ -199,5 +242,6 @@ export const AUDIO_PRELOAD_CUES = Object.freeze([
   'notification.success', 'notification.warning',
   'navigation.warp_depart', 'navigation.warp_arrive',
   'ambience.title', 'intro.awakening', 'intro.ignition', 'intro.breach', 'intro.arrival', 'intro.bed',
+  'coop.signal', 'coop.corridor', 'coop.docking', 'coop.handoff', 'coop.link_bed',
   'flagship.engine',
 ]);

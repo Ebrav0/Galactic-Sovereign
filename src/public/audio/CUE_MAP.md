@@ -28,3 +28,5 @@ loops. Physical combat layers still use **Kenney** sci-fi / impact.
 | `ambience.system` | `mixkit/ambience_engine_hum.mp3`, `rubberduck/sfx_19*.mp3` |
 | `ambience.dyson` | `mixkit/ambience_bass_suspense.mp3`, `ambience_drone_dark.mp3` |
 | `intro.awakening` / `ignition` / `breach` / `translation` / `arrival` | Mixkit cinematic whoosh / tunnel / impact layers synced to warp-intro phases |
+| `coop.signal` / `corridor` / `docking` / `handoff` | Mixkit telemetry, electric, force-field, engine, sweep, and confirmation layers synced to multiplayer-intro phases |
+| `coop.link_bed` | `mixkit/ambience_high_tech.mp3`, rising under the relay handshake and stopping at handoff |
