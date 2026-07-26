@@ -64,6 +64,8 @@ import {
   activeCombatQueues,
 } from './production.js';
 import { setFlagshipInput, getFlagshipInput, flagshipControlStatus, flagshipEngineStatus, orderTravel, transitStatus, transitEtaMs, toggleFlagshipOrbit, isFlagshipOrbiting, orbitTargetLabel, resyncFlagshipDisplayPose, advanceCoopFlagshipVisual, ensurePlayerFlagships, getPlayerFlagship } from './flagship.js';
+import { createCoopInputRelay } from './coop-input-relay.js';
+import { createRemotePoseBuffer, reconcilePredictedPose } from './coop-motion.js';
 import {
   orderScoutTravel,
   scoutEtaMs,
@@ -463,6 +465,23 @@ let coopPlayers = [];
 const COOP_SYNC_LAG_MS = 250;
 /** Position error budget ≈ how far a flagship can travel in that window. */
 const COOP_SYNC_POS_ERR = FLAGSHIP_MAX_SPEED * (COOP_SYNC_LAG_MS / 1000);
+const coopRemoteFlagshipPoses = createRemotePoseBuffer({
+  interpolationDelayMs: 120,
+  maxExtrapolationMs: 100,
+});
+let coopLocalAuthorityPoses = new WeakMap();
+let coopInputRelay = null;
+const coopMotionDiagnostics = {
+  localHardSnaps: 0,
+  maxLocalCorrectionError: 0,
+};
+
+function resetCoopMotionPresentation() {
+  coopRemoteFlagshipPoses.clear();
+  coopLocalAuthorityPoses = new WeakMap();
+  coopMotionDiagnostics.localHardSnaps = 0;
+  coopMotionDiagnostics.maxLocalCorrectionError = 0;
+}
 
 /**
  * Host-anchored presentation clock.
@@ -598,42 +617,43 @@ function applyPoseToFlagship(f, pose, { local = false, authTime = null } = {}) {
   let hardSnapped = false;
   // While orbiting, position is kinematic from angle+planet time — don't xy-rubber-band.
   if (!orbiting) {
-    let positionPose = pose;
-    // Pose coordinates describe the host's simulation time at send. Project
-    // them forward to the client's smooth host clock before reconciliation so
-    // normal network age is not mistaken for prediction error.
-    if (
-      Number.isFinite(authTime)
-      && Number.isFinite(state.time)
-      && Number.isFinite(pose.x)
-      && Number.isFinite(pose.y)
-    ) {
-      const leadMs = Math.max(0, Math.min(COOP_SYNC_LAG_MS, state.time - authTime));
-      if (leadMs > 0 && (Number.isFinite(pose.vx) || Number.isFinite(pose.vy))) {
-        positionPose = {
-          ...pose,
-          x: pose.x + (Number(pose.vx) || 0) * (leadMs / 1000),
-          y: pose.y + (Number(pose.vy) || 0) * (leadMs / 1000),
-        };
+    const authoritative = {
+      systemId: pose.systemId ?? f.systemId ?? null,
+      time: Number.isFinite(authTime) ? authTime : state.time,
+      x: pose.x,
+      y: pose.y,
+      vx: Number(pose.vx) || 0,
+      vy: Number(pose.vy) || 0,
+      heading: pose.heading,
+    };
+    if (local) {
+      coopLocalAuthorityPoses.set(f, authoritative);
+      if (systemChanged || !Number.isFinite(f.x) || !Number.isFinite(f.y)) {
+        const rec = reconcilePredictedPose(f, authoritative, {
+          renderTimeMs: state.time,
+          dtMs: 0,
+          maxErr: COOP_SYNC_POS_ERR,
+          forceSnap: true,
+        });
+        hardSnapped = rec.hardSnapped;
+      }
+    } else {
+      const added = coopRemoteFlagshipPoses.push(f.pilotId, authoritative, authoritative.time);
+      if (added && (systemChanged || !Number.isFinite(f.x) || !Number.isFinite(f.y))) {
+        const sampled = coopRemoteFlagshipPoses.sample(f.pilotId, authoritative.time + 120);
+        if (sampled) {
+          f.x = sampled.x;
+          f.y = sampled.y;
+          f.vx = sampled.vx;
+          f.vy = sampled.vy;
+          f.heading = sampled.heading;
+        }
+        hardSnapped = true;
       }
     }
-    const rec = reconcilePose2d(f, positionPose, { local, systemChanged });
-    hardSnapped = rec.hardSnapped;
-    reconcileHeading(f, pose.heading, { local, systemChanged });
-    if (typeof pose.vx === 'number') {
-      const thrusting = local && (() => {
-        const inp = getFlagshipInput?.();
-        return inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6;
-      })();
-      f.vx = thrusting && Number.isFinite(f.vx) ? f.vx : (local && Number.isFinite(f.vx) ? f.vx * 0.5 + pose.vx * 0.5 : pose.vx);
-    }
-    if (typeof pose.vy === 'number') {
-      const thrusting = local && (() => {
-        const inp = getFlagshipInput?.();
-        return inp && Math.hypot(inp.x || 0, inp.y || 0) > 1e-6;
-      })();
-      f.vy = thrusting && Number.isFinite(f.vy) ? f.vy : (local && Number.isFinite(f.vy) ? f.vy * 0.5 + pose.vy * 0.5 : pose.vy);
-    }
+  } else {
+    coopLocalAuthorityPoses.delete(f);
+    coopRemoteFlagshipPoses.clear(f.pilotId);
   }
 
   if (typeof pose.hp === 'number') f.hp = pose.hp;
@@ -642,6 +662,37 @@ function applyPoseToFlagship(f, pose, { local = false, authTime = null } = {}) {
   if ('wormholeTransit' in pose) f.wormholeTransit = pose.wormholeTransit;
   if (pose.callsign != null) f.callsign = pose.callsign;
   return { prevSys, systemChanged, hardSnapped };
+}
+
+function advanceCoopFlagshipPresentation(dtMs) {
+  const local = state.flagship;
+  const localAuthority = local ? coopLocalAuthorityPoses.get(local) : null;
+  if (local && localAuthority && !local.orbit && !local.transit && !local.wormholeTransit) {
+    const input = getFlagshipInput();
+    const result = reconcilePredictedPose(local, localAuthority, {
+      renderTimeMs: state.time,
+      dtMs,
+      maxErr: COOP_SYNC_POS_ERR,
+      inputActive: Math.hypot(input.x || 0, input.y || 0) > 1e-6,
+    });
+    coopMotionDiagnostics.maxLocalCorrectionError = Math.max(
+      coopMotionDiagnostics.maxLocalCorrectionError,
+      result.err,
+    );
+    if (result.hardSnapped) coopMotionDiagnostics.localHardSnaps += 1;
+    resyncFlagshipDisplayPose(state);
+  }
+
+  for (const flagship of state.playerFlagships ?? []) {
+    if (!flagship || flagship === local || flagship.orbit || flagship.transit || flagship.wormholeTransit) continue;
+    const sampled = coopRemoteFlagshipPoses.sample(flagship.pilotId, state.time);
+    if (!sampled || (sampled.systemId != null && sampled.systemId !== flagship.systemId)) continue;
+    flagship.x = sampled.x;
+    flagship.y = sampled.y;
+    flagship.vx = sampled.vx;
+    flagship.vy = sampled.vy;
+    flagship.heading = sampled.heading;
+  }
 }
 
 function advanceCoopCombatVisual(state, dtMs) {
@@ -848,6 +899,8 @@ function resetClientCoopPresentation() {
   coopClock.ready = false;
   coopClock.latestHostTime = 0;
   coopClock.latestHostAt = 0;
+  resetCoopMotionPresentation();
+  coopInputRelay?.reset();
   coopPlayers = [];
   follow.allyPilotId = null;
   state.pausedBy = null;
@@ -1305,6 +1358,11 @@ const coop = createCoopClient({
   onNotice: (notice) => toast(notice, 'info'),
   onStatus: (info) => {
     coopStatus = info;
+    if (info.phase === 'closed') {
+      coopInputRelay?.reset({ preserveDesired: true });
+    } else if (info.phase === 'playing') {
+      coopInputRelay?.reset({ preserveDesired: true, resendDesired: true });
+    }
     updateCoopBanner();
   },
   onError: (message) => toast(message, 'error'),
@@ -1716,21 +1774,18 @@ function doFocusTutorial() {
   return { ok: true };
 }
 
-// Throttled WASD relay to the co-op host (host integrates thrust authoritatively).
-const coopThrust = { x: 0, y: 0, sentAt: 0 };
-const COOP_THRUST_MIN_INTERVAL_MS = 50;
+// Latest-value WASD relay to the co-op host (host integrates thrust authoritatively).
+coopInputRelay = createCoopInputRelay({
+  minIntervalMs: 50,
+  send: (x, y) => {
+    if (!coop.isActive()) return;
+    // Fire-and-forget: pose corrections arrive via summaries; no toast spam.
+    coop.command('setFlagshipInput', { x, y }).catch(() => {});
+  },
+});
 
 function sendCoopFlagshipInput(x, y) {
-  const now = performance.now();
-  const changed = x !== coopThrust.x || y !== coopThrust.y;
-  if (!changed) return;
-  const releasing = x === 0 && y === 0;
-  if (!releasing && now - coopThrust.sentAt < COOP_THRUST_MIN_INTERVAL_MS) return;
-  coopThrust.x = x;
-  coopThrust.y = y;
-  coopThrust.sentAt = now;
-  // Fire-and-forget: pose corrections arrive via summaries; no toast spam.
-  coop.command('setFlagshipInput', { x, y }).catch(() => {});
+  coopInputRelay.update(x, y);
 }
 
 function doFlagshipInput(x, y) {
@@ -2910,6 +2965,7 @@ function runFrame(now) {
   if (coop.isActive() && !state.paused) {
     advanceCoopClock(dt);
     advanceCoopFlagshipVisual(state, dt);
+    advanceCoopFlagshipPresentation(dt);
     advanceCoopCombatVisual(state, dt);
   }
 
@@ -4216,8 +4272,16 @@ window.__coopStatus = () => ({
   ...coopStatus,
   active: coop.isActive(),
   summary: coop.getSummary(),
-  diagnostics: coop.getDiagnostics(),
+  diagnostics: {
+    ...coop.getDiagnostics(),
+    ...coopMotionDiagnostics,
+    ...coopRemoteFlagshipPoses.diagnostics(),
+  },
 });
+window.__resetCoopMotionDiagnostics = () => {
+  coopMotionDiagnostics.localHardSnaps = 0;
+  coopMotionDiagnostics.maxLocalCorrectionError = 0;
+};
 window.__fps = () => lastFps;
 
 queueMicrotask(async () => {

@@ -118,6 +118,8 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
       bulkProductionEvents: [], bulkDeliveryEvents: [],
       strategicOperationEvents: [],
       diplomacyEvents: [],
+      remainingMs: 0,
+      ticksAdvanced: 0,
     };
   }
   let remaining = accumulatedMs;
@@ -167,7 +169,7 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
   }
   return {
     captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents,
-    wormholeArrivals, remainingMs: remaining,
+    wormholeArrivals, remainingMs: remaining, ticksAdvanced: ticks,
     builderDroneEvents, droneCompletions, logisticsEvents,
     bulkProductionEvents, bulkDeliveryEvents,
     strategicOperationEvents,

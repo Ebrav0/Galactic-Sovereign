@@ -890,15 +890,18 @@ function handleMessage(ws, raw, req) {
 }
 
 function startTickLoop() {
-  let last = Date.now();
+  let last = performance.now();
+  let remainingMs = 0;
   lastBattleLifecycleFp = battleLifecycleFingerprint(state);
   lastFleetRosterFp = fleetRosterFingerprint(state);
   setInterval(() => {
-    const now = Date.now();
+    const now = performance.now();
     const dt = now - last;
     last = now;
-    const events = step(state, dt);
-    tickCount += 1;
+    const previousTick = tickCount;
+    const events = step(state, remainingMs + dt);
+    remainingMs = events.remainingMs ?? 0;
+    tickCount += events.ticksAdvanced ?? 0;
 
     if ((events?.droneCompletions?.length ?? 0) > 0) {
       dirty = true;
@@ -922,10 +925,10 @@ function startTickLoop() {
       publishPose();
     }
 
-    if (tickCount % SUMMARY_EVERY_TICKS === 0) {
+    if (Math.floor(previousTick / SUMMARY_EVERY_TICKS) < Math.floor(tickCount / SUMMARY_EVERY_TICKS)) {
       publishPose();
     }
-    if (tickCount % DELTA_EVERY_TICKS === 0) {
+    if (Math.floor(previousTick / DELTA_EVERY_TICKS) < Math.floor(tickCount / DELTA_EVERY_TICKS)) {
       publishDelta();
     }
     publishEvents(events);

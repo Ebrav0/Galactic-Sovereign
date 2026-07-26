@@ -2116,3 +2116,17 @@ Never delete prior entries.
 - Fixed-step sequence `[49, 51, 49, 51, 49, 51, 49, 51]` represents 400 ms wall time: current host-style calls advance only 200 ms, while retaining `remainingMs` advances 400 ms with zero remainder.
 - Current retained-world projection benchmark: ~1.435 MB projection; projection mean 7.08 ms / p95 8.32 ms; fresh projection plus unchanged deep diff 15.84 ms. This is a meaningful 4 Hz event-loop cost but is not accepted as the stutter root without the live trace.
 - `output/verify_combat_steering.mjs` currently fails its solo fixed-tick boundary check: display x samples `1.0500, 0.0210, 0.2625, 0.5250, 0.7875, 1.0290`. Its browser portion also hit the known sandboxed Chromium permission failure.
+
+### 2026-07-26 implementation resumed
+- Repaired authenticated readiness detection to use `/api/v1/session`; the full three-client baseline now completes and deletes exactly its isolated three accounts/world root.
+- Baseline evidence: 595.6 ms authority-clock drift over 15.45 s, 10 Hz pose arrival p95 105.7 ms, final convergence within floating-point noise, and all three 15 ms diagonal final inputs missing from the WebSocket stream.
+- Implemented monotonic host timing with carried fixed-step remainder and actual `ticksAdvanced`, latest-value trailing input delivery, time-based local reconciliation, and a 120 ms remote flagship interpolation buffer with 100 ms bounded extrapolation.
+- Added `verify:coop-movement-core` coverage for alternating 49/51 ms timing, delayed/multi-tick and paused stepping, rapid/trailing/release/reconnect input behavior, interpolation/extrapolation, and bounded time-based correction.
+
+### 2026-07-26 acceptance
+- The identical authenticated three-client acceptance run passes: authority-clock drift is 27.1 ms over 15.43 s, normal pose-arrival p95 is 103.4 ms, degraded-recovery drift is 39.0 ms, and degraded pose-arrival p95 is 103.8 ms. Pose frequency remains unchanged.
+- Every rapid final diagonal input was delivered. Normal sustained flight recorded zero backward correction frames, zero hard snaps, a maximum local correction error of 10.2 units against the existing 85-unit budget, and foreground frame-gap p99 of 34.3 ms.
+- Final three-client convergence is effectively exact: position divergence below 0.000000000002 units, zero velocity divergence, and heading divergence below 0.000000000000001 radians. Recovery after degraded networking and reconnect remained inside the synchronization limits.
+- `verify:coop-movement-core`, the production build, the authoritative command gate, authenticated smoke test, and full four-player ship regression pass. The four-player regression also passes ACL, pause, combat, reconnect, cadence, and cross-client agreement checks when the test host is given a test-only high command burst; production rate limits were not changed.
+- Visually inspected normal flight, degraded-network recovery, reconnect, and the standard web-game title flow. Game canvases and flagship presentation rendered correctly. The standard Vite title flow retains its pre-existing hosted-session 404 when no account gateway is running.
+- Both the baseline and acceptance harnesses verified exact deletion of their three temporary accounts and isolated world roots without touching any external account store. The two additional isolated regression roots were also removed and verified absent.

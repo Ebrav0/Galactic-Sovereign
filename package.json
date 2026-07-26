@@ -15,6 +15,7 @@
     "verify:hosted-auth": "node scripts/verify-hosted-auth.mjs",
     "verify:hosted-ui": "node scripts/verify-hosted-ui.mjs",
     "verify:hosted-load": "node scripts/verify-hosted-load.mjs",
+    "verify:coop-movement-core": "node scripts/verify-coop-movement-core.mjs",
     "verify:coop-movement": "node scripts/verify-coop-movement-quality.mjs",
     "verify:world-migration": "node scripts/verify-world-migration.mjs",
     "verify:security": "node scripts/verify-security-hardening.mjs",
