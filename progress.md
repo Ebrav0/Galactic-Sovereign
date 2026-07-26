@@ -10,6 +10,26 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-07-26 — Production login origin recovery
+
+**Task claimed:** Diagnose and fix the live login form rejecting correct credentials with `Invalid origin` after deployment.
+
+### Diagnosis
+- The deployment replaced the prior systemd unit, which carried production origins inline, with the hardened unit that reads `/etc/galactic-sovereign/gateway.env`.
+- That environment file had never been created on the migrated host, so the gateway defaulted `GS_PUBLIC_ORIGIN` to `http://127.0.0.1:8080` and rejected the real HTTPS browser origin before checking credentials.
+
+### Done
+- Restored the four production gateway origin/Access settings in the root-owned environment file and restarted the gateway.
+- Added a deployer preflight that preserves inline settings into the environment file during migration and refuses to mutate production if any required setting is missing.
+
+### Verification
+- Gateway startup now reports `https://play.galacticsovereign.xyz` as its public origin.
+- A safe login probe from the real Play origin reaches credential validation (`401 Invalid username or password` for a nonexistent account); an unrelated origin remains blocked with `403 Invalid origin`.
+- Public `/healthz` remains healthy.
+- `bash -n scripts/deploy-secure-home.sh` and `git diff --check` pass.
+
+---
+
 ## Session 2026-07-26 — Solo command HUD cleanup
 
 **Task claimed:** Clean up the overlapping, crowded top UI shown in the solo-mode screenshot.

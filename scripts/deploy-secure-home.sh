@@ -17,6 +17,35 @@ release_id="${1:-$(git -C "$root" rev-parse --short=12 HEAD)-$(date -u +%Y%m%dT%
 archive="$(GS_RELEASE_OUTPUT_DIR="${GS_RELEASE_OUTPUT_DIR:-$root/release}" "$root/scripts/package-hosted-release.sh" "$release_id")"
 sums="$archive.sha256"
 
+echo "Preserving production gateway origins before service-unit replacement"
+ssh "root@$GS_PVE_SSH_HOST" "pct exec '$GS_PVE_CT_ID' -- bash -lc '
+  set -euo pipefail
+  config=/etc/galactic-sovereign/gateway.env
+  install -d -o root -g root -m 0700 /etc/galactic-sovereign
+  if [[ ! -s \"\$config\" ]]; then
+    staged=\$(mktemp)
+    trap \"rm -f -- '\$staged'\" EXIT
+    systemctl show galactic-sovereign-gateway.service --property=Environment --value |
+      tr \" \" \"\\n\" |
+      sed -n \"/^GS_\\(PUBLIC_ORIGIN\\|ADMIN_ORIGIN\\|ACCESS_TEAM_DOMAIN\\|ACCESS_AUD\\)=/p\" > \"\$staged\"
+    for key in GS_PUBLIC_ORIGIN GS_ADMIN_ORIGIN GS_ACCESS_TEAM_DOMAIN GS_ACCESS_AUD; do
+      grep -q \"^\${key}=\" \"\$staged\" || {
+        echo \"cannot preserve missing production setting: \$key\" >&2
+        exit 1
+      }
+    done
+    install -o root -g galactic-sovereign -m 0640 \"\$staged\" \"\$config\"
+    trap - EXIT
+    rm -f -- \"\$staged\"
+  fi
+  for key in GS_PUBLIC_ORIGIN GS_ADMIN_ORIGIN GS_ACCESS_TEAM_DOMAIN GS_ACCESS_AUD; do
+    grep -q \"^\${key}=\" \"\$config\" || {
+      echo \"production gateway config is missing: \$key\" >&2
+      exit 1
+    }
+  done
+'"
+
 echo "Creating Proxmox and file-level backups before mutation"
 if [[ -n "${GS_PVE_BACKUP_STORAGE:-}" ]]; then
   [[ "$GS_PVE_BACKUP_STORAGE" =~ ^[A-Za-z0-9._-]+$ ]] || { echo 'invalid Proxmox storage name' >&2; exit 2; }
