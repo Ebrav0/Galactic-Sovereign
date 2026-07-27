@@ -120,7 +120,8 @@ for (const engine of engines) {
     assert(await step() === 'map_ping', `${engine}: double-click inspect did not advance`);
     await page.keyboard.press('p');
     assert(await step() === 'system_return', `${engine}: training ping did not advance`);
-    await page.keyboard.press('m');
+    // Show me alone must complete step 13 — players get stuck if told to press M first,
+    // because M only toggles the map layer and can leave them on the inspected neighbor.
     await page.getByRole('button', { name: 'Return home' }).click();
     assert(await step() === 'resources_costs', `${engine}: Stronghold recovery did not advance`);
     await page.getByRole('button', { name: 'Explain credits and income' }).click();

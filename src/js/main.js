@@ -1757,6 +1757,12 @@ function doViewSystem(systemId) {
   if (battle?.active) battle.alertAcknowledged = true;
   const alert = document.getElementById('battle-alert');
   if (alert?.dataset.systemId === systemId) alert.classList.add('hidden');
+  // Double-click / inspect into the Stronghold must count for Foundations step 13.
+  // Toggling M alone can leave viewedSystemId on the neighbor from inspect_star.
+  markTutorialSystemViewed(state);
+  if (systemId === state.stronghold) {
+    recordSoloTutorialEvent('stronghold_returned', { source: 'view_system' });
+  }
 }
 
 function showBattleAlert({ systemId, mode = 'tactical' }) {

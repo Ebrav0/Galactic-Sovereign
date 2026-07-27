@@ -80,6 +80,15 @@ for (const [eventId, expectedStep] of fundamentals) {
   recordTutorialEvent(state, eventId);
   assert.equal(getTutorialState(state).step, expectedStep, `${eventId} should advance to ${expectedStep}`);
 }
+
+{
+  const returnStep = TUTORIAL_STEPS.find((step) => step.id === 'system_return');
+  assert.ok(returnStep, 'system_return step missing');
+  assert.equal(returnStep.controlActionId, undefined, 'system_return must not imply M alone completes the lesson');
+  assert.match(returnStep.objective, /Stronghold/i);
+  assert.match(returnStep.input, /Return home|double-click/i);
+  assert.match(returnStep.why, /M alone/i);
+}
 await new Promise((resolve) => setTimeout(resolve, 0));
 
 setProfileForTest({ tutorialGraduatedAt: 1234 });

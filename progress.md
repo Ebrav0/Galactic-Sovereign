@@ -2294,3 +2294,22 @@ Never delete prior entries.
 - Committed campaign content as `0e8a030` and deployed immutable release `campaign-content-0e8a030-20260727-r1` through the guarded Proxmox/CT workflow.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/campaign-content-0e8a030-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle containing `dominionProgress`, `depotsNeed`, and `wormhole_race`.
 - Login-notification WIP remains uncommitted and was not included in this release.
+
+---
+
+## Session 2026-07-27 — Tutorial step 13 (system_return) stuck fix
+
+**Task claimed:** Step 13 of Foundations confuses players and gets them stuck.
+
+### Cause
+- Copy told players to “Press M, then Show me”, and the coach instruction bound to view-toggle (M).
+- After `inspect_star`, `viewedSystemId` stays on the neighbor. Pressing M only flips System/Galaxy; double-clicking the Stronghold used `doViewSystem`, which never fired `stronghold_returned`.
+
+### Fix
+- Fire `stronghold_returned` when opening the Stronghold via `doViewSystem` (double-click / inspect home).
+- Rewrite step 13 copy so “Return home” is primary and M alone is explicitly not enough.
+- Browser verifier completes step 13 with Return home alone.
+
+### Verification
+- `npm run verify:tutorial` passes.
+- `node scripts/verify-tutorial-browsers.mjs … webkit` passes.
