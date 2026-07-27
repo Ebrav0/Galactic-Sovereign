@@ -6,6 +6,7 @@ import {
   controlActionForCode,
   detectControlPlatform,
   formatControlAction,
+  isEditableControlTarget,
 } from '../src/js/control-registry.js';
 import {
   FOUNDATIONS_COURSE,

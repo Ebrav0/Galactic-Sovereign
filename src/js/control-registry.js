@@ -78,11 +78,23 @@ export function matchesControlAction(event, actionId) {
 }
 
 export function isEditableControlTarget(target) {
-  return target instanceof HTMLInputElement
-    || target instanceof HTMLTextAreaElement
-    || target instanceof HTMLSelectElement
-    || target?.isContentEditable === true
-    || target?.closest?.('button, a[href], [role="button"], [role="link"]') != null;
+  // Only true text/form fields. HUD buttons (Join, Command Deck, etc.) often
+  // keep focus after click — treating them as "editable" swallows WASD and
+  // freezes the flagship, especially after multiplayer join.
+  if (!target || typeof target !== 'object') return false;
+  if (typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement) return true;
+  if (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement) return true;
+  if (typeof HTMLSelectElement !== 'undefined' && target instanceof HTMLSelectElement) return true;
+  return target.isContentEditable === true;
+}
+
+/** Drop focus from HUD chrome so gameplay keys reach the canvas again. */
+export function releaseGameplayKeyboardFocus() {
+  if (typeof document === 'undefined') return;
+  const active = document.activeElement;
+  if (!active || active === document.body || active === document.documentElement) return;
+  if (isEditableControlTarget(active)) return;
+  active.blur?.();
 }
 
 export function detectControlPlatform(nav = globalThis.navigator) {

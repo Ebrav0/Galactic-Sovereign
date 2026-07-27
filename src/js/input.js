@@ -6,6 +6,7 @@ import {
   controlActionForCode,
   emitControlAction,
   isEditableControlTarget,
+  releaseGameplayKeyboardFocus,
 } from './control-registry.js';
 import {
   camera,
@@ -224,6 +225,8 @@ export function attachInput(canvas, ctx) {
   }
 
   canvas.addEventListener('mousedown', (e) => {
+    // Clicking the canvas should reclaim keyboard flight from leftover HUD focus.
+    releaseGameplayKeyboardFocus();
     if (e.button === 1) {
       e.preventDefault();
       pointerDown = true;
