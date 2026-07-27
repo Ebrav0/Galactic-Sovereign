@@ -2283,3 +2283,14 @@ Never delete prior entries.
 ### Verification
 - `npm run verify:campaign-content` and `verify:campaign-content:browser` pass (screenshots in `output/campaign-content/`).
 - Login-notification WIP remains uncommitted and is not included in this release.
+
+---
+
+## Session 2026-07-27 — Campaign content production deployment
+
+**Task claimed:** Deploy Dominion/Economic victories and Wormhole Race / First Hero missions to production.
+
+### Production deployment
+- Committed campaign content as `0e8a030` and deployed immutable release `campaign-content-0e8a030-20260727-r1` through the guarded Proxmox/CT workflow.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/campaign-content-0e8a030-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle containing `dominionProgress`, `depotsNeed`, and `wormhole_race`.
+- Login-notification WIP remains uncommitted and was not included in this release.
