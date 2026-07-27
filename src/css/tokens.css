@@ -88,6 +88,10 @@
   --footer-height: 52px;
   --rail-width: 292px;
   --rail-gap: var(--space-3);
+  --activity-rail-width: 160px;
+  --inspector-width: 300px;
+  --action-deck-height: 96px;
+  --action-deck-height-expanded: 280px;
 
   /* Legacy aliases */
   --hud-bg: var(--bg-panel);

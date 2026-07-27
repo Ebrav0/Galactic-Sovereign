@@ -2,6 +2,8 @@
 
 This package defines three complete player-facing UI directions for Galactic Sovereign. The previews show one focused strategic moment; the accompanying specifications map the rest of the game without cramming every feature into one frame.
 
+**Runtime direction (shipped):** Adaptive Command Deck — live HUD shell in `src/index.html` / `src/js/command-deck.js`. Command Bridge and War Room remain design references only.
+
 Developer, cheat, diagnostic, and administrator controls are intentionally out of scope. Account entry, campaign setup, co-op, saves, audio, tutorials, strategic play, and tactical combat remain in scope.
 
 ## Direction 1 — Command Bridge

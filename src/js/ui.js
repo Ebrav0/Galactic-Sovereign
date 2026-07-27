@@ -153,6 +153,10 @@ import { allTechNodes, derivedTier, techNode } from './tech-web.js';
 import { empireQueueHulls } from './tech-web.js';
 import { hullDisplayName, flagshipHullStage } from './hull.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
+import {
+  applyDeckChrome,
+  resolveDeckContext,
+} from './command-deck.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
   playerShipEtaMs,
@@ -4028,6 +4032,14 @@ export function initUi(ctx) {
     coach.style.visibility = 'hidden';
     coach.classList.remove('hidden');
     const tip = coach.getBoundingClientRect();
+    const activity = el('activity-rail')?.getBoundingClientRect();
+    const inspector = el('context-inspector')?.getBoundingClientRect();
+    const deck = el('action-deck')?.getBoundingClientRect();
+    const mapAnchor = anchor.id === 'game-canvas' || anchor.id === 'game-viewport';
+    // Keep map-anchored coaches out of the central play field under the Deck shell.
+    if (mapAnchor && (placement === 'left' || placement === 'right')) {
+      placement = 'bottom';
+    }
     let left = rect.left;
     let top = rect.top;
     if (placement === 'left') {
@@ -4043,8 +4055,17 @@ export function initUi(ctx) {
       left = rect.left + rect.width / 2 - tip.width / 2;
       top = rect.bottom + gap;
     }
-    left = Math.max(8, Math.min(left, window.innerWidth - tip.width - 8));
-    top = Math.max(8, Math.min(top, window.innerHeight - tip.height - 8));
+    const minLeft = Math.max(8, activity ? activity.right + 8 : 8);
+    const maxLeft = Math.min(
+      window.innerWidth - tip.width - 8,
+      inspector && inspector.width > 40 ? inspector.left - tip.width - 8 : window.innerWidth - tip.width - 8,
+    );
+    const maxTop = Math.min(
+      window.innerHeight - tip.height - 8,
+      deck ? deck.top - tip.height - 8 : window.innerHeight - tip.height - 8,
+    );
+    left = Math.max(minLeft, Math.min(left, Math.max(minLeft, maxLeft)));
+    top = Math.max(8, Math.min(top, Math.max(8, maxTop)));
     coach.style.transform = '';
     coach.style.left = `${Math.round(left)}px`;
     coach.style.top = `${Math.round(top)}px`;
@@ -4486,6 +4507,17 @@ export function initUi(ctx) {
   el('quick-orbit-btn')?.addEventListener('click', () => doToggleOrbit?.());
   el('quick-follow-btn')?.addEventListener('click', () => doFollowFlagship?.());
   el('quick-ping-btn')?.addEventListener('click', () => doMapPing?.({ source: 'button' }));
+  document.querySelectorAll('[data-deck-return]').forEach((btn) => {
+    btn.addEventListener('click', () => closeSidePanel());
+  });
+  el('tech-screen-expand')?.addEventListener('click', () => {
+    const screen = el('tech-screen');
+    if (!screen) return;
+    const next = !screen.classList.contains('tech-screen--fullscreen');
+    screen.classList.toggle('tech-screen--fullscreen', next);
+    el('tech-screen-expand').setAttribute('aria-pressed', next ? 'true' : 'false');
+    el('tech-screen-expand').textContent = next ? 'Collapse' : 'Expand';
+  });
   el('tab-galaxy').addEventListener('click', () => {
     closeSidePanel();
     if (getView() !== 'galaxy') doToggleView();
@@ -5280,6 +5312,22 @@ export function initUi(ctx) {
     el('hud')?.classList.toggle('hud--combat', showCombatUi && phase === 'playing');
     const combatHud = el('combat-hud');
     combatHud?.classList.toggle('hidden', !(showCombatUi && phase === 'playing'));
+
+    const deckContext = resolveDeckContext({
+      view,
+      sidePanel,
+      selection,
+      combatActive: showCombatUi && phase === 'playing',
+      selectedScoutId,
+      selectedBuilderDroneId,
+      selectedBattleGroupId: getSelectedBattleGroupId?.() ?? null,
+    });
+    applyDeckChrome(el('hud'), deckContext, {
+      view,
+      sidePanel,
+      systemName: viewedSystem?.name,
+    });
+
     if (showCombatUi && phase === 'playing' && activeBattle) {
       renderCombatHud(state, activeBattle, viewedSystem?.name, {
         issueTacticalOrder,

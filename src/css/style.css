@@ -159,8 +159,17 @@ html, body {
   z-index: 10;
   pointer-events: none;
   display: grid;
-  grid-template-rows: var(--header-height) 1fr var(--footer-height);
+  grid-template-rows: var(--header-height) 1fr var(--action-deck-height);
   grid-template-columns: 1fr;
+}
+
+#hud.hud--command-deck {
+  --footer-height: var(--action-deck-height);
+}
+
+#hud.hud--command-deck.hud--deck-expanded {
+  --footer-height: min(var(--action-deck-height-expanded), 280px);
+  grid-template-rows: var(--header-height) 1fr var(--footer-height);
 }
 
 /* Cinematic vignette + faint scanlines over the play space. */
@@ -198,12 +207,17 @@ html, body {
 /* Rails and overlays must stay out of the grid flow — the rule above wins on specificity otherwise. */
 #hud > .hud-frame,
 #hud > .hud-rail,
+#hud > #activity-rail,
+#hud > #context-inspector,
 #hud > #hud-overlays {
   position: absolute;
 }
 #hud .hud-rail,
 #hud .hud-header,
-#hud .hud-footer { pointer-events: auto; }
+#hud .hud-footer,
+#hud #activity-rail,
+#hud #context-inspector,
+#hud #action-deck { pointer-events: auto; }
 
 #hud-overlays {
   position: absolute;
@@ -223,7 +237,9 @@ html, body {
 #hud.hud--boot > .hud-frame,
 #hud.hud--boot > .hud-header,
 #hud.hud--boot > .hud-rail,
-#hud.hud--boot > .hud-footer {
+#hud.hud--boot > .hud-footer,
+#hud.hud--boot > #activity-rail,
+#hud.hud--boot > #context-inspector {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -231,7 +247,9 @@ html, body {
 
 #hud.hud--combat > .hud-header,
 #hud.hud--combat > .hud-rail,
-#hud.hud--combat > .hud-footer {
+#hud.hud--combat > .hud-footer,
+#hud.hud--combat > #activity-rail,
+#hud.hud--combat > #context-inspector {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -239,6 +257,160 @@ html, body {
 
 #hud.hud--combat > .hud-frame {
   opacity: 0.55;
+}
+
+/* ===================== ADAPTIVE COMMAND DECK ===================== */
+
+#activity-rail {
+  top: calc(var(--header-height) + var(--rail-gap));
+  bottom: calc(var(--footer-height) + var(--rail-gap));
+  left: var(--space-3);
+  width: var(--activity-rail-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 30;
+  pointer-events: none;
+}
+
+#activity-rail > * { pointer-events: auto; }
+
+.deck-breadcrumb {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-gold);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  clip-path: var(--clip-btn);
+  padding: var(--space-2) var(--space-3);
+  backdrop-filter: blur(var(--panel-blur));
+}
+
+.activity-rail__tabs.tab-bar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: var(--space-2);
+  max-width: none;
+  width: 100%;
+}
+
+.activity-rail__tabs .tab {
+  justify-content: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+}
+
+.activity-rail__tabs .tab__icon {
+  display: inline-flex;
+  width: 1.1em;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.activity-rail__comms {
+  margin-top: auto;
+  max-height: 28%;
+  overflow: hidden;
+}
+
+#context-inspector {
+  top: calc(var(--header-height) + var(--rail-gap));
+  bottom: calc(var(--footer-height) + var(--rail-gap));
+  right: var(--space-3);
+  width: var(--inspector-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 30;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#context-inspector > .hud-rail {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  top: auto;
+  bottom: auto;
+  left: auto;
+  right: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+#context-inspector .hud-rail--right {
+  width: 100%;
+}
+
+.action-deck-host.hud-footer {
+  grid-row: 3;
+  display: block;
+  padding: 0;
+  pointer-events: none;
+}
+
+#action-deck {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  pointer-events: auto;
+  background:
+    linear-gradient(180deg, rgba(5, 17, 45, 0.55), rgba(2, 8, 23, 0.88));
+  border-top: 1px solid var(--border-subtle);
+  backdrop-filter: blur(var(--panel-blur));
+}
+
+#hud.hud--deck-expanded #action-deck {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding-top: var(--space-3);
+}
+
+@media (max-width: 1439px) {
+  :root {
+    --activity-rail-width: 64px;
+    --inspector-width: 300px;
+  }
+
+  .activity-rail__tabs .tab__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .activity-rail__tabs .tab {
+    justify-content: center;
+  }
+
+  .deck-breadcrumb {
+    font-size: 9px;
+    padding: 4px 6px;
+  }
+
+  #hud:not(.hud--deck-activity):not(.hud--deck-expanded) #context-inspector:not(:has(.panel:not(.hidden))) {
+    width: 0;
+    padding: 0;
+    overflow: visible;
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --activity-rail-width: 160px;
+    --inspector-width: 300px;
+  }
 }
 
 #combat-hud {
@@ -885,7 +1057,7 @@ button {
   overflow-y: auto;
   height: auto;
   padding: var(--space-2) var(--space-3);
-  pointer-events: auto;
+  pointer-events: none;
   background:
     linear-gradient(135deg, rgba(242, 197, 92, 0.14), transparent 42%),
     linear-gradient(165deg, rgba(14, 27, 54, 0.97), rgba(5, 10, 24, 0.95));
@@ -894,6 +1066,14 @@ button {
   color: var(--text-primary);
   transform: translateZ(0);
   animation: tutorial-coach-in 0.2s ease-out;
+}
+
+.tutorial-coach button,
+.tutorial-coach a,
+.tutorial-coach input,
+.tutorial-coach select,
+.tutorial-coach .tutorial-coach__actions {
+  pointer-events: auto;
 }
 
 .tutorial-coach--coop {
@@ -3830,7 +4010,7 @@ button {
   padding-bottom: var(--space-3);
 }
 
-/* Full-screen technology web */
+/* Full-screen / slide-over technology & command workspaces */
 .tech-screen {
   position: absolute;
   top: var(--header-height);
@@ -3844,6 +4024,39 @@ button {
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
   overflow: hidden;
+}
+
+.tech-screen--slide {
+  left: max(12vw, 80px);
+  background:
+    linear-gradient(90deg, transparent, rgba(4, 8, 16, 0.55) 18px),
+    linear-gradient(180deg, rgba(4, 8, 16, 0.96), rgba(8, 12, 22, 0.94));
+  border-left: 1px solid var(--border-default);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.45);
+}
+
+.tech-screen--slide.tech-screen--fullscreen,
+.tech-screen.tech-screen--fullscreen {
+  left: 0;
+}
+
+.tech-screen__slide-chrome {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(5, 17, 45, 0.72);
+}
+
+.tech-screen__slide-title {
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-right: auto;
 }
 
 .tech-screen__body {

@@ -4126,6 +4126,7 @@ function doStartNewGame(opts = {}) {
 }
 window.__setBootPhase = (phase) => setBootPhase(phase);
 window.__getBootPhase = () => getBootPhase();
+window.__getView = () => view;
 window.__getWarpIntroState = () => warpIntroState();
 window.__getCoopIntroState = () => coopIntroState();
 window.__setCoopIntroElapsed = (ms) => setCoopIntroElapsedForTest(ms);

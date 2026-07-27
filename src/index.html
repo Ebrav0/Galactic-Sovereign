@@ -18,7 +18,7 @@
     <canvas id="game-canvas"></canvas>
   </div>
 
-  <div id="hud">
+  <div id="hud" class="hud--command-deck" data-deck-context="systemMap">
     <div class="hud-frame" aria-hidden="true">
       <span class="hud-frame__corner hud-frame__corner--tl"></span>
       <span class="hud-frame__corner hud-frame__corner--tr"></span>
@@ -142,7 +142,33 @@
       </div>
     </header>
 
-    <aside id="left-rail" class="hud-rail hud-rail--left">
+    <aside id="activity-rail" class="activity-rail" aria-label="Command activity">
+      <div id="deck-breadcrumb" class="deck-breadcrumb" aria-live="polite">System · Map</div>
+      <nav id="tab-bar" class="tab-bar activity-rail__tabs" aria-label="View navigation">
+        <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy" title="Galaxy"><span class="tab__icon" aria-hidden="true">◈</span><span class="tab__label">Galaxy</span></button>
+        <button type="button" class="tab tab--active" data-view="system" id="tab-system" title="System"><span class="tab__icon" aria-hidden="true">◎</span><span class="tab__label">System</span></button>
+        <button type="button" class="tab" data-panel="fleet" id="tab-fleet" title="Fleet"><span class="tab__icon" aria-hidden="true">⊳</span><span class="tab__label">Fleet</span></button>
+        <button type="button" class="tab" data-panel="logistics" id="tab-logistics" title="Logistics"><span class="tab__icon" aria-hidden="true">⇄</span><span class="tab__label">Logistics</span></button>
+        <button type="button" class="tab" data-panel="tech" id="tab-tech" title="Tech"><span class="tab__icon" aria-hidden="true">✦</span><span class="tab__label">Tech</span></button>
+        <button type="button" class="tab" data-panel="dyson" id="tab-dyson" title="Dyson"><span class="tab__icon" aria-hidden="true">◉</span><span class="tab__label">Dyson</span></button>
+        <button type="button" class="tab" data-panel="diplomacy" id="tab-diplomacy" title="Diplomacy"><span class="tab__icon" aria-hidden="true">☍</span><span class="tab__label">Diplomacy</span></button>
+        <button type="button" class="tab" data-panel="operations" id="tab-operations" title="Operations"><span class="tab__icon" aria-hidden="true">☰</span><span class="tab__label">Operations</span></button>
+        <button type="button" class="tab" data-panel="campaign" id="tab-campaign" title="Campaign"><span class="tab__icon" aria-hidden="true">⚑</span><span class="tab__label">Campaign</span></button>
+      </nav>
+      <div id="notification-log" class="panel panel--compact activity-rail__comms">
+        <div class="panel__header panel__header--toggle">
+          <span class="panel__marker" aria-hidden="true"></span>
+          <span class="panel__title">Comms Log</span>
+          <button type="button" id="notification-toggle" class="btn btn--ghost btn--xs" aria-label="Toggle notifications">−</button>
+        </div>
+        <div id="notification-log-body" class="panel__body notification-log__body">
+          <p class="empty-state">No transmissions yet.</p>
+        </div>
+      </div>
+    </aside>
+
+    <aside id="context-inspector" class="context-inspector" aria-label="Context inspector">
+    <div id="left-rail" class="hud-rail hud-rail--left">
       <div id="fleet-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -325,20 +351,11 @@
           <p class="empty-state">Research nodes appear here.</p>
         </div>
       </div>
-
-      <div id="notification-log" class="panel panel--compact">
-        <div class="panel__header panel__header--toggle">
-          <span class="panel__marker" aria-hidden="true"></span>
-          <span class="panel__title">Comms Log</span>
-          <button type="button" id="notification-toggle" class="btn btn--ghost btn--xs" aria-label="Toggle notifications">−</button>
-        </div>
-        <div id="notification-log-body" class="panel__body notification-log__body">
-          <p class="empty-state">No transmissions yet.</p>
-        </div>
-      </div>
+    </aside>
     </aside>
 
-    <footer id="hud-footer" class="hud-footer">
+    <footer id="hud-footer" class="hud-footer action-deck-host">
+      <div id="action-deck" class="action-deck" aria-label="Command action deck">
       <div id="view-hint" class="view-hint"></div>
       <div id="flight-quick-controls" class="flight-quick-controls" aria-label="Clickable flight controls">
         <button type="button" class="btn btn--ghost btn--xs" data-flight-x="0" data-flight-y="-1" aria-label="Thrust up">↑</button>
@@ -349,25 +366,15 @@
         <button type="button" class="btn btn--ghost btn--xs" id="quick-follow-btn">Follow (F)</button>
         <button type="button" class="btn btn--ghost btn--xs" id="quick-ping-btn">Ping (P)</button>
       </div>
-      <nav id="tab-bar" class="tab-bar" aria-label="View navigation">
-        <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy">Galaxy</button>
-        <button type="button" class="tab tab--active" data-view="system" id="tab-system">System</button>
-        <button type="button" class="tab" data-panel="fleet" id="tab-fleet">Fleet</button>
-        <button type="button" class="tab" data-panel="logistics" id="tab-logistics">Logistics</button>
-        <button type="button" class="tab" data-panel="tech" id="tab-tech">Tech</button>
-        <button type="button" class="tab" data-panel="dyson" id="tab-dyson">Dyson</button>
-        <button type="button" class="tab" data-panel="diplomacy" id="tab-diplomacy">Diplomacy</button>
-        <button type="button" class="tab" data-panel="operations" id="tab-operations">Operations</button>
-        <button type="button" class="tab" data-panel="campaign" id="tab-campaign">Campaign</button>
-      </nav>
       <div id="overlay-controls" class="overlay-controls" aria-label="Galaxy overlays">
         <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-threat">Threat</button>
         <button type="button" class="overlay-toggle" id="overlay-sensor">Sensors</button>
         <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-blockade">Blockades</button>
       </div>
       <div id="command-timeline" class="command-timeline" aria-live="polite">
-        <span class="command-timeline__mode" id="command-mode">Strategic command</span>
+        <span class="command-timeline__mode" id="command-mode">Command Deck · Map</span>
         <span class="command-timeline__detail" id="command-detail">Select a fleet, system, or convoy for contextual orders.</span>
+      </div>
       </div>
     </footer>
 
@@ -965,19 +972,36 @@
         </div>
       </div>
 
-      <div id="diplomacy-screen" class="tech-screen hidden">
+      <div id="diplomacy-screen" class="tech-screen tech-screen--slide hidden" role="dialog" aria-label="Diplomacy workspace">
+        <div class="tech-screen__slide-chrome">
+          <button type="button" class="btn btn--ghost btn--xs deck-workspace-return" data-deck-return>← Return to map</button>
+          <span class="tech-screen__slide-title">Diplomacy</span>
+        </div>
         <div id="diplomacy-screen-body" class="tech-screen__body panel__body"></div>
       </div>
 
-      <div id="operations-screen" class="tech-screen hidden">
+      <div id="operations-screen" class="tech-screen tech-screen--slide hidden" role="dialog" aria-label="Operations workspace">
+        <div class="tech-screen__slide-chrome">
+          <button type="button" class="btn btn--ghost btn--xs deck-workspace-return" data-deck-return>← Return to map</button>
+          <span class="tech-screen__slide-title">Operations</span>
+        </div>
         <div id="operations-screen-body" class="tech-screen__body panel__body"></div>
       </div>
 
-      <div id="campaign-screen" class="tech-screen hidden">
+      <div id="campaign-screen" class="tech-screen tech-screen--slide hidden" role="dialog" aria-label="Campaign workspace">
+        <div class="tech-screen__slide-chrome">
+          <button type="button" class="btn btn--ghost btn--xs deck-workspace-return" data-deck-return>← Return to map</button>
+          <span class="tech-screen__slide-title">Campaign</span>
+        </div>
         <div id="campaign-screen-body" class="tech-screen__body panel__body"></div>
       </div>
 
-      <div id="tech-screen" class="tech-screen hidden">
+      <div id="tech-screen" class="tech-screen tech-screen--slide hidden" role="dialog" aria-label="Technology workspace">
+        <div class="tech-screen__slide-chrome">
+          <button type="button" class="btn btn--ghost btn--xs deck-workspace-return" data-deck-return>← Return to map</button>
+          <span class="tech-screen__slide-title">Technology Web</span>
+          <button type="button" class="btn btn--ghost btn--xs" id="tech-screen-expand" aria-pressed="false">Expand</button>
+        </div>
         <div id="tech-screen-body" class="tech-screen__body"></div>
       </div>
 
