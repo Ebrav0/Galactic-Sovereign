@@ -2252,3 +2252,15 @@ Never delete prior entries.
 
 ### Next TODOs
 - Optional: restore a compact clickable flight pad somewhere other than a full-width footer if playtests miss the on-screen buttons.
+
+---
+
+## Session 2026-07-27 — HUD polish production deployment
+
+**Task claimed:** Deploy the Comms Log / Dyson stacking / action-deck removal HUD polish to production.
+
+### Production deployment
+- Committed HUD polish as `d127311` and deployed immutable release `hud-polish-d127311-20260727-r1` through the guarded Proxmox/CT workflow.
+- Completed a 2.12 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/hud-polish-d127311-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live HTML containing `hud--command-deck`, activity/context rails, and Dyson panel without `action-deck` / `hud-footer`.
+- Login-notification and campaign-content WIP remain uncommitted and were not included in this release.
