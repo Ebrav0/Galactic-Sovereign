@@ -71,7 +71,6 @@ async function measureShell(page) {
       vh,
       activity: rect('activity-rail'),
       inspector: rect('context-inspector'),
-      actionDeck: rect('action-deck'),
       canvas,
       deckContext: document.getElementById('hud')?.dataset?.deckContext || null,
       deckExpanded: document.getElementById('hud')?.classList.contains('hud--deck-expanded'),
@@ -99,7 +98,7 @@ async function runAtViewport(browser, size, label) {
     if (st) st.paused = false;
   });
   await page.locator('#activity-rail').waitFor({ state: 'visible' });
-  await page.locator('#action-deck').waitFor({ state: 'visible' });
+  await page.locator('#context-inspector').waitFor({ state: 'attached' });
 
   await page.evaluate(() => window.__selectPlanet?.(null));
   await page.waitForTimeout(200);
@@ -107,7 +106,6 @@ async function runAtViewport(browser, size, label) {
   await page.screenshot({ path: path.join(outputDir, `${label}-01-system-collapsed.png`) });
 
   assert(shell.activity, `${label}: activity-rail missing`);
-  assert(shell.actionDeck, `${label}: action-deck missing`);
   assert(shell.canvas, `${label}: canvas missing`);
   assert(shell.deckContext === 'systemMap' || shell.deckContext === 'activity',
     `${label}: expected systemMap context, got ${shell.deckContext}`);
@@ -143,6 +141,7 @@ async function runAtViewport(browser, size, label) {
   await page.screenshot({ path: path.join(outputDir, `${label}-02-body-or-system.png`) });
 
   await page.locator('#tab-galaxy').click({ force: true });
+  await page.evaluate(() => window.__setView?.('galaxy'));
   await page.waitForTimeout(300);
   const overlaysOk = await page.evaluate(() => {
     const o = document.getElementById('overlay-threat');

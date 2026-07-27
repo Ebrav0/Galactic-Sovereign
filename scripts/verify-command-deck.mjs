@@ -105,7 +105,8 @@ assert.equal(DECK_LAYOUT.compact.canvasHeightCollapsedMinRatio, 0.64);
 // Shell markers expected after migration
 assert.match(html, /id="activity-rail"/, 'activity-rail region required');
 assert.match(html, /id="context-inspector"/, 'context-inspector region required');
-assert.match(html, /id="action-deck"/, 'action-deck region required');
+assert.doesNotMatch(html, /id="hud-footer"/, 'legacy hud-footer must stay removed');
+assert.doesNotMatch(html, /id="action-deck"/, 'legacy action-deck must stay removed');
 assert.match(html, /id="deck-breadcrumb"/, 'deck-breadcrumb required');
 assert.match(html, /hud--command-deck|command-deck/, 'command deck shell class/marker required');
 

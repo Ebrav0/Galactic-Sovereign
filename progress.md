@@ -2213,3 +2213,42 @@ Never delete prior entries.
 - Completed a 2.07 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/adaptive-command-deck-e7eff9a-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, coop health JSON, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live HTML containing `hud--command-deck`, `activity-rail`, `context-inspector`, and `action-deck`.
 - Login-notification WIP remains uncommitted and was not included in this release.
+
+---
+
+## Session 2026-07-27 — Victory + campaign content (2 victories, 2 missions)
+
+**Task claimed:** Complete Dominion and Economic victory vs GDD §14; wire Wormhole Race and First Hero missions with title/campaign UX.
+
+### Implemented
+- Dominion: systems **or** anchored-wormhole endpoint share ≥ 35%; `campaignSummary.dominionProgress`.
+- Economic: credits + Solarii + ≥3 Export Depots (`VICTORY_ECONOMIC_DEPOTS`); `campaignSummary.economicProgress`.
+- Wormhole Race: advances on unanchored transit settle in `tickShipWormholeTransit` (shared sim; co-op inherits via `enterWormhole`).
+- First Hero: advances inside successful `buildHeroFlagship` (shared; co-op inherits).
+- Title Missions picker (`wormhole_race` / `first_hero`); Campaign door uses `mode: 'campaign'`; Campaign panel shows victory/mission progress.
+- Fixture `scripts/fixtures/campaign-content.json`; verifies `verify:campaign-content` and `verify:campaign-content:browser`.
+
+### Verification
+- `npm run verify:campaign-content` and `verify:campaign-content:browser` pass (screenshots in `output/campaign-content/`).
+- `verify:tutorial`, `verify:coop-movement-core`, `verify_diplomacy_v3.mjs`, `git diff --check`, and full production build pass.
+- Not deployed in this session.
+
+
+---
+
+## Session 2026-07-27 — HUD polish: Comms Log, Dyson panel, action deck removal
+
+**Task claimed:** Fix crowded Comms Log, Dyson panel buried behind other inspector panels, and remove the bottom Strategic Command bar.
+
+### Done
+- Comms Log entries use stacked time/message layout with more padding so the rail feels readable instead of dense.
+- Fixed broken `#context-inspector` markup (`left-rail` was closed with `</aside>`, leaving `#right-rail` as a sibling that overlapped empire queue/intel). Dyson now owns the inspector when selected; competing panels hide.
+- Removed the bottom action deck / Strategic Command footer entirely. Galaxy overlay toggles moved into the header. Flight/orbit/follow/ping remain keyboard-driven; hidden stubs keep bindings alive.
+- Updated command-deck ID fixture + verify scripts for the retired footer.
+
+### Verification
+- Manual browser check: Dyson panel front-and-center, footer gone, log spacing improved.
+- `npm run verify:command-deck` and `verify:command-deck:browser` pass.
+
+### Next TODOs
+- Optional: restore a compact clickable flight pad somewhere other than a full-width footer if playtests miss the on-screen buttons.

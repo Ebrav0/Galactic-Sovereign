@@ -123,6 +123,11 @@
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z"/></svg>
           <span class="btn-label">Galaxy Map (M)</span>
         </button>
+        <div id="overlay-controls" class="overlay-controls hidden" aria-label="Galaxy overlays">
+          <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-threat">Threat</button>
+          <button type="button" class="overlay-toggle" id="overlay-sensor">Sensors</button>
+          <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-blockade">Blockades</button>
+        </div>
         <button id="pause-btn" type="button" class="btn btn--ghost btn--sm">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 3h3v10H4V3zm5 0h3v10H9V3z"/></svg>
           <span class="btn-label">Pause</span>
@@ -264,9 +269,9 @@
           <div id="capture-panel-body"></div>
         </div>
       </div>
-    </aside>
+    </div>
 
-    <aside id="right-rail" class="hud-rail hud-rail--right">
+    <div id="right-rail" class="hud-rail hud-rail--right">
       <div id="build-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
@@ -351,32 +356,22 @@
           <p class="empty-state">Research nodes appear here.</p>
         </div>
       </div>
-    </aside>
+    </div>
     </aside>
 
-    <footer id="hud-footer" class="hud-footer action-deck-host">
-      <div id="action-deck" class="action-deck" aria-label="Command action deck">
-      <div id="view-hint" class="view-hint"></div>
-      <div id="flight-quick-controls" class="flight-quick-controls" aria-label="Clickable flight controls">
-        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="0" data-flight-y="-1" aria-label="Thrust up">↑</button>
-        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="-1" data-flight-y="0" aria-label="Thrust left">←</button>
-        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="0" data-flight-y="1" aria-label="Thrust down">↓</button>
-        <button type="button" class="btn btn--ghost btn--xs" data-flight-x="1" data-flight-y="0" aria-label="Thrust right">→</button>
-        <button type="button" class="btn btn--ghost btn--xs" id="quick-orbit-btn">Orbit (O)</button>
-        <button type="button" class="btn btn--ghost btn--xs" id="quick-follow-btn">Follow (F)</button>
-        <button type="button" class="btn btn--ghost btn--xs" id="quick-ping-btn">Ping (P)</button>
-      </div>
-      <div id="overlay-controls" class="overlay-controls" aria-label="Galaxy overlays">
-        <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-threat">Threat</button>
-        <button type="button" class="overlay-toggle" id="overlay-sensor">Sensors</button>
-        <button type="button" class="overlay-toggle overlay-toggle--active" id="overlay-blockade">Blockades</button>
-      </div>
-      <div id="command-timeline" class="command-timeline" aria-live="polite">
-        <span class="command-timeline__mode" id="command-mode">Command Deck · Map</span>
-        <span class="command-timeline__detail" id="command-detail">Select a fleet, system, or convoy for contextual orders.</span>
-      </div>
-      </div>
-    </footer>
+    <!-- Flight/orbit/follow/ping remain keyboard-driven; stubs keep JS bindings alive. -->
+    <div id="view-hint" class="visually-hidden" aria-hidden="true"></div>
+    <div id="command-mode" class="visually-hidden" aria-hidden="true"></div>
+    <div id="command-detail" class="visually-hidden" aria-hidden="true"></div>
+    <div id="flight-quick-controls" class="visually-hidden" aria-hidden="true" hidden>
+      <button type="button" data-flight-x="0" data-flight-y="-1" tabindex="-1"></button>
+      <button type="button" data-flight-x="-1" data-flight-y="0" tabindex="-1"></button>
+      <button type="button" data-flight-x="0" data-flight-y="1" tabindex="-1"></button>
+      <button type="button" data-flight-x="1" data-flight-y="0" tabindex="-1"></button>
+      <button type="button" id="quick-orbit-btn" tabindex="-1"></button>
+      <button type="button" id="quick-follow-btn" tabindex="-1"></button>
+      <button type="button" id="quick-ping-btn" tabindex="-1"></button>
+    </div>
 
     <div id="battle-alert" class="battle-alert hidden" role="status" aria-live="polite">
       <div>
@@ -659,11 +654,18 @@
               <label for="new-game-victory">Victory goal</label>
               <select id="new-game-victory" class="menu-select">
                 <option value="sandbox">Sandbox (no victory)</option>
-                <option value="dominion">Dominion (35% systems)</option>
+                <option value="dominion">Dominion (35% systems or anchored wormholes)</option>
                 <option value="megastructure">Megastructure (3 Dysons + Helioclast)</option>
                 <option value="annihilation">Annihilation (eliminate AI)</option>
-                <option value="economic">Economic (50k cr + 50 Solarii)</option>
+                <option value="economic">Economic (50k cr + 50 Solarii + 3 Export Depots)</option>
                 <option value="sculptor">Sculptor (3 superweapon actions)</option>
+              </select>
+            </div>
+            <div id="new-game-mission-field" class="menu-field hidden">
+              <label for="new-game-mission">Mission</label>
+              <select id="new-game-mission" class="menu-select">
+                <option value="wormhole_race">Wormhole Race — complete an unanchored transit</option>
+                <option value="first_hero">First Hero Flagship — commission your first hero</option>
               </select>
             </div>
             <div id="new-game-difficulty-field" class="menu-field">

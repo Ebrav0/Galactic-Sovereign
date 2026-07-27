@@ -1242,6 +1242,45 @@ function renderCampaignPanel(container, state, ctx = {}) {
   intro.className = 'panel-note';
   intro.textContent = `Mode: ${camp.mode} · Victory: ${camp.victoryType}${camp.won ? ' · WON' : ''}${camp.defeated ? ' · DEFEATED' : ''}`;
   container.appendChild(intro);
+
+  if (camp.victoryType === 'dominion' && !camp.won) {
+    const dp = camp.dominionProgress;
+    const domNote = document.createElement('p');
+    domNote.className = 'panel-note';
+    domNote.id = 'campaign-dominion-progress';
+    domNote.textContent = `Dominion: systems ${dp.playerSystems}/${dp.systemThreshold}`
+      + (dp.totalAnchors > 0
+        ? ` · anchors ${dp.playerAnchors}/${dp.anchorThreshold}`
+        : ' · anchors (none yet)');
+    container.appendChild(domNote);
+  }
+  if (camp.victoryType === 'economic' && !camp.won) {
+    const ep = camp.economicProgress;
+    const econNote = document.createElement('p');
+    econNote.className = 'panel-note';
+    econNote.id = 'campaign-economic-progress';
+    econNote.textContent = `Economic: ${ep.credits}/${ep.creditsNeed} cr · ${ep.solarii}/${ep.solariiNeed} Solarii · ${ep.depots}/${ep.depotsNeed} depots`;
+    container.appendChild(econNote);
+  }
+  if (camp.activeMissionId) {
+    const mission = listMissions().find((m) => m.id === camp.activeMissionId);
+    const prog = camp.missionProgress?.[camp.activeMissionId] ?? {};
+    const missionBlock = document.createElement('div');
+    missionBlock.className = 'campaign-mission-progress';
+    missionBlock.id = 'campaign-mission-progress';
+    const title = document.createElement('p');
+    title.className = 'panel-note';
+    title.textContent = `Mission: ${mission?.name ?? camp.activeMissionId}`;
+    missionBlock.appendChild(title);
+    for (const obj of mission?.objectives ?? []) {
+      const row = document.createElement('p');
+      row.className = 'panel-note panel-note--muted';
+      row.textContent = `${prog[obj.id] ? '✓' : '○'} ${obj.label}`;
+      missionBlock.appendChild(row);
+    }
+    container.appendChild(missionBlock);
+  }
+
   const mile = document.createElement('p');
   mile.className = 'panel-note panel-note--muted';
   mile.textContent = `Completed Dysons: ${ms.completedDysonCount} · Diplomacy: ${ms.diplomacyUnlocked ? 'yes' : 'no'} · Superweapon: ${ms.superweaponUnlocked ? 'yes' : 'no'}`;
@@ -1322,8 +1361,18 @@ function renderCampaignPanel(container, state, ctx = {}) {
     heroBtn.onclick = () => {
       coopOrLocal('buildHeroFlagship', {}, () => {
         const res = buildHeroFlagship(state);
-        toast(res.ok ? 'Hero flagship queued' : res.reason, res.ok ? 'ok' : 'error');
-      }, { onOk: () => toast('Hero flagship queued', 'ok') });
+        if (!res.ok) {
+          toast(res.reason, 'error');
+          return;
+        }
+        toast('Hero flagship queued', 'ok');
+        if (res.mission?.complete) toast('Mission complete', 'ok');
+      }, {
+        onOk: (res) => {
+          toast('Hero flagship queued', 'ok');
+          if (res?.mission?.complete) toast('Mission complete', 'ok');
+        },
+      });
     };
     container.appendChild(heroBtn);
   }
@@ -4657,15 +4706,17 @@ export function initUi(ctx) {
     const showVictory = flow === 'graduation'
       || flow === 'campaign'
       || (flow === 'custom' && mode === 'campaign');
+    const showMission = flow === 'missions' || (flow === 'custom' && mode === 'mission');
     const showDifficulty = flow !== 'tutorial' && mode !== 'tutorial';
     el('new-game-mode-picker')?.classList.toggle('hidden', !showPicker);
     el('new-game-victory-field')?.classList.toggle('hidden', !showVictory);
+    el('new-game-mission-field')?.classList.toggle('hidden', !showMission);
     el('new-game-difficulty-field')?.classList.toggle('hidden', !showDifficulty);
 
     const start = el('new-game-start-btn');
     if (!start) return;
     if (flow === 'graduation') start.textContent = 'Continue Campaign';
-    else if (flow === 'missions' || mode === 'mission') start.textContent = 'Begin Missions';
+    else if (flow === 'missions' || mode === 'mission') start.textContent = 'Begin Mission';
     else if (flow === 'sandbox' || mode === 'sandbox') start.textContent = 'Begin Sandbox';
     else if (mode === 'tutorial') start.textContent = 'Begin Tutorial';
     else start.textContent = 'Begin Campaign';
@@ -4919,7 +4970,8 @@ export function initUi(ctx) {
         toast('Complete the Academy tutorial to unlock Missions', 'error');
         return;
       }
-      doStartNewGame?.({ mode: 'mission', victoryType: 'dominion', aiDifficulty });
+      const missionId = el('new-game-mission')?.value || 'wormhole_race';
+      doStartNewGame?.({ mode: 'mission', victoryType: 'sandbox', aiDifficulty, missionId });
       closeNewGameModal();
       return;
     }
@@ -4928,7 +4980,7 @@ export function initUi(ctx) {
       closeNewGameModal();
       return;
     }
-    doStartNewGame?.({ mode: 'sandbox', victoryType: vt, aiDifficulty });
+    doStartNewGame?.({ mode: 'campaign', victoryType: vt, aiDifficulty });
     closeNewGameModal();
   });
 
@@ -5354,7 +5406,8 @@ export function initUi(ctx) {
     el('pause-overlay').classList.toggle('hidden', !state.paused || phase !== 'playing');
     el('view-toggle-btn').querySelector('.btn-label').textContent =
       view === 'galaxy' ? 'System View (M)' : 'Galaxy Map (M)';
-    el('view-hint').textContent = contextualViewHint;
+    const viewHint = el('view-hint');
+    if (viewHint) viewHint.textContent = contextualViewHint;
     updateTabBar(view, sidePanel);
     const overlays = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
     el('overlay-controls')?.classList.toggle('hidden', view !== 'galaxy');
@@ -5364,20 +5417,22 @@ export function initUi(ctx) {
 
     const commandMode = el('command-mode');
     const commandDetail = el('command-detail');
-    if (activeBattle?.active) {
-      commandMode.textContent = 'Tactical command';
-      const lastOrder = activeFleetOrders(activeBattle, 'player').at(-1);
-      commandDetail.textContent = lastOrder
-        ? `Order #${lastOrder.sequence}: ${lastOrder.type.replaceAll('_', ' ')}`
-        : 'Battle active — set formation and target priorities.';
-    } else if (logistics.activeConvoyCount > 0) {
-      commandMode.textContent = 'Logistics command';
-      commandDetail.textContent = `${logistics.activeConvoyCount} convoy${logistics.activeConvoyCount === 1 ? '' : 's'} active · ${cargoTotal(logistics.cargoInTransit).toFixed(1)} cargo in transit`;
-    } else {
-      commandMode.textContent = state.paused ? 'Paused order phase' : 'Strategic command';
-      commandDetail.textContent = state.paused
-        ? 'Issue orders while simulation time is stopped.'
-        : 'Select a fleet, system, or convoy for contextual orders.';
+    if (commandMode && commandDetail) {
+      if (activeBattle?.active) {
+        commandMode.textContent = 'Tactical command';
+        const lastOrder = activeFleetOrders(activeBattle, 'player').at(-1);
+        commandDetail.textContent = lastOrder
+          ? `Order #${lastOrder.sequence}: ${lastOrder.type.replaceAll('_', ' ')}`
+          : 'Battle active — set formation and target priorities.';
+      } else if (logistics.activeConvoyCount > 0) {
+        commandMode.textContent = 'Logistics command';
+        commandDetail.textContent = `${logistics.activeConvoyCount} convoy${logistics.activeConvoyCount === 1 ? '' : 's'} active · ${cargoTotal(logistics.cargoInTransit).toFixed(1)} cargo in transit`;
+      } else {
+        commandMode.textContent = state.paused ? 'Paused order phase' : 'Strategic command';
+        commandDetail.textContent = state.paused
+          ? 'Issue orders while simulation time is stopped.'
+          : 'Select a fleet, system, or convoy for contextual orders.';
+      }
     }
 
     const swGalaxyPanel = el('superweapon-galaxy-panel');
@@ -5482,6 +5537,17 @@ export function initUi(ctx) {
     }
 
     const dysonPanel = el('dyson-panel');
+    // Activity tabs own the inspector — park empire queue / intel / scouts so they
+    // don't stack on top of (or shove behind) the focused panel.
+    const inspectorFocusPanel = (sidePanel === 'dyson' && view === 'system')
+      || sidePanel === 'fleet'
+      || sidePanel === 'logistics'
+      || sidePanel === 'tech'
+      || sidePanel === 'diplomacy'
+      || sidePanel === 'operations'
+      || sidePanel === 'campaign';
+    el('empire-queue-panel')?.classList.toggle('hidden', inspectorFocusPanel);
+
     if (sidePanel === 'dyson' && view === 'system') {
       dysonPanel.classList.remove('hidden');
       const system = systemById(state, viewedSystemId);
@@ -5535,7 +5601,7 @@ export function initUi(ctx) {
         : `${readyScouts}${transitScouts ? `+${transitScouts}` : ''}`;
 
     const scoutPanel = el('scout-panel');
-    if (state.scouts.length > 0 && sidePanel !== 'fleet') {
+    if (state.scouts.length > 0 && sidePanel !== 'fleet' && !inspectorFocusPanel) {
       scoutPanel.classList.remove('hidden');
       const rosterSnap = scoutRosterStructureSnapshot(state, selectedScoutId);
       if (rosterSnap !== uiSnapshots.scoutRoster) {
@@ -5554,7 +5620,7 @@ export function initUi(ctx) {
     const intelBody = el('intel-panel-body');
     const captureBody = el('capture-panel-body');
 
-    if (view === 'system' && hasIntel(state, viewedSystemId)) {
+    if (!inspectorFocusPanel && view === 'system' && hasIntel(state, viewedSystemId)) {
       intelPanel.classList.remove('hidden');
       const sys = viewedSystem;
       const req = captureRequirement(state, viewedSystemId);
@@ -5582,7 +5648,7 @@ export function initUi(ctx) {
           captureBody.appendChild(warn);
         }
       }
-    } else if (view === 'system' && viewedSystem) {
+    } else if (!inspectorFocusPanel && view === 'system' && viewedSystem) {
       intelPanel.classList.remove('hidden');
       const noIntelSnap = `no-intel:${viewedSystemId}`;
       if (noIntelSnap !== uiSnapshots.intelBody) {

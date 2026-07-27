@@ -55,7 +55,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     why: 'Your flagship is your personal command ship and must physically travel through each system.',
     expected: 'The flagship moves and its engine trail appears.',
     recovery: 'Return to System view, click the game map, then hold an arrow key.',
-    uiTargetId: 'view-hint',
+    uiTargetId: 'deck-breadcrumb',
     placement: 'top',
   },
   {
@@ -81,7 +81,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     expected: 'The flagship location reads “orbiting” and follows a circular path.',
     recovery: 'Keep the world selected and move closer if Command reports that the body is out of range.',
     actionLabel: 'Show orbit target',
-    uiTargetId: 'view-hint',
+    uiTargetId: 'deck-breadcrumb',
     placement: 'top',
   },
   {
@@ -93,7 +93,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     why: 'You must leave orbit before manually flying to another location.',
     expected: 'The “orbiting” label disappears and manual thrust becomes available.',
     recovery: 'Press O while still in System view; the selected body can remain selected.',
-    uiTargetId: 'view-hint',
+    uiTargetId: 'deck-breadcrumb',
     placement: 'top',
   },
   {
@@ -167,7 +167,7 @@ export const TUTORIAL_STEPS = Object.freeze([
     why: 'Pings mark intent in multiplayer and provide a harmless location marker during training.',
     expected: 'A ping confirmation appears without issuing a travel order.',
     recovery: 'Press P while the map has focus.',
-    uiTargetId: 'view-hint',
+    uiTargetId: 'deck-breadcrumb',
     placement: 'top',
   },
   {

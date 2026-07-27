@@ -1,8 +1,7 @@
 {
-  "generatedAt": "2026-07-27T18:35:33.279Z",
-  "note": "Frozen Adaptive Command Deck ID contract. Do not rename these IDs.",
+  "generatedAt": "2026-07-27T19:24:45.113Z",
+  "note": "Frozen Adaptive Command Deck ID contract. Action deck / hud-footer retired 2026-07-27.",
   "allHtmlIds": [
-    "action-deck",
     "activity-rail",
     "anchor-target-select",
     "audio-ambience-volume",
@@ -225,7 +224,6 @@
     "game-canvas-gl",
     "game-viewport",
     "hud",
-    "hud-footer",
     "hud-overlays",
     "import-file-input",
     "import-save-btn",
@@ -351,7 +349,6 @@
   ],
   "duplicateHtmlIds": [],
   "criticalIds": [
-    "action-deck",
     "activity-rail",
     "audio-settings-btn",
     "battle-alert-view",
@@ -388,7 +385,6 @@
     "game-canvas-gl",
     "game-viewport",
     "hud",
-    "hud-footer",
     "intel-panel",
     "left-rail",
     "logistics-panel",
@@ -448,7 +444,7 @@
     "tab-fleet",
     "tab-galaxy",
     "tab-logistics",
-    "view-hint",
+    "deck-breadcrumb",
     "view-toggle-btn"
   ],
   "coopTutorialUiTargetIds": [
@@ -458,7 +454,7 @@
     "game-canvas",
     "pause-btn",
     "tab-galaxy",
-    "view-hint"
+    "deck-breadcrumb"
   ],
   "fieldManualTargetIds": [
     "combat-hud-advanced-toggle",
@@ -510,7 +506,6 @@
     "queue-corvette-btn"
   ],
   "staticCriticalIds": [
-    "action-deck",
     "activity-rail",
     "audio-settings-btn",
     "battle-alert-view",
@@ -547,7 +542,6 @@
     "game-canvas-gl",
     "game-viewport",
     "hud",
-    "hud-footer",
     "intel-panel",
     "left-rail",
     "logistics-panel",

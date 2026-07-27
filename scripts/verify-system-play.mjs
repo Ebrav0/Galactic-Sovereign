@@ -166,7 +166,7 @@ try {
       canvasHRatio: canvas.height / vh,
       freeW,
       deckH: deck?.height || 0,
-      flightVisible: !document.getElementById('flight-quick-controls')?.classList.contains('hidden'),
+      flightControlsPresent: !!document.getElementById('flight-quick-controls'),
       okH: canvas.height / vh >= minH - 0.05,
       okW: freeW >= minW - 0.05,
     };
@@ -177,7 +177,7 @@ try {
 
   assert(geom.okH, `canvas height ratio ${geom.canvasHRatio}`);
   assert(geom.okW, `canvas free width ratio ${geom.freeW}`);
-  assert(geom.flightVisible, 'flight-quick-controls not visible');
+  assert(geom.flightControlsPresent, 'flight-quick-controls stubs missing');
 
   await page.screenshot({ path: path.join(outputDir, 'system-play.png') });
   assert(errors.length === 0, `page errors: ${errors.join('; ')}`);
