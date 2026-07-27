@@ -2313,3 +2313,13 @@ Never delete prior entries.
 ### Verification
 - `npm run verify:tutorial` passes.
 - `node scripts/verify-tutorial-browsers.mjs … webkit` passes.
+
+---
+
+## Session 2026-07-27 — Tutorial step 13 production deployment
+
+**Task claimed:** Deploy the Foundations step 13 (`system_return`) stuck fix to production.
+
+### Production deployment
+- Committed the fix as `74d5185` and deployed immutable release `tutorial-step13-74d5185-20260727-r1` through the guarded Proxmox/CT workflow.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/tutorial-step13-74d5185-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle containing the clarified “M alone” / Return home copy.
