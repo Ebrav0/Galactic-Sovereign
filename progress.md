@@ -2195,3 +2195,21 @@ Never delete prior entries.
 - Completed a 2.01 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
 - Confirmed the active production release, gateway/co-op/Cloudflare tunnel services, loopback health endpoints, public `https://play.galacticsovereign.xyz/healthz`, HTTP 200 for the live site, and unique Foundations/orbit copy in the CDN-served JavaScript bundle.
 - GitHub source push was denied by the execution environment's code-export policy. The existing private Sites project ID also returned `project_not_found`, so the Sites mirror was not changed; no alternate source-export path was attempted.
+
+---
+
+## Session 2026-07-27 — Adaptive Command Deck production deployment
+
+### Implemented
+- Shipped Adaptive Command Deck as the live HUD shell: activity rail, context inspector, action deck, map-preserving slide-over workspaces, and selection-driven `data-deck-context` chrome while preserving tutorial/field-manual control IDs.
+- Added `src/js/command-deck.js`, frozen ID fixture, and verify scripts `verify:command-deck`, `verify:command-deck:browser`, and `verify:system-play`.
+
+### Verification
+- `verify:command-deck`, `verify:command-deck:browser` (1440 + 1280), `verify:system-play`, `verify:tutorial`, WebKit tutorial browsers, `verify:coop-movement-core`, and production build passed before deploy.
+- Goldens under `output/command-deck/acceptance/`.
+
+### Production deployment
+- Committed Deck source as `e7eff9a` and deployed immutable release `adaptive-command-deck-e7eff9a-20260727-r1` through the guarded Proxmox/CT workflow.
+- Completed a 2.07 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/adaptive-command-deck-e7eff9a-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, coop health JSON, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live HTML containing `hud--command-deck`, `activity-rail`, `context-inspector`, and `action-deck`.
+- Login-notification WIP remains uncommitted and was not included in this release.
