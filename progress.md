@@ -2264,3 +2264,22 @@ Never delete prior entries.
 - Completed a 2.12 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/hud-polish-d127311-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live HTML containing `hud--command-deck`, activity/context rails, and Dyson panel without `action-deck` / `hud-footer`.
 - Login-notification and campaign-content WIP remain uncommitted and were not included in this release.
+
+---
+
+## Session 2026-07-27 — Victory + campaign content (2 victories, 2 missions)
+
+**Task claimed:** Complete Dominion and Economic victory vs GDD §14; wire Wormhole Race and First Hero missions with title/campaign UX.
+
+### Implemented
+- Dominion: systems **or** anchored-wormhole endpoint share ≥ 35%; `campaignSummary.dominionProgress`.
+- Economic: credits + Solarii + ≥3 Export Depots (`VICTORY_ECONOMIC_DEPOTS`); `campaignSummary.economicProgress`.
+- Wormhole Race: advances on unanchored transit settle in `tickShipWormholeTransit` (shared sim; co-op inherits via `enterWormhole`).
+- First Hero: advances inside successful `buildHeroFlagship` (shared; co-op inherits).
+- Title Missions picker (`wormhole_race` / `first_hero`); Campaign door uses `mode: 'campaign'`; Campaign panel shows victory/mission progress.
+- Fixture `scripts/fixtures/campaign-content.json`; verifies `verify:campaign-content` and `verify:campaign-content:browser`.
+- Fixed start toast copy so Campaign/Mission modes no longer say “campaign campaign”.
+
+### Verification
+- `npm run verify:campaign-content` and `verify:campaign-content:browser` pass (screenshots in `output/campaign-content/`).
+- Login-notification WIP remains uncommitted and is not included in this release.

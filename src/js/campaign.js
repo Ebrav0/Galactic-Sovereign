@@ -4,14 +4,15 @@ import {
   VICTORY_DOMINION_THRESHOLD,
   VICTORY_ECONOMIC_CREDITS,
   VICTORY_ECONOMIC_SOLARII,
+  VICTORY_ECONOMIC_DEPOTS,
   VICTORY_SCULPTOR_ACTIONS,
-  SHELL_COUNT,
+  FLAGSHIP_HP,
 } from './constants.js';
-import { getSystems, persistentSystemRecords } from './galaxy-scope.js';
+import { persistentSystemRecords } from './galaxy-scope.js';
 import { superweaponSummary } from './superweapon.js';
 import { countCompletedDysons } from './milestones.js';
 import { listAiFactionsFromState } from './diplomacy.js';
-import { FLAGSHIP_HP } from './constants.js';
+import { logisticsSummary } from './logistics.js';
 import { createTutorialCampaignState, TUTORIAL_STEP_IDS } from './tutorial-access.js';
 
 export const VICTORY_TYPES = [
@@ -93,6 +94,58 @@ export function startTutorial(state) {
   return { ok: true };
 }
 
+/** Anchored wormhole endpoints (each paired link contributes two endpoints). */
+export function countAnchoredWormholeEndpoints(state) {
+  let totalAnchors = 0;
+  let playerAnchors = 0;
+  for (const wh of Object.values(state.wormholes ?? {})) {
+    if (!wh?.anchor) continue;
+    totalAnchors += 1;
+    if (wh.anchorOwner === 'player') playerAnchors += 1;
+  }
+  return { totalAnchors, playerAnchors };
+}
+
+export function dominionProgress(state) {
+  const systems = persistentSystemRecords(state);
+  const playerSystems = systems.filter(({ system }) => system.owner === 'player').length;
+  const totalStars = Object.values(state.galaxies ?? {})
+    .reduce((sum, galaxy) => sum + (galaxy.graph?.stars?.length ?? 0), 0)
+    || systems.length;
+  const systemThreshold = Math.ceil(totalStars * VICTORY_DOMINION_THRESHOLD);
+  const { totalAnchors, playerAnchors } = countAnchoredWormholeEndpoints(state);
+  const anchorThreshold = totalAnchors > 0
+    ? Math.ceil(totalAnchors * VICTORY_DOMINION_THRESHOLD)
+    : 0;
+  return {
+    playerSystems,
+    systemThreshold,
+    totalStars,
+    playerAnchors,
+    anchorThreshold,
+    totalAnchors,
+    systemsMet: playerSystems >= systemThreshold,
+    anchorsMet: totalAnchors > 0 && playerAnchors >= anchorThreshold,
+  };
+}
+
+export function economicProgress(state) {
+  const credits = Math.floor(state.credits ?? 0);
+  const solarii = state.solarii ?? 0;
+  const depots = logisticsSummary(state).depotCount ?? 0;
+  return {
+    credits,
+    creditsNeed: VICTORY_ECONOMIC_CREDITS,
+    solarii,
+    solariiNeed: VICTORY_ECONOMIC_SOLARII,
+    depots,
+    depotsNeed: VICTORY_ECONOMIC_DEPOTS,
+    creditsMet: credits >= VICTORY_ECONOMIC_CREDITS,
+    solariiMet: solarii >= VICTORY_ECONOMIC_SOLARII,
+    depotsMet: depots >= VICTORY_ECONOMIC_DEPOTS,
+  };
+}
+
 export function checkDefeat(state) {
   ensureCampaign(state);
   if (state.campaign.defeated || state.campaign.won) return null;
@@ -133,17 +186,19 @@ export function checkVictory(state) {
   const vt = state.campaign.victoryType;
   if (vt === 'sandbox') return null;
 
-  const systems = persistentSystemRecords(state);
-  const playerSystems = systems.filter(({ system }) => system.owner === 'player').length;
-  const totalStars = Object.values(state.galaxies ?? {})
-    .reduce((sum, galaxy) => sum + (galaxy.graph?.stars?.length ?? 0), 0)
-    || systems.length;
-
   if (vt === 'dominion') {
-    const threshold = Math.ceil(totalStars * VICTORY_DOMINION_THRESHOLD);
-    if (playerSystems >= threshold) {
+    const progress = dominionProgress(state);
+    if (progress.systemsMet || progress.anchorsMet) {
       state.campaign.won = true;
-      return { type: 'victory', victoryType: vt, playerSystems, threshold };
+      return {
+        type: 'victory',
+        victoryType: vt,
+        path: progress.systemsMet ? 'systems' : 'anchors',
+        playerSystems: progress.playerSystems,
+        threshold: progress.systemThreshold,
+        playerAnchors: progress.playerAnchors,
+        anchorThreshold: progress.anchorThreshold,
+      };
     }
   }
 
@@ -157,6 +212,7 @@ export function checkVictory(state) {
   }
 
   if (vt === 'annihilation') {
+    const systems = persistentSystemRecords(state);
     const aiOwned = systems.filter(({ system }) => system.owner === 'ai').length;
     if (aiOwned === 0 && listAiFactionsFromState(state).length > 0) {
       state.campaign.won = true;
@@ -165,15 +221,14 @@ export function checkVictory(state) {
   }
 
   if (vt === 'economic') {
-    if (state.credits >= VICTORY_ECONOMIC_CREDITS && (state.solarii ?? 0) >= VICTORY_ECONOMIC_SOLARII) {
+    const progress = economicProgress(state);
+    if (progress.creditsMet && progress.solariiMet && progress.depotsMet) {
       state.campaign.won = true;
-      return { type: 'victory', victoryType: vt };
+      return { type: 'victory', victoryType: vt, ...progress };
     }
   }
 
   if (vt === 'sculptor') {
-    const actions = state.superweapon?.createCount ?? 0;
-    const destroys = (state.superweapon?.lastAction?.type === 'destroy') ? 1 : 0;
     const total = (state.superweapon?.createCount ?? 0)
       + (state.campaign.missionProgress?.destroyCount ?? 0);
     if (total >= VICTORY_SCULPTOR_ACTIONS) {
@@ -212,5 +267,7 @@ export function campaignSummary(state) {
     activeMissionId: state.campaign.activeMissionId,
     completedMissions: [...(state.campaign.completedMissions ?? [])],
     missionProgress: { ...(state.campaign.missionProgress ?? {}) },
+    dominionProgress: dominionProgress(state),
+    economicProgress: economicProgress(state),
   };
 }

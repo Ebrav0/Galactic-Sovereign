@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-07-27T19:00:00.000Z",
+  "note": "Frozen campaign content thresholds and mission objective ids. Keep in sync with constants.js and missions.js.",
+  "wormholeSettleHook": "tickShipWormholeTransit in src/js/wormholes.js (via tickWormholeTransit)",
+  "thresholds": {
+    "VICTORY_DOMINION_THRESHOLD": 0.35,
+    "VICTORY_ECONOMIC_CREDITS": 50000,
+    "VICTORY_ECONOMIC_SOLARII": 50,
+    "VICTORY_ECONOMIC_DEPOTS": 3,
+    "VICTORY_SCULPTOR_ACTIONS": 3
+  },
+  "missions": {
+    "wormhole_race": {
+      "objectives": ["enter_wormhole"],
+      "requiresUnanchored": true
+    },
+    "first_hero": {
+      "objectives": ["build_hero"]
+    }
+  },
+  "titleMissions": ["wormhole_race", "first_hero"],
+  "coopActionsRequired": ["enterWormhole", "buildHeroFlagship"]
+}

@@ -803,6 +803,8 @@ export const LISTENING_POST_INTEL_BONUS = 1;
 export const VICTORY_DOMINION_THRESHOLD = 0.35;
 export const VICTORY_ECONOMIC_CREDITS = 50000;
 export const VICTORY_ECONOMIC_SOLARII = 50;
+/** Export Depots required for Economic victory (trade-network gate). */
+export const VICTORY_ECONOMIC_DEPOTS = 3;
 export const VICTORY_SCULPTOR_ACTIONS = 3;
 
 // --- Rendering ---

@@ -19,6 +19,7 @@ import { dehydrateGalaxy, hydrateGalaxy } from './hydration.js';
 import { techEffects } from './tech-web.js';
 import { empireStructureEffectValue } from './body-structures.js';
 import { requireTutorialAccess } from './tutorial-access.js';
+import { advanceMissionObjective } from './missions.js';
 
 let wormholeJumpCounter = 0;
 let wormholeArrivalFx = null;
@@ -120,13 +121,18 @@ export function orderWormholeTravel(state, { targetGalaxyId = null, forceAnchore
 
   const fromWh = wormholeIdForGalaxy(state.activeGalaxyId);
   let toWh;
+  let unanchored = true;
   if (targetGalaxyId) {
     toWh = wormholeIdForGalaxy(targetGalaxyId);
     if (!state.wormholes[toWh]) return { ok: false, reason: 'Unknown target galaxy' };
+    unanchored = !(state.wormholes[fromWh]?.anchor === toWh);
   } else if (forceAnchored && state.wormholes[fromWh]?.anchor) {
     toWh = state.wormholes[fromWh].anchor;
+    unanchored = false;
   } else {
     toWh = resolveExitWormhole(state, fromWh);
+    // Default enter prefers an existing anchor; that transit is not the Race.
+    unanchored = state.wormholes[fromWh]?.anchor !== toWh;
   }
 
   if (toWh === fromWh) return { ok: false, reason: 'No valid exit wormhole' };
@@ -149,11 +155,12 @@ export function orderWormholeTravel(state, { targetGalaxyId = null, forceAnchore
     toWh,
     startTime: state.time,
     durationMs,
+    unanchored,
   };
   state.credits = Math.max(0, state.credits - WORMHOLE_HAZARD_CREDIT_COST);
 
   const targetGal = state.wormholes[toWh]?.galaxyId;
-  return { ok: true, fromWh, toWh, targetGalaxyId: targetGal, etaMs: durationMs };
+  return { ok: true, fromWh, toWh, targetGalaxyId: targetGal, etaMs: durationMs, unanchored };
 }
 
 export function tickWormholeTransit(state) {
@@ -198,11 +205,18 @@ function tickShipWormholeTransit(state, f) {
   f.transit = null;
   f.wormholeTransit = null;
 
+  let mission = null;
+  if (wt.unanchored && state.campaign?.activeMissionId === 'wormhole_race') {
+    mission = advanceMissionObjective(state, 'wormhole_race', 'enter_wormhole');
+  }
+
   return {
     fromGalaxyId,
     toGalaxyId,
     fromWh: wt.fromWh,
     toWh: wt.toWh,
+    unanchored: !!wt.unanchored,
+    mission,
   };
 }
 

@@ -15,6 +15,7 @@ import { systemById } from './state.js';
 import { effectiveLegDurationMs } from './strategic-structures.js';
 import { canRouteThroughSystem } from './diplomacy.js';
 import { requireTutorialAccess } from './tutorial-access.js';
+import { advanceMissionObjective } from './missions.js';
 
 let nextHeroId = 1;
 
@@ -94,7 +95,11 @@ export function buildHeroFlagship(state, rallyStarId = null, opts = {}) {
     buildCompleteAt: state.time + HERO_FLAGSHIP_BUILD_MS,
   };
   state.heroFlagships.push(hero);
-  return { ok: true, heroId: hero.id, systemId: hero.systemId };
+  let mission = null;
+  if (state.campaign?.activeMissionId === 'first_hero') {
+    mission = advanceMissionObjective(state, 'first_hero', 'build_hero');
+  }
+  return { ok: true, heroId: hero.id, systemId: hero.systemId, mission };
 }
 
 export function spawnHeroFlagshipForTest(state, systemId) {

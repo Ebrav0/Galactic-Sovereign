@@ -3190,6 +3190,7 @@ function runFrame(now) {
     triggerWormholeArrivalFx(state, wh);
     const destGal = getActiveGalaxy(state);
     toast(`Arrived in ${destGal?.name ?? wh.toGalaxyId} via wormhole`, 'ok');
+    if (wh.mission?.complete) toast('Mission complete', 'ok');
     viewedSystemId = BLACK_HOLE_ID;
     view = 'system';
     follow.enabled = true;
@@ -3952,7 +3953,9 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   galaxyTargetStarId = state.stronghold;
   helioclastTargetingMode = null;
   if (opts.victoryType) setVictoryType(state, opts.victoryType, opts.mode ?? 'sandbox');
+  else if (opts.mode) setVictoryType(state, 'sandbox', opts.mode);
   if (opts.mode === 'tutorial') initTutorial(state, { replay: opts.replay === true });
+  if (opts.missionId) startMission(state, opts.missionId);
   document.getElementById('new-game-modal')?.classList.add('hidden');
   document.getElementById('new-game-modal-backdrop')?.classList.add('hidden');
   doImportState(state);
@@ -4111,7 +4114,13 @@ function doStartNewGame(opts = {}) {
       snapCameraTo(0, 0);
       camera.zoom = CAMERA_DEFAULT_ZOOM;
       follow.enabled = true;
-      toast(`New ${opts.mode ?? 'sandbox'} campaign started`, 'ok');
+      const startToasts = {
+        tutorial: 'Tutorial started',
+        mission: 'Mission started',
+        campaign: 'Campaign started',
+        sandbox: 'Sandbox started',
+      };
+      toast(startToasts[opts.mode] ?? 'New game started', 'ok');
     },
     drawGameFrame: (ctx, fade) => {
       const savedZoom = camera.zoom;
@@ -4337,6 +4346,9 @@ window.__focusTutorial = () => doFocusTutorial();
 window.__setVictoryType = (type, mode) => setVictoryType(state, type, mode);
 window.__checkVictory = () => checkVictory(state);
 window.__checkDefeat = () => checkDefeat(state);
+window.__campaignSummary = () => campaignSummary(state);
+window.__missionsSummary = () => missionsSummary(state);
+window.__getGameState = () => state;
 window.__buildStrategicStructure = (type, planetId) =>
   buildStrategicStructure(state, viewedSystemId, type, planetId ?? selection);
 window.__buildBodyStructure = (type, bodyId) =>
