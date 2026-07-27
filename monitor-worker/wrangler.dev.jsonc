@@ -1,32 +1,20 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "replace-with-worker-name",
+  "name": "galactic-sovereign-monitor-local",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-26",
   "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": false,
-  "routes": [
-    { "pattern": "monitor.example.com", "custom_domain": true },
-    { "pattern": "mobile.example.com", "custom_domain": true }
-  ],
   "assets": {
     "directory": "./mobile/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
     "run_worker_first": true
   },
-  "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1
-  },
-  "triggers": {
-    "crons": ["* * * * *"]
-  },
   "kv_namespaces": [
     { "binding": "HEALTH", "id": "00000000000000000000000000000000" }
   ],
   "r2_buckets": [
-    { "binding": "ARCHIVE", "bucket_name": "replace-with-archive-bucket" }
+    { "binding": "ARCHIVE", "bucket_name": "galactic-sovereign-local-archive" }
   ],
   "send_email": [
     {
@@ -38,8 +26,8 @@
   "vars": {
     "ALERT_TO": "owner@example.com",
     "ALERT_FROM": "alerts@example.com",
-    "MONITOR_HOST": "monitor.example.com",
-    "MOBILE_HOST": "mobile.example.com",
+    "MONITOR_HOST": "localhost",
+    "MOBILE_HOST": "localhost",
     "TEAM_DOMAIN": "https://example.cloudflareaccess.com",
     "POLICY_AUD": "replace-with-mobile-access-audience",
     "LOCAL_DEV_BYPASS": "1"

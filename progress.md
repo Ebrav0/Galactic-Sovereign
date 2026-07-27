@@ -2195,3 +2195,31 @@ Never delete prior entries.
 - Completed a 2.01 GB Proxmox snapshot, immutable file-level backup, checksum validation, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
 - Confirmed the active production release, gateway/co-op/Cloudflare tunnel services, loopback health endpoints, public `https://play.galacticsovereign.xyz/healthz`, HTTP 200 for the live site, and unique Foundations/orbit copy in the CDN-served JavaScript bundle.
 - GitHub source push was denied by the execution environment's code-export policy. The existing private Sites project ID also returned `project_not_found`, so the Sites mirror was not changed; no alternate source-export path was attempted.
+
+---
+
+## Session 2026-07-26 — iOS mobile production status
+
+### Request
+- Build a secure, mobile-only iOS status page reachable from `galacticsovereign.xyz`, with owner login, accurate production data, backend inspection, and thorough testing.
+
+### Implemented
+- Built a dedicated iOS-first status PWA with safe-area layout, four thumb-reachable tabs, pull-to-refresh, offline and stale-data truth states, install manifest, service worker, and owner session controls.
+- Reworked the monitor Worker into an exact-host, read-only status API with strict heartbeat allowlisting, HMAC validation, replay suppression, freshness handling, sanitized trends, Cloudflare Access JWT verification, and fail-closed security headers.
+- Added the mobile Status link to the public website header, hero status indicator, and footer.
+- Added unit, integration, WebKit iPhone, small/large iPhone viewport, touch-target, offline, stale-telemetry, dependency, and design-comparison gates.
+- Corrected `gsctl site-deploy` so an already-active site service is restarted after its atomic release switch instead of continuing to serve the previous release.
+
+### Verification
+- Worker release gate passes: production PWA build, generated Cloudflare bindings, both TypeScript checks, 11/11 unit tests, and Wrangler deployment dry-run.
+- WebKit iPhone 15 Pro full flow passes; Chromium iPhone SE and iPhone 15 Pro Max bounds pass. Healthy, stale, offline, owner-account, trend-period, and touch-target states pass with no application console/page/request failures.
+- Signed-heartbeat integration passes: a valid fresh payload is accepted, a duplicate returns 202 without a second write, a payload older than five minutes returns 400, and a bad HMAC returns 403.
+- Mobile Worker dependency audit and root production dependency audit report zero vulnerabilities. The Electron packaging-only development graph still has npm advisories for current `electron-builder` transitive tooling; no vulnerable package is shipped in the mobile Worker or production server runtime.
+- Design QA passed against the existing Galactic Sovereign 375 x 812 mobile visual truth; report is `monitor-worker/mobile/design-qa.md`.
+
+### Production
+- Created a dedicated Cloudflare Access application for `mobile.galacticsovereign.xyz` with a 12-hour owner-email-only policy, HttpOnly/Lax cookies, and binding-cookie protection.
+- Deployed Worker version `d8728fc0-d780-4c69-8186-fdacc5c55f2a` with static assets and custom domains for both monitor and mobile hosts.
+- Deployed immutable site release `site-mobile-status-20260727T175300Z`; loopback health, active release, current asset hash, and all three public Status links were verified.
+- Production Tailscale inspection found gateway, co-op, public site, health timer, and tunnel active. The sanitized server heartbeat and Cloudflare KV agree on service state, disk use, releases, restore timestamps, UPS state, and players; the expected timestamp/backup-age delta is within the five-minute publish interval. Heartbeat credential files remain root-only mode 0600.
+- The unauthenticated production mobile page and API redirect to the dedicated Cloudflare Access login. Authenticated UI behavior is covered locally with cryptographically valid Access JWT tests; a real owner inbox challenge was not automated.
