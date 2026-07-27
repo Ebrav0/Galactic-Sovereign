@@ -2323,3 +2323,21 @@ Never delete prior entries.
 ### Production deployment
 - Committed the fix as `74d5185` and deployed immutable release `tutorial-step13-74d5185-20260727-r1` through the guarded Proxmox/CT workflow.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/tutorial-step13-74d5185-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle containing the clarified “M alone” / Return home copy.
+
+---
+
+## Session 2026-07-27 — Multiplayer WASD focus freeze fix
+
+**Task claimed:** Deploy the multiplayer player-ship immobility fix (Join button focus swallowing WASD).
+
+### Cause
+- `isEditableControlTarget` treated any focused HUD button as editable, so after Multiplayer → Join the keyboard handler ignored thrust keys.
+
+### Fix
+- Narrow the guard to real text/form fields.
+- Blur leftover HUD focus when entering `PLAYING` and on canvas mousedown.
+
+### Production deployment
+- Committed as `6ad8612` and deployed immutable release `mp-wasd-focus-6ad8612-20260727-r1` through the guarded Proxmox/CT workflow.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/mp-wasd-focus-6ad8612-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle `assets/main-DZO_Lpt_.js` containing the narrowed editable-target check (no button-selector guard).
+- Login-notification WIP remains uncommitted and was not included in this release.

@@ -53,6 +53,12 @@ assert.match(formatControlAction('drone_dispatch', 'windows'), /Ctrl/);
 assert.match(formatControlAction('fleet_dispatch', 'macos'), /Option/);
 assert(Object.keys(CONTROL_ACTIONS).length >= 18);
 
+// HUD buttons must not block WASD (multiplayer Join leaves focus on the button).
+assert.equal(isEditableControlTarget({
+  closest: (sel) => (String(sel).includes('button') ? {} : null),
+}), false);
+assert.equal(isEditableControlTarget({ isContentEditable: true }), true);
+
 const state = createNewGame(80726);
 initTutorial(state);
 assert.equal(getTutorialState(state).step, 'command_overview');
