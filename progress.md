@@ -2341,3 +2341,14 @@ Never delete prior entries.
 - Committed as `6ad8612` and deployed immutable release `mp-wasd-focus-6ad8612-20260727-r1` through the guarded Proxmox/CT workflow.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/mp-wasd-focus-6ad8612-20260727-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle `assets/main-DZO_Lpt_.js` containing the narrowed editable-target check (no button-selector guard).
 - Login-notification WIP remains uncommitted and was not included in this release.
+
+---
+
+## Session 2026-07-27 — Admin presence + solo notices production deployment
+
+**Task claimed:** Deploy admin online presence and owner notices for solo + multiplayer players.
+
+### Production deployment
+- Committed as `fd8be46` and deployed immutable release `admin-presence-fd8be46-20260728-r1` through the guarded Proxmox/CT workflow.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/admin-presence-fd8be46-20260728-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle `assets/main-DcAJwQPB.js` containing `ws/presence` / `presenceReady`.
+- Monitor-worker login-notification WIP remains stashed and was not included in this release.
