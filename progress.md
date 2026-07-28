@@ -2352,3 +2352,19 @@ Never delete prior entries.
 - Committed as `fd8be46` and deployed immutable release `admin-presence-fd8be46-20260728-r1` through the guarded Proxmox/CT workflow.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/admin-presence-fd8be46-20260728-r1`, gateway/co-op/Cloudflare tunnel active, loopback gateway healthz, public `https://play.galacticsovereign.xyz/healthz` HTTP 200, and live bundle `assets/main-DcAJwQPB.js` containing `ws/presence` / `presenceReady`.
 - Monitor-worker login-notification WIP remains stashed and was not included in this release.
+
+---
+
+## Session 2026-07-27 — Login / solo / multiplayer email notifications
+
+**Task claimed:** Finish owner email notifications for credential login, solo play entry, and multiplayer joins.
+
+### Implemented
+- Monitor Worker `POST /events/login` validates HMAC signature + freshness, dedupes by eventId, emails `ALERT_TO` via existing `ALERT_EMAIL` binding.
+- Gateway already posted signed events; production now has `GS_LOGIN_NOTIFICATION_URL` and matching `LOGIN_NOTIFICATION_SECRET`.
+- Hosted solo play calls `reportSoloPlayActivity` on new game / load so `solo.enter` fires.
+
+### Production
+- Committed `3724736`; deployed Worker `galactic-sovereign-monitor` version `f4c7b0ab-76f7-43fc-86b8-bb2182b55614`.
+- Deployed game release `login-notifications-3724736-20260728-r1`.
+- Smoke POSTs for `user.login`, `solo.enter`, and `multiplayer.join` returned HTTP 200 from `https://monitor.galacticsovereign.xyz/events/login`.
