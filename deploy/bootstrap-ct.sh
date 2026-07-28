@@ -41,6 +41,9 @@ if [[ ! -s /etc/galactic-sovereign/credentials/session-pepper ]]; then
   umask 077
   openssl rand -base64 48 > /etc/galactic-sovereign/credentials/session-pepper
 fi
+if [[ ! -s /etc/galactic-sovereign/credentials/login-notification-secret ]]; then
+  openssl rand -base64 48 > /etc/galactic-sovereign/credentials/login-notification-secret
+fi
 chmod 0600 /etc/galactic-sovereign/credentials/* 2>/dev/null || true
 
 install -o root -g root -m 0644 deploy/security/20auto-upgrades /etc/apt/apt.conf.d/20auto-upgrades

@@ -26,6 +26,14 @@ const fmtDuration = (ms) => {
   const m = Math.floor((seconds % 3600) / 60);
   return `${h ? `${h}h ` : ''}${m}m`;
 };
+const fmtMode = (mode) => ({
+  online: 'Online',
+  solo: 'Solo',
+  multiplayer: 'Multiplayer',
+  mixed: 'Mixed',
+}[mode] || 'Online');
+const LIVE_POLL_MS = 4_000;
+let livePollTimer = 0;
 const fmtBytes = (value) => {
   const bytes = Number(value || 0);
   if (bytes < 1024) return `${bytes} B`;
@@ -46,7 +54,7 @@ function previewState() {
   return {
     overview: { gateway: { ok: true }, multiplayer: { ok: true, worldId: 'production-world', playersOnline: 3 }, users: { total: 8, active: 8, disabled: 0 }, soloSaves: 14, activeSessions: 5 },
     operations: { ok: true, readiness: 100, telemetryAgeSeconds: 18, findings: [], telemetry: { timestamp: Math.floor(now / 1000), services: { gateway: true, coop: true, site: true, tunnel: true }, backupAgeSeconds: 420, diskUsePercent: 31, firewallOk: true, restoreTestAt: Math.floor(now / 1000) - 86400, offsiteRestoreTestAt: Math.floor(now / 1000) - 86400, upsState: 'OL', release: 'game-20260722T210000Z', siteRelease: 'site-20260722T215200Z', playersOnline: 3 } },
-    live: [0, 1, 2].map((index) => ({ userId: `preview-${index}`, username: `player-${index + 1}`, displayName: 'Connected player', connectedAt: now - [4_320_000, 2_838_000, 909_000][index], lastActivityAt: now - index * 12_000, connections: 1 })),
+    live: [0, 1, 2].map((index) => ({ userId: `preview-${index}`, username: `player-${index + 1}`, displayName: 'Connected player', connectedAt: now - [4_320_000, 2_838_000, 909_000][index], lastActivityAt: now - index * 12_000, connections: 1, mode: ['multiplayer', 'solo', 'online'][index] })),
     multiplayerHealth: { ok: true, playersOnline: 3, worldId: 'production-world' },
     sessions: [0, 1, 2, 3, 4].map((index) => ({ sessionId: `a1b2c3d4e5${index}0`, userId: `preview-${index}`, username: `player-${index + 1}`, displayName: 'Player account', createdAt: now - (index + 1) * 3_600_000, lastSeenAt: now - index * 24_000, expiresAt: now + 5 * 86_400_000 })),
     releases: { rollbackAvailable: true, game: { current: 'game-20260722T210000Z', releases: [{ id: 'game-20260722T210000Z', surface: 'game', installedAt: now - 86_400_000, current: true }, { id: 'game-20260720T190000Z', surface: 'game', installedAt: now - 3 * 86_400_000, current: false }] }, site: { current: 'site-20260722T215200Z', releases: [{ id: 'site-20260722T215200Z', surface: 'site', installedAt: now - 76_000_000, current: true }, { id: 'site-20260720T171500Z', surface: 'site', installedAt: now - 3 * 86_400_000, current: false }] } },
@@ -150,7 +158,7 @@ function commandView() {
   const newestBackup = state.backups[0];
   return `<div class="mission-grid">
     <section class="board-panel readiness-panel"><div class="readiness-copy"><p class="eyebrow">Production posture</p><h2>${ops?.ok ? 'Operations ready' : 'Action required'}</h2><p>${findings.length ? `${findings.length} production finding${findings.length === 1 ? '' : 's'} require review.` : 'All monitored production systems are operational.'}</p></div><div class="readiness-score" style="--score:${ready ?? 0}"><span>Readiness score</span><strong>${ready ?? '—'}</strong><small>${ops?.ok ? 'Healthy' : 'Review findings'}</small></div><div class="attention"><strong>Needs attention</strong>${findings.length ? findings.map((item) => `<div class="attention-row attention-row--${item.severity}"><i class="ph ph-warning-circle"></i><span>${escapeHtml(item.message)}</span></div>`).join('') : '<div class="attention-row"><i class="ph ph-check-circle"></i><span>No active incidents.</span></div>'}</div></section>
-    <section class="board-panel live-panel"><div class="panel-heading"><div><p class="eyebrow">Live now</p><h2>${state.live.length} player${state.live.length === 1 ? '' : 's'} connected</h2></div><a class="button-outline" href="#live">Open live console <i class="ph ph-arrow-up-right"></i></a></div><div class="live-list">${state.live.length ? state.live.slice(0, 4).map((row) => `<div class="live-row"><i class="ph ph-user-circle"></i><span><strong>${escapeHtml(row.displayName || row.username)}</strong><small>${fmtDuration(Date.now() - row.connectedAt)} connected</small></span>${statusPill(true, 'In game')}</div>`).join('') : '<div class="empty-state">No players connected.</div>'}</div></section>
+    <section class="board-panel live-panel"><div class="panel-heading"><div><p class="eyebrow">Live now</p><h2>${state.live.length} player${state.live.length === 1 ? '' : 's'} online</h2></div><a class="button-outline" href="#live">Open live console <i class="ph ph-arrow-up-right"></i></a></div><div class="live-list">${state.live.length ? state.live.slice(0, 4).map((row) => `<div class="live-row"><i class="ph ph-user-circle"></i><span><strong>${escapeHtml(row.displayName || row.username)}</strong><small>${fmtDuration(Date.now() - row.connectedAt)} · ${escapeHtml(fmtMode(row.mode))}</small></span>${statusPill(true, fmtMode(row.mode))}</div>`).join('') : '<div class="empty-state">No players online.</div>'}</div></section>
     <section class="board-panel matrix-panel"><div class="panel-heading"><div><p class="eyebrow">System matrix</p><h2>Production systems</h2></div><small>Checked ${ops?.telemetryAgeSeconds == null ? 'never' : `${ops.telemetryAgeSeconds}s ago`}</small></div>${serviceMatrix(t)}</section>
     <section class="board-panel trends-panel"><div class="panel-heading"><div><p class="eyebrow">7-day trends</p><h2>Capacity and activity</h2></div><a href="#analytics">Explore analytics</a></div><canvas class="telemetry-chart" data-period="7d" aria-label="Seven day disk, player, and backup trends"></canvas><div class="chart-legend"><span class="legend-disk">Disk use</span><span class="legend-players">Players online</span><span class="legend-backup">Backup age</span></div></section>
     <section class="board-panel recovery-panel"><div class="recovery-row"><i class="ph ph-hard-drives"></i><span><strong>Local restore</strong><small>${t?.restoreTestAt ? 'Verified' : 'No verification recorded'}</small></span><time>${t?.restoreTestAt ? fmtDate(t.restoreTestAt * 1000) : '—'}</time>${statusPill(Boolean(t?.restoreTestAt), t?.restoreTestAt ? 'Verified' : 'Unknown')}</div><div class="recovery-row"><i class="ph ph-cloud-check"></i><span><strong>Offsite restore</strong><small>${t?.offsiteRestoreTestAt ? 'Verified' : 'No verification recorded'}</small></span><time>${t?.offsiteRestoreTestAt ? fmtDate(t.offsiteRestoreTestAt * 1000) : '—'}</time>${statusPill(Boolean(t?.offsiteRestoreTestAt), t?.offsiteRestoreTestAt ? 'Verified' : 'Unknown')}</div><div class="recovery-row"><i class="ph ph-archive"></i><span><strong>Newest backup</strong><small>${newestBackup ? escapeHtml(newestBackup.name) : 'No readable metadata'}</small></span><time>${newestBackup ? fmtAgo(newestBackup.modifiedAt) : '—'}</time>${statusPill(Boolean(newestBackup), newestBackup ? 'Complete' : 'Unknown')}</div></section>
@@ -159,7 +167,7 @@ function commandView() {
 }
 
 function liveView() {
-  return `<div class="section-heading"><div><p class="eyebrow">Multiplayer operations</p><h2>Live players</h2><p>Presence is read from the authenticated Play relay. Network addresses are never exposed here.</p></div>${statusPill(Boolean(state.multiplayerHealth?.ok), state.multiplayerHealth?.ok ? 'World online' : 'World unavailable')}</div><div class="split-layout"><section class="board-panel"><div class="data-list data-list--live"><div class="data-head"><span>Player</span><span>Connected</span><span>Activity</span><span>Connections</span><span></span></div>${state.live.length ? state.live.map((row) => `<div class="data-row"><span><strong>${escapeHtml(row.displayName || row.username)}</strong><small>@${escapeHtml(row.username)}</small></span><span>${fmtDuration(Date.now() - row.connectedAt)}</span><span>${fmtAgo(row.lastActivityAt)}</span><span>${row.connections}</span><span><button data-kick="${escapeHtml(row.userId)}" class="button-danger button-small">Kick</button></span></div>`).join('') : '<div class="empty-state">No players are connected right now.</div>'}</div></section><aside class="board-panel notice-composer"><p class="eyebrow">Maintenance notice</p><h2>Message connected players</h2><p>The message appears as an in-game owner notice. It cannot issue commands or alter game state.</p><form id="notice-form"><label for="notice-message">Message</label><textarea id="notice-message" maxlength="180" required placeholder="Example: Scheduled maintenance begins in 10 minutes."></textarea><button class="button-primary" type="submit">Send notice</button></form></aside></div>`;
+  return `<div class="section-heading"><div><p class="eyebrow">Live operations</p><h2>Online players</h2><p>Players appear when they sign in on Play and leave when they sign out or close the game. Covers title screen, solo worlds, and multiplayer.</p></div>${statusPill(Boolean(state.multiplayerHealth?.ok), state.multiplayerHealth?.ok ? 'World online' : 'World unavailable')}</div><div class="split-layout"><section class="board-panel"><div class="data-list data-list--live">${liveRosterMarkup()}</div></section><aside class="board-panel notice-composer"><p class="eyebrow">Maintenance notice</p><h2>Message online players</h2><p>The message appears as an in-game owner notice for anyone currently signed in — title screen, solo, or multiplayer. It cannot issue commands or alter game state.</p><form id="notice-form"><label for="notice-message">Message</label><textarea id="notice-message" maxlength="180" required placeholder="Example: Scheduled maintenance begins in 10 minutes."></textarea><button class="button-primary" type="submit">Send notice</button></form></aside></div>`;
 }
 
 function sessionsView() {
@@ -205,11 +213,11 @@ function render() {
 
 function bindSection(section) {
   if (section === 'live') {
-    document.querySelectorAll('[data-kick]').forEach((button) => button.addEventListener('click', () => confirmAction({ title: 'Kick player', copy: 'This closes every active multiplayer connection for this account.', label: 'Kick player' }, () => api(`/api/v1/admin/multiplayer/${encodeURIComponent(button.dataset.kick)}/kick`, { method: 'POST', mutation: true }))));
+    bindLiveKickButtons();
     document.querySelector('#notice-form')?.addEventListener('submit', async (event) => {
       event.preventDefault();
       const message = document.querySelector('#notice-message').value;
-      try { const result = await api('/api/v1/admin/multiplayer/notice', { method: 'POST', mutation: true, body: { message } }); notice(`Notice delivered to ${result.delivered} connection${result.delivered === 1 ? '' : 's'}.`, 'ok'); event.target.reset(); await refresh(); } catch (error) { notice(error.message, 'error'); }
+      try { const result = await api('/api/v1/admin/multiplayer/notice', { method: 'POST', mutation: true, body: { message } }); notice(`Notice delivered to ${result.delivered} connection${result.delivered === 1 ? '' : 's'} (solo and multiplayer).`, 'ok'); event.target.reset(); await refresh(); } catch (error) { notice(error.message, 'error'); }
     });
   }
   if (section === 'sessions') document.querySelectorAll('[data-revoke-session]').forEach((button) => button.addEventListener('click', () => confirmAction({ title: 'Revoke session', copy: `Revoke session ${button.dataset.revokeSession}?`, label: 'Revoke session' }, () => api(`/api/v1/admin/sessions/${button.dataset.revokeSession}`, { method: 'DELETE', mutation: true }))));
@@ -306,12 +314,71 @@ function drawCharts() {
 }
 
 function notice(message, type) { const el = document.querySelector('#notice'); el.className = `notice notice--${type}`; el.textContent = message; }
+
+function liveFingerprint(rows) {
+  return (rows || []).map((row) => [
+    row.userId, row.mode, row.connections, row.connectedAt, row.lastActivityAt, row.displayName, row.username,
+  ].join(':')).join('|');
+}
+
+function liveRosterMarkup() {
+  if (!state.live.length) return '<div class="empty-state">No players are online right now.</div>';
+  return `<div class="data-head"><span>Player</span><span>Status</span><span>Connected</span><span>Activity</span><span>Connections</span><span></span></div>${state.live.map((row) => `<div class="data-row"><span><strong>${escapeHtml(row.displayName || row.username)}</strong><small>@${escapeHtml(row.username)}</small></span><span>${escapeHtml(fmtMode(row.mode))}</span><span>${fmtDuration(Date.now() - row.connectedAt)}</span><span>${fmtAgo(row.lastActivityAt)}</span><span>${row.connections}</span><span>${row.mode === 'multiplayer' || row.mode === 'mixed' ? `<button data-kick="${escapeHtml(row.userId)}" class="button-danger button-small">Kick</button>` : ''}</span></div>`).join('')}`;
+}
+
+function bindLiveKickButtons() {
+  document.querySelectorAll('[data-kick]').forEach((button) => button.addEventListener('click', () => confirmAction({ title: 'Kick player', copy: 'This closes every active multiplayer connection for this account.', label: 'Kick player' }, () => api(`/api/v1/admin/multiplayer/${encodeURIComponent(button.dataset.kick)}/kick`, { method: 'POST', mutation: true }))));
+}
+
+function patchLiveRoster() {
+  const section = (location.hash || '#command').slice(1);
+  if (section === 'command') {
+    render();
+    return;
+  }
+  if (section !== 'live') return;
+  const list = document.querySelector('.data-list--live');
+  if (!list) {
+    render();
+    return;
+  }
+  list.innerHTML = liveRosterMarkup();
+  bindLiveKickButtons();
+  const heading = document.querySelector('.section-heading h2');
+  if (heading) heading.textContent = 'Online players';
+}
+
+async function refreshLiveQuietly() {
+  if (previewMode || document.hidden) return;
+  try {
+    const multiplayer = await api('/api/v1/admin/multiplayer');
+    const nextLive = multiplayer.live || [];
+    const changed = liveFingerprint(state.live) !== liveFingerprint(nextLive)
+      || Boolean(state.multiplayerHealth?.ok) !== Boolean(multiplayer.health?.ok);
+    state.live = nextLive;
+    state.multiplayerHealth = multiplayer.health;
+    if (!changed) return;
+    patchLiveRoster();
+  } catch {
+    // Keep the last successful roster until the next poll or manual refresh.
+  }
+}
+
+function startLivePolling() {
+  if (livePollTimer || previewMode) return;
+  livePollTimer = window.setInterval(() => { void refreshLiveQuietly(); }, LIVE_POLL_MS);
+}
+
 async function refresh() { try { document.querySelector('.refresh').disabled = true; await load(); render(); } catch (error) { notice(error.message, 'error'); } finally { document.querySelector('.refresh').disabled = false; } }
 
 try {
   session = await api('/api/v1/admin/session');
   shell();
   await refresh();
+  startLivePolling();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void refreshLiveQuietly();
+  });
 } catch (error) {
   app.innerHTML = `<main class="fatal"><img src="/assets/galactic-sovereign-logo.png" alt="Galactic Sovereign" /><p class="eyebrow">Access validation failed</p><h1>Command unavailable</h1><p>${escapeHtml(error.message)}</p><a href="https://play.galacticsovereign.xyz">Return to Play</a></main>`;
 }

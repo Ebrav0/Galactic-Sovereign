@@ -116,3 +116,18 @@ export function hostedMultiplayerUrl() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws/multiplayer`;
 }
+
+export function hostedPresenceUrl() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws/presence`;
+}
+
+/** Fire-and-forget owner email for hosted solo play entry. */
+export function reportSoloPlayActivity(reason = 'enter') {
+  if (!state.hosted || !state.session?.authenticated) return;
+  void accountApi('/api/v1/activity/play', {
+    method: 'POST',
+    csrf: true,
+    body: { mode: 'solo', reason: String(reason || 'enter').slice(0, 32) },
+  }).catch(() => { /* never block play on notification transport */ });
+}

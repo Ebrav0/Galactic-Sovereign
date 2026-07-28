@@ -99,6 +99,24 @@ function connectMultiplayer(session, hello = {}) {
   });
 }
 
+function connectPresence(session) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${APP_PORT}/ws/presence`, {
+      origin: ORIGIN,
+      headers: { cookie: session.cookie },
+    });
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for presenceReady')), 10_000);
+    socket.on('message', (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'presenceReady') {
+        clearTimeout(timeout);
+        resolve({ socket, ready: message });
+      }
+    });
+    socket.once('error', reject);
+  });
+}
+
 async function main() {
   const bootstrap = new AuthStore({ dataDir: accountDir });
   const owner = await bootstrap.createUser({
@@ -147,6 +165,17 @@ async function main() {
   assert(!ownerMultiplayer.welcome.reconnectToken, 'Authenticated welcome leaked a reconnect token');
   ownerMultiplayer.socket.close();
 
+  const playerPresence = await connectPresence(playerSession);
+  assert(playerPresence.ready.mode === 'online', 'Presence ready did not report online mode');
+  playerPresence.socket.close();
+  const unauthPresence = await new Promise((resolve) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${APP_PORT}/ws/presence`, { origin: ORIGIN });
+    socket.once('open', () => resolve('opened'));
+    socket.once('unexpected-response', (_req, res) => resolve(res.statusCode));
+    socket.once('error', () => resolve('error'));
+  });
+  assert(unauthPresence === 401 || unauthPresence === 'error', `Unauthenticated presence connected (${unauthPresence})`);
+
   const playerMultiplayer = await connectMultiplayer(playerSession);
   const closePromise = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Disabled user WebSocket was not revoked')), 8_000);
@@ -164,7 +193,7 @@ async function main() {
   const revokedApi = await request('/api/v1/saves', { session: playerSession });
   assert(revokedApi.response.status === 401, 'Disabled user retained API access');
 
-  console.log('[hosted-auth] PASS: isolation, ETags, gateway identity, and immediate revocation');
+  console.log('[hosted-auth] PASS: isolation, ETags, gateway identity, presence, and immediate revocation');
 }
 
 try {

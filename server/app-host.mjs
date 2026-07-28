@@ -9,6 +9,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 
 import { AuthStore, generateTemporaryPassword } from './auth-store.mjs';
 import { createAccessAuth } from './access-auth.mjs';
+import { createLoginNotifier } from './login-notifier.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.GS_APP_PORT || 8080);
@@ -42,6 +43,7 @@ function readCredential(name, fileName) {
 
 const GATEWAY_SECRET = readCredential('GS_GATEWAY_SECRET', 'gateway-secret');
 const SESSION_PEPPER = readCredential('GS_SESSION_PEPPER', 'session-pepper');
+const LOGIN_NOTIFICATION_SECRET = readCredential('GS_LOGIN_NOTIFICATION_SECRET', 'login-notification-secret');
 const ADMIN_CSRF_SECRET = readCredential('GS_ADMIN_CSRF_SECRET', 'admin-csrf-secret') || (
   SESSION_PEPPER
     ? crypto.createHmac('sha256', SESSION_PEPPER)
@@ -59,8 +61,15 @@ if ((process.env.NODE_ENV === 'production' || GATEWAY_SECRET) && !SESSION_PEPPER
   throw new Error('Missing session-pepper credential (required in production and whenever gateway secret is configured)');
 }
 const store = new AuthStore({ dataDir: DATA_DIR, sessionPepper: SESSION_PEPPER });
+const loginNotifier = createLoginNotifier({
+  endpoint: process.env.GS_LOGIN_NOTIFICATION_URL,
+  secret: LOGIN_NOTIFICATION_SECRET,
+});
 const loginAttempts = new Map();
+const activityNotifyAt = new Map();
+const ACTIVITY_NOTIFY_COOLDOWN_MS = 60_000;
 const liveSockets = new Set();
+const presenceSockets = new Set();
 const BACKUP_DIR = path.resolve(process.env.GS_BACKUP_DIR || '/var/lib/galactic-sovereign/backups');
 const HEALTH_DIR = path.resolve(process.env.GS_HEALTH_DIR || '/var/lib/galactic-sovereign/health');
 const ADMIN_OPS_SOCKET = process.env.GS_ADMIN_OPS_SOCKET || '/run/galactic-sovereign/admin-ops.sock';
@@ -200,11 +209,28 @@ function releaseInventory(root, currentLink, surface) {
   return { current: releases.find((release) => release.current)?.id || null, releases: releases.slice(0, 12) };
 }
 
+function livePlaySockets() {
+  return [...liveSockets, ...presenceSockets];
+}
+
+function deliverAdminNotice(message) {
+  const notice = `Owner notice: ${message}`;
+  const payload = JSON.stringify({ type: 'adminNotice', notice });
+  let delivered = 0;
+  for (const socket of livePlaySockets()) {
+    if (socket.readyState !== WebSocket.OPEN) continue;
+    socket.send(payload);
+    delivered += 1;
+  }
+  return { delivered, notice, message };
+}
+
 function liveMultiplayerRows() {
   const byAccount = new Map();
-  for (const socket of liveSockets) {
+  for (const socket of livePlaySockets()) {
     const user = socket.gsUser;
     if (!user?.id) continue;
+    const mode = socket.gsPlayMode || 'multiplayer';
     const row = byAccount.get(user.id) || {
       userId: user.id,
       username: user.username,
@@ -212,13 +238,27 @@ function liveMultiplayerRows() {
       connectedAt: socket.gsConnectedAt || null,
       lastActivityAt: socket.gsLastActivityAt || socket.gsConnectedAt || null,
       connections: 0,
+      modes: new Set(),
     };
     row.connections += 1;
+    row.modes.add(mode);
     row.connectedAt = Math.min(row.connectedAt || Infinity, socket.gsConnectedAt || Infinity);
     row.lastActivityAt = Math.max(row.lastActivityAt || 0, socket.gsLastActivityAt || 0);
     byAccount.set(user.id, row);
   }
-  return [...byAccount.values()].sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
+  return [...byAccount.values()]
+    .map((row) => ({
+      userId: row.userId,
+      username: row.username,
+      displayName: row.displayName,
+      connectedAt: row.connectedAt,
+      lastActivityAt: row.lastActivityAt,
+      connections: row.connections,
+      mode: row.modes.has('multiplayer') && row.modes.has('solo')
+        ? 'mixed'
+        : row.modes.has('multiplayer') ? 'multiplayer' : 'solo',
+    }))
+    .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
 }
 
 function adminOpsRequest(payload) {
@@ -405,6 +445,17 @@ function publicSession(session) {
   return { ok: true, authenticated: true, user: session.user, csrfToken: session.csrfToken, expiresAt: session.expiresAt };
 }
 
+function notifyPlayActivity(user, type, context) {
+  if (!loginNotifier.enabled) return false;
+  const key = `${user.id}:${type}`;
+  const now = Date.now();
+  const last = activityNotifyAt.get(key) || 0;
+  if (now - last < ACTIVITY_NOTIFY_COOLDOWN_MS) return false;
+  activityNotifyAt.set(key, now);
+  void loginNotifier.notify(user, { type, context });
+  return true;
+}
+
 async function handleApi(req, res, url) {
   if (url.pathname.startsWith('/api/v1/admin')) {
     return json(res, 404, { ok: false, error: 'API route not found' });
@@ -428,7 +479,22 @@ async function handleApi(req, res, url) {
     loginAttempts.delete(key);
     const created = store.createSession(user.id);
     setSessionCookie(res, created.token);
+    void loginNotifier.notify(user, { type: 'user.login' });
     return json(res, 200, publicSession({ ...created, user }));
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/v1/activity/play') {
+    const session = requireSession(req, res, { ready: true, csrf: true });
+    if (!session) return;
+    const body = await readJson(req, 4 * 1024);
+    const mode = String(body.mode || '').trim();
+    const reason = String(body.reason || '').trim().slice(0, 32);
+    if (mode !== 'solo') return json(res, 400, { ok: false, error: 'Unsupported activity mode' });
+    const notified = notifyPlayActivity(session.user, 'solo.enter', {
+      mode: 'solo',
+      ...(reason ? { reason } : {}),
+    });
+    return json(res, 200, { ok: true, notified });
   }
 
   if (req.method === 'POST' && url.pathname === '/api/v1/auth/logout') {
@@ -594,7 +660,10 @@ async function handleAdminApi(req, res, url, identity) {
   if (req.method === 'GET' && url.pathname === '/api/v1/admin/overview') {
     const multiplayer = await fetchCoopHealth();
     return json(res, 200, {
-      ok: true, gateway: { ok: true }, multiplayer, liveRelayCount: liveSockets.size,
+      ok: true, gateway: { ok: true }, multiplayer,
+      liveRelayCount: liveSockets.size,
+      livePresenceCount: presenceSockets.size,
+      livePlayerCount: livePlaySockets().length,
       releaseId: process.env.GS_RELEASE_ID || null,
       ...store.adminOverviewCounts(),
     });
@@ -612,16 +681,11 @@ async function handleAdminApi(req, res, url, identity) {
     return json(res, 200, { ok: true, health: await fetchCoopHealth(), live: liveMultiplayerRows() });
   }
   if (req.method === 'POST' && url.pathname === '/api/v1/admin/multiplayer/notice') {
-    return adminMutation(req, res, identity, { action: 'multiplayer.notice', resource: 'multiplayer' }, async () => {
+    return adminMutation(req, res, identity, { action: 'multiplayer.notice', resource: 'players' }, async () => {
       const body = await readJson(req, 8 * 1024);
       const message = String(body.message || '').trim().replace(/\s+/g, ' ').slice(0, 180);
       if (message.length < 3) throw new Error('Maintenance notice must be at least 3 characters');
-      let delivered = 0;
-      for (const socket of liveSockets) {
-        if (socket.readyState !== WebSocket.OPEN) continue;
-        socket.send(JSON.stringify({ type: 'adminNotice', notice: `Owner notice: ${message}` }));
-        delivered += 1;
-      }
+      const { delivered } = deliverAdminNotice(message);
       return { payload: { delivered, message } };
     });
   }
@@ -766,6 +830,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const relayServer = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
+const presenceServer = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 });
 
 function rejectUpgrade(socket, status, message) {
   socket.write(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
@@ -778,15 +843,48 @@ server.on('upgrade', (req, socket, head) => {
     return socket.destroy();
   }
   const url = new URL(req.url || '/', PUBLIC_ORIGIN);
-  if (url.pathname !== '/ws/multiplayer') return rejectUpgrade(socket, 404, 'Not Found');
+  if (url.pathname !== '/ws/multiplayer' && url.pathname !== '/ws/presence') {
+    return rejectUpgrade(socket, 404, 'Not Found');
+  }
   if (!validOrigin(req)) return rejectUpgrade(socket, 403, 'Forbidden');
   const session = sessionFor(req, { touch: false });
   if (!session || session.user.mustChangePassword) return rejectUpgrade(socket, 401, 'Unauthorized');
+  if (url.pathname === '/ws/presence') {
+    return presenceServer.handleUpgrade(req, socket, head, (client) => {
+      client.gsSessionHash = session.tokenHash;
+      client.gsUser = session.user;
+      client.gsPlayMode = 'solo';
+      presenceServer.emit('connection', client, req);
+    });
+  }
   if (!GATEWAY_SECRET) return rejectUpgrade(socket, 503, 'Gateway Not Configured');
   relayServer.handleUpgrade(req, socket, head, (client) => {
     client.gsSessionHash = session.tokenHash;
     client.gsUser = session.user;
+    client.gsPlayMode = 'multiplayer';
     relayServer.emit('connection', client, req);
+  });
+});
+
+presenceServer.on('connection', (client) => {
+  client.gsConnectedAt = Date.now();
+  client.gsLastActivityAt = client.gsConnectedAt;
+  client.gsPlayMode = 'online';
+  presenceSockets.add(client);
+  if (client.readyState === WebSocket.OPEN) {
+    client.send(JSON.stringify({ type: 'presenceReady', mode: client.gsPlayMode }));
+  }
+  client.on('message', (data) => {
+    client.gsLastActivityAt = Date.now();
+    let msg;
+    try { msg = JSON.parse(String(data)); } catch { return; }
+    if (msg?.type === 'ping') return;
+    if (msg?.type !== 'presence' && msg?.type !== 'mode') return;
+    const next = String(msg.mode || '').trim();
+    if (next === 'online' || next === 'solo') client.gsPlayMode = next;
+  });
+  client.on('close', () => {
+    presenceSockets.delete(client);
   });
 });
 
@@ -796,6 +894,7 @@ relayServer.on('connection', (client) => {
   liveSockets.add(client);
   const pending = [];
   let pendingBytes = 0;
+  let joinNotified = false;
   const legacyPilot = store.claimedPilotForUser(client.gsUser.id);
   const upstream = new WebSocket(COOP_URL, {
     maxPayload: 8 * 1024 * 1024,
@@ -819,6 +918,10 @@ relayServer.on('connection', (client) => {
   upstream.on('open', () => {
     for (const [data, binary] of pending) upstream.send(data, { binary });
     pending.length = 0;
+    if (!joinNotified) {
+      joinNotified = true;
+      notifyPlayActivity(client.gsUser, 'multiplayer.join', { mode: 'multiplayer' });
+    }
   });
   upstream.on('message', (data, binary) => {
     client.gsLastActivityAt = Date.now();
@@ -837,7 +940,7 @@ relayServer.on('connection', (client) => {
 });
 
 const sessionAuditTimer = setInterval(() => {
-  for (const socket of liveSockets) {
+  for (const socket of livePlaySockets()) {
     if (!store.db.prepare(`
       SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=? AND s.expires_at>? AND u.status='active' AND u.must_change_password=0
@@ -855,7 +958,7 @@ server.listen(PORT, HOST, () => {
 function shutdown(signal) {
   console.log(`[app] ${signal} — closing`);
   clearInterval(sessionAuditTimer);
-  for (const socket of liveSockets) socket.close(1001, 'Server shutdown');
+  for (const socket of livePlaySockets()) socket.close(1001, 'Server shutdown');
   server.close(() => {
     store.close();
     process.exit(0);

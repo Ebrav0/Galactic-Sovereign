@@ -179,7 +179,7 @@ import {
 import { initUi, toast } from './ui.js';
 import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
 import { stellarCatalogInfo } from './star-types.js';
-import { getBootPhase, setBootPhase, BOOT_PHASE } from './boot.js';
+import { getBootPhase, setBootPhase as setBootPhaseRaw, BOOT_PHASE } from './boot.js';
 import {
   startWarpIntro,
   drawWarpIntro,
@@ -375,6 +375,7 @@ import { initAccountUi, setHostedSaveFlushHandler } from './account-ui.js';
 import { applyCombatSummary, applyFleetsSummary } from './coop-protocol.js';
 import { applySharedStateDelta } from './coop-replication.js';
 import { captureCombatDisplayPose } from './combat-steering.js';
+import { createPlayPresence } from './play-presence.js';
 
 let state = createNewGame(DEFAULT_SEED);
 loadProfile();
@@ -382,7 +383,7 @@ state.pirates = spawnPirateFleets(state);
 seedAiFaction(state, state.homeGalaxyId);
 initBuilderDrones(state);
 state.paused = true;
-setBootPhase(BOOT_PHASE.TITLE);
+setBootPhaseRaw(BOOT_PHASE.TITLE);
 let selection = null;
 let view = 'system';
 let viewedSystemId = state.stronghold;
@@ -1136,8 +1137,9 @@ function leaveCoopSession(opts = {}) {
     parkTitleSeedWorld();
     if (opts.silent) return;
     toast('Left co-op — choose Single Player or Multiplayer', 'info');
-  } else if (!opts.silent) {
-    toast('Left co-op session', 'info');
+  } else {
+    syncHostedPlayPresence();
+    if (!opts.silent) toast('Left co-op session', 'info');
   }
 }
 
@@ -1386,9 +1388,38 @@ const coop = createCoopClient({
       coopInputRelay?.reset({ preserveDesired: true, resendDesired: true });
     }
     updateCoopBanner();
+    syncHostedPlayPresence();
   },
   onError: (message) => toast(message, 'error'),
 });
+
+const playPresence = createPlayPresence({
+  onNotice: (notice) => toast(notice, 'info'),
+});
+
+function syncHostedPlayPresence() {
+  if (!isHostedMode()) {
+    playPresence.disable();
+    return;
+  }
+  const session = currentAccountSession();
+  const ready = session?.authenticated && !session.user?.mustChangePassword;
+  // Multiplayer relay already reports presence; avoid double rows/notices.
+  if (!ready || coop.isActive()) {
+    playPresence.disable();
+    return;
+  }
+  const phase = getBootPhase();
+  const mode = (phase === BOOT_PHASE.PLAYING || phase === BOOT_PHASE.WARP_INTRO)
+    ? 'solo'
+    : 'online';
+  playPresence.enable(mode);
+}
+
+function setBootPhase(phase) {
+  setBootPhaseRaw(phase);
+  syncHostedPlayPresence();
+}
 
 const audioEngine = createAudioEngine(AUDIO_CATALOG);
 const audioDirector = createAudioDirector(audioEngine);
@@ -4406,11 +4437,16 @@ queueMicrotask(async () => {
     return;
   }
   await discoverAccountSession();
+  syncHostedPlayPresence();
   let resumeHosted = false;
   try { resumeHosted = sessionStorage.getItem('gs.hosted.coop.autoJoin') === '1'; } catch { /* private mode */ }
   if (isHostedMode() && currentAccountSession()?.authenticated && resumeHosted) {
     await joinCoopSession({ promptPassword: false });
   }
+});
+
+window.addEventListener('gs-account-changed', () => {
+  syncHostedPlayPresence();
 });
 
 initAccountUi().catch((error) => {

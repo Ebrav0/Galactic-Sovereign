@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import WebSocket from 'ws';
 
 const APP_PORT = 20_100 + Math.floor(Math.random() * 200);
 const COOP_PORT = APP_PORT + 300;
@@ -70,18 +71,52 @@ async function adminRequest(pathname, { method = 'GET', body, csrf, origin = ADM
   return { response, payload: contentType.includes('json') ? await response.json() : await response.text() };
 }
 
-async function playRequest(pathname, { method = 'GET', body, cookie } = {}) {
+async function playRequest(pathname, { method = 'GET', body, cookie, csrf } = {}) {
   const origin = `http://127.0.0.1:${APP_PORT}`;
   const response = await fetch(`${origin}${pathname}`, {
     method,
     headers: {
       origin,
       ...(cookie ? { cookie } : {}),
+      ...(csrf ? { 'x-csrf-token': csrf } : {}),
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { response, payload: await response.json() };
+}
+
+function connectPresence(cookie) {
+  const origin = `http://127.0.0.1:${APP_PORT}`;
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${APP_PORT}/ws/presence`, {
+      origin,
+      headers: { cookie },
+    });
+    const timeout = setTimeout(() => reject(new Error('Timed out waiting for presenceReady')), 10_000);
+    socket.on('message', (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === 'presenceReady') {
+        clearTimeout(timeout);
+        resolve({ socket, ready: message });
+      }
+    });
+    socket.once('error', reject);
+  });
+}
+
+function waitForAdminNotice(socket, timeoutMs = 8_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out waiting for adminNotice')), timeoutMs);
+    const onMessage = (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type !== 'adminNotice') return;
+      clearTimeout(timer);
+      socket.off('message', onMessage);
+      resolve(message);
+    };
+    socket.on('message', onMessage);
+  });
 }
 
 try {
@@ -143,17 +178,47 @@ try {
     method: 'POST', body: { username: 'pilot', password: created.payload.temporaryPassword },
   });
   assert.equal(playerLogin.response.status, 200);
-  const playerCookie = playerLogin.response.headers.get('set-cookie')?.split(';')[0];
+  let playerCookie = playerLogin.response.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(playerCookie);
+  const passwordChange = await playRequest('/api/v1/auth/change-password', {
+    method: 'POST',
+    cookie: playerCookie,
+    csrf: playerLogin.payload.csrfToken,
+    body: { currentPassword: created.payload.temporaryPassword, newPassword: 'Pilot Password 123!' },
+  });
+  assert.equal(passwordChange.response.status, 200);
+  const readyLogin = await playRequest('/api/v1/auth/login', {
+    method: 'POST', body: { username: 'pilot', password: 'Pilot Password 123!' },
+  });
+  assert.equal(readyLogin.response.status, 200);
+  playerCookie = readyLogin.response.headers.get('set-cookie')?.split(';')[0];
   assert.ok(playerCookie);
 
   for (const route of ['/api/v1/admin/overview', '/api/v1/admin/operations', '/api/v1/admin/telemetry?period=7d', '/api/v1/admin/multiplayer', '/api/v1/admin/releases', '/api/v1/admin/users', '/api/v1/admin/sessions', '/api/v1/admin/saves', '/api/v1/admin/backups', '/api/v1/admin/audit']) {
     assert.equal((await adminRequest(route)).response.status, 200, `${route} failed`);
   }
+
+  const presence = await connectPresence(playerCookie);
+  assert.equal(presence.ready.mode, 'online');
+  presence.socket.send(JSON.stringify({ type: 'presence', mode: 'solo' }));
+  await delay(100);
+  const noticeWait = waitForAdminNotice(presence.socket);
   const notice = await adminRequest('/api/v1/admin/multiplayer/notice', {
     method: 'POST', csrf: session.payload.csrfToken, body: { message: 'Integration maintenance notice' },
   });
   assert.equal(notice.response.status, 200);
   assert.ok(notice.payload.requestId);
+  assert.equal(notice.payload.delivered, 1);
+  const deliveredNotice = await noticeWait;
+  assert.match(deliveredNotice.notice, /Integration maintenance notice/);
+  const live = await adminRequest('/api/v1/admin/multiplayer');
+  assert.equal(live.response.status, 200);
+  assert.equal(live.payload.live.some((row) => row.username === 'pilot' && row.mode === 'solo'), true);
+  presence.socket.close();
+  await delay(100);
+  const liveAfter = await adminRequest('/api/v1/admin/multiplayer');
+  assert.equal(liveAfter.payload.live.some((row) => row.username === 'pilot'), false);
+
   assert.equal((await adminRequest('/api/v1/admin/telemetry?period=invalid')).response.status, 400);
 
   const sessions = await adminRequest('/api/v1/admin/sessions');

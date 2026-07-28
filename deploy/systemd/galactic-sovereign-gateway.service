@@ -21,6 +21,7 @@ Environment=GS_COOP_INTERNAL_URL=ws://127.0.0.1:9090
 EnvironmentFile=-/etc/galactic-sovereign/gateway.env
 LoadCredential=gateway-secret:/etc/galactic-sovereign/credentials/gateway-secret
 LoadCredential=session-pepper:/etc/galactic-sovereign/credentials/session-pepper
+LoadCredential=login-notification-secret:/etc/galactic-sovereign/credentials/login-notification-secret
 Restart=always
 RestartSec=3
 TimeoutStopSec=15
