@@ -12,6 +12,7 @@ import {
 
 const PLAY_URL = "https://play.galacticsovereign.xyz";
 const ADMIN_URL = "https://admin.galacticsovereign.xyz";
+const STATUS_URL = "https://mobile.galacticsovereign.xyz";
 
 const releases = [
   {
@@ -72,6 +73,7 @@ function Header() {
       <nav aria-label="Primary navigation">
         <a href="/">Home</a>
         <a href="/changelog/">Changelog</a>
+        <a href={STATUS_URL}>Status</a>
         <a href={PLAY_URL}>Play</a>
         <a href={ADMIN_URL}>Admin</a>
       </nav>
@@ -87,6 +89,7 @@ function Footer() {
       <nav aria-label="Footer navigation">
         <a href={PLAY_URL}>Play</a>
         <a href={ADMIN_URL}>Admin</a>
+        <a href={STATUS_URL}>Status</a>
         <a href="/changelog/">Changelog</a>
         <a href="/privacy/">Privacy</a>
       </nav>
@@ -146,7 +149,7 @@ function HomePage() {
             <a className="button button--primary" href={PLAY_URL}><GameController weight="fill" aria-hidden="true" />Play game<ArrowUpRight aria-hidden="true" /></a>
             <a className="button button--secondary" href={ADMIN_URL}><ShieldCheck weight="duotone" aria-hidden="true" />Admin portal</a>
           </div>
-          <p className="hero__status"><span aria-hidden="true" />Command network online</p>
+          <a className="hero__status" href={STATUS_URL}><span aria-hidden="true" />Open mobile system status <ArrowRight aria-hidden="true" /></a>
         </div>
       </section>
 

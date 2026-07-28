@@ -1,0 +1,19 @@
+{
+  "name": "Galactic Sovereign Status",
+  "short_name": "GS Status",
+  "description": "Private mobile operations status for Galactic Sovereign.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#020711",
+  "theme_color": "#020711",
+  "icons": [
+    {
+      "src": "/assets/brand-sigil.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

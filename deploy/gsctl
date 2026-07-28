@@ -169,7 +169,8 @@ case "$command" in
     ln -sfn "$release" "$site_releases/.current-$release_id"
     mv -Tf "$site_releases/.current-$release_id" "$site_current"
     systemctl daemon-reload
-    systemctl enable --now galactic-sovereign-site.service
+    systemctl enable galactic-sovereign-site.service
+    systemctl restart galactic-sovereign-site.service
     for attempt in {1..30}; do
       curl --fail --silent http://127.0.0.1:8081/healthz >/dev/null && break
       [[ "$attempt" -lt 30 ]] || { echo 'site health check timed out' >&2; exit 1; }

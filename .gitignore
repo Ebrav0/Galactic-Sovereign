@@ -10,6 +10,7 @@ admin-dist/
 website/qa/
 monitor-worker/worker-configuration.d.ts
 monitor-worker/wrangler.production.jsonc
+monitor-worker/.wrangler/
 deploy/private/
 .DS_Store
 Thumbs.db

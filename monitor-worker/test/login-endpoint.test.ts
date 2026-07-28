@@ -12,6 +12,9 @@ function createEnv() {
     sent,
     env: {
       LOGIN_NOTIFICATION_SECRET: secret,
+      MONITOR_HOST: 'monitor.example.test',
+      MOBILE_HOST: 'mobile.example.test',
+      LOCAL_DEV_BYPASS: '0',
       ALERT_TO: 'owner@example.test',
       ALERT_FROM: 'alerts@example.test',
       ALERT_EMAIL: { async send(message: unknown) { sent.push(message); } },
