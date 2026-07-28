@@ -1,4 +1,5 @@
 import { findings, validateHeartbeat, type Finding, type Heartbeat } from './health';
+import { formatLoginEmail, validateLoginEvent } from './login';
 
 const LAST_KEY = 'state:last-heartbeat';
 const ACTIVE_KEY = 'state:active-alerts';
@@ -107,6 +108,40 @@ async function receiveHeartbeat(request: Request, env: Env, ctx: ExecutionContex
   return Response.json({ ok: true });
 }
 
+async function receiveLogin(request: Request, env: Env): Promise<Response> {
+  let body: ArrayBuffer;
+  try { body = await boundedBody(request); } catch { return Response.json({ ok: false, error: 'Invalid body' }, { status: 413 }); }
+  const supplied = request.headers.get('x-gs-signature') || '';
+  if (!supplied || !await verifySignature(body, supplied, env.LOGIN_NOTIFICATION_SECRET)) {
+    return Response.json({ ok: false, error: 'Invalid signature' }, { status: 403 });
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(new TextDecoder().decode(body)); } catch {
+    return Response.json({ ok: false, error: 'Invalid JSON' }, { status: 400 });
+  }
+  const event = validateLoginEvent(parsed);
+  const now = Math.floor(Date.now() / 1_000);
+  if (!event || Math.abs(now - event.timestamp) > 300) {
+    return Response.json({ ok: false, error: 'Invalid or stale login event' }, { status: 400 });
+  }
+  const dedupeKey = `login-event:${event.eventId}`;
+  if (await env.HEALTH.get(dedupeKey)) return Response.json({ ok: true, duplicate: true });
+  const message = formatLoginEmail(event);
+  try {
+    await env.ALERT_EMAIL.send({
+      to: env.ALERT_TO,
+      from: { email: env.ALERT_FROM, name: 'Galactic Sovereign' },
+      ...message,
+    });
+    await env.HEALTH.put(dedupeKey, 'sent', { expirationTtl: 86400 });
+  } catch (error) {
+    console.error({ event: 'login-email-failed', eventId: event.eventId, error: String(error) });
+    return Response.json({ ok: false, error: 'Email delivery failed' }, { status: 503 });
+  }
+  console.log({ event: 'login-email-sent', eventId: event.eventId, type: event.type, username: event.user.username });
+  return Response.json({ ok: true });
+}
+
 async function scheduledCheck(env: Env): Promise<void> {
   const last = await env.HEALTH.get<Heartbeat>(LAST_KEY, 'json');
   const now = Math.floor(Date.now() / 1000);
@@ -119,6 +154,7 @@ export default {
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'POST' && url.pathname === '/heartbeat') return receiveHeartbeat(request, env, ctx);
+    if (request.method === 'POST' && url.pathname === '/events/login') return receiveLogin(request, env);
     const archiveMatch = /^\/archive\/daily\/([^/]+)$/.exec(url.pathname);
     if (request.method === 'PUT' && archiveMatch) return receiveArchive(request, env, decodeURIComponent(archiveMatch[1]!));
     if (request.method === 'GET' && url.pathname === '/healthz') {

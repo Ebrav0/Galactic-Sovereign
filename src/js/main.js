@@ -370,7 +370,7 @@ import { createAudioEngine } from './audio-engine.js';
 import { createAudioDirector } from './audio-director.js';
 import { initAudioUi } from './audio-ui.js';
 import { createCoopClient, coopQueryEnabled, defaultWsUrl } from './coop-client.js';
-import { currentAccountSession, discoverAccountSession, hostedMultiplayerUrl, isHostedMode } from './account-client.js';
+import { currentAccountSession, discoverAccountSession, hostedMultiplayerUrl, isHostedMode, reportSoloPlayActivity } from './account-client.js';
 import { initAccountUi, setHostedSaveFlushHandler } from './account-ui.js';
 import { applyCombatSummary, applyFleetsSummary } from './coop-protocol.js';
 import { applySharedStateDelta } from './coop-replication.js';
@@ -2373,6 +2373,7 @@ async function doLoadSlot(slot) {
   const res = await readSlot(slot);
   if (res.ok) {
     doImportState(res.state);
+    reportSoloPlayActivity(slot === 'autosave' ? 'continue' : 'load');
     toast(`Loaded ${slot}`, 'ok');
   } else {
     toast(`Load failed: ${res.error}`, 'error');
@@ -4124,6 +4125,7 @@ function doStartNewGame(opts = {}) {
   selectedBuilderDroneId = null;
   state.paused = true;
   document.getElementById('title-screen')?.classList.add('hidden');
+  reportSoloPlayActivity(opts.replay ? 'replay' : 'new_game');
   setBootPhase(BOOT_PHASE.WARP_INTRO);
   const objectiveLabels = {
     sandbox: 'OPEN ASCENDANCY',
