@@ -874,7 +874,16 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       { active: depotStructure.operational !== false },
     );
     if (z > 0.28) {
-      labelText(ctx, 'EXPORT DEPOT', depotScreen.x, depotScreen.y + Math.max(18, 27 * z), Math.max(8, 9 * z), THEME.accentCyan);
+      const depot = Object.values(state.logistics?.depots ?? {})
+        .find((entry) => entry.systemId === systemId && entry.structureId === depotStructure.id);
+      labelText(
+        ctx,
+        `EXPORT CENTER L${depot?.level ?? depotStructure.level ?? 1} · ${Math.round(depot?.storedCredits ?? 0)} CR`,
+        depotScreen.x,
+        depotScreen.y + Math.max(18, 27 * z),
+        Math.max(8, 9 * z),
+        THEME.accentCyan,
+      );
     }
 
     for (const transport of localTransportSnapshots(state)
@@ -2488,7 +2497,12 @@ export function drawGalaxy(
     ...droneTransit.map((entry) => ({ ...entry, color: '#ffb85c' })),
     ...convoyTransit
       .filter(({ status }) => status.phase === 'in_transit')
-      .map(({ status }) => ({ ...status, color: '#76ddff' })),
+      .map(({ convoy, status }) => ({
+        ...status,
+        color: (convoy.threatScore ?? 0) >= 70
+          ? THEME.dangerHot
+          : (convoy.threatScore ?? 0) >= 35 ? '#ffc760' : '#76ddff',
+      })),
   ];
   const pirateMarkers = pirateFleetMarkersForGalaxy(state);
   const pirateMarkersBySystem = new Map();
@@ -3130,11 +3144,13 @@ export function drawGalaxy(
     if (tier === 'close') {
       labelText(
         ctx,
-        convoy.id.toUpperCase(),
+        `${convoy.id.toUpperCase()} · ${Math.round(convoy.creditLoad ?? 0)} CR · ${(convoy.threatBand ?? 'safe').toUpperCase()}`,
         s.x,
         s.y + Math.max(15, 21 * z),
         Math.max(7, 8 * z),
-        convoy.ownerId === 'player' ? '#76ddff' : '#ff7a7a',
+        (convoy.threatScore ?? 0) >= 70
+          ? THEME.dangerHot
+          : (convoy.threatScore ?? 0) >= 35 ? '#ffc760' : '#76ddff',
       );
     }
   }

@@ -360,6 +360,7 @@ function playerCombatPresenceInSystem(state, systemId) {
 /** Any force that can fight on the player's side in this system. */
 function hasFriendlyCombatants(state, systemId) {
   if (playerCombatPresenceInSystem(state, systemId)) return true;
+  if (activeConvoys(state).some((convoy) => convoyAtSystem(state, convoy, systemId))) return true;
   const system = getSystems(state)[systemId];
   if (system?.owner === 'player') {
     return combatStructureUnits(state, system, 'player').some((unit) => unit.hp > 0);
@@ -504,9 +505,12 @@ function shouldBattle(state, systemId) {
   // Nest alone on an AI system must not start ghost auto-battles that melt the nest.
   const nestThreat = !!nest && (playerPresent || pirates.length > 0);
   const hostileToPlayer = pirates.length > 0 || nestThreat || aiShips.length > 0 || hostileStructures;
+  const convoyPresent = activeConvoys(state)
+    .some((convoy) => convoyAtSystem(state, convoy, systemId));
   // Require at least one friendly combatant — empty player systems must not
   // spawn ghost battles that instantly defeat when View Battle promotes them.
   if (playerPresent && hostileToPlayer) return true;
+  if (convoyPresent && pirates.length > 0) return true;
   if (system?.owner === 'player' && hostileToPlayer && friendlyCombatants) return true;
   // AI-held systems only auto-resolve when pirates are actually attacking;
   // the faction's own stationed ships are not an opposing force.
@@ -641,6 +645,10 @@ function collectAllyShips(state, systemId) {
       out.push({ ...ship, side: 'ai' });
     }
     out.push(...combatStructureUnits(state, system, 'ai'));
+    for (const convoy of activeConvoys(state)) {
+      if ((convoy.ownerId ?? 'player') !== system.factionId) continue;
+      if (convoyAtSystem(state, convoy, systemId)) out.push(convoyCombatUnit(convoy, 'ai'));
+    }
     return out;
   }
   for (const ship of ships) {
@@ -690,9 +698,9 @@ function collectAllyShips(state, systemId) {
   }
   for (const convoy of activeConvoys(state)) {
     const ownerId = convoy.ownerId ?? 'player';
-    const friendly = playerPresent
-      ? ownerId === 'player' || isAllied(state, ownerId)
-      : ownerId === system?.factionId;
+    const friendly = ownerId === 'player'
+      || (playerPresent ? isAllied(state, ownerId) : ownerId === system?.factionId)
+      || pirateFleetAtSystem(state, systemId).length > 0;
     if (!friendly || !convoyAtSystem(state, convoy, systemId)) continue;
     out.push(convoyCombatUnit(convoy, playerPresent && ownerId === 'player' ? 'player' : 'ai'));
   }
@@ -1281,10 +1289,15 @@ function applyCasualtiesToState(state, systemId, battle, options = {}) {
     const system = systemById(state, systemId);
     for (const unit of battle.units) {
       if (unit.isConvoy) {
-        if (unit.hp <= 0) interceptConvoy(state, unit.convoyId ?? unit.id, {
-          destroyed: true,
-          attackerId: unit.side === 'enemy' ? 'player' : undefined,
-        });
+        if (unit.hp <= 0) {
+          const pirateFleet = fleets.find((fleet) => fleet.ships.some((ship) => ship.hp > 0));
+          interceptConvoy(state, unit.convoyId ?? unit.id, {
+            destroyed: true,
+            attackerId: pirateFleet ? 'pirates' : unit.side === 'enemy' ? 'player' : undefined,
+            pirateFleetId: pirateFleet?.id,
+            systemId,
+          });
+        }
         continue;
       }
       if (unit.isStructure) {
@@ -1616,9 +1629,13 @@ function resolveAutoBattle(state, systemId, battle) {
   const destroyUnit = (unit) => {
     if (!unit) return;
     if (unit.isConvoy) {
+      const pirateFleet = pirateFleetAtSystem(state, systemId)
+        .find((fleet) => fleet.ships.some((ship) => ship.hp > 0));
       interceptConvoy(state, unit.convoyId ?? unit.id, {
         destroyed: true,
-        attackerId: unit.side === 'enemy' ? 'player' : undefined,
+        attackerId: pirateFleet ? 'pirates' : unit.side === 'enemy' ? 'player' : undefined,
+        pirateFleetId: pirateFleet?.id,
+        systemId,
       });
       return;
     }

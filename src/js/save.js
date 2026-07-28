@@ -125,6 +125,7 @@ function migrateSave(envelope) {
   if (e.saveVersion === 22) e = migrateV22toV23(e);
   if (e.saveVersion === 23) e = migrateV23toV24(e);
   if (e.saveVersion === 24) e = migrateV24toV25(e);
+  if (e.saveVersion === 25) e = migrateV25toV26(e);
   return e;
 }
 
@@ -1407,6 +1408,53 @@ function migrateV24toV25(envelope) {
   };
 }
 
+export function initV26State(state) {
+  initV25State(state);
+  const logistics = ensureLogisticsState(state);
+  for (const galaxy of Object.values(state.galaxies ?? {})) {
+    for (const system of Object.values(galaxy.systems ?? {})) {
+      const exportStructure = (system.structures ?? [])
+        .find((structure) => structure.type === 'export_depot');
+      if (!exportStructure) continue;
+      const hasExchange = system.structures.some((structure) => structure.type === 'galactic_exchange');
+      const hasHub = system.structures.some((structure) => structure.type === 'logistics_hub');
+      const level = hasExchange ? 4 : hasHub ? 2 : Math.max(1, Number(exportStructure.level) || 1);
+      exportStructure.level = level;
+      const depot = logistics.depots[`depot:${galaxy.id ?? state.activeGalaxyId}:${system.id}`]
+        ?? Object.values(logistics.depots).find((entry) => entry.systemId === system.id);
+      if (depot) depot.level = Math.max(depot.level ?? 1, level);
+    }
+  }
+  for (const fleet of state.pirates?.fleets ?? []) {
+    fleet.stolenCredits = Math.max(0, Number(fleet.stolenCredits) || 0);
+    fleet.stolenFromOwnerId ??= null;
+  }
+  for (const nest of state.pirates?.nests ?? []) {
+    nest.lootVault = Math.max(0, Number(nest.lootVault) || 0);
+  }
+  for (const ship of [...(state.playerShips ?? []), ...(state.aiShips ?? [])]) {
+    ship.convoyReserve = !!ship.convoyReserve;
+    ship.convoyLeaseId ??= null;
+    ship.convoyEscortId ??= null;
+    ship.convoyReturnDepotId ??= null;
+    ship.convoyRallyDepotId ??= null;
+  }
+  // Re-normalize capacities/bays after legacy structures determine center level.
+  ensureLogisticsState(state);
+  return state;
+}
+
+function migrateV25toV26(envelope) {
+  const state = initV26State(envelope.state);
+  const stateJson = JSON.stringify(state);
+  return {
+    saveVersion: 26,
+    checksum: crc32(stateJson),
+    savedAt: envelope.savedAt,
+    state,
+  };
+}
+
 // v21 -> v22 (Dyson→Novacula spine tech tree + superweapon skeleton parts).
 function migrateV21toV22(envelope) {
   const state = initV22State(envelope.state);
@@ -1465,6 +1513,7 @@ export function deserialize(envelopeJson, { verifyChecksum = true, trustCurrent 
   initV23State(envelope.state);
   initV24State(envelope.state);
   initV25State(envelope.state);
+  initV26State(envelope.state);
 
   if (envelope.state?.flagship) {
     envelope.state.flagship.orbit = envelope.state.flagship.orbit ?? null;

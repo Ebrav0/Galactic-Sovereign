@@ -76,7 +76,9 @@ import {
   pauseDepotRoute,
   resumeDepotRoute,
   rerouteConvoy,
-  setConvoyEscort,
+  setConvoyReserve,
+  setExportCenterDoctrine,
+  upgradeExportCenter,
 } from '../src/js/logistics.js';
 import { upgradeBodyStructure, buildBodyStructure } from '../src/js/body-structures.js';
 import { buildStrategicStructure } from '../src/js/strategic-structures.js';
@@ -425,9 +427,26 @@ function dispatch(state, command, payload, playerId, ctx = {}) {
       if (!payload.convoyId) return { ok: false, reason: 'convoyId required' };
       return rerouteConvoy(state, payload.convoyId, payload.destinationSystemId ?? null);
     }
-    case 'setConvoyEscort': {
-      if (!payload.convoyId) return { ok: false, reason: 'convoyId required' };
-      return setConvoyEscort(state, payload.convoyId, payload.escortStrength ?? 0);
+    case 'setExportCenterDoctrine': {
+      if (!payload.depotId || !payload.doctrineId) {
+        return { ok: false, reason: 'depotId and doctrineId required' };
+      }
+      return setExportCenterDoctrine(state, payload.depotId, payload.doctrineId);
+    }
+    case 'upgradeExportCenter': {
+      if (!payload.depotId) return { ok: false, reason: 'depotId required' };
+      return upgradeExportCenter(state, payload.depotId);
+    }
+    case 'setConvoyReserve': {
+      if (!payload.subjectType || !payload.subjectId) {
+        return { ok: false, reason: 'subjectType and subjectId required' };
+      }
+      return setConvoyReserve(
+        state,
+        payload.subjectType,
+        payload.subjectId,
+        payload.enabled !== false,
+      );
     }
 
     case 'deployBuilderDrone': {
@@ -599,7 +618,8 @@ export const WORLD_MUTATING_COMMANDS = new Set([
   'buildBodyStructure', 'buildStrategicStructure', 'upgradeBodyStructure',
   'autoAssignShipsToFleets',
   'setDepotDestination', 'pauseDepotRoute', 'resumeDepotRoute',
-  'dispatchDepot', 'rerouteConvoy', 'setConvoyEscort',
+  'dispatchDepot', 'rerouteConvoy', 'setExportCenterDoctrine',
+  'upgradeExportCenter', 'setConvoyReserve',
   'createBulkProductionOrder', 'pauseBulkProductionOrder',
   'resumeBulkProductionOrder', 'cancelBulkProductionOrder',
   'createExpansionCampaign', 'pauseExpansionCampaign',

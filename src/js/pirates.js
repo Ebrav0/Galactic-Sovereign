@@ -27,6 +27,12 @@ import {
 } from './transit.js';
 import { playerShipStatus } from './fleets.js';
 import { fleetPower } from './fleet-power.js';
+import {
+  activeConvoys,
+  convoyTransitStatus,
+  materializeConvoyEscorts,
+  recoverStolenCredits,
+} from './logistics.js';
 
 let nextPirateShipId = 1;
 let nextFleetId = 1;
@@ -140,6 +146,7 @@ export function syncPirateNestsFromCombatUnits(state, units = []) {
     nest.hp = Math.max(0, unit.hp ?? 0);
     nest.maxHp = unit.maxHp ?? nest.maxHp ?? PIRATE_NEST_HP;
     if (nest.hp <= 0) {
+      recoverNestLoot(state, nest);
       nest.destroyed = true;
       nest.hp = 0;
       state.pirates.pendingRespawn = (state.pirates.pendingRespawn ?? [])
@@ -158,6 +165,7 @@ export function destroyPirateNest(state, nestId) {
   ensurePiratesState(state);
   const nest = state.pirates.nests.find((entry) => entry.id === nestId);
   if (!nest || nest.destroyed) return null;
+  recoverNestLoot(state, nest);
   nest.hp = 0;
   nest.destroyed = true;
   state.pirates.pendingRespawn = (state.pirates.pendingRespawn ?? [])
@@ -178,7 +186,26 @@ function createNest(state, systemId, nestIndex) {
     hp: PIRATE_NEST_HP,
     maxHp: PIRATE_NEST_HP,
     destroyed: false,
+    lootVault: 0,
+    lootByOwner: {},
   };
+}
+
+function recoverNestLoot(state, nest) {
+  const recoveries = [];
+  const byOwner = nest.lootByOwner && typeof nest.lootByOwner === 'object'
+    ? nest.lootByOwner
+    : { player: nest.lootVault ?? 0 };
+  for (const [ownerId, credits] of Object.entries(byOwner)) {
+    const recovered = Math.floor(Math.max(0, Number(credits) || 0) * 0.5);
+    if (recovered <= 0) continue;
+    const result = recoverStolenCredits(state, ownerId, recovered, nest.id);
+    if (result.ok) recoveries.push({ ownerId, credits: recovered });
+  }
+  nest.recoveredCredits = recoveries.reduce((sum, entry) => sum + entry.credits, 0);
+  nest.lootVault = 0;
+  nest.lootByOwner = {};
+  return recoveries;
 }
 
 function backfillNestsFromFleets(state) {
@@ -327,6 +354,37 @@ function pickRaidTarget(state, fleet) {
     if (roll <= 0) return c.systemId;
   }
   return top[0].systemId;
+}
+
+function pickConvoyTarget(state, fleet) {
+  const galaxy = getGraph(state);
+  const candidates = [];
+  for (const convoy of activeConvoys(state)) {
+    if (!['jumping', 'in_transit'].includes(convoy.status)) continue;
+    if ((convoy.creditLoad ?? 0) <= 0) continue;
+    const status = convoyTransitStatus(state, convoy);
+    if (!status?.fromId || !status?.toId) continue;
+    const escortCount = convoy.escortShipIds?.length ?? 0;
+    if (escortCount > 0 && (convoy.threatScore ?? 0) < 50) continue;
+    const interceptNode = status.progress < 0.55 ? status.fromId : status.toId;
+    const path = findPath(galaxy, fleet.systemId, interceptNode);
+    const hops = pathHopCount(path);
+    if (!path || hops > PIRATE_RAID_MAX_HOPS) continue;
+    const score = (convoy.creditLoad ?? 0)
+      * (convoy.signature ?? 1)
+      * (1 + (convoy.threatScore ?? 0) / 100)
+      / Math.max(1, escortCount + hops);
+    candidates.push({
+      convoyId: convoy.id,
+      targetSystemId: interceptNode,
+      score,
+      hops,
+    });
+  }
+  candidates.sort((a, b) => (b.score - a.score)
+    || (a.hops - b.hops)
+    || a.convoyId.localeCompare(b.convoyId));
+  return candidates[0] ?? null;
 }
 
 function orderFleetTravel(state, fleet, targetId, intentType = 'wander') {
@@ -485,6 +543,12 @@ function respawnFleet(state, pending) {
   if (!systemId) return null;
   const size = pending.size === 'large' ? 'large' : 'small';
   const composition = size === 'large' ? PIRATE_SHIPS_LARGE : PIRATE_SHIPS;
+  const ships = buildFleetShips(seed, pending.fleetId, composition);
+  const vaultBonus = Math.min(3, Math.floor((nest?.lootVault ?? 0) / 1000));
+  const bonusHull = PIRATE_SHIPS[0]?.hull ?? 'raider';
+  for (let i = 0; i < vaultBonus; i++) {
+    ships.push(createShipInstance(`ps-${nextPirateShipId++}`, bonusHull));
+  }
   return {
     id: pending.fleetId,
     galaxyId: state.activeGalaxyId,
@@ -492,7 +556,7 @@ function respawnFleet(state, pending) {
     transit: null,
     size,
     nestId: nest?.id ?? pending.nestId ?? null,
-    ships: buildFleetShips(seed, pending.fleetId, composition),
+    ships,
     wanderCooldownMs: PIRATE_WANDER_MS,
     intent: { type: 'wander', targetSystemId: null },
   };
@@ -559,7 +623,66 @@ export function tickPirateInterdictions(state, onInterdict) {
     events.push(event);
     onInterdict?.(systemId, match.fleet, ship, event);
   }
+
+  for (const convoy of activeConvoys(state)) {
+    if (!['jumping', 'in_transit'].includes(convoy.status)) continue;
+    const convoyStatus = convoyTransitStatus(state, convoy);
+    if (!convoyStatus?.fromId || !convoyStatus?.toId) continue;
+    const match = pirateStatuses.find(({ fleet, status }) => (
+      fleet.transit
+      && fleet.intent?.convoyId === convoy.id
+      && sameLane(status, convoyStatus)
+      && closesEnough(status, convoyStatus)
+    ));
+    if (!match) continue;
+    const systemId = dropoutSystemId(convoyStatus);
+    convoy.currentNodeId = systemId;
+    convoy.resumeStatus = convoy.status;
+    convoy.status = 'paused';
+    convoy.pausedAt = state.time;
+    convoy.pauseReason = 'pirate_interdiction';
+    match.fleet.transit = null;
+    match.fleet.systemId = systemId;
+    match.fleet.wanderCooldownMs = PIRATE_WANDER_MS;
+    match.fleet.intent = {
+      type: 'interdict_convoy',
+      convoyId: convoy.id,
+      targetSystemId: systemId,
+    };
+    materializeConvoyEscorts(state, convoy.id, systemId);
+    const event = {
+      type: 'pirate_convoy_interdiction',
+      fleetId: match.fleet.id,
+      convoyId: convoy.id,
+      systemId,
+      credits: convoy.creditLoad ?? 0,
+      threatScore: convoy.threatScore ?? 0,
+    };
+    events.push(event);
+    onInterdict?.(systemId, match.fleet, convoy, event);
+  }
   return events;
+}
+
+function bankFleetLoot(state, fleet) {
+  const credits = Math.max(0, Number(fleet.stolenCredits) || 0);
+  if (credits <= 0 || fleet.intent?.type !== 'return_loot') return null;
+  const nest = state.pirates?.nests?.find((entry) => entry.id === fleet.nestId);
+  if (!nest || nest.destroyed || fleet.systemId !== nest.systemId) return null;
+  const ownerId = fleet.stolenFromOwnerId ?? 'player';
+  nest.lootVault = (nest.lootVault ?? 0) + credits;
+  nest.lootByOwner = nest.lootByOwner ?? {};
+  nest.lootByOwner[ownerId] = (nest.lootByOwner[ownerId] ?? 0) + credits;
+  fleet.stolenCredits = 0;
+  fleet.stolenFromOwnerId = null;
+  fleet.intent = { type: 'wander', targetSystemId: null };
+  return {
+    type: 'pirate_loot_banked',
+    fleetId: fleet.id,
+    nestId: nest.id,
+    systemId: nest.systemId,
+    credits,
+  };
 }
 
 export function tickPirates(state, onArrive) {
@@ -587,16 +710,31 @@ export function tickPirates(state, onArrive) {
           fleet.transit = null;
           fleet.systemId = destId;
           fleet.wanderCooldownMs = PIRATE_WANDER_MS;
-          if (fleet.intent?.targetSystemId === destId) fleet.intent = { type: fleet.intent.type, targetSystemId: destId };
+          if (fleet.intent?.targetSystemId === destId) {
+            fleet.intent = { ...fleet.intent, targetSystemId: destId };
+          }
+          const lootEvent = bankFleetLoot(state, fleet);
           arrivals.push({ fleetId: fleet.id, systemId: destId });
+          if (lootEvent) arrivals.push(lootEvent);
           onArrive?.(destId, fleet);
         },
       );
       continue;
     }
 
+    const lootEvent = bankFleetLoot(state, fleet);
+    if (lootEvent) arrivals.push(lootEvent);
+
     if (!fleet.systemId || fleet.ships.every((s) => s.hp <= 0)) {
       if (fleet.ships.every((s) => s.hp <= 0)) {
+        if ((fleet.stolenCredits ?? 0) > 0) {
+          recoverStolenCredits(
+            state,
+            fleet.stolenFromOwnerId ?? 'player',
+            fleet.stolenCredits,
+            fleet.id,
+          );
+        }
         state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleet.id);
         scheduleRespawn(state, fleet.id, fleet.size, fleet.nestId);
       }
@@ -605,10 +743,21 @@ export function tickPirates(state, onArrive) {
 
     fleet.wanderCooldownMs = Math.max(0, (fleet.wanderCooldownMs ?? 0) - TICK_MS);
     if (fleet.wanderCooldownMs <= 0) {
+      if (fleet.intent?.type === 'return_loot') {
+        const nest = state.pirates.nests?.find((entry) => entry.id === fleet.nestId && !entry.destroyed);
+        if (nest && orderFleetTravel(state, fleet, nest.systemId, 'return_loot')) {
+          fleet.intent.stolenFromOwnerId = fleet.stolenFromOwnerId ?? 'player';
+          continue;
+        }
+      }
       const rng = pirateRng(state.meta.seed, fleet.id, `choice:${state.time}`);
-      const raidTarget = rng() < PIRATE_RAID_CHANCE ? pickRaidTarget(state, fleet) : null;
-      const target = raidTarget ?? pickWanderTarget(state, fleet);
-      if (target) orderFleetTravel(state, fleet, target, raidTarget ? 'raid' : 'wander');
+      const convoyTarget = pickConvoyTarget(state, fleet);
+      const raidTarget = !convoyTarget && rng() < PIRATE_RAID_CHANCE ? pickRaidTarget(state, fleet) : null;
+      const target = convoyTarget?.targetSystemId ?? raidTarget ?? pickWanderTarget(state, fleet);
+      if (target) {
+        orderFleetTravel(state, fleet, target, convoyTarget ? 'raid_convoy' : raidTarget ? 'raid' : 'wander');
+        if (convoyTarget) fleet.intent.convoyId = convoyTarget.convoyId;
+      }
       else fleet.wanderCooldownMs = PIRATE_WANDER_MS;
     }
   }
@@ -622,6 +771,14 @@ export function removePirateShip(state, fleetId, shipId) {
   const ship = fleet.ships.find((s) => s.id === shipId);
   if (ship) ship.hp = 0;
   if (fleet.ships.every((s) => s.hp <= 0)) {
+    if ((fleet.stolenCredits ?? 0) > 0) {
+      recoverStolenCredits(
+        state,
+        fleet.stolenFromOwnerId ?? 'player',
+        fleet.stolenCredits,
+        fleet.id,
+      );
+    }
     state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleetId);
     scheduleRespawn(state, fleetId, fleet.size, fleet.nestId);
   }
@@ -641,12 +798,17 @@ export function ensurePiratesState(state) {
     nest.destroyed = !!nest.destroyed || nest.hp <= 0;
     if (nest.destroyed) nest.hp = 0;
     nest.galaxyId = nest.galaxyId ?? state.activeGalaxyId;
+    nest.lootVault = Math.max(0, Number(nest.lootVault) || 0);
+    nest.lootByOwner = nest.lootByOwner && typeof nest.lootByOwner === 'object'
+      ? nest.lootByOwner
+      : { player: nest.lootVault };
   }
   if (!state.pirates.nests.length && state.pirates.fleets.length) {
     backfillNestsFromFleets(state);
   }
   const nestsById = new Map(state.pirates.nests.map((nest) => [nest.id, nest]));
   for (const fleet of state.pirates.fleets) {
+    fleet.stolenCredits = Math.max(0, Number(fleet.stolenCredits) || 0);
     const path = fleet.transit?.path;
     fleet.intent = fleet.intent ?? {
       type: fleet.transit ? 'raid' : 'wander',

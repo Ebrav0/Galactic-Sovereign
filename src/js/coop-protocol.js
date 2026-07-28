@@ -227,6 +227,10 @@ function compactPlayerShip(ship) {
     ownerPlayerId: ship.ownerPlayerId ?? null,
     grantedControllers: Array.isArray(ship.grantedControllers) ? [...ship.grantedControllers] : [],
     postBattleReturn: ship.postBattleReturn ?? null,
+    convoyReserve: !!ship.convoyReserve,
+    convoyEscortId: ship.convoyEscortId ?? null,
+    convoyEscortRally: ship.convoyEscortRally ?? null,
+    convoyEscortReturn: ship.convoyEscortReturn ?? null,
   };
 }
 
@@ -248,6 +252,8 @@ function compactPirateFleet(fleet) {
     systemId: fleet.systemId ?? null,
     transit: fleet.transit ?? null,
     nestId: fleet.nestId ?? null,
+    intent: fleet.intent ?? null,
+    stolenCredits: fleet.stolenCredits ?? 0,
     ships: (fleet.ships ?? []).map((s) => ({
       id: s.id,
       hull: s.hull ?? 'raider',
@@ -265,6 +271,7 @@ function compactPirateNest(nest) {
     hp: nest.hp ?? 0,
     maxHp: nest.maxHp ?? nest.hp ?? 1,
     destroyed: !!nest.destroyed,
+    lootVault: nest.lootVault ?? 0,
   };
 }
 
@@ -333,6 +340,10 @@ export function applyFleetsSummary(state, fleets) {
           ownerPlayerId: pose.ownerPlayerId ?? null,
           grantedControllers: Array.isArray(pose.grantedControllers) ? [...pose.grantedControllers] : [],
           postBattleReturn: pose.postBattleReturn ?? null,
+          convoyReserve: !!pose.convoyReserve,
+          convoyEscortId: pose.convoyEscortId ?? null,
+          convoyEscortRally: pose.convoyEscortRally ?? null,
+          convoyEscortReturn: pose.convoyEscortReturn ?? null,
         };
       } else {
         if (pose.hull != null) ship.hull = pose.hull;
@@ -344,6 +355,10 @@ export function applyFleetsSummary(state, fleets) {
         if ('anchorBodyId' in pose) ship.anchorBodyId = pose.anchorBodyId;
         if ('ownerPlayerId' in pose) ship.ownerPlayerId = pose.ownerPlayerId;
         if ('postBattleReturn' in pose) ship.postBattleReturn = pose.postBattleReturn;
+        if ('convoyReserve' in pose) ship.convoyReserve = !!pose.convoyReserve;
+        if ('convoyEscortId' in pose) ship.convoyEscortId = pose.convoyEscortId;
+        if ('convoyEscortRally' in pose) ship.convoyEscortRally = pose.convoyEscortRally;
+        if ('convoyEscortReturn' in pose) ship.convoyEscortReturn = pose.convoyEscortReturn;
         if (Array.isArray(pose.grantedControllers)) {
           ship.grantedControllers = [...pose.grantedControllers];
         }
@@ -398,6 +413,8 @@ export function applyFleetsSummary(state, fleets) {
           systemId: pose.systemId,
           transit: pose.transit ?? null,
           nestId: pose.nestId ?? null,
+          intent: pose.intent ?? null,
+          stolenCredits: pose.stolenCredits ?? 0,
           ships: [],
         };
       } else {
@@ -405,6 +422,8 @@ export function applyFleetsSummary(state, fleets) {
         if (pose.systemId !== undefined) fleet.systemId = pose.systemId;
         if ('transit' in pose) fleet.transit = pose.transit;
         if ('nestId' in pose) fleet.nestId = pose.nestId;
+        if ('intent' in pose) fleet.intent = pose.intent;
+        if ('stolenCredits' in pose) fleet.stolenCredits = pose.stolenCredits;
       }
       const shipById = new Map((fleet.ships ?? []).map((s) => [String(s.id), s]));
       const ships = [];
@@ -449,6 +468,7 @@ export function applyFleetsSummary(state, fleets) {
           hp: pose.hp ?? 0,
           maxHp: pose.maxHp ?? pose.hp ?? 1,
           destroyed: !!pose.destroyed,
+          lootVault: pose.lootVault ?? 0,
         };
       } else {
         if (pose.galaxyId !== undefined) nest.galaxyId = pose.galaxyId;
@@ -456,6 +476,7 @@ export function applyFleetsSummary(state, fleets) {
         if (typeof pose.hp === 'number') nest.hp = pose.hp;
         if (typeof pose.maxHp === 'number') nest.maxHp = pose.maxHp;
         if ('destroyed' in pose) nest.destroyed = !!pose.destroyed;
+        if ('lootVault' in pose) nest.lootVault = pose.lootVault;
       }
       if (!wasDestroyed && nest.destroyed) {
         notices.push({

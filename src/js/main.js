@@ -39,7 +39,6 @@ import { step, advance, togglePaused } from './simulation.js';
 import {
   buildOutpost,
   canBuildOutpost,
-  incomePerSecond,
   incomePerSecondInSystem,
   resetStructureIds,
 } from './economy.js';
@@ -359,7 +358,10 @@ import {
   findExportDepot,
   logisticsSummary,
   registerExportDepot,
+  setConvoyReserve,
   setDepotDestination,
+  setExportCenterDoctrine,
+  upgradeExportCenter,
 } from './logistics.js';
 import {
   buildRedactedSolSnapshot,
@@ -3417,8 +3419,11 @@ window.render_game_to_text = () => {
   const orbitTarget = orbitTargetLabel(state);
   const stellarInfo = stellarCatalogInfo(viewedSystem?.star);
 
-  const passiveOutpostCreditsPerSecond = incomePerSecond(state);
-  const cargoDeliveryCreditsPerSecond = logisticsSummary(state).throughputCreditsPerMinute / 60;
+  const logisticsStateSummary = logisticsSummary(state);
+  const onsiteShare = logisticsStateSummary.onsiteProcessingShare;
+  const physicalOutpostCreditsPerSecond = logisticsStateSummary.physicalProductionCreditsPerSecond;
+  const passiveOutpostCreditsPerSecond = logisticsStateSummary.onsiteCreditsPerSecond;
+  const cargoDeliveryCreditsPerSecond = logisticsStateSummary.throughputCreditsPerMinute / 60;
   return JSON.stringify({
     bootPhase: getBootPhase(),
     intro: getBootPhase() === BOOT_PHASE.WARP_INTRO ? warpIntroState() : null,
@@ -3466,6 +3471,8 @@ window.render_game_to_text = () => {
     selectedScoutId,
     selectedBattleGroupId,
     passiveOutpostCreditsPerSecond,
+    onsiteProcessingShare: onsiteShare,
+    physicalOutpostCreditsPerSecond,
     cargoDeliveryCreditsPerSecond,
     totalProjectedCreditsPerSecond: passiveOutpostCreditsPerSecond + cargoDeliveryCreditsPerSecond,
     incomePerSec: passiveOutpostCreditsPerSecond + cargoDeliveryCreditsPerSecond,
@@ -3567,7 +3574,7 @@ window.render_game_to_text = () => {
       assignedDrones: job.assignedDroneIds?.length ?? 0,
     })),
     logistics: {
-      ...logisticsSummary(state),
+      ...logisticsStateSummary,
       nexuses: discoverTradeNexuses(state),
       depots: Object.values(state.logistics?.depots ?? {}).map((depot) => ({
         id: depot.id,
@@ -3575,17 +3582,26 @@ window.render_game_to_text = () => {
         operational: depot.operational,
         routePaused: depot.routePaused,
         preferredNexusId: depot.preferredNexusId,
-        inventory: depot.inventory,
+        level: depot.level,
+        doctrineId: depot.doctrineId,
+        storedCredits: depot.storedCredits,
+        capacity: depot.capacity,
+        assemblyBays: depot.assemblyBays,
       })),
-      convoys: activeConvoys(state).map((convoy) => ({
+      convoys: activeConvoys(state)
+        .filter((convoy) => (convoy.ownerId ?? 'player') === 'player')
+        .map((convoy) => ({
         id: convoy.id,
         ownerId: convoy.ownerId ?? 'player',
         status: convoy.status,
         fromSystemId: convoy.fromSystemId,
         destinationSystemId: convoy.destinationSystemId,
         path: [...convoy.path],
-        manifest: convoy.manifest,
-        escortStrength: convoy.escortStrength,
+        creditLoad: convoy.creditLoad,
+        doctrineId: convoy.doctrineId,
+        escortShipIds: [...(convoy.escortShipIds ?? [])],
+        threatScore: convoy.threatScore ?? 0,
+        threatBand: convoy.threatBand ?? 'safe',
         projection: convoyTransitStatus(state, convoy),
       })),
     },
@@ -3637,6 +3653,7 @@ window.render_game_to_text = () => {
         hp: nest.hp ?? 0,
         maxHp: nest.maxHp ?? 0,
         destroyed: !!nest.destroyed,
+        lootVault: nest.lootVault ?? 0,
       })),
       nestMarkers: pirateNestMarkersForGalaxy(state),
       inViewedSystem: pirateFleetAtSystem(state, viewedSystemId).length > 0,
@@ -3651,6 +3668,8 @@ window.render_game_to_text = () => {
         destination: fleet.transit?.path?.length ? fleet.transit.path[fleet.transit.path.length - 1] : null,
         etaMs: fleet.transit ? pirateFleetEtaMs(state, fleet) : null,
         intent: fleet.intent?.type ?? 'wander',
+        stolenCredits: fleet.stolenCredits ?? 0,
+        targetConvoyId: fleet.intent?.convoyId ?? null,
         targetSystemId: fleet.intent?.targetSystemId ?? null,
         shipCount: fleet.ships.filter((s) => s.hp > 0).length,
         power: pirateFleetPower(fleet, state),
@@ -4028,6 +4047,12 @@ window.__registerExportDepot = (systemId, opts = {}) =>
 window.__setDepotDestination = (depotId, nexusSystemId = null) =>
   setDepotDestination(state, depotId, nexusSystemId);
 window.__dispatchDepot = (depotId, opts = {}) => dispatchDepot(state, depotId, opts);
+window.__setExportCenterDoctrine = (depotId, doctrineId) =>
+  setExportCenterDoctrine(state, depotId, doctrineId);
+window.__upgradeExportCenter = (depotId, opts = {}) =>
+  upgradeExportCenter(state, depotId, opts);
+window.__setConvoyReserve = (subjectType, subjectId, enabled = true) =>
+  setConvoyReserve(state, subjectType, subjectId, enabled);
 window.__followConvoy = (convoyId) => doFollowConvoy(convoyId);
 window.__offlineSolAdvice = () => createOfflineSolAdvice(state);
 window.__redactedSolSnapshot = () => buildRedactedSolSnapshot(state);

@@ -1,7 +1,7 @@
 // ALL balance numbers live here (IMPLEMENTATION_PLAN §3).
 // Logic files must import from this module — never hardcode numbers.
 
-export const SAVE_VERSION = 25;
+export const SAVE_VERSION = 26;
 
 // --- Simulation ---
 export const TICK_MS = 50;                 // 20 ticks per second
@@ -48,6 +48,75 @@ export const LOGISTICS_CARGO_CREDIT_VALUE = {
   fuel: 6,
   manufacturedGoods: 10,
 };
+export const LOGISTICS_CREDIT_STOCK_CAPACITY = 750;
+export const LOGISTICS_LOCAL_CREDIT_CAPACITY = 120;
+export const LOGISTICS_EXPORT_CENTER_CAPACITY = Object.freeze({
+  1: 1500,
+  2: 5000,
+  3: 15000,
+  4: 40000,
+});
+export const LOGISTICS_EXPORT_CENTER_BAYS = Object.freeze({
+  1: 1,
+  2: 2,
+  3: 3,
+  4: 4,
+});
+export const LOGISTICS_EXPORT_CENTER_UPGRADE_COST = Object.freeze({
+  2: 800,
+  3: 1100,
+  4: 1800,
+});
+export const LOGISTICS_FREE_FREIGHTERS = 50;
+export const LOGISTICS_FREIGHTER_COST = 50;
+export const LOGISTICS_FREIGHTER_BUILD_MS = 10000;
+export const LOGISTICS_CONVOY_PARTIAL_DISPATCH_MS = 180000;
+export const LOGISTICS_CONVOY_FILL_RATIO = 0.9;
+export const LOGISTICS_CONVOY_PARTIAL_FILL_RATIO = 0.25;
+export const LOGISTICS_ESCORT_RALLY_MS = 30000;
+export const LOGISTICS_ONSITE_PROCESSING_SHARE = 0.1;
+export const LOGISTICS_CONVOY_DOCTRINES = Object.freeze({
+  standard: Object.freeze({
+    label: 'Standard',
+    capacity: 400,
+    speed: 115,
+    hp: 180,
+    signature: 1,
+    dps: 2,
+  }),
+  fast: Object.freeze({
+    label: 'Fast Courier',
+    capacity: 250,
+    speed: 140,
+    hp: 140,
+    signature: 0.65,
+    dps: 1,
+  }),
+  bulk: Object.freeze({
+    label: 'Bulk',
+    capacity: 1200,
+    speed: 85,
+    hp: 280,
+    signature: 1.5,
+    dps: 2,
+  }),
+  armored: Object.freeze({
+    label: 'Armored',
+    capacity: 800,
+    speed: 80,
+    hp: 500,
+    signature: 1.25,
+    dps: 5,
+  }),
+  stealth: Object.freeze({
+    label: 'Stealth',
+    capacity: 500,
+    speed: 105,
+    hp: 180,
+    signature: 0.35,
+    dps: 1,
+  }),
+});
 
 // --- Structures ---
 export const SHIPYARD_COST = 400;

@@ -37,7 +37,7 @@ import {
   dysonLaunchers,
   foundryHostPlanet,
 } from './state.js';
-import { canBuildOutpost, incomePerSecond, incomePerSecondInSystem } from './economy.js';
+import { canBuildOutpost } from './economy.js';
 import { canBuildShipyard, canQueueScout, canQueueHull } from './production.js';
 import {
   activeJobsInSystem,
@@ -175,7 +175,6 @@ import { getGraph } from './galaxy-scope.js';
 import { getBattleState } from './combat.js';
 import {
   activeConvoys,
-  cargoTotal,
   convoyEtaMs,
   depotSummary,
   discoverTradeNexuses,
@@ -184,8 +183,10 @@ import {
   pauseDepotRoute,
   rerouteConvoy,
   resumeDepotRoute,
-  setConvoyEscort,
+  setConvoyReserve,
   setDepotDestination,
+  setExportCenterDoctrine,
+  upgradeExportCenter,
 } from './logistics.js';
 import {
   activeFleetOrders,
@@ -775,17 +776,59 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
   const summary = logisticsSummary(state);
   const metrics = document.createElement('div');
   metrics.className = 'metric-grid';
-  appendMetric(metrics, 'Outposts', `${incomePerSecond(state).toFixed(1)} cr/s`);
+  appendMetric(metrics, 'Stored', `${summary.storedCredits.toFixed(0)} cr`);
   appendMetric(metrics, 'Throughput', `${summary.throughputCreditsPerMinute.toFixed(1)} cr/min`);
-  appendMetric(metrics, 'Projected total', `${(incomePerSecond(state) + summary.throughputCreditsPerMinute / 60).toFixed(1)} cr/s`);
-  appendMetric(metrics, 'In transit', `${cargoTotal(summary.cargoInTransit).toFixed(1)} cargo`);
+  appendMetric(metrics, 'In transit', `${summary.creditsInTransit.toFixed(0)} cr`);
+  appendMetric(
+    metrics,
+    'Freighters',
+    summary.freighters
+      ? `${summary.freighters.active}/${summary.freighters.total}`
+      : '—',
+  );
   appendMetric(metrics, 'Trade Nexuses', `${summary.availableNexusCount}/${summary.nexusCount}`);
   appendMetric(metrics, 'Blockades', String(summary.laneBlockadeCount + summary.systemBlockadeCount));
   container.appendChild(metrics);
 
+  const reserveTitle = document.createElement('p');
+  reserveTitle.className = 'panel-note';
+  reserveTitle.textContent = 'Convoy escort reserve';
+  container.appendChild(reserveTitle);
+  const reserveActions = document.createElement('div');
+  reserveActions.className = 'panel__actions';
+  const reserveGroups = battleGroupsForGalaxy(state);
+  for (const group of reserveGroups) {
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = `btn btn--xs ${group.convoyReserve ? 'btn--primary' : 'btn--ghost'}`;
+    toggle.textContent = `${formatFleetName(group.ordinal)}: ${group.convoyReserve ? 'Reserved' : 'Available'}`;
+    toggle.onclick = () => {
+      const enabled = !group.convoyReserve;
+      coopOrLocal('setConvoyReserve', {
+        subjectType: 'battle_group',
+        subjectId: group.id,
+        enabled,
+      }, () => {
+        const result = setConvoyReserve(state, 'battle_group', group.id, enabled);
+        toast(result.ok ? 'Convoy escort reserve updated' : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Convoy escort reserve updated', 'ok') });
+    };
+    reserveActions.appendChild(toggle);
+  }
+  if (!reserveGroups.length) {
+    const reserveEmpty = document.createElement('span');
+    reserveEmpty.className = 'panel-note panel-note--muted';
+    reserveEmpty.textContent = 'Create a fleet to opt real warships into convoy escort duty.';
+    reserveActions.appendChild(reserveEmpty);
+  }
+  container.appendChild(reserveActions);
+
   const nexuses = discoverTradeNexuses(state);
   const depots = Object.values(state.logistics?.depots ?? {})
-    .filter((depot) => depot.galaxyId === state.activeGalaxyId)
+    .filter((depot) => (
+      depot.galaxyId === state.activeGalaxyId
+      && (depot.ownerId ?? 'player') === 'player'
+    ))
     .sort((a, b) => a.systemId.localeCompare(b.systemId));
   if (!depots.length) {
     const empty = document.createElement('p');
@@ -799,11 +842,44 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
     const card = document.createElement('article');
     card.className = 'logistics-card';
     const title = document.createElement('strong');
-    title.textContent = `${systemById(state, depot.systemId)?.name ?? depot.systemId} Export Depot`;
+    title.textContent = `${systemById(state, depot.systemId)?.name ?? depot.systemId} Export Center · L${data.level}`;
     const status = document.createElement('p');
     status.className = 'panel-note';
-    status.textContent = `${data.storedCargo.toFixed(1)}/${data.capacity} cargo · ${data.activeConvoys} active convoy${data.activeConvoys === 1 ? '' : 's'}${data.routePaused ? ` · paused (${data.pauseReason ?? 'manual'})` : ''}`;
+    status.textContent = `${data.storedCredits.toFixed(0)}/${data.capacity} cr · ${data.availableAssemblyBays}/${data.assemblyBays} bays ready · ${data.activeConvoys} active${data.routePaused ? ` · paused (${data.pauseReason ?? 'manual'})` : ''}`;
     card.append(title, status);
+
+    const security = document.createElement('p');
+    security.className = 'panel-note panel-note--muted';
+    security.textContent = `Route security: ${data.security.band} ${data.security.score}/100 · recommended escort ${Math.ceil(data.security.recommendedEscortPower)}`;
+    card.appendChild(security);
+
+    const doctrineLabel = document.createElement('label');
+    doctrineLabel.className = 'field-label';
+    doctrineLabel.textContent = 'Convoy doctrine';
+    const doctrine = document.createElement('select');
+    doctrine.className = 'command-input';
+    for (const optionData of data.availableDoctrines) {
+      const option = document.createElement('option');
+      option.value = optionData;
+      const stats = optionData === data.doctrine.id
+        ? data.doctrine
+        : null;
+      option.textContent = stats
+        ? `${optionData} · ${stats.capacity} cr · ${stats.speed} speed`
+        : optionData;
+      option.selected = optionData === data.doctrineId;
+      doctrine.appendChild(option);
+    }
+    doctrine.onchange = () => {
+      coopOrLocal('setExportCenterDoctrine', {
+        depotId: depot.id,
+        doctrineId: doctrine.value,
+      }, () => {
+        const result = setExportCenterDoctrine(state, depot.id, doctrine.value);
+        toast(result.ok ? 'Convoy doctrine updated' : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Convoy doctrine updated', 'ok') });
+    };
+    card.append(doctrineLabel, doctrine);
 
     const destinationLabel = document.createElement('label');
     destinationLabel.className = 'field-label';
@@ -853,12 +929,24 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
         toast(result.ok ? `${result.convoy.id} jumping to Trade Nexus` : result.reason, result.ok ? 'ok' : 'error');
       }, { onOk: () => toast('Convoy dispatched to Trade Nexus', 'ok') });
     };
-    actions.append(pause, dispatch);
+    const upgrade = document.createElement('button');
+    upgrade.type = 'button';
+    upgrade.className = 'btn btn--ghost btn--xs';
+    upgrade.disabled = data.level >= 4;
+    upgrade.textContent = data.level >= 4 ? 'Fully upgraded' : `Upgrade to L${data.level + 1}`;
+    upgrade.onclick = () => {
+      coopOrLocal('upgradeExportCenter', { depotId: depot.id }, () => {
+        const result = upgradeExportCenter(state, depot.id);
+        toast(result.ok ? `Export Center upgraded to level ${result.level}` : result.reason, result.ok ? 'ok' : 'error');
+      }, { onOk: () => toast('Export Center upgraded', 'ok') });
+    };
+    actions.append(pause, dispatch, upgrade);
     card.appendChild(actions);
     container.appendChild(card);
   }
 
-  for (const convoy of activeConvoys(state)) {
+  for (const convoy of activeConvoys(state)
+    .filter((entry) => (entry.ownerId ?? 'player') === 'player')) {
     const card = document.createElement('article');
     card.className = 'logistics-card';
     const title = document.createElement('strong');
@@ -866,12 +954,12 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
     const eta = convoyEtaMs(state, convoy);
     const status = document.createElement('p');
     status.className = 'panel-note';
-    status.textContent = `${convoy.status.replaceAll('_', ' ')} · ETA ${formatEta(eta)} · ${cargoTotal(convoy.manifest).toFixed(1)} cargo · escort ${convoy.escortStrength ?? 0}`;
+    status.textContent = `${convoy.status.replaceAll('_', ' ')} · ETA ${formatEta(eta)} · ${convoy.creditLoad.toFixed(0)} cr · ${convoy.doctrineId} · ${convoy.escortShipIds?.length ?? 0} escort ships`;
     const danger = document.createElement('p');
     danger.className = 'panel-note panel-note--muted';
     danger.textContent = convoy.pauseReason
       ? `Risk: ${convoy.pauseReason}`
-      : `Route: ${(convoy.path ?? []).map((id) => systemById(state, id)?.name ?? id).join(' → ')}`;
+      : `Threat: ${convoy.threatBand ?? 'unknown'} ${Math.round(convoy.threatScore ?? 0)}/100 · ${(convoy.path ?? []).map((id) => systemById(state, id)?.name ?? id).join(' → ')}`;
     const actions = document.createElement('div');
     actions.className = 'panel__actions';
     const followButton = document.createElement('button');
@@ -889,18 +977,7 @@ function renderLogisticsPanel(container, state, { onFollowConvoy } = {}) {
         toast(result.ok ? 'Convoy rerouted over shortest valid lanes' : result.reason, result.ok ? 'ok' : 'error');
       }, { onOk: () => toast('Convoy rerouted over shortest valid lanes', 'ok') });
     };
-    const escort = document.createElement('button');
-    escort.type = 'button';
-    escort.className = 'btn btn--ghost btn--xs';
-    escort.textContent = '+ Escort';
-    escort.onclick = () => {
-      const nextEscort = (convoy.escortStrength ?? 0) + 25;
-      coopOrLocal('setConvoyEscort', { convoyId: convoy.id, escortStrength: nextEscort }, () => {
-        const result = setConvoyEscort(state, convoy.id, nextEscort);
-        toast(result.ok ? 'Escort strength assigned' : result.reason, result.ok ? 'ok' : 'error');
-      }, { onOk: () => toast('Escort strength assigned', 'ok') });
-    };
-    actions.append(followButton, reroute, escort);
+    actions.append(followButton, reroute);
     card.append(title, status, danger, actions);
     container.appendChild(card);
   }
@@ -5153,7 +5230,7 @@ export function initUi(ctx) {
 
     el('credits-value').textContent = Math.floor(state.credits).toLocaleString();
     const logistics = logisticsSummary(state);
-    el('income-value').textContent = incomePerSecond(state).toFixed(1);
+    el('income-value').textContent = logistics.onsiteCreditsPerSecond.toFixed(1);
 
     let contextualViewHint = controlHints()[view];
     if (view === 'system' && viewedSystemId && isPlayerOwned(state, viewedSystemId)) {
@@ -5426,7 +5503,7 @@ export function initUi(ctx) {
           : 'Battle active — set formation and target priorities.';
       } else if (logistics.activeConvoyCount > 0) {
         commandMode.textContent = 'Logistics command';
-        commandDetail.textContent = `${logistics.activeConvoyCount} convoy${logistics.activeConvoyCount === 1 ? '' : 's'} active · ${cargoTotal(logistics.cargoInTransit).toFixed(1)} cargo in transit`;
+        commandDetail.textContent = `${logistics.activeConvoyCount} convoy${logistics.activeConvoyCount === 1 ? '' : 's'} active · ${logistics.creditsInTransit.toFixed(0)} credits in transit`;
       } else {
         commandMode.textContent = state.paused ? 'Paused order phase' : 'Strategic command';
         commandDetail.textContent = state.paused

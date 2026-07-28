@@ -23,6 +23,21 @@ import {
   LOGISTICS_DEFAULT_CONVOY_ARMOR,
   LOGISTICS_CARGO_CREDIT_VALUE,
   LOGISTICS_RECENT_DELIVERY_WINDOW_MS,
+  LOGISTICS_CREDIT_STOCK_CAPACITY,
+  LOGISTICS_LOCAL_CREDIT_CAPACITY,
+  LOGISTICS_EXPORT_CENTER_CAPACITY,
+  LOGISTICS_EXPORT_CENTER_BAYS,
+  LOGISTICS_EXPORT_CENTER_UPGRADE_COST,
+  LOGISTICS_FREE_FREIGHTERS,
+  LOGISTICS_FREIGHTER_COST,
+  LOGISTICS_FREIGHTER_BUILD_MS,
+  LOGISTICS_CONVOY_PARTIAL_DISPATCH_MS,
+  LOGISTICS_CONVOY_FILL_RATIO,
+  LOGISTICS_CONVOY_PARTIAL_FILL_RATIO,
+  LOGISTICS_ESCORT_RALLY_MS,
+  LOGISTICS_ONSITE_PROCESSING_SHARE,
+  LOGISTICS_CONVOY_DOCTRINES,
+  HULL_STATS,
 } from './constants.js';
 import {
   laneBezierAngle,
@@ -94,6 +109,20 @@ export const DEFAULT_LOGISTICS_CONFIG = Object.freeze({
   minLegMs: LOGISTICS_LANE_MIN_LEG_MS,
   defaultConvoyArmor: LOGISTICS_DEFAULT_CONVOY_ARMOR,
   cargoValues: Object.freeze({ ...LOGISTICS_CARGO_CREDIT_VALUE }),
+  outpostCreditCapacity: LOGISTICS_CREDIT_STOCK_CAPACITY,
+  localCreditCapacity: LOGISTICS_LOCAL_CREDIT_CAPACITY,
+  exportCenterCapacity: LOGISTICS_EXPORT_CENTER_CAPACITY,
+  exportCenterBays: LOGISTICS_EXPORT_CENTER_BAYS,
+  exportCenterUpgradeCost: LOGISTICS_EXPORT_CENTER_UPGRADE_COST,
+  freeFreighters: LOGISTICS_FREE_FREIGHTERS,
+  freighterCost: LOGISTICS_FREIGHTER_COST,
+  freighterBuildMs: LOGISTICS_FREIGHTER_BUILD_MS,
+  convoyPartialDispatchMs: LOGISTICS_CONVOY_PARTIAL_DISPATCH_MS,
+  convoyFillRatio: LOGISTICS_CONVOY_FILL_RATIO,
+  convoyPartialFillRatio: LOGISTICS_CONVOY_PARTIAL_FILL_RATIO,
+  escortRallyMs: LOGISTICS_ESCORT_RALLY_MS,
+  onsiteProcessingShare: LOGISTICS_ONSITE_PROCESSING_SHARE,
+  convoyDoctrines: LOGISTICS_CONVOY_DOCTRINES,
   recentDeliveryWindowMs: LOGISTICS_RECENT_DELIVERY_WINDOW_MS,
   terminalConvoyLimit: 80,
   terminalLocalTransportLimit: 60,
@@ -106,6 +135,8 @@ const EPSILON = 1e-7;
 function roundCargo(value) {
   return Math.round(Math.max(0, Number(value) || 0) * CARGO_PRECISION) / CARGO_PRECISION;
 }
+
+const roundCredits = roundCargo;
 
 function resolveConfig(overrides = {}) {
   const productionOverrides = overrides.productionRates ?? {};
@@ -209,21 +240,70 @@ function cargoRoom(inventory, capacity) {
   return Math.max(0, capacity - cargoTotal(inventory));
 }
 
+function creditRoom(storedCredits, capacity) {
+  return Math.max(0, roundCredits(capacity) - roundCredits(storedCredits));
+}
+
+function legacyCredits(record, cargoKey = 'inventory') {
+  if (Number.isFinite(record?.storedCredits)) return roundCredits(record.storedCredits);
+  if (Number.isFinite(record?.creditLoad)) return roundCredits(record.creditLoad);
+  return cargoCreditValue(record?.[cargoKey]);
+}
+
+function ownerWallet(state, ownerId = 'player') {
+  if (!ownerId || ownerId === 'player') {
+    return {
+      get: () => Math.max(0, Number(state.credits) || 0),
+      set: (value) => { state.credits = Math.max(0, Number(value) || 0); },
+    };
+  }
+  const faction = state.factions?.list?.find((candidate) => candidate.id === ownerId);
+  if (!faction) return null;
+  return {
+    get: () => Math.max(0, Number(faction.credits) || 0),
+    set: (value) => { faction.credits = Math.max(0, Number(value) || 0); },
+  };
+}
+
+export function recoverStolenCredits(state, ownerId = 'player', amount = 0, source = 'pirate_fleet') {
+  const credits = roundCredits(Math.max(0, Number(amount) || 0));
+  if (credits <= 0) return { ok: true, credits: 0 };
+  const wallet = ownerWallet(state, ownerId);
+  if (!wallet) return { ok: false, reason: 'No wallet for convoy owner' };
+  wallet.set(wallet.get() + credits);
+  const logistics = ensureLogisticsState(state);
+  logistics.stats.recoveredCredits = roundCredits(logistics.stats.recoveredCredits + credits);
+  const event = {
+    type: 'convoy_credits_recovered',
+    at: state.time ?? 0,
+    ownerId,
+    credits,
+    source,
+  };
+  recordEvent(logistics, event, DEFAULT_LOGISTICS_CONFIG);
+  return { ok: true, credits, event };
+}
+
 export function createDefaultLogisticsState() {
   return {
-    version: 1,
+    version: 2,
     nextConvoyId: 1,
     nextLocalTransportId: 1,
     depots: {},
     routes: [],
     outpostStock: {},
     localTransports: [],
+    freighterPools: {},
     convoys: [],
     blockades: { lanes: [], systems: [] },
     stats: {
       producedCargo: emptyCargo(),
       deliveredCargo: emptyCargo(),
       lostCargo: emptyCargo(),
+      producedCredits: 0,
+      onsiteCredits: 0,
+      lostCredits: 0,
+      recoveredCredits: 0,
       deliveredCredits: 0,
       deliveredCreditsByOwner: {},
       convoysDispatched: 0,
@@ -246,7 +326,7 @@ export function ensureLogisticsState(state) {
   }
   const base = createDefaultLogisticsState();
   const logistics = state.logistics;
-  logistics.version = 1;
+  logistics.version = 2;
   logistics.nextConvoyId = Math.max(1, Number(logistics.nextConvoyId) || 1);
   logistics.nextLocalTransportId = Math.max(1, Number(logistics.nextLocalTransportId) || 1);
   logistics.depots = logistics.depots && typeof logistics.depots === 'object' ? logistics.depots : {};
@@ -254,6 +334,8 @@ export function ensureLogisticsState(state) {
   logistics.outpostStock = logistics.outpostStock && typeof logistics.outpostStock === 'object'
     ? logistics.outpostStock : {};
   logistics.localTransports = Array.isArray(logistics.localTransports) ? logistics.localTransports : [];
+  logistics.freighterPools = logistics.freighterPools && typeof logistics.freighterPools === 'object'
+    ? logistics.freighterPools : {};
   logistics.convoys = Array.isArray(logistics.convoys) ? logistics.convoys : [];
   logistics.blockades = logistics.blockades && typeof logistics.blockades === 'object'
     ? logistics.blockades : base.blockades;
@@ -270,6 +352,56 @@ export function ensureLogisticsState(state) {
     ? logistics.stats.deliveredCreditsByOwner : {};
   logistics.events = Array.isArray(logistics.events) ? logistics.events : [];
   logistics.lastTickAt = Number.isFinite(logistics.lastTickAt) ? logistics.lastTickAt : null;
+
+  for (const depot of Object.values(logistics.depots)) {
+    depot.ownerId = depot.ownerId ?? 'player';
+    depot.level = Math.max(1, Math.min(4, Math.floor(Number(depot.level) || 1)));
+    depot.doctrineId = LOGISTICS_CONVOY_DOCTRINES[depot.doctrineId] ? depot.doctrineId : 'standard';
+    depot.storedCredits = legacyCredits(depot);
+    depot.capacity = LOGISTICS_EXPORT_CENTER_CAPACITY[depot.level];
+    depot.assemblyBays = LOGISTICS_EXPORT_CENTER_BAYS[depot.level];
+    depot.assemblyBusyUntil = Array.isArray(depot.assemblyBusyUntil)
+      ? depot.assemblyBusyUntil.slice(0, depot.assemblyBays).map((time) => Math.max(0, Number(time) || 0))
+      : [];
+    while (depot.assemblyBusyUntil.length < depot.assemblyBays) depot.assemblyBusyUntil.push(0);
+    depot.readySince = Number.isFinite(depot.readySince) ? depot.readySince : null;
+    depot.waitingForEscortsSince = Number.isFinite(depot.waitingForEscortsSince)
+      ? depot.waitingForEscortsSince : null;
+  }
+  for (const stock of Object.values(logistics.outpostStock)) {
+    stock.ownerId = stock.ownerId ?? 'player';
+    stock.storedCredits = legacyCredits(stock);
+    stock.capacity = Math.max(LOGISTICS_CREDIT_STOCK_CAPACITY, Number(stock.capacityCredits) || 0);
+    stock.producedCredits = Math.max(
+      0,
+      Number(stock.producedCredits) || cargoCreditValue(stock.producedTotal),
+    );
+  }
+  for (const transport of logistics.localTransports) {
+    transport.ownerId = transport.ownerId ?? 'player';
+    transport.creditLoad = Number.isFinite(transport.creditLoad)
+      ? roundCredits(transport.creditLoad)
+      : cargoCreditValue(transport.manifest);
+  }
+  for (const convoy of logistics.convoys) {
+    convoy.ownerId = convoy.ownerId ?? 'player';
+    convoy.creditLoad = Number.isFinite(convoy.creditLoad)
+      ? roundCredits(convoy.creditLoad)
+      : cargoCreditValue(convoy.manifest);
+    convoy.doctrineId = LOGISTICS_CONVOY_DOCTRINES[convoy.doctrineId]
+      ? convoy.doctrineId : 'standard';
+    convoy.escortShipIds = Array.isArray(convoy.escortShipIds)
+      ? [...new Set(convoy.escortShipIds.map(String))] : [];
+    convoy.threat = Math.max(0, Math.min(100, Number(convoy.threat) || 0));
+    convoy.threatScore = Math.max(
+      0,
+      Math.min(100, Number(convoy.threatScore ?? convoy.threat) || 0),
+    );
+    convoy.threatBand = convoy.threatBand
+      ?? (convoy.threatScore < 25 ? 'safe'
+        : convoy.threatScore < 50 ? 'watched'
+          : convoy.threatScore < 75 ? 'threatened' : 'critical');
+  }
   return logistics;
 }
 
@@ -287,6 +419,200 @@ export function resetLogisticsIds(state) {
   }
   logistics.nextConvoyId = maxConvoy + 1;
   logistics.nextLocalTransportId = maxLocal + 1;
+}
+
+function ownerResearchUnlocked(state, ownerId, techId) {
+  const { techState } = ownerContext(state, ownerId);
+  return !!techState?.research?.unlocked?.includes?.(techId);
+}
+
+function ensureFreighterPool(state, ownerId = 'player', options = {}) {
+  const logistics = ensureLogisticsState(state);
+  const config = configFrom(options);
+  const id = ownerId || 'player';
+  const existing = logistics.freighterPools[id] ?? {};
+  const pool = {
+    ownerId: id,
+    total: Math.max(config.freeFreighters, Math.floor(Number(existing.total) || config.freeFreighters)),
+    paid: Math.max(0, Math.floor(Number(existing.paid) || 0)),
+    nextFreighterId: Math.max(
+      config.freeFreighters + 1,
+      Math.floor(Number(existing.nextFreighterId) || config.freeFreighters + 1),
+    ),
+    builds: Array.isArray(existing.builds) ? existing.builds : [],
+    backlog: Math.max(0, Math.floor(Number(existing.backlog) || 0)),
+  };
+  logistics.freighterPools[id] = pool;
+  return pool;
+}
+
+function activeFreighterIds(logistics, ownerId) {
+  return new Set(logistics.localTransports
+    .filter((transport) => transport.ownerId === ownerId && localTransportActive(transport))
+    .map((transport) => String(transport.freighterId))
+    .filter(Boolean));
+}
+
+function availableFreighterId(state, ownerId, options = {}) {
+  const logistics = ensureLogisticsState(state);
+  const pool = ensureFreighterPool(state, ownerId, options);
+  const active = activeFreighterIds(logistics, ownerId);
+  for (let index = 1; index <= pool.total; index++) {
+    const id = `freighter:${ownerId}:${index}`;
+    if (!active.has(id)) return id;
+  }
+  return null;
+}
+
+function tickFreighterBuilds(state, options = {}) {
+  const logistics = ensureLogisticsState(state);
+  const now = state.time ?? 0;
+  const events = [];
+  for (const pool of Object.values(logistics.freighterPools)) {
+    const completed = pool.builds.filter((build) => now >= build.completeAt);
+    pool.builds = pool.builds.filter((build) => now < build.completeAt);
+    for (const build of completed) {
+      pool.total += 1;
+      pool.paid += build.cost > 0 ? 1 : 0;
+      events.push({
+        type: 'freighter_completed',
+        at: now,
+        ownerId: pool.ownerId,
+        freighterId: build.freighterId,
+        cost: build.cost,
+      });
+    }
+  }
+  return events;
+}
+
+function queueFreighterBuild(state, ownerId, options = {}) {
+  const config = configFrom(options);
+  const pool = ensureFreighterPool(state, ownerId, options);
+  if (pool.builds.length > 0) return { ok: false, reason: 'Freighter already building' };
+  const wallet = ownerWallet(state, ownerId);
+  if (!wallet || wallet.get() + EPSILON < config.freighterCost) {
+    pool.backlog += 1;
+    return { ok: false, reason: `Need ${config.freighterCost} credits for another freighter` };
+  }
+  wallet.set(wallet.get() - config.freighterCost);
+  const ordinal = pool.nextFreighterId++;
+  const build = {
+    freighterId: `freighter:${ownerId}:${ordinal}`,
+    ownerId,
+    cost: config.freighterCost,
+    startedAt: state.time ?? 0,
+    completeAt: (state.time ?? 0) + config.freighterBuildMs,
+  };
+  pool.builds.push(build);
+  return { ok: true, build };
+}
+
+export function freighterPoolSummary(state, ownerId = 'player', options = {}) {
+  const logistics = ensureLogisticsState(state);
+  const pool = ensureFreighterPool(state, ownerId, options);
+  const active = activeFreighterIds(logistics, ownerId).size;
+  return {
+    ownerId,
+    freeAllowance: configFrom(options).freeFreighters,
+    total: pool.total,
+    paid: pool.paid,
+    active,
+    available: Math.max(0, pool.total - active),
+    building: pool.builds.length,
+    backlog: pool.backlog,
+  };
+}
+
+export function availableConvoyDoctrines(state, ownerId = 'player') {
+  const result = ['standard'];
+  if (ownerResearchUnlocked(state, ownerId, 'trade_fast_couriers')) result.push('fast');
+  if (ownerResearchUnlocked(state, ownerId, 'trade_bulk_freighter')) result.push('bulk');
+  if (ownerResearchUnlocked(state, ownerId, 'trade_armored_convoy')) result.push('armored');
+  if (ownerResearchUnlocked(state, ownerId, 'trade_signature_masking')) result.push('stealth');
+  return result;
+}
+
+function preferredAiConvoyDoctrine(state, ownerId) {
+  const available = new Set(availableConvoyDoctrines(state, ownerId));
+  const personality = state.factions?.list?.find((faction) => faction.id === ownerId)?.personality;
+  const preference = {
+    economic: ['bulk', 'armored', 'fast', 'stealth'],
+    militarist: ['armored', 'bulk', 'fast', 'stealth'],
+    expansionist: ['fast', 'stealth', 'bulk', 'armored'],
+    scientific: ['stealth', 'fast', 'armored', 'bulk'],
+  }[personality] ?? ['armored', 'bulk', 'fast', 'stealth'];
+  return preference.find((doctrineId) => available.has(doctrineId)) ?? 'standard';
+}
+
+function doctrineCapacityMultiplier(state, ownerId) {
+  const effects = techEffects(ownerContext(state, ownerId).techState);
+  return Math.max(1, Number(effects.convoyCapacityMult) || 1);
+}
+
+export function convoyDoctrine(state, doctrineId = 'standard', ownerId = 'player', options = {}) {
+  const config = configFrom(options);
+  const id = config.convoyDoctrines[doctrineId] ? doctrineId : 'standard';
+  const base = config.convoyDoctrines[id];
+  return {
+    id,
+    ...base,
+    capacity: roundCredits(base.capacity * doctrineCapacityMultiplier(state, ownerId)),
+  };
+}
+
+export function setExportCenterDoctrine(state, depotId, doctrineId) {
+  const depot = findExportDepot(state, depotId);
+  if (!depot) return { ok: false, reason: 'No such export center' };
+  if (!availableConvoyDoctrines(state, depot.ownerId).includes(doctrineId)) {
+    return { ok: false, reason: 'Convoy doctrine is not researched' };
+  }
+  depot.doctrineId = doctrineId;
+  return { ok: true, depot, doctrine: convoyDoctrine(state, doctrineId, depot.ownerId) };
+}
+
+export function upgradeExportCenter(state, depotId, options = {}) {
+  const depot = findExportDepot(state, depotId);
+  if (!depot) return { ok: false, reason: 'No such export center' };
+  const nextLevel = Math.min(4, (depot.level ?? 1) + 1);
+  if (nextLevel === depot.level) return { ok: false, reason: 'Export center is already fully upgraded' };
+  const ownerId = depot.ownerId ?? 'player';
+  const requirements = {
+    2: ['trade_logistics_hubs'],
+    3: ['trade_lane_secured', 'trade_armored_convoy'],
+    4: ['trade_galactic_exchange'],
+  };
+  const missing = requirements[nextLevel].filter((techId) => !ownerResearchUnlocked(state, ownerId, techId));
+  if (missing.length) return { ok: false, reason: 'Required export-center technology is not researched' };
+  const config = configFrom(options);
+  const cost = config.exportCenterUpgradeCost[nextLevel];
+  const wallet = ownerWallet(state, ownerId);
+  if (!wallet || wallet.get() + EPSILON < cost) return { ok: false, reason: `Need ${cost} credits` };
+  wallet.set(wallet.get() - cost);
+  depot.level = nextLevel;
+  depot.capacity = config.exportCenterCapacity[nextLevel];
+  depot.assemblyBays = config.exportCenterBays[nextLevel];
+  while (depot.assemblyBusyUntil.length < depot.assemblyBays) depot.assemblyBusyUntil.push(0);
+  const system = getSystems(state, depot.galaxyId)[depot.systemId];
+  const structure = system?.structures?.find((entry) => entry.id === depot.structureId);
+  if (structure) {
+    structure.level = nextLevel;
+    structure.maxHp = [0, 520, 720, 1020, 1320][nextLevel];
+    structure.hp = Math.max(structure.hp ?? 0, structure.maxHp);
+  }
+  return { ok: true, depot, level: nextLevel, cost };
+}
+
+export function setConvoyReserve(state, subjectType, subjectId, enabled = true) {
+  if (!['ship', 'battle_group'].includes(subjectType)) {
+    return { ok: false, reason: 'Convoy reserve subject must be a ship or battle group' };
+  }
+  const target = subjectType === 'ship'
+    ? state.playerShips?.find((ship) => ship.id === subjectId)
+    : state.battleGroups?.find((group) => group.id === subjectId);
+  if (!target) return { ok: false, reason: `No such ${subjectType.replace('_', ' ')}` };
+  target.convoyReserve = !!enabled;
+  return { ok: true, subjectType, subjectId, enabled: !!enabled };
 }
 
 function galaxyIdsForState(state, requested) {
@@ -508,7 +834,6 @@ export function registerExportDepot(state, galaxyId, systemId, options = {}) {
   const id = options.id ?? exportDepotId(galaxyId, systemId);
   const ownerId = options.ownerId
     ?? (system.owner === 'player' ? 'player' : system.factionId ?? 'ai-0');
-  const { effectOpts } = ownerContext(state, ownerId);
   const existing = logistics.depots[id];
   if (existing) {
     if (options.structureId) {
@@ -516,27 +841,39 @@ export function registerExportDepot(state, galaxyId, systemId, options = {}) {
       existing.source = 'structure';
     }
     existing.operational = options.operational ?? true;
-    existing.capacity = options.capacity
-      ?? config.depotCapacity + structureDepotCapacityBonus(state, systemId, { ...effectOpts, galaxyId });
+    existing.level = Math.max(1, Math.min(4, Number(options.level ?? existing.level) || 1));
+    existing.capacity = config.exportCenterCapacity[existing.level];
+    existing.assemblyBays = config.exportCenterBays[existing.level];
+    existing.assemblyBusyUntil = Array.isArray(existing.assemblyBusyUntil)
+      ? existing.assemblyBusyUntil.slice(0, existing.assemblyBays) : [];
+    while (existing.assemblyBusyUntil.length < existing.assemblyBays) existing.assemblyBusyUntil.push(0);
     existing.ownerId = ownerId;
     return { ok: true, depot: existing, created: false };
   }
 
+  const level = Math.max(1, Math.min(4, Number(options.level) || 1));
   const depot = {
     id,
     galaxyId,
     systemId,
-    ownerId,
     structureId: options.structureId ?? null,
     source: options.structureId ? 'structure' : (options.source ?? 'registered'),
     operational: options.operational ?? true,
-    capacity: options.capacity
-      ?? config.depotCapacity + structureDepotCapacityBonus(state, systemId, { ...effectOpts, galaxyId }),
+    level,
+    capacity: config.exportCenterCapacity[level],
+    assemblyBays: config.exportCenterBays[level],
+    assemblyBusyUntil: Array(config.exportCenterBays[level]).fill(0),
+    storedCredits: Number.isFinite(options.storedCredits)
+      ? roundCredits(options.storedCredits)
+      : cargoCreditValue(options.inventory),
+    doctrineId: config.convoyDoctrines[options.doctrineId] ? options.doctrineId : 'standard',
     inventory: normalizeCargo(options.inventory),
     preferredNexusId: options.preferredNexusId ?? null,
     routePaused: false,
     pauseReason: null,
     lastDispatchAt: null,
+    readySince: null,
+    waitingForEscortsSince: null,
     createdAt: Number.isFinite(options.createdAt) ? options.createdAt : (state.time ?? 0),
   };
   logistics.depots[id] = depot;
@@ -574,9 +911,8 @@ export function syncExportDepots(state, galaxyId = state.activeGalaxyId, options
         allowNonPlayer: options.allowNonPlayer ?? system.owner === 'ai',
         ownerId: system.owner === 'player' ? 'player' : system.factionId ?? 'ai-0',
         structureId: structure.id,
+        level: structure.level ?? 1,
         operational: isOperationalStructure(state, structure, { ...effectOpts, systemId: system.id, galaxyId }),
-        capacity: configFrom(options).depotCapacity
-          + structureDepotCapacityBonus(state, system.id, { ...effectOpts, galaxyId }),
         createdAt: structure.builtAtTime,
       });
       if (!result.ok) continue;
@@ -660,7 +996,9 @@ function ensureOutpostStock(logistics, galaxyId, system, outpost, config, capaci
       outpostId: outpost.id,
       bodyId: outpost.bodyId,
       ownerId: system.owner === 'player' ? 'player' : system.factionId ?? 'ai-0',
-      capacity: outpostStockCapacity(outpost) + capacityBonus,
+      capacity: config.outpostCreditCapacity + Math.max(0, capacityBonus) * 6,
+      storedCredits: 0,
+      producedCredits: 0,
       inventory: emptyCargo(),
       producedTotal: emptyCargo(),
       lastProducedAt: null,
@@ -669,7 +1007,7 @@ function ensureOutpostStock(logistics, galaxyId, system, outpost, config, capaci
   }
   logistics.outpostStock[id].ownerId = system.owner === 'player'
     ? 'player' : system.factionId ?? logistics.outpostStock[id].ownerId ?? 'ai-0';
-  logistics.outpostStock[id].capacity = outpostStockCapacity(outpost) + capacityBonus;
+  logistics.outpostStock[id].capacity = config.outpostCreditCapacity + Math.max(0, capacityBonus) * 6;
   return logistics.outpostStock[id];
 }
 
@@ -702,12 +1040,13 @@ export function systemCargoProduction(system, deltaMs = TICK_MS, options = {}) {
   return total;
 }
 
-/** Produces into outpost buffers. Cargo only reaches a depot via local transports. */
+/** Produces unbanked credits into capped outpost storage. */
 export function tickOutpostProduction(state, options = {}) {
   const logistics = ensureLogisticsState(state);
   const config = configFrom(options);
   const deltaMs = options.tickMs ?? TICK_MS;
-  let produced = emptyCargo();
+  let producedCredits = 0;
+  let onsiteCredits = 0;
   for (const galaxyId of galaxyIdsForState(state, options.galaxyIds ?? options.galaxyId)) {
     for (const system of Object.values(getSystems(state, galaxyId))) {
       if (!['player', 'ai'].includes(system.owner) || system.star?.kind === 'trade_nexus') continue;
@@ -727,7 +1066,7 @@ export function tickOutpostProduction(state, options = {}) {
           config,
           effects.outpostStockCapacityBonus,
         );
-        const delta = cargoProductionForOutpost(system, outpost, deltaMs, {
+        const deltaCargo = cargoProductionForOutpost(system, outpost, deltaMs, {
           ...config,
           moonYieldMultiplier: effects.moonYieldMult,
           systemProductionMultiplier: structureCargoProductionMultiplier(state, system.id, {
@@ -735,16 +1074,31 @@ export function tickOutpostProduction(state, options = {}) {
             galaxyId,
           }) * effects.cargoProductionMult * effects.outpostCargoOutputMult,
         });
-        const accepted = cargoManifestFromInventory(delta, cargoRoom(stock.inventory, stock.capacity));
-        mutateCargo(stock.inventory, addCargo(stock.inventory, accepted));
-        mutateCargo(stock.producedTotal, addCargo(stock.producedTotal, accepted));
+        const grossCredits = cargoCreditValue(deltaCargo, config.cargoValues);
+        stock.productionCreditsPerSecond = deltaMs > 0
+          ? roundCredits(grossCredits * (1000 / deltaMs)) : 0;
+        const ownerId = stock.ownerId ?? 'player';
+        const processingShare = effects.onsiteProcessingShare
+          ?? (ownerResearchUnlocked(state, ownerId, 'trade_onsite_processing')
+            ? config.onsiteProcessingShare : 0);
+        const directCredits = roundCredits(grossCredits * Math.max(0, Math.min(1, processingShare)));
+        const physicalCredits = roundCredits(grossCredits - directCredits);
+        const acceptedCredits = Math.min(physicalCredits, creditRoom(stock.storedCredits, stock.capacity));
+        stock.storedCredits = roundCredits(stock.storedCredits + acceptedCredits);
+        stock.producedCredits = roundCredits(stock.producedCredits + acceptedCredits);
         stock.lastProducedAt = state.time ?? 0;
-        produced = addCargo(produced, accepted);
+        producedCredits = roundCredits(producedCredits + acceptedCredits);
+        if (directCredits > 0) {
+          const wallet = ownerWallet(state, ownerId);
+          if (wallet) wallet.set(wallet.get() + directCredits);
+          onsiteCredits = roundCredits(onsiteCredits + directCredits);
+        }
       }
     }
   }
-  mutateCargo(logistics.stats.producedCargo, addCargo(logistics.stats.producedCargo, produced));
-  return produced;
+  logistics.stats.producedCredits = roundCredits(logistics.stats.producedCredits + producedCredits);
+  logistics.stats.onsiteCredits = roundCredits(logistics.stats.onsiteCredits + onsiteCredits);
+  return { producedCredits, onsiteCredits };
 }
 
 function recordEvent(logistics, event, config) {
@@ -773,7 +1127,8 @@ export function localTransportStatus(transport, time) {
     status: transport.status,
     loaded: transport.status === 'inbound',
     progress: Math.max(0, Math.min(1, (sampleTime - transport.departAt) / duration)),
-    manifest: normalizeCargo(transport.manifest),
+    creditLoad: roundCredits(transport.creditLoad),
+    freighterId: transport.freighterId ?? null,
   };
 }
 
@@ -799,28 +1154,32 @@ export function tickLocalTransports(state, options = {}) {
     const depot = logistics.depots[transport.depotId];
     const stock = logistics.outpostStock[transport.stockId];
     if (!depot?.operational) {
-      if (stock) mutateCargo(stock.inventory, addCargo(stock.inventory, transport.manifest));
+      if (stock) stock.storedCredits = roundCredits(stock.storedCredits + transport.creditLoad);
       transport.status = 'failed';
       transport.completedAt = now;
       const event = { type: 'local_transport_failed', at: now, transportId: transport.id, depotId: transport.depotId };
       events.push(recordEvent(logistics, event, config));
       continue;
     }
-    const delivered = cargoManifestFromInventory(transport.manifest, cargoRoom(depot.inventory, depot.capacity));
-    const overflow = subtractCargo(transport.manifest, delivered);
-    mutateCargo(depot.inventory, addCargo(depot.inventory, delivered));
-    if (stock) mutateCargo(stock.inventory, addCargo(stock.inventory, overflow));
+    const deliveredCredits = Math.min(transport.creditLoad, creditRoom(depot.storedCredits, depot.capacity));
+    const overflowCredits = roundCredits(transport.creditLoad - deliveredCredits);
+    depot.storedCredits = roundCredits(depot.storedCredits + deliveredCredits);
+    if (stock) stock.storedCredits = roundCredits(stock.storedCredits + overflowCredits);
     transport.status = 'delivered';
     transport.completedAt = now;
     const event = {
-      type: 'cargo_arrived_at_depot', at: now, transportId: transport.id,
-      depotId: depot.id, manifest: delivered, overflow,
+      type: 'credits_arrived_at_export_center', at: now, transportId: transport.id,
+      depotId: depot.id, creditLoad: deliveredCredits, overflowCredits,
     };
     events.push(recordEvent(logistics, event, config));
   }
 
   const stocks = Object.values(logistics.outpostStock)
-    .sort((a, b) => a.id.localeCompare(b.id));
+    .sort((a, b) => {
+      const fillDelta = (b.storedCredits / Math.max(1, b.capacity))
+        - (a.storedCredits / Math.max(1, a.capacity));
+      return Math.abs(fillDelta) > EPSILON ? fillDelta : a.id.localeCompare(b.id);
+    });
   for (const stock of stocks) {
     const stockSystem = getSystems(state, stock.galaxyId)[stock.systemId];
     const stockOutpost = stockSystem?.structures?.find((structure) => structure.id === stock.outpostId);
@@ -834,7 +1193,7 @@ export function tickLocalTransports(state, options = {}) {
       .filter((candidate) => candidate.galaxyId === stock.galaxyId && candidate.systemId === stock.systemId)
       .sort((a, b) => a.id.localeCompare(b.id))[0];
     if (!depot?.operational) continue;
-    if (cargoTotal(stock.inventory) + EPSILON < config.localDispatchCargo) continue;
+    if (stock.storedCredits <= EPSILON) continue;
     const { techState, effectOpts } = ownerContext(state, stock.ownerId ?? depot.ownerId ?? 'player');
     const localInterval = config.localDispatchIntervalMs
       * structureDispatchIntervalMultiplier(state, stock.systemId, 'local', {
@@ -848,20 +1207,28 @@ export function tickLocalTransports(state, options = {}) {
       (transport) => transport.stockId === stock.id && localTransportActive(transport),
     )) continue;
 
-    const manifest = cargoManifestFromInventory(stock.inventory, config.localTransportCapacity);
-    if (cargoTotal(manifest) <= EPSILON) continue;
-    mutateCargo(stock.inventory, subtractCargo(stock.inventory, manifest));
+    const freighterId = availableFreighterId(state, stock.ownerId ?? 'player', config);
+    if (!freighterId) {
+      queueFreighterBuild(state, stock.ownerId ?? 'player', config);
+      continue;
+    }
+    const creditLoad = roundCredits(Math.min(stock.storedCredits, config.localCreditCapacity));
+    if (creditLoad <= EPSILON) continue;
+    stock.storedCredits = roundCredits(stock.storedCredits - creditLoad);
     stock.lastLocalDispatchAt = now;
+    const pool = ensureFreighterPool(state, stock.ownerId ?? 'player', config);
+    pool.backlog = Math.max(0, pool.backlog - 1);
     const transport = {
       id: `local-${logistics.nextLocalTransportId++}`,
       galaxyId: stock.galaxyId,
       systemId: stock.systemId,
       stockId: stock.id,
       ownerId: stock.ownerId ?? depot.ownerId ?? 'player',
+      freighterId,
       outpostId: stock.outpostId,
       fromBodyId: stock.bodyId,
       depotId: depot.id,
-      manifest,
+      creditLoad,
       status: 'inbound',
       departAt: now,
       arriveAt: now + config.localTransitMs,
@@ -869,8 +1236,8 @@ export function tickLocalTransports(state, options = {}) {
     };
     logistics.localTransports.push(transport);
     const event = {
-      type: 'local_transport_dispatched', at: now, transportId: transport.id,
-      depotId: depot.id, outpostId: stock.outpostId, manifest,
+      type: 'local_freighter_dispatched', at: now, transportId: transport.id,
+      depotId: depot.id, outpostId: stock.outpostId, freighterId, creditLoad,
     };
     events.push(recordEvent(logistics, event, config));
   }
@@ -882,6 +1249,211 @@ function findConvoy(state, convoyId) {
   return ensureLogisticsState(state).convoys.find((convoy) => convoy.id === convoyId) ?? null;
 }
 
+function escortPowerForShip(ship) {
+  const stats = HULL_STATS[ship?.hull] ?? {};
+  return Math.max(0, Number(stats.dps) || 0) + Math.max(0, Number(ship?.hp ?? stats.hp) || 0) / 20;
+}
+
+function convoyReserveShipIds(state) {
+  const reservedGroups = new Set(
+    (state.battleGroups ?? []).filter((group) => group.convoyReserve).map((group) => group.id),
+  );
+  const groupShipIds = new Set();
+  for (const group of state.battleGroups ?? []) {
+    if (!reservedGroups.has(group.id)) continue;
+    for (const shipId of group.shipIds ?? []) groupShipIds.add(shipId);
+  }
+  return new Set((state.playerShips ?? [])
+    .filter((ship) => ship.convoyReserve || groupShipIds.has(ship.id))
+    .map((ship) => ship.id));
+}
+
+function eligibleEscortShips(state, depot) {
+  const ownerId = depot.ownerId ?? 'player';
+  const candidates = ownerId === 'player'
+    ? (state.playerShips ?? []).filter((ship) => convoyReserveShipIds(state).has(ship.id))
+    : (state.aiShips ?? []).filter((ship) => (ship.factionId ?? 'ai-0') === ownerId
+      && ship.convoyReserve !== false);
+  return candidates.filter((ship) => {
+    const stats = HULL_STATS[ship.hull] ?? {};
+    return ship.hp > 0
+      && (stats.dps ?? 0) > 0
+      && !['flagship', 'hero_flagship', 'helioclast'].includes(ship.hull)
+      && !ship.convoyLeaseId
+      && !state.systemBattles?.[ship.systemId]?.active;
+  });
+}
+
+function routePatrolPower(state, galaxyId, path, ownerId) {
+  const routeSystems = new Set(path ?? []);
+  const ships = ownerId === 'player' ? state.playerShips ?? [] : state.aiShips ?? [];
+  return roundCredits(ships
+    .filter((ship) => ship.galaxyId === galaxyId
+      && routeSystems.has(ship.systemId)
+      && !ship.transit
+      && ship.hp > 0
+      && (ownerId === 'player' || (ship.factionId ?? 'ai-0') === ownerId))
+    .reduce((sum, ship) => sum + escortPowerForShip(ship), 0));
+}
+
+export function routeSecuritySummary(state, input, options = {}) {
+  const depot = typeof input === 'string' ? findExportDepot(state, input) : input;
+  if (!depot) return null;
+  const ownerId = depot.ownerId ?? 'player';
+  const route = options.path
+    ? { path: options.path }
+    : bestNexusRoute(state, depot.galaxyId, depot.systemId, {
+      destinationSystemId: options.destinationSystemId ?? depot.preferredNexusId,
+      ownerId,
+    });
+  const path = route?.path ?? [];
+  const doctrine = convoyDoctrine(state, options.doctrineId ?? depot.doctrineId, ownerId, options);
+  const creditLoad = roundCredits(options.creditLoad ?? Math.min(depot.storedCredits, doctrine.capacity));
+  const factors = [];
+  let threat = 10;
+  const valueThreat = Math.min(25, (creditLoad / 200) * doctrine.signature);
+  threat += valueThreat;
+  if (valueThreat > 0) factors.push({ id: 'value', amount: roundCredits(valueThreat) });
+
+  const pirateSystems = new Set((state.pirates?.fleets ?? [])
+    .filter((fleet) => fleet.galaxyId === depot.galaxyId && fleet.systemId)
+    .map((fleet) => fleet.systemId));
+  const nestSystems = new Set((state.pirates?.nests ?? [])
+    .filter((nest) => nest.galaxyId === depot.galaxyId && !nest.destroyed)
+    .map((nest) => nest.systemId));
+  const pirateExposure = path.reduce((sum, systemId) => (
+    sum + (pirateSystems.has(systemId) ? 15 : 0) + (nestSystems.has(systemId) ? 20 : 0)
+  ), 0);
+  threat += Math.min(35, pirateExposure);
+  if (pirateExposure > 0) factors.push({ id: 'pirates', amount: Math.min(35, pirateExposure) });
+
+  const blockadeExposure = path.slice(0, -1).reduce((sum, systemId, index) => (
+    sum + (isLaneBlockaded(state, depot.galaxyId, systemId, path[index + 1]) ? 20 : 0)
+  ), 0);
+  threat += Math.min(25, blockadeExposure);
+  if (blockadeExposure > 0) factors.push({ id: 'blockades', amount: Math.min(25, blockadeExposure) });
+
+  const recentCutoff = (state.time ?? 0) - 300000;
+  const recentAttacks = ensureLogisticsState(state).events.filter((event) => (
+    event.at >= recentCutoff
+      && ['convoy_intercepted', 'convoy_credits_stolen'].includes(event.type)
+      && event.galaxyId === depot.galaxyId
+  )).length;
+  const recentThreat = Math.min(20, recentAttacks * 5);
+  threat += recentThreat;
+  if (recentThreat > 0) factors.push({ id: 'recent_attacks', amount: recentThreat });
+
+  const centerReduction = [0, 0, 5, 15, 25][depot.level ?? 1];
+  threat -= centerReduction;
+  if (centerReduction > 0) factors.push({ id: 'export_center', amount: -centerReduction });
+  const techReduction = Math.max(
+    0,
+    Number(techEffects(ownerContext(state, ownerId).techState).routeThreatReduction) || 0,
+  );
+  threat -= techReduction;
+  if (techReduction > 0) factors.push({ id: 'technology', amount: -techReduction });
+  const patrolPower = routePatrolPower(state, depot.galaxyId, path, ownerId);
+  const patrolReduction = Math.min(20, patrolPower / 5);
+  threat -= patrolReduction;
+  if (patrolReduction > 0) factors.push({ id: 'patrols', amount: -roundCredits(patrolReduction) });
+
+  const escortShipIds = options.escortShipIds ?? [];
+  const escortShips = [
+    ...(state.playerShips ?? []),
+    ...(state.aiShips ?? []),
+  ].filter((ship) => escortShipIds.includes(ship.id));
+  const escortPower = roundCredits(escortShips.reduce((sum, ship) => sum + escortPowerForShip(ship), 0));
+  const escortReduction = Math.min(35, escortPower / 4);
+  threat -= escortReduction;
+  if (escortReduction > 0) factors.push({ id: 'escorts', amount: -roundCredits(escortReduction) });
+
+  const score = Math.max(0, Math.min(100, Math.round(threat)));
+  const band = score < 25 ? 'safe' : score < 50 ? 'watched' : score < 75 ? 'threatened' : 'critical';
+  return {
+    score,
+    band,
+    path,
+    factors,
+    creditLoad,
+    doctrineId: doctrine.id,
+    recommendedEscortPower: Math.ceil(score * 1.5),
+    escortPower,
+    patrolPower,
+  };
+}
+
+function beginEscortRally(state, depot, security, options = {}) {
+  const now = state.time ?? 0;
+  if (depot.waitingForEscortsSince == null) depot.waitingForEscortsSince = now;
+  const selected = new Set(depot.pendingEscortShipIds ?? []);
+  let selectedPower = [...selected].reduce((sum, shipId) => {
+    const ship = [...(state.playerShips ?? []), ...(state.aiShips ?? [])].find((entry) => entry.id === shipId);
+    return sum + escortPowerForShip(ship);
+  }, 0);
+  const graph = getGraph(state, depot.galaxyId);
+  const candidates = eligibleEscortShips(state, depot)
+    .filter((ship) => !selected.has(ship.id))
+    .map((ship) => {
+      const path = ship.systemId
+        ? shortestRoute(graph, ship.systemId, depot.systemId, routeBlockades(state, depot.galaxyId))
+        : null;
+      return { ship, path, distance: path ? routeDistance(graph, path) : Infinity };
+    })
+    .filter((entry) => entry.path)
+    .sort((a, b) => a.distance - b.distance || b.ship.hp - a.ship.hp || a.ship.id.localeCompare(b.ship.id));
+  for (const entry of candidates) {
+    if (selectedPower >= security.recommendedEscortPower) break;
+    const { ship, path } = entry;
+    selected.add(ship.id);
+    selectedPower += escortPowerForShip(ship);
+    ship.convoyRallyDepotId = depot.id;
+    if (ship.systemId !== depot.systemId && !ship.transit && path.length > 1) {
+      const speed = HULL_STATS[ship.hull]?.laneSpeed ?? 100;
+      ship.transit = {
+        path,
+        legIndex: 0,
+        legStartTime: now,
+        legDurationMs: convoyLegDurationMs(graph, path[0], path[1], {
+          ...options,
+          convoySpeed: speed,
+        }),
+      };
+      ship.systemId = null;
+    }
+  }
+  depot.pendingEscortShipIds = [...selected];
+  return depot.pendingEscortShipIds;
+}
+
+function arrivedEscortIds(state, depot) {
+  const allShips = [...(state.playerShips ?? []), ...(state.aiShips ?? [])];
+  return (depot.pendingEscortShipIds ?? []).filter((shipId) => {
+    const ship = allShips.find((entry) => entry.id === shipId);
+    return ship?.hp > 0 && !ship.transit && ship.systemId === depot.systemId;
+  });
+}
+
+function claimConvoyEscorts(state, depot, convoyId) {
+  const arrived = arrivedEscortIds(state, depot);
+  const allShips = [...(state.playerShips ?? []), ...(state.aiShips ?? [])];
+  for (const shipId of arrived) {
+    const ship = allShips.find((entry) => entry.id === shipId);
+    ship.convoyLeaseId = convoyId;
+    ship.convoyEscortId = convoyId;
+    ship.convoyRallyDepotId = null;
+    ship.transit = null;
+    ship.systemId = null;
+  }
+  for (const shipId of depot.pendingEscortShipIds ?? []) {
+    if (arrived.includes(shipId)) continue;
+    const ship = allShips.find((entry) => entry.id === shipId);
+    if (ship && ship.convoyRallyDepotId === depot.id) ship.convoyRallyDepotId = null;
+  }
+  depot.pendingEscortShipIds = [];
+  depot.waitingForEscortsSince = null;
+  return arrived;
+}
+
 export function dispatchDepot(state, depotId, options = {}) {
   const logistics = ensureLogisticsState(state);
   const config = configFrom(options);
@@ -889,11 +1461,9 @@ export function dispatchDepot(state, depotId, options = {}) {
   if (!depot) return { ok: false, reason: 'No such export depot' };
   if (!depot.operational) return { ok: false, reason: 'Export depot is offline' };
   if (depot.routePaused) return { ok: false, reason: `Route paused: ${depot.pauseReason ?? 'manual'}` };
-  if (cargoTotal(depot.inventory) + EPSILON < config.minDispatchCargo) {
-    return { ok: false, reason: `Need ${config.minDispatchCargo} cargo to dispatch` };
-  }
+  if (depot.storedCredits <= EPSILON) return { ok: false, reason: 'No stored credits to dispatch' };
   const { techState, effectOpts } = ownerContext(state, depot.ownerId ?? 'player');
-  const routeCapacity = 1
+  const routeCapacity = Math.max(1, depot.assemblyBays ?? 1)
     + Math.max(0, Math.floor(techEffects(techState).convoyRouteBonus ?? 0))
     + Math.max(0, Math.floor(structureActiveConvoyRouteBonus(state, depot.systemId, {
       ...effectOpts,
@@ -930,9 +1500,18 @@ export function dispatchDepot(state, depotId, options = {}) {
   routeRecord.updatedAt = state.time ?? 0;
   if (!logistics.routes.includes(routeRecord)) logistics.routes.push(routeRecord);
 
-  const manifest = cargoManifestFromInventory(depot.inventory, config.convoyCapacity);
-  mutateCargo(depot.inventory, subtractCargo(depot.inventory, manifest));
+  const doctrine = convoyDoctrine(state, options.doctrineId ?? depot.doctrineId, depot.ownerId, config);
+  const creditLoad = roundCredits(Math.min(depot.storedCredits, doctrine.capacity));
+  depot.storedCredits = roundCredits(depot.storedCredits - creditLoad);
   const now = state.time ?? 0;
+  const escortShipIds = claimConvoyEscorts(state, depot, `convoy-${logistics.nextConvoyId}`);
+  const security = routeSecuritySummary(state, depot, {
+    ...config,
+    path: route.path,
+    doctrineId: doctrine.id,
+    creditLoad,
+    escortShipIds,
+  });
   const graph = getGraph(state, depot.galaxyId);
   const convoy = {
     id: `convoy-${logistics.nextConvoyId++}`,
@@ -950,23 +1529,45 @@ export function dispatchDepot(state, depotId, options = {}) {
     jumpStartedAt: now,
     jumpEndsAt: now + config.jumpDurationMs,
     legStartTime: now + config.jumpDurationMs,
-    legDurationMs: convoyLegDurationMs(graph, route.path[0], route.path[1], config),
+    legDurationMs: convoyLegDurationMs(graph, route.path[0], route.path[1], {
+      ...config,
+      convoySpeed: Math.min(
+        doctrine.speed,
+        ...escortShipIds.map((shipId) => {
+          const ship = [...(state.playerShips ?? []), ...(state.aiShips ?? [])]
+            .find((entry) => entry.id === shipId);
+          return HULL_STATS[ship?.hull]?.laneSpeed ?? doctrine.speed;
+        }),
+      ),
+    }),
     pausedAt: null,
     resumeStatus: null,
     pauseReason: null,
-    manifest,
-    deliveryValue: cargoCreditValue(manifest, config.cargoValues),
-    escortStrength: Math.max(0, Number(options.escortStrength) || 0),
-    armor: Math.max(0, Number(options.armor) || config.defaultConvoyArmor),
+    doctrineId: doctrine.id,
+    creditLoad,
+    deliveryValue: creditLoad,
+    escortShipIds,
+    escortStrength: security?.escortPower ?? 0,
+    threat: security?.score ?? 0,
+    threatScore: security?.score ?? 0,
+    threatBand: security?.band ?? 'safe',
+    armor: Math.max(0, Number(options.armor) || doctrine.hp),
+    maxArmor: Math.max(0, Number(options.armor) || doctrine.hp),
+    convoySpeed: doctrine.speed,
+    signature: doctrine.signature,
     deliveredAt: null,
     interceptedAt: null,
   };
   logistics.convoys.push(convoy);
   depot.lastDispatchAt = now;
+  depot.readySince = null;
+  const freeBay = depot.assemblyBusyUntil.findIndex((time) => time <= now);
+  if (freeBay >= 0) depot.assemblyBusyUntil[freeBay] = now;
   logistics.stats.convoysDispatched += 1;
   const event = {
     type: 'convoy_dispatched', at: now, convoyId: convoy.id, depotId: depot.id,
-    ownerId: convoy.ownerId, destinationSystemId: convoy.destinationSystemId, path: [...convoy.path], manifest,
+    ownerId: convoy.ownerId, destinationSystemId: convoy.destinationSystemId,
+    path: [...convoy.path], creditLoad, doctrineId: doctrine.id, escortShipIds,
   };
   recordEvent(logistics, event, config);
   return { ok: true, convoy, event };
@@ -980,6 +1581,32 @@ export function tickDepotDispatch(state, options = {}) {
   const depots = Object.values(logistics.depots).sort((a, b) => a.id.localeCompare(b.id));
   for (const depot of depots) {
     if (!depot.operational || depot.routePaused) continue;
+    if ((depot.ownerId ?? 'player') !== 'player') {
+      depot.doctrineId = preferredAiConvoyDoctrine(state, depot.ownerId);
+    }
+    const freeBay = depot.assemblyBusyUntil.findIndex((time) => time <= now);
+    if (freeBay < 0) continue;
+    const doctrine = convoyDoctrine(state, depot.doctrineId, depot.ownerId, config);
+    const fillRatio = depot.storedCredits / Math.max(1, doctrine.capacity);
+    if (fillRatio + EPSILON < config.convoyFillRatio) {
+      if (depot.storedCredits > EPSILON && depot.readySince == null) depot.readySince = now;
+      const partialReady = depot.readySince != null
+        && now - depot.readySince >= config.convoyPartialDispatchMs
+        && fillRatio + EPSILON >= config.convoyPartialFillRatio;
+      if (!partialReady) continue;
+    } else if (depot.readySince == null) {
+      depot.readySince = now;
+    }
+    const security = routeSecuritySummary(state, depot, { ...config, doctrineId: doctrine.id });
+    beginEscortRally(state, depot, security, config);
+    const arrivedIds = arrivedEscortIds(state, depot);
+    const ralliedPower = arrivedIds.reduce((sum, shipId) => {
+      const ship = [...(state.playerShips ?? []), ...(state.aiShips ?? [])]
+        .find((entry) => entry.id === shipId);
+      return sum + escortPowerForShip(ship);
+    }, 0);
+    const rallyExpired = now - depot.waitingForEscortsSince >= config.escortRallyMs;
+    if (ralliedPower + EPSILON < security.recommendedEscortPower && !rallyExpired) continue;
     const { techState, effectOpts } = ownerContext(state, depot.ownerId ?? 'player');
     const interval = config.convoyDispatchIntervalMs
       * structureDispatchIntervalMultiplier(state, depot.systemId, 'convoy', {
@@ -1092,7 +1719,10 @@ export function rerouteConvoy(state, convoyId, destinationSystemId = null, optio
   convoy.legIndex = 0;
   convoy.currentNodeId = origin.systemId;
   convoy.legStartTime = wasJumping ? Math.max(now, convoy.jumpEndsAt) : now;
-  convoy.legDurationMs = convoyLegDurationMs(graph, route.path[0], route.path[1], config);
+  convoy.legDurationMs = convoyLegDurationMs(graph, route.path[0], route.path[1], {
+    ...config,
+    convoySpeed: convoy.convoySpeed ?? config.convoySpeed,
+  });
   convoy.status = wasJumping ? 'jumping' : 'in_transit';
   convoy.systemId = wasJumping ? origin.systemId : null;
   convoy.resumeStatus = null;
@@ -1126,8 +1756,73 @@ export function resumeConvoy(state, convoyId, options = {}) {
 export function setConvoyEscort(state, convoyId, escortStrength) {
   const convoy = findConvoy(state, convoyId);
   if (!convoy) return { ok: false, reason: 'No such convoy' };
-  convoy.escortStrength = Math.max(0, Number(escortStrength) || 0);
-  return { ok: true, convoy };
+  return {
+    ok: false,
+    reason: 'Abstract escort strength was replaced by real ships in the Convoy Reserve',
+    convoy,
+  };
+}
+
+function convoyEscortShips(state, convoy) {
+  const ids = new Set(convoy?.escortShipIds ?? []);
+  return [...(state.playerShips ?? []), ...(state.aiShips ?? [])]
+    .filter((ship) => ids.has(ship.id) && ship.hp > 0);
+}
+
+export function materializeConvoyEscorts(state, convoyId, systemId) {
+  const convoy = findConvoy(state, convoyId);
+  if (!convoy) return { ok: false, reason: 'No such convoy' };
+  for (const ship of convoyEscortShips(state, convoy)) {
+    ship.transit = null;
+    ship.systemId = systemId;
+    ship.convoyEscortId = convoy.id;
+  }
+  convoy.systemId = systemId;
+  convoy.currentNodeId = systemId;
+  return { ok: true, convoy, shipIds: [...convoy.escortShipIds] };
+}
+
+function sendEscortsHome(state, convoy, fromSystemId) {
+  const depot = findExportDepot(state, convoy.depotId);
+  const graph = getGraph(state, convoy.galaxyId);
+  for (const ship of convoyEscortShips(state, convoy)) {
+    ship.convoyEscortId = null;
+    ship.convoyReturnDepotId = depot?.id ?? null;
+    ship.systemId = fromSystemId;
+    ship.transit = null;
+    if (!depot || fromSystemId === depot.systemId) {
+      ship.convoyLeaseId = null;
+      ship.convoyReturnDepotId = null;
+      continue;
+    }
+    const path = shortestRoute(graph, fromSystemId, depot.systemId, routeBlockades(state, convoy.galaxyId));
+    if (!path || path.length < 2) {
+      ship.convoyLeaseId = null;
+      ship.convoyReturnDepotId = null;
+      continue;
+    }
+    ship.transit = {
+      path,
+      legIndex: 0,
+      legStartTime: state.time ?? 0,
+      legDurationMs: convoyLegDurationMs(graph, path[0], path[1], {
+        convoySpeed: HULL_STATS[ship.hull]?.laneSpeed ?? 100,
+      }),
+    };
+    ship.systemId = null;
+  }
+}
+
+function tickEscortReturns(state) {
+  for (const ship of [...(state.playerShips ?? []), ...(state.aiShips ?? [])]) {
+    if (!ship.convoyReturnDepotId || ship.transit) continue;
+    const depot = findExportDepot(state, ship.convoyReturnDepotId);
+    if (!depot || ship.systemId === depot.systemId) {
+      ship.convoyLeaseId = null;
+      ship.convoyReturnDepotId = null;
+      ship.convoyRallyDepotId = null;
+    }
+  }
 }
 
 /** Deterministic interception resolution: escort + armor versus supplied threat. */
@@ -1141,7 +1836,9 @@ export function interceptConvoy(state, convoyId, options = {}) {
   }
   const now = state.time ?? 0;
   const threat = options.threatStrength;
-  const defense = (convoy.escortStrength ?? 0) + (convoy.armor ?? 0);
+  const escortPower = convoyEscortShips(state, convoy)
+    .reduce((sum, ship) => sum + escortPowerForShip(ship), 0);
+  const defense = escortPower + (convoy.armor ?? 0);
   if (Number.isFinite(threat) && defense >= threat) {
     logistics.stats.interceptionsRepelled += 1;
     const event = { type: 'convoy_interception_repelled', at: now, convoyId, threatStrength: threat, defense };
@@ -1155,41 +1852,59 @@ export function interceptConvoy(state, convoyId, options = {}) {
     return { ok: true, destroyed: false, repelled: true, convoy, event };
   }
 
-  const { techState } = ownerContext(state, convoy.ownerId ?? 'player');
   const baseLossFraction = options.destroyed === true
-    ? 1
-    : Math.max(0, Math.min(1, options.cargoLossFraction ?? 1));
-  const lossFraction = Math.max(0, Math.min(1,
-    baseLossFraction * techEffects(techState).cargoLossMult,
-  ));
-  const lostCargo = scaleCargo(convoy.manifest, lossFraction);
-  mutateCargo(convoy.manifest, subtractCargo(convoy.manifest, lostCargo));
-  convoy.deliveryValue = cargoCreditValue(convoy.manifest, config.cargoValues);
-  mutateCargo(logistics.stats.lostCargo, addCargo(logistics.stats.lostCargo, lostCargo));
-  const destroyed = options.destroyed ?? (cargoTotal(convoy.manifest) <= EPSILON);
+    ? 1 : Math.max(0, Math.min(1, options.creditLossFraction ?? options.cargoLossFraction ?? 1));
+  const lostCredits = roundCredits(convoy.creditLoad * baseLossFraction);
+  convoy.creditLoad = roundCredits(convoy.creditLoad - lostCredits);
+  convoy.deliveryValue = convoy.creditLoad;
+  logistics.stats.lostCredits = roundCredits(logistics.stats.lostCredits + lostCredits);
+  const destroyed = options.destroyed ?? (convoy.creditLoad <= EPSILON);
   if (destroyed) {
     convoy.status = 'intercepted';
     convoy.systemId = null;
     convoy.interceptedAt = now;
     convoy.pauseReason = 'interception';
     logistics.stats.convoysLost += 1;
+    sendEscortsHome(state, convoy, options.systemId ?? convoy.currentNodeId ?? convoy.fromSystemId);
   } else {
     pauseConvoyInternal(convoy, now, 'interception');
   }
   if (options.pauseRoute !== false) pauseDepotRoute(state, convoy.depotId, 'interception');
   const event = {
     type: 'convoy_intercepted', at: now, convoyId, destroyed,
-    lostCargo, remainingCargo: normalizeCargo(convoy.manifest),
+    galaxyId: convoy.galaxyId,
+    lostCredits,
+    remainingCredits: convoy.creditLoad,
   };
   recordEvent(logistics, event, config);
   if (options.attackerId && options.attackerId !== (convoy.ownerId ?? 'player')) {
     recordDiplomaticEvent(state, {
       type: 'convoy_intercepted', actor: options.attackerId,
       target: convoy.ownerId ?? 'player',
-      severity: Math.max(0.5, cargoTotal(lostCargo) / 100),
+      severity: Math.max(0.5, lostCredits / 100),
     });
   }
-  return { ok: true, destroyed, repelled: false, lostCargo, convoy, event };
+  const pirateFleet = options.pirateFleetId
+    ? state.pirates?.fleets?.find((fleet) => fleet.id === options.pirateFleetId)
+    : null;
+  if (destroyed && pirateFleet && lostCredits > 0) {
+    pirateFleet.stolenCredits = roundCredits((pirateFleet.stolenCredits ?? 0) + lostCredits);
+    pirateFleet.stolenFromOwnerId = convoy.ownerId ?? 'player';
+    pirateFleet.intent = {
+      type: 'return_loot',
+      targetSystemId: state.pirates?.nests?.find((nest) => nest.id === pirateFleet.nestId)?.systemId
+        ?? pirateFleet.systemId,
+    };
+    recordEvent(logistics, {
+      type: 'convoy_credits_stolen',
+      at: now,
+      galaxyId: convoy.galaxyId,
+      convoyId,
+      pirateFleetId: pirateFleet.id,
+      credits: lostCredits,
+    }, config);
+  }
+  return { ok: true, destroyed, repelled: false, lostCredits, convoy, event };
 }
 
 function nexusStillAvailable(state, convoy) {
@@ -1216,39 +1931,36 @@ function deliverConvoy(state, convoy, config) {
       })
       * techEffects(techState).nexusDeliveryValueMult,
   ) || 1);
-  const baseCredits = roundCargo(cargoCreditValue(convoy.manifest, config.cargoValues) * deliveryMultiplier);
+  const baseCredits = roundCredits(convoy.creditLoad * deliveryMultiplier);
   const destination = getSystems(state, convoy.galaxyId)[convoy.destinationSystemId];
   const destinationActor = destination?.owner === 'player' ? 'player' : destination?.factionId ?? null;
   const diplomaticTrade = destinationActor && destinationActor !== ownerId
     ? settleDiplomaticTradeDelivery(state, { from: ownerId, to: destinationActor, baseValue: baseCredits })
     : null;
-  const credits = roundCargo(diplomaticTrade?.ok ? diplomaticTrade.value : baseCredits);
-  if (ownerId === 'player') {
-    state.credits = (Number(state.credits) || 0) + credits;
-  } else {
-    const faction = state.factions?.list?.find((candidate) => candidate.id === ownerId);
-    if (faction) faction.credits = (Number(faction.credits) || 0) + credits;
-  }
+  const credits = roundCredits(diplomaticTrade?.ok ? diplomaticTrade.value : baseCredits);
+  const wallet = ownerWallet(state, ownerId);
+  if (wallet) wallet.set(wallet.get() + credits);
   convoy.status = 'delivered';
   convoy.systemId = convoy.destinationSystemId;
   convoy.currentNodeId = convoy.destinationSystemId;
   convoy.deliveredAt = now;
   convoy.deliveryValue = credits;
   logistics.stats.convoysDelivered += 1;
-  logistics.stats.deliveredCredits = roundCargo(logistics.stats.deliveredCredits + credits);
-  logistics.stats.deliveredCreditsByOwner[ownerId] = roundCargo(
+  logistics.stats.deliveredCredits = roundCredits(logistics.stats.deliveredCredits + credits);
+  logistics.stats.deliveredCreditsByOwner[ownerId] = roundCredits(
     (logistics.stats.deliveredCreditsByOwner[ownerId] ?? 0) + credits,
   );
   logistics.stats.lastDeliveryAt = now;
-  mutateCargo(logistics.stats.deliveredCargo, addCargo(logistics.stats.deliveredCargo, convoy.manifest));
   logistics.stats.recentDeliveries.push({
-    at: now, convoyId: convoy.id, ownerId, credits, cargo: normalizeCargo(convoy.manifest),
+    at: now, convoyId: convoy.id, ownerId, credits, creditLoad: convoy.creditLoad,
   });
   const cutoff = now - config.recentDeliveryWindowMs * 2;
   logistics.stats.recentDeliveries = logistics.stats.recentDeliveries.filter((delivery) => delivery.at >= cutoff);
+  sendEscortsHome(state, convoy, convoy.destinationSystemId);
   return recordEvent(logistics, {
     type: 'convoy_delivered', at: now, convoyId: convoy.id,
-    ownerId, destinationSystemId: convoy.destinationSystemId, manifest: normalizeCargo(convoy.manifest), credits,
+    ownerId, destinationSystemId: convoy.destinationSystemId,
+    creditLoad: convoy.creditLoad, credits,
   }, config);
 }
 
@@ -1335,7 +2047,7 @@ function tickOneConvoy(state, convoy, config, events) {
       graph,
       convoy.path[convoy.legIndex],
       convoy.path[convoy.legIndex + 1],
-      config,
+      { ...config, convoySpeed: convoy.convoySpeed ?? config.convoySpeed },
     );
   }
 }
@@ -1370,7 +2082,10 @@ export function tickLogistics(state, options = {}) {
     for (const galaxyId of galaxyIds) syncExportDepots(state, galaxyId, options);
   }
   tickOutpostProduction(state, { ...options, galaxyIds });
+  const freighterEvents = tickFreighterBuilds(state, options);
+  tickEscortReturns(state);
   const events = [
+    ...freighterEvents,
     ...tickLocalTransports(state, options),
     ...tickDepotDispatch(state, options),
     ...tickConvoys(state, options),
@@ -1388,7 +2103,10 @@ export function convoyEtaMs(state, convoy, options = {}) {
   const sampleTime = convoy.status === 'jumping' ? convoy.legStartTime : now;
   eta += Math.max(0, convoy.legStartTime + convoy.legDurationMs - sampleTime);
   for (let i = convoy.legIndex + 1; i < convoy.path.length - 1; i++) {
-    eta += convoyLegDurationMs(graph, convoy.path[i], convoy.path[i + 1], options);
+    eta += convoyLegDurationMs(graph, convoy.path[i], convoy.path[i + 1], {
+      ...options,
+      convoySpeed: convoy.convoySpeed,
+    });
   }
   return Math.round(eta);
 }
@@ -1468,12 +2186,18 @@ export function depotSummary(state, depotId, options = {}) {
     routePaused: depot.routePaused,
     pauseReason: depot.pauseReason,
     preferredNexusId: depot.preferredNexusId,
-    inventory: normalizeCargo(depot.inventory),
-    storedCargo: cargoTotal(depot.inventory),
+    level: depot.level,
+    doctrineId: depot.doctrineId,
+    doctrine: convoyDoctrine(state, depot.doctrineId, depot.ownerId, config),
+    storedCredits: roundCredits(depot.storedCredits),
     capacity: depot.capacity,
-    inventoryCredits: cargoCreditValue(depot.inventory, config.cargoValues),
+    assemblyBays: depot.assemblyBays,
+    availableAssemblyBays: depot.assemblyBusyUntil.filter((time) => time <= (state.time ?? 0)).length,
     activeConvoys: convoys.filter((convoy) => !['delivered', 'intercepted'].includes(convoy.status)).length,
     lastDispatchAt: depot.lastDispatchAt,
+    readySince: depot.readySince,
+    security: routeSecuritySummary(state, depot, config),
+    availableDoctrines: availableConvoyDoctrines(state, depot.ownerId),
   };
 }
 
@@ -1491,17 +2215,27 @@ export function logisticsSummary(state, galaxyId = state.activeGalaxyId, options
   const outpostStock = Object.values(logistics.outpostStock).filter(
     (stock) => stock.galaxyId === galaxyId && ownerMatches(stock),
   );
-  const cargoAtOutposts = outpostStock.reduce((total, stock) => addCargo(total, stock.inventory), emptyCargo());
-  const cargoAtDepots = depots.reduce((total, depot) => addCargo(total, depot.inventory), emptyCargo());
-  const cargoInTransit = convoys
+  const creditsAtOutposts = roundCredits(
+    outpostStock.reduce((total, stock) => total + stock.storedCredits, 0),
+  );
+  const creditsAtExportCenters = roundCredits(
+    depots.reduce((total, depot) => total + depot.storedCredits, 0),
+  );
+  const creditsInTransit = roundCredits(convoys
     .filter((convoy) => !['delivered', 'intercepted'].includes(convoy.status))
-    .reduce((total, convoy) => addCargo(total, convoy.manifest), emptyCargo());
+    .reduce((total, convoy) => total + convoy.creditLoad, 0));
   const cutoff = (state.time ?? 0) - config.recentDeliveryWindowMs;
   const recent = logistics.stats.recentDeliveries.filter(
     (delivery) => delivery.at >= cutoff && ownerMatches(delivery),
   );
-  const throughputCreditsPerMinute = roundCargo(recent.reduce((sum, delivery) => sum + delivery.credits, 0)
+  const throughputCreditsPerMinute = roundCredits(recent.reduce((sum, delivery) => sum + delivery.credits, 0)
     * (60000 / config.recentDeliveryWindowMs));
+  const grossProductionCreditsPerSecond = roundCredits(outpostStock
+    .reduce((sum, stock) => sum + (stock.productionCreditsPerSecond ?? 0), 0));
+  const onsiteProcessingShare = ownerId == null
+    ? 0
+    : Math.max(0, Math.min(1,
+      Number(techEffects(ownerContext(state, ownerId).techState).onsiteProcessingShare) || 0));
   const statuses = {};
   for (const convoy of convoys) statuses[convoy.status] = (statuses[convoy.status] ?? 0) + 1;
   return {
@@ -1512,22 +2246,47 @@ export function logisticsSummary(state, galaxyId = state.activeGalaxyId, options
     depotCount: depots.length,
     operationalDepotCount: depots.filter((depot) => depot.operational).length,
     pausedRouteCount: depots.filter((depot) => depot.routePaused).length,
-    activeConvoyRouteCapacity: depots.length + depots.reduce(
-      (total, depot) => total + structureActiveConvoyRouteBonus(state, depot.systemId),
-      0,
-    ),
+    activeConvoyRouteCapacity: depots.reduce((total, depot) => total + depot.assemblyBays, 0),
     convoyCount: convoys.length,
     activeConvoyCount: convoys.filter((convoy) => !['delivered', 'intercepted'].includes(convoy.status)).length,
     convoyStatuses: statuses,
-    cargoAtOutposts,
-    cargoAtDepots,
-    cargoInTransit,
-    storedCargo: roundCargo(cargoTotal(cargoAtOutposts) + cargoTotal(cargoAtDepots)),
+    creditsAtOutposts,
+    creditsAtExportCenters,
+    creditsInTransit,
+    storedCredits: roundCredits(creditsAtOutposts + creditsAtExportCenters),
+    freighters: ownerId == null ? null : freighterPoolSummary(state, ownerId, config),
+    outposts: outpostStock.map((stock) => ({
+      id: stock.id,
+      systemId: stock.systemId,
+      outpostId: stock.outpostId,
+      storedCredits: stock.storedCredits,
+      capacity: stock.capacity,
+      fillRatio: stock.storedCredits / Math.max(1, stock.capacity),
+      productionCreditsPerSecond: stock.productionCreditsPerSecond ?? 0,
+      physicalProductionCreditsPerSecond: roundCredits(
+        (stock.productionCreditsPerSecond ?? 0) * (1 - onsiteProcessingShare),
+      ),
+      timeUntilFullMs: (stock.productionCreditsPerSecond ?? 0) > 0
+        ? Math.max(0, (stock.capacity - stock.storedCredits)
+          / ((stock.productionCreditsPerSecond ?? 0) * (1 - onsiteProcessingShare)) * 1000)
+        : null,
+    })),
     throughputCreditsPerMinute,
+    grossProductionCreditsPerSecond,
+    physicalProductionCreditsPerSecond: roundCredits(
+      grossProductionCreditsPerSecond * (1 - onsiteProcessingShare),
+    ),
+    onsiteCreditsPerSecond: roundCredits(
+      grossProductionCreditsPerSecond * onsiteProcessingShare,
+    ),
+    onsiteProcessingShare,
     deliveredCredits: ownerId == null
       ? logistics.stats.deliveredCredits
       : logistics.stats.deliveredCreditsByOwner[ownerId] ?? 0,
-    lostCargo: normalizeCargo(logistics.stats.lostCargo),
+    producedCredits: logistics.stats.producedCredits,
+    onsiteCredits: logistics.stats.onsiteCredits,
+    lostCredits: logistics.stats.lostCredits,
+    recoveredCredits: logistics.stats.recoveredCredits,
     laneBlockadeCount: logistics.blockades.lanes.filter((key) => key.startsWith(`${galaxyId}:`)).length,
     systemBlockadeCount: logistics.blockades.systems.filter((key) => key.startsWith(`${galaxyId}:`)).length,
   };

@@ -26,7 +26,6 @@ import {
   SOLARII_SHELL_MULTIPLIERS,
   SHIPYARD_LEVEL_BUILD_TIME_MULTIPLIERS,
   STRUCTURE_UPGRADE_COST_MULTIPLIERS,
-  OUTPOST_PASSIVE_INCOME,
   CAPTURE_HOLD_MS,
 } from './constants.js';
 import { neighborsOf, BLACK_HOLE_ID, findPath } from './galaxy.js';
@@ -80,7 +79,6 @@ import {
 } from './diplomacy.js';
 
 const PERSONALITIES = ['expansionist', 'economic', 'megastructure', 'wormhole'];
-const OUTPOST_CREDITS_PER_SECOND = OUTPOST_PASSIVE_INCOME;
 const DEFAULT_BODY_STRUCTURE_BUILD_MS = 24000;
 
 export const AI_DOCTRINE_TYPES = Object.freeze({
@@ -800,8 +798,9 @@ export function applyAiFactionIncomeTick(state, faction, deltaMs = TICK_MS) {
   if (state.paused) return { credits: 0, solarii: 0 };
   const difficulty = aiDifficultyProfile(state, faction);
   const seconds = Math.max(0, deltaMs) / 1000;
-  const credits = aiOperationalOutpostCount(state, faction.id)
-    * OUTPOST_CREDITS_PER_SECOND * seconds * difficulty.incomeMult;
+  // AI outpost credits use the same physical logistics chain as the player.
+  // This tick retains only the separate Solarii economy.
+  const credits = 0;
   const solarii = aiSolariiPerSecond(state, faction) * seconds * difficulty.incomeMult;
   faction.credits += credits;
   faction.solarii += solarii;
