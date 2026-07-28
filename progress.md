@@ -2396,3 +2396,13 @@ Never delete prior entries.
 - Deployed immutable site release `site-mobile-status-20260727T175300Z`; loopback health, active release, current asset hash, and all three public Status links were verified.
 - Production Tailscale inspection found gateway, co-op, public site, health timer, and tunnel active. The sanitized server heartbeat and Cloudflare KV agree on service state, disk use, releases, restore timestamps, UPS state, and players; the expected timestamp/backup-age delta is within the five-minute publish interval. Heartbeat credential files remain root-only mode 0600.
 - The unauthenticated production mobile page and API redirect to the dedicated Cloudflare Access login. Authenticated UI behavior is covered locally with cryptographically valid Access JWT tests; a real owner inbox challenge was not automated.
+
+## Session 2026-07-28 — Nests / AI start / readable skirmish production deployment
+
+**Task claimed:** Commit and deploy one-system AI starts, pirate nests, and readable skirmish combat.
+
+### Production
+- Feature commit `fce840e`; merge with `origin/main` (mobile monitor Worker + login notifications) as `703b962`.
+- Deployed immutable release `nests-ai-skirmish-703b962e2009-20260728-r1` through the guarded Proxmox/CT workflow.
+- Confirmed active release symlink `/opt/galactic-sovereign/releases/nests-ai-skirmish-703b962e2009-20260728-r1`, public `https://play.galacticsovereign.xyz/healthz` healthy, and live bundle `assets/main-BS6pZ90Y.js` containing `pirate_nest` / `PIRATE NEST` / `nestId`.
+
