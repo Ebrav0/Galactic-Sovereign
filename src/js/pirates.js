@@ -2,6 +2,8 @@
 
 import {
   PIRATE_FLEET_COUNT,
+  PIRATE_NEST_COUNT,
+  PIRATE_NEST_HP,
   PIRATE_WANDER_MS,
   PIRATE_RAID_CHANCE,
   PIRATE_RAID_MAX_HOPS,
@@ -28,6 +30,7 @@ import { fleetPower } from './fleet-power.js';
 
 let nextPirateShipId = 1;
 let nextFleetId = 1;
+let nextNestId = 1;
 
 function pirateRng(seed, fleetId, salt) {
   return createRng(hashSeed(seed, `pirate:${fleetId}:${salt}`));
@@ -40,8 +43,23 @@ function rimStarIds(galaxy, strongholdId) {
     dist: Math.hypot(s.x, s.y),
   }));
   scored.sort((a, b) => b.dist - a.dist);
-  const rimCount = Math.max(PIRATE_FLEET_COUNT + 2, Math.floor(stars.length * 0.35));
+  const rimCount = Math.max(PIRATE_NEST_COUNT + PIRATE_FLEET_COUNT + 2, Math.floor(stars.length * 0.35));
   return scored.slice(0, rimCount).map((s) => s.id);
+}
+
+function midRimNestCandidates(state) {
+  const galaxy = getGraph(state);
+  const aiHomes = new Set(
+    (state.factions?.list ?? []).map((f) => f.homeSystemId).filter(Boolean),
+  );
+  const rim = rimStarIds(galaxy, state.stronghold);
+  return rim.filter((id) => {
+    if (id === state.stronghold || id === BLACK_HOLE_ID) return false;
+    if (aiHomes.has(id)) return false;
+    const system = systemById(state, id);
+    if (!system || system.owner === 'player' || system.owner === 'ai') return false;
+    return (system.bodies?.length ?? 0) > 0;
+  });
 }
 
 function buildFleetShips(seed, fleetId, composition = PIRATE_SHIPS) {
@@ -54,9 +72,138 @@ function buildFleetShips(seed, fleetId, composition = PIRATE_SHIPS) {
   return ships;
 }
 
+export function nestCombatUnitId(nestId) {
+  return `nest:${nestId}`;
+}
+
+export function parseNestCombatUnitId(unitId) {
+  const match = String(unitId ?? '').match(/^nest:(.+)$/);
+  return match ? match[1] : null;
+}
+
+export function pirateNestAtSystem(state, systemId) {
+  return (state.pirates?.nests ?? []).find((nest) => (
+    nest.galaxyId === state.activeGalaxyId
+    && nest.systemId === systemId
+    && !nest.destroyed
+    && (nest.hp ?? 0) > 0
+  )) ?? null;
+}
+
+export function pirateNestSystemsWithPresence(state) {
+  return (state.pirates?.nests ?? [])
+    .filter((nest) => nest.galaxyId === state.activeGalaxyId && !nest.destroyed && (nest.hp ?? 0) > 0)
+    .map((nest) => nest.systemId);
+}
+
+export function pirateNestMarkersForGalaxy(state) {
+  return (state.pirates?.nests ?? [])
+    .filter((nest) => nest.galaxyId === state.activeGalaxyId && !nest.destroyed && (nest.hp ?? 0) > 0)
+    .map((nest) => ({
+      nestId: nest.id,
+      systemId: nest.systemId,
+      hp: nest.hp ?? 0,
+      maxHp: nest.maxHp ?? PIRATE_NEST_HP,
+      side: 'enemy',
+      kind: 'nest',
+    }));
+}
+
+export function pirateNestCombatUnits(state, systemId) {
+  const nest = pirateNestAtSystem(state, systemId);
+  if (!nest) return [];
+  return [{
+    id: nestCombatUnitId(nest.id),
+    hull: 'command_cruiser',
+    hp: Math.max(0, nest.hp ?? nest.maxHp ?? PIRATE_NEST_HP),
+    maxHp: nest.maxHp ?? PIRATE_NEST_HP,
+    side: 'enemy',
+    isStructure: true,
+    isObjective: true,
+    isPirateNest: true,
+    nestId: nest.id,
+    structureType: 'pirate_nest',
+    weaponProfile: 'kinetic',
+  }];
+}
+
+/** Apply combat unit HP back onto nest records. Returns destroy events. */
+export function syncPirateNestsFromCombatUnits(state, units = []) {
+  const events = [];
+  ensurePiratesState(state);
+  for (const unit of units) {
+    const nestId = unit?.nestId ?? parseNestCombatUnitId(unit?.id);
+    if (!nestId) continue;
+    if (!(unit.isPirateNest || unit.structureType === 'pirate_nest')) continue;
+    const nest = state.pirates.nests.find((entry) => entry.id === nestId);
+    if (!nest || nest.destroyed) continue;
+    nest.hp = Math.max(0, unit.hp ?? 0);
+    nest.maxHp = unit.maxHp ?? nest.maxHp ?? PIRATE_NEST_HP;
+    if (nest.hp <= 0) {
+      nest.destroyed = true;
+      nest.hp = 0;
+      state.pirates.pendingRespawn = (state.pirates.pendingRespawn ?? [])
+        .filter((pending) => pending.nestId !== nest.id);
+      events.push({
+        type: 'pirate_nest_destroyed',
+        nestId: nest.id,
+        systemId: nest.systemId,
+      });
+    }
+  }
+  return events;
+}
+
+export function destroyPirateNest(state, nestId) {
+  ensurePiratesState(state);
+  const nest = state.pirates.nests.find((entry) => entry.id === nestId);
+  if (!nest || nest.destroyed) return null;
+  nest.hp = 0;
+  nest.destroyed = true;
+  state.pirates.pendingRespawn = (state.pirates.pendingRespawn ?? [])
+    .filter((pending) => pending.nestId !== nest.id);
+  return {
+    type: 'pirate_nest_destroyed',
+    nestId: nest.id,
+    systemId: nest.systemId,
+  };
+}
+
+function createNest(state, systemId, nestIndex) {
+  const id = `nest-${nestIndex}`;
+  return {
+    id,
+    galaxyId: state.activeGalaxyId,
+    systemId,
+    hp: PIRATE_NEST_HP,
+    maxHp: PIRATE_NEST_HP,
+    destroyed: false,
+  };
+}
+
+function backfillNestsFromFleets(state) {
+  const fleets = state.pirates?.fleets ?? [];
+  if (!fleets.length) return;
+  const bySystem = new Map();
+  for (const fleet of fleets) {
+    const systemId = fleet.systemId ?? fleet.homeSystemId;
+    if (!systemId) continue;
+    if (!bySystem.has(systemId)) bySystem.set(systemId, []);
+    bySystem.get(systemId).push(fleet);
+  }
+  let index = nextNestId;
+  for (const [systemId, systemFleets] of bySystem) {
+    const nest = createNest(state, systemId, index++);
+    state.pirates.nests.push(nest);
+    for (const fleet of systemFleets) fleet.nestId = nest.id;
+  }
+  nextNestId = index;
+}
+
 export function resetPirateIds(state) {
   let maxShip = 0;
   let maxFleet = 0;
+  let maxNest = 0;
   for (const fleet of state.pirates?.fleets ?? []) {
     const fn = parseInt(String(fleet.id).replace('pirate-', ''), 10);
     if (Number.isFinite(fn)) maxFleet = Math.max(maxFleet, fn);
@@ -69,28 +216,43 @@ export function resetPirateIds(state) {
     const fn = parseInt(String(pending.fleetId).replace('pirate-', ''), 10);
     if (Number.isFinite(fn)) maxFleet = Math.max(maxFleet, fn);
   }
+  for (const nest of state.pirates?.nests ?? []) {
+    const nn = parseInt(String(nest.id).replace('nest-', ''), 10);
+    if (Number.isFinite(nn)) maxNest = Math.max(maxNest, nn);
+  }
   nextPirateShipId = maxShip + 1;
   nextFleetId = maxFleet + 1;
+  nextNestId = maxNest + 1;
 }
 
 export function spawnPirateFleets(state) {
   nextPirateShipId = 1;
   nextFleetId = 1;
+  nextNestId = 1;
   const seed = state.meta?.seed ?? 1;
-  const rim = rimStarIds(getGraph(state), state.stronghold);
-  const rng = createRng(hashSeed(seed, 'pirate-spawn'));
-  const fleets = [];
+  const candidates = midRimNestCandidates(state);
+  const rng = createRng(hashSeed(seed, 'pirate-nest-spawn'));
+  const nests = [];
   const used = new Set();
 
-  for (let i = 0; i < PIRATE_FLEET_COUNT; i++) {
-    const fleetId = `pirate-${nextFleetId++}`;
-    let systemId = rim[Math.floor(rng() * rim.length)];
-    let guard = 0;
-    while (used.has(systemId) && guard++ < 20) {
-      systemId = rim[Math.floor(rng() * rim.length)];
-    }
+  for (let i = 0; i < PIRATE_NEST_COUNT; i++) {
+    const remaining = candidates.filter((id) => !used.has(id));
+    if (!remaining.length) break;
+    const systemId = remaining[Math.floor(rng() * remaining.length)];
     used.add(systemId);
-    // First rim fleet is the large carrier group (≥2 light carriers); others stay small.
+    const nest = createNest(state, systemId, nextNestId++);
+    nests.push(nest);
+  }
+
+  const fleets = [];
+  const nestCount = nests.length;
+  const fleetCount = PIRATE_FLEET_COUNT;
+  for (let i = 0; i < fleetCount; i++) {
+    const nest = nests[i % Math.max(1, nestCount)] ?? null;
+    const systemId = nest?.systemId
+      ?? candidates[Math.floor(rng() * Math.max(1, candidates.length))];
+    if (!systemId) continue;
+    const fleetId = `pirate-${nextFleetId++}`;
     const size = i === 0 ? 'large' : 'small';
     const composition = size === 'large' ? PIRATE_SHIPS_LARGE : PIRATE_SHIPS;
     fleets.push({
@@ -99,13 +261,14 @@ export function spawnPirateFleets(state) {
       systemId,
       transit: null,
       size,
+      nestId: nest?.id ?? null,
       ships: buildFleetShips(seed, fleetId, composition),
       wanderCooldownMs: Math.floor(rng() * PIRATE_WANDER_MS),
       intent: { type: 'wander', targetSystemId: null },
     });
   }
 
-  return { fleets, pendingRespawn: [] };
+  return { fleets, pendingRespawn: [], nests };
 }
 
 function pickWanderTarget(state, fleet) {
@@ -232,7 +395,7 @@ export function pirateFleetEtaMs(state, fleet) {
 }
 
 export function pirateSystemsWithPresence(state) {
-  const ids = new Set();
+  const ids = new Set(pirateNestSystemsWithPresence(state));
   for (const fleet of state.pirates?.fleets ?? []) {
     if (fleet.galaxyId !== state.activeGalaxyId) continue;
     if (fleet.systemId && !fleet.transit) ids.add(fleet.systemId);
@@ -292,20 +455,34 @@ export function pirateFleetTransitMarkersForGalaxy(state) {
   return out;
 }
 
-function scheduleRespawn(state, fleetId, size = 'small') {
+function scheduleRespawn(state, fleetId, size = 'small', nestId = null) {
   state.pirates.pendingRespawn = state.pirates.pendingRespawn ?? [];
+  const nest = nestId
+    ? state.pirates.nests?.find((entry) => entry.id === nestId)
+    : null;
+  if (nest?.destroyed) return;
   state.pirates.pendingRespawn.push({
     fleetId,
     size: size === 'large' ? 'large' : 'small',
+    nestId: nestId ?? null,
     respawnAt: state.time + PIRATE_RESPAWN_MS,
   });
 }
 
+function nestForPending(state, pending) {
+  if (!pending?.nestId) return null;
+  return (state.pirates?.nests ?? []).find((nest) => nest.id === pending.nestId) ?? null;
+}
+
 function respawnFleet(state, pending) {
+  const nest = nestForPending(state, pending);
+  if (nest?.destroyed) return null;
   const seed = state.meta.seed;
-  const rim = rimStarIds(getGraph(state), state.stronghold);
+  const candidates = midRimNestCandidates(state);
+  const rim = candidates.length ? candidates : rimStarIds(getGraph(state), state.stronghold);
   const rng = createRng(hashSeed(seed, `respawn:${pending.fleetId}:${state.time}`));
-  const systemId = rim[Math.floor(rng() * rim.length)];
+  const systemId = nest?.systemId ?? rim[Math.floor(rng() * Math.max(1, rim.length))];
+  if (!systemId) return null;
   const size = pending.size === 'large' ? 'large' : 'small';
   const composition = size === 'large' ? PIRATE_SHIPS_LARGE : PIRATE_SHIPS;
   return {
@@ -314,6 +491,7 @@ function respawnFleet(state, pending) {
     systemId,
     transit: null,
     size,
+    nestId: nest?.id ?? pending.nestId ?? null,
     ships: buildFleetShips(seed, pending.fleetId, composition),
     wanderCooldownMs: PIRATE_WANDER_MS,
     intent: { type: 'wander', targetSystemId: null },
@@ -389,7 +567,10 @@ export function tickPirates(state, onArrive) {
 
   state.pirates.pendingRespawn = (state.pirates.pendingRespawn ?? []).filter((p) => {
     if (state.time < p.respawnAt) return true;
-    state.pirates.fleets.push(respawnFleet(state, p));
+    const nest = nestForPending(state, p);
+    if (nest?.destroyed) return false;
+    const fleet = respawnFleet(state, p);
+    if (fleet) state.pirates.fleets.push(fleet);
     return false;
   });
 
@@ -417,7 +598,7 @@ export function tickPirates(state, onArrive) {
     if (!fleet.systemId || fleet.ships.every((s) => s.hp <= 0)) {
       if (fleet.ships.every((s) => s.hp <= 0)) {
         state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleet.id);
-        scheduleRespawn(state, fleet.id, fleet.size);
+        scheduleRespawn(state, fleet.id, fleet.size, fleet.nestId);
       }
       continue;
     }
@@ -442,24 +623,51 @@ export function removePirateShip(state, fleetId, shipId) {
   if (ship) ship.hp = 0;
   if (fleet.ships.every((s) => s.hp <= 0)) {
     state.pirates.fleets = state.pirates.fleets.filter((f) => f.id !== fleetId);
-    scheduleRespawn(state, fleetId, fleet.size);
+    scheduleRespawn(state, fleetId, fleet.size, fleet.nestId);
   }
 }
 
 export function ensurePiratesState(state) {
   if (!state.pirates) {
-    state.pirates = { fleets: [], pendingRespawn: [] };
+    state.pirates = { fleets: [], pendingRespawn: [], nests: [] };
   } else {
     state.pirates.fleets = state.pirates.fleets ?? [];
     state.pirates.pendingRespawn = state.pirates.pendingRespawn ?? [];
+    state.pirates.nests = state.pirates.nests ?? [];
   }
+  for (const nest of state.pirates.nests) {
+    nest.maxHp = nest.maxHp ?? PIRATE_NEST_HP;
+    nest.hp = Number.isFinite(nest.hp) ? nest.hp : nest.maxHp;
+    nest.destroyed = !!nest.destroyed || nest.hp <= 0;
+    if (nest.destroyed) nest.hp = 0;
+    nest.galaxyId = nest.galaxyId ?? state.activeGalaxyId;
+  }
+  if (!state.pirates.nests.length && state.pirates.fleets.length) {
+    backfillNestsFromFleets(state);
+  }
+  const nestsById = new Map(state.pirates.nests.map((nest) => [nest.id, nest]));
   for (const fleet of state.pirates.fleets) {
     const path = fleet.transit?.path;
     fleet.intent = fleet.intent ?? {
       type: fleet.transit ? 'raid' : 'wander',
       targetSystemId: path?.length ? path[path.length - 1] : (fleet.systemId ?? null),
     };
+    if (!fleet.nestId || !nestsById.has(fleet.nestId) || nestsById.get(fleet.nestId)?.destroyed) {
+      const home = state.pirates.nests.find((nest) => nest.systemId === fleet.systemId && !nest.destroyed)
+        ?? state.pirates.nests.find((nest) => !nest.destroyed)
+        ?? null;
+      fleet.nestId = home?.id ?? null;
+    }
   }
+  for (const pending of state.pirates.pendingRespawn) {
+    if (!pending.nestId) {
+      const fleetHint = state.pirates.fleets.find((fleet) => fleet.id === pending.fleetId);
+      pending.nestId = fleetHint?.nestId
+        ?? state.pirates.nests.find((nest) => !nest.destroyed)?.id
+        ?? null;
+    }
+  }
+  resetPirateIds(state);
 }
 
 function validateComposition(composition) {
@@ -505,6 +713,9 @@ export function devSpawnEnemyFleetAtSystem(state, systemId, composition = PIRATE
     galaxyId: state.activeGalaxyId,
     systemId,
     transit: null,
+    nestId: pirateNestAtSystem(state, systemId)?.id
+      ?? state.pirates.nests.find((nest) => !nest.destroyed)?.id
+      ?? null,
     ships: buildFleetShipsFromComposition(composition),
     wanderCooldownMs: PIRATE_WANDER_MS,
     intent: { type: 'raid', targetSystemId: systemId },

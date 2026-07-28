@@ -213,3 +213,71 @@ export function aiShipsSummary(state) {
       hp: s.hp,
     }));
 }
+
+export function aiFleetMarkersForGalaxy(state) {
+  const bySystem = new Map();
+  for (const ship of state.aiShips ?? []) {
+    if (ship.galaxyId !== state.activeGalaxyId || !ship.systemId || ship.transit || ship.hp <= 0) continue;
+    const entry = bySystem.get(ship.systemId) ?? {
+      systemId: ship.systemId,
+      shipCount: 0,
+      factionIds: new Set(),
+      side: 'enemy',
+      hostile: true,
+    };
+    entry.shipCount += 1;
+    entry.factionIds.add(aiShipFactionId(state, ship));
+    bySystem.set(ship.systemId, entry);
+  }
+  return [...bySystem.values()].map((entry) => ({
+    systemId: entry.systemId,
+    shipCount: entry.shipCount,
+    factionId: [...entry.factionIds].sort()[0] ?? null,
+    factionIds: [...entry.factionIds].sort(),
+    side: 'enemy',
+    hostile: true,
+  }));
+}
+
+export function aiFleetTransitMarkersForGalaxy(state) {
+  const galaxy = getGraph(state);
+  const out = [];
+  for (const ship of state.aiShips ?? []) {
+    if (ship.galaxyId !== state.activeGalaxyId || !ship.transit || ship.hp <= 0) continue;
+    const status = transitStatusCore(
+      ship.transit,
+      galaxy,
+      state.time,
+      aiShipLaneSpeed(ship.hull),
+      AI_LANE_MIN_LEG_MS,
+    );
+    if (!status) continue;
+    out.push({
+      shipId: ship.id,
+      factionId: aiShipFactionId(state, ship),
+      x: status.x,
+      y: status.y,
+      angle: status.angle,
+      destId: status.destId,
+      shipCount: 1,
+      side: 'enemy',
+      hostile: true,
+      inTransit: true,
+    });
+  }
+  return out;
+}
+
+export function aiTransitLaneKeys(state) {
+  const keys = new Set();
+  for (const ship of state.aiShips ?? []) {
+    if (ship.galaxyId !== state.activeGalaxyId || !ship.transit) continue;
+    const t = ship.transit;
+    for (let i = t.legIndex; i < t.path.length - 1; i++) {
+      const a = t.path[i];
+      const b = t.path[i + 1];
+      keys.add(a < b ? `${a}|${b}` : `${b}|${a}`);
+    }
+  }
+  return keys;
+}

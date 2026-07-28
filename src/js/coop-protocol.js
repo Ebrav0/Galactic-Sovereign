@@ -35,6 +35,9 @@ function combatUnitPose(unit) {
     maxHp: unit.maxHp ?? unit.hp ?? 0,
     ...(unit.isWing ? { isWing: true } : {}),
     ...(unit.isStructure ? { isStructure: true } : {}),
+    ...(unit.isPirateNest ? { isPirateNest: true } : {}),
+    ...(unit.structureType ? { structureType: unit.structureType } : {}),
+    ...(unit.nestId ? { nestId: unit.nestId } : {}),
     ...(unit.hideSprite ? { hideSprite: true } : {}),
     ...(unit.factionId ? { factionId: unit.factionId } : {}),
   };
@@ -159,6 +162,9 @@ export function applyCombatSummary(state, combat, opts = {}) {
       if (pose.hull != null) unit.hull = pose.hull;
       if (pose.isWing) unit.isWing = true;
       if (pose.isStructure) unit.isStructure = true;
+      if (pose.isPirateNest) unit.isPirateNest = true;
+      if (pose.structureType != null) unit.structureType = pose.structureType;
+      if (pose.nestId != null) unit.nestId = pose.nestId;
       if (pose.hideSprite) unit.hideSprite = true;
       if (pose.factionId != null) unit.factionId = pose.factionId;
       if (typeof pose.maxHp === 'number') unit.maxHp = pose.maxHp;
@@ -241,12 +247,24 @@ function compactPirateFleet(fleet) {
     galaxyId: fleet.galaxyId ?? null,
     systemId: fleet.systemId ?? null,
     transit: fleet.transit ?? null,
+    nestId: fleet.nestId ?? null,
     ships: (fleet.ships ?? []).map((s) => ({
       id: s.id,
       hull: s.hull ?? 'raider',
       hp: s.hp ?? 0,
       maxHp: s.maxHp ?? s.hp ?? 1,
     })),
+  };
+}
+
+function compactPirateNest(nest) {
+  return {
+    id: nest.id,
+    galaxyId: nest.galaxyId ?? null,
+    systemId: nest.systemId ?? null,
+    hp: nest.hp ?? 0,
+    maxHp: nest.maxHp ?? nest.hp ?? 1,
+    destroyed: !!nest.destroyed,
   };
 }
 
@@ -259,6 +277,7 @@ export function fleetsSummaryFromState(state) {
     ships: (state.playerShips ?? []).map(compactPlayerShip),
     scouts: (state.scouts ?? []).map(compactScout),
     pirates: (state.pirates?.fleets ?? []).map(compactPirateFleet),
+    nests: (state.pirates?.nests ?? []).map(compactPirateNest),
   };
 }
 
@@ -275,11 +294,15 @@ export function fleetRosterFingerprint(state) {
   const pirates = (state.pirates?.fleets ?? [])
     .map((f) => {
       const shipPart = (f.ships ?? []).map((s) => `${s.id}:${s.hp ?? 0}`).sort().join('+');
-      return `${f.id}@${f.systemId ?? ''}:${f.transit ? 1 : 0}:${shipPart}`;
+      return `${f.id}@${f.systemId ?? ''}:${f.nestId ?? ''}:${f.transit ? 1 : 0}:${shipPart}`;
     })
     .sort()
     .join(',');
-  return `${ships}|${scouts}|${pirates}`;
+  const nests = (state.pirates?.nests ?? [])
+    .map((n) => `${n.id}@${n.systemId ?? ''}:${n.destroyed ? 1 : 0}:${Math.round((n.hp ?? 0) / 50)}`)
+    .sort()
+    .join(',');
+  return `${ships}|${scouts}|${pirates}|${nests}`;
 }
 
 /**
@@ -361,7 +384,7 @@ export function applyFleetsSummary(state, fleets) {
   }
 
   if (Array.isArray(fleets.pirates)) {
-    if (!state.pirates || typeof state.pirates !== 'object') state.pirates = { fleets: [] };
+    if (!state.pirates || typeof state.pirates !== 'object') state.pirates = { fleets: [], nests: [] };
     if (!Array.isArray(state.pirates.fleets)) state.pirates.fleets = [];
     const byId = new Map(state.pirates.fleets.map((f) => [String(f.id), f]));
     const next = [];
@@ -374,12 +397,14 @@ export function applyFleetsSummary(state, fleets) {
           galaxyId: pose.galaxyId,
           systemId: pose.systemId,
           transit: pose.transit ?? null,
+          nestId: pose.nestId ?? null,
           ships: [],
         };
       } else {
         if (pose.galaxyId !== undefined) fleet.galaxyId = pose.galaxyId;
         if (pose.systemId !== undefined) fleet.systemId = pose.systemId;
         if ('transit' in pose) fleet.transit = pose.transit;
+        if ('nestId' in pose) fleet.nestId = pose.nestId;
       }
       const shipById = new Map((fleet.ships ?? []).map((s) => [String(s.id), s]));
       const ships = [];
@@ -404,6 +429,47 @@ export function applyFleetsSummary(state, fleets) {
       next.push(fleet);
     }
     state.pirates.fleets = next;
+  }
+
+  if (Array.isArray(fleets.nests)) {
+    if (!state.pirates || typeof state.pirates !== 'object') state.pirates = { fleets: [], nests: [] };
+    if (!Array.isArray(state.pirates.nests)) state.pirates.nests = [];
+    const byId = new Map(state.pirates.nests.map((n) => [String(n.id), n]));
+    const next = [];
+    const notices = [];
+    for (const pose of fleets.nests) {
+      if (!pose?.id) continue;
+      let nest = byId.get(String(pose.id));
+      const wasDestroyed = !!nest?.destroyed;
+      if (!nest) {
+        nest = {
+          id: pose.id,
+          galaxyId: pose.galaxyId,
+          systemId: pose.systemId,
+          hp: pose.hp ?? 0,
+          maxHp: pose.maxHp ?? pose.hp ?? 1,
+          destroyed: !!pose.destroyed,
+        };
+      } else {
+        if (pose.galaxyId !== undefined) nest.galaxyId = pose.galaxyId;
+        if (pose.systemId !== undefined) nest.systemId = pose.systemId;
+        if (typeof pose.hp === 'number') nest.hp = pose.hp;
+        if (typeof pose.maxHp === 'number') nest.maxHp = pose.maxHp;
+        if ('destroyed' in pose) nest.destroyed = !!pose.destroyed;
+      }
+      if (!wasDestroyed && nest.destroyed) {
+        notices.push({
+          type: 'pirate_nest_destroyed',
+          nestId: nest.id,
+          systemId: nest.systemId,
+        });
+      }
+      next.push(nest);
+    }
+    state.pirates.nests = next;
+    if (notices.length) {
+      state.coopNotices = [...(state.coopNotices ?? []), ...notices];
+    }
   }
 }
 

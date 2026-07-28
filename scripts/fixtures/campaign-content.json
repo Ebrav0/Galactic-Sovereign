@@ -1,23 +1,33 @@
 {
-  "generatedAt": "2026-07-27T19:00:00.000Z",
+  "generatedAt": "2026-07-28T01:00:00.000Z",
   "note": "Frozen campaign content thresholds and mission objective ids. Keep in sync with constants.js and missions.js.",
   "wormholeSettleHook": "tickShipWormholeTransit in src/js/wormholes.js (via tickWormholeTransit)",
+  "missionEvalHook": "evaluateActiveMission in src/js/missions.js (via simulation tick)",
   "thresholds": {
     "VICTORY_DOMINION_THRESHOLD": 0.35,
     "VICTORY_ECONOMIC_CREDITS": 50000,
     "VICTORY_ECONOMIC_SOLARII": 50,
     "VICTORY_ECONOMIC_DEPOTS": 3,
-    "VICTORY_SCULPTOR_ACTIONS": 3
+    "VICTORY_SCULPTOR_ACTIONS": 3,
+    "DYSON_DEFENSE_MIN_SHELLS": 4
   },
   "missions": {
     "wormhole_race": {
       "objectives": ["enter_wormhole"],
       "requiresUnanchored": true
     },
+    "dyson_defense": {
+      "objectives": ["hold_dyson"],
+      "minShells": 4
+    },
     "first_hero": {
       "objectives": ["build_hero"]
+    },
+    "final_dominion": {
+      "objectives": ["dominion"],
+      "scope": "homeGalaxy"
     }
   },
-  "titleMissions": ["wormhole_race", "first_hero"],
+  "titleMissions": ["wormhole_race", "dyson_defense", "first_hero", "final_dominion"],
   "coopActionsRequired": ["enterWormhole", "buildHeroFlagship"]
 }

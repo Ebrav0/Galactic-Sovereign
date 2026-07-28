@@ -91,6 +91,7 @@ import {
   pirateFleetEtaMs,
   pirateFleetPower,
   pirateFleetMarkersForGalaxy,
+  pirateNestMarkersForGalaxy,
   pirateFleetTransitMarkersForGalaxy,
   ensurePiratesState,
 } from './pirates.js';
@@ -229,7 +230,7 @@ import {
 import { startResearch, researchSummary, buildResearchStation, canBuildResearchStation, ensureResearchState } from './research.js';
 import { applyTechEffect, techEffects } from './tech-web.js';
 import { buildTradeStation, canBuildTradeStation, tradeSummary } from './trade.js';
-import { aiFactionSummary, forceAiCapture, listAiFactions } from './ai-faction.js';
+import { aiFactionSummary, forceAiCapture, listAiFactions, doctrineLabel, aiFactionById } from './ai-faction.js';
 import { resetAiShipIds, aiShipsSummary } from './ai-ships.js';
 import { productionSlotSummary } from './production.js';
 import { allTechNodes, isTechUnlocked, techPrereqsMet } from './tech-web.js';
@@ -379,8 +380,8 @@ import { createPlayPresence } from './play-presence.js';
 
 let state = createNewGame(DEFAULT_SEED);
 loadProfile();
-state.pirates = spawnPirateFleets(state);
 seedAiFaction(state, state.homeGalaxyId);
+state.pirates = spawnPirateFleets(state);
 initBuilderDrones(state);
 state.paused = true;
 setBootPhaseRaw(BOOT_PHASE.TITLE);
@@ -417,9 +418,14 @@ const EMPTY_TICK_EVENTS = Object.freeze({
   bulkDeliveryEvents: [],
   strategicOperationEvents: [],
   diplomacyEvents: [],
+  aiEvents: [],
   campaignEvents: [],
   remainingMs: 0,
 });
+
+/** Rate-limit loud AI empire toasts so capture spam does not drown the HUD. */
+let lastAiCaptureToastAt = 0;
+const AI_CAPTURE_TOAST_GAP_MS = 4500;
 
 /** Min gap between full world applies (join/flush bypass). Keeps the UI thread free
  * while still letting post-command debounced snapshots land promptly. */
@@ -819,6 +825,17 @@ function applyCoopSummary(summary) {
     applyFleetsSummary(state, summary.fleets);
   }
 
+  const coopNotices = state.coopNotices ?? [];
+  if (coopNotices.length) {
+    state.coopNotices = [];
+    for (const ev of coopNotices) {
+      if (ev.type === 'pirate_nest_destroyed') {
+        const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+        toast(`Pirate nest destroyed at ${name}`, 'ok');
+      }
+    }
+  }
+
   updateCoopBanner();
 }
 
@@ -921,8 +938,8 @@ function parkTitleSeedWorld() {
   resetClientCoopPresentation();
   audioDirector.reset();
   state = createNewGame(DEFAULT_SEED);
-  state.pirates = spawnPirateFleets(state);
   seedAiFaction(state, state.homeGalaxyId);
+  state.pirates = spawnPirateFleets(state);
   initBuilderDrones(state);
   state.paused = true;
   selection = null;
@@ -1526,14 +1543,10 @@ function doSetCombatMarquee(rect = null) {
 
 function doCombatFocus(targetId) {
   pruneCombatSelection();
-  if (!combatSelectionIds.length) {
-    toast('Select ships first', 'error');
-    return { ok: false, reason: 'Select ships first' };
-  }
   const result = doIssueTacticalOrder({
     type: 'focus_fire',
     targetId,
-    subjectIds: [...combatSelectionIds],
+    ...(combatSelectionIds.length ? { subjectIds: [...combatSelectionIds] } : {}),
   });
   if (result.ok) combatCommandMode = null;
   return result;
@@ -2412,7 +2425,10 @@ function doImportState(newState) {
   if (!newState.constructionJobs) newState.constructionJobs = [];
   if (!newState.drones) newState.drones = [];
   if (!newState.factions?.ai?.homeSystemId) seedAiFaction(newState, newState.homeGalaxyId ?? 'gal-0');
-  if (!newState.pirates?.fleets?.length) {
+  const hasPirateState = (newState.pirates?.fleets?.length ?? 0) > 0
+    || (newState.pirates?.nests?.length ?? 0) > 0
+    || (newState.pirates?.pendingRespawn?.length ?? 0) > 0;
+  if (!hasPirateState) {
     newState.pirates = spawnPirateFleets(newState);
   }
   ensurePiratesState(newState);
@@ -3120,6 +3136,11 @@ function runFrame(now) {
     toast(`Pirates intercepted ${ev.shipId} near ${name}`, 'error');
   }
   for (const battle of tickEvents.battleEvents ?? []) {
+    if (battle.type === 'pirate_nest_destroyed') {
+      const nestName = systemById(state, battle.systemId)?.name ?? battle.systemId;
+      toast(`Pirate nest destroyed at ${nestName}`, 'ok');
+      continue;
+    }
     const name = systemById(state, battle.systemId)?.name ?? battle.systemId;
     if (battle.type === 'battle_started') {
       const activeBattle = getBattleState(state, battle.systemId);
@@ -3186,6 +3207,31 @@ function runFrame(now) {
     if (ev.type === 'call_to_arms_accepted') toast('An ally answered a defensive call', 'ok');
     if (ev.type === 'call_to_arms_refused') toast('A defensive call was refused', 'error');
     if (ev.type === 'council_resolution_resolved') toast(`Council resolution ${ev.passed ? 'passed' : 'failed'}`, ev.passed ? 'ok' : 'error');
+    if (ev.type === 'ai_war_declared') {
+      const attacker = aiFactionById(state, ev.attacker)?.name ?? ev.attacker;
+      const defender = ev.defender === 'player'
+        ? 'your empire'
+        : (aiFactionById(state, ev.defender)?.name ?? ev.defender);
+      toast(`War declared: ${attacker} vs ${defender}`, 'error');
+    }
+  }
+  for (const ev of tickEvents.aiEvents ?? []) {
+    const factionName = aiFactionById(state, ev.factionId)?.name ?? ev.factionId ?? 'Hostile empire';
+    if (ev.type === 'ai_doctrine_set') {
+      const label = ev.label ?? doctrineLabel(ev.doctrineType);
+      toast(`${factionName} commits to a ${label}`, 'info');
+    }
+    if (ev.type === 'contact_detected') {
+      toast(`Contact: ${factionName}`, 'info');
+    }
+    if (ev.type === 'ai_capture') {
+      const nowMs = performance.now();
+      if (nowMs - lastAiCaptureToastAt >= AI_CAPTURE_TOAST_GAP_MS) {
+        lastAiCaptureToastAt = nowMs;
+        const name = systemById(state, ev.systemId)?.name ?? ev.systemId;
+        toast(`${factionName} claimed ${name}`, 'error');
+      }
+    }
   }
   for (const cap of tickEvents.captures ?? []) {
     if (!cap?.captured) continue;
@@ -3220,6 +3266,7 @@ function runFrame(now) {
   for (const ev of tickEvents.campaignEvents ?? []) {
     if (ev.type === 'victory') toast(`Victory: ${ev.victoryType}`, 'ok');
     if (ev.type === 'defeat') toast(`Defeat: ${ev.reason}`, 'error');
+    if (ev.type === 'mission_complete') toast('Mission complete', 'ok');
   }
 
   tickContextualTips(state, toast);
@@ -3583,6 +3630,15 @@ window.render_game_to_text = () => {
     builderDrones: builderDroneSummary(state),
     pirates: {
       fleetCount: state.pirates?.fleets?.length ?? 0,
+      nestCount: (state.pirates?.nests ?? []).filter((n) => !n.destroyed).length,
+      nests: (state.pirates?.nests ?? []).map((nest) => ({
+        id: nest.id,
+        systemId: nest.systemId,
+        hp: nest.hp ?? 0,
+        maxHp: nest.maxHp ?? 0,
+        destroyed: !!nest.destroyed,
+      })),
+      nestMarkers: pirateNestMarkersForGalaxy(state),
       inViewedSystem: pirateFleetAtSystem(state, viewedSystemId).length > 0,
       markers: pirateSystemsWithPresence(state),
       galaxyMarkers: pirateFleetMarkersForGalaxy(state),
@@ -3590,6 +3646,7 @@ window.render_game_to_text = () => {
       fleets: (state.pirates?.fleets ?? []).map((fleet) => ({
         id: fleet.id,
         systemId: fleet.systemId,
+        nestId: fleet.nestId ?? null,
         inTransit: !!fleet.transit,
         destination: fleet.transit?.path?.length ? fleet.transit.path[fleet.transit.path.length - 1] : null,
         etaMs: fleet.transit ? pirateFleetEtaMs(state, fleet) : null,
@@ -3985,8 +4042,8 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   state.aiDifficulty = ['easy', 'normal', 'hard', 'sovereign'].includes(opts.aiDifficulty)
     ? opts.aiDifficulty
     : 'normal';
-  state.pirates = spawnPirateFleets(state);
   seedAiFaction(state, state.homeGalaxyId);
+  state.pirates = spawnPirateFleets(state);
   resetContextualTips();
   galaxyTargetStarId = state.stronghold;
   helioclastTargetingMode = null;

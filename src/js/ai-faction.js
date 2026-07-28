@@ -2,11 +2,15 @@
 
 import {
   AI_STARTING_CREDITS,
-  AI_STARTING_SYSTEMS,
   AI_TICK_INTERVAL_TICKS,
   AI_BUILD_OUTPOST_COST,
   AI_PERSONALITY_NAMES,
   AI_FACTION_COUNT,
+  AI_SEED_HOP_MIN,
+  AI_SEED_HOP_MAX,
+  AI_DOCTRINE_COMMIT_MS,
+  AI_FLEET_MASS_CAPS,
+  AI_CORRIDOR_CONTACT_HOPS,
   SHIPYARD_COST,
   TICK_MS,
   STRUCTURE_BUILD_MS,
@@ -25,7 +29,7 @@ import {
   OUTPOST_PASSIVE_INCOME,
   CAPTURE_HOLD_MS,
 } from './constants.js';
-import { neighborsOf, BLACK_HOLE_ID } from './galaxy.js';
+import { neighborsOf, BLACK_HOLE_ID, findPath } from './galaxy.js';
 import { getGraph, getSystems, persistentSystemRecords } from './galaxy-scope.js';
 import {
   createRng,
@@ -67,14 +71,52 @@ import {
 import {
   canAttackFaction,
   getActiveWar,
+  getContact,
   isAtWar,
+  detectContact,
   recordOccupation,
   recordWarEvent,
+  CONTACT_UNKNOWN,
 } from './diplomacy.js';
 
 const PERSONALITIES = ['expansionist', 'economic', 'megastructure', 'wormhole'];
 const OUTPOST_CREDITS_PER_SECOND = OUTPOST_PASSIVE_INCOME;
 const DEFAULT_BODY_STRUCTURE_BUILD_MS = 24000;
+
+export const AI_DOCTRINE_TYPES = Object.freeze({
+  corridor_push: 'corridor_push',
+  claim_exchange: 'claim_exchange',
+  dyson_race: 'dyson_race',
+  wormhole_push: 'wormhole_push',
+});
+
+const PERSONALITY_DOCTRINE = Object.freeze({
+  expansionist: AI_DOCTRINE_TYPES.corridor_push,
+  economic: AI_DOCTRINE_TYPES.claim_exchange,
+  megastructure: AI_DOCTRINE_TYPES.dyson_race,
+  wormhole: AI_DOCTRINE_TYPES.wormhole_push,
+});
+
+const DOCTRINE_BUILD_BIAS = Object.freeze({
+  corridor_push: ['shipyard', 'outpost', 'fleet_academy', 'missile_silo', 'orbital_defense'],
+  claim_exchange: ['galactic_exchange', 'logistics_hub', 'outpost', 'power_grid', 'storage_depot'],
+  dyson_race: ['sail_foundry', 'dyson_launcher', 'solar_collector', 'nanoforge', 'outpost'],
+  wormhole_push: ['wormhole_observatory', 'sensor_array', 'shipyard', 'outpost', 'interdiction_array'],
+});
+
+const DOCTRINE_FLEET_BIAS = Object.freeze({
+  corridor_push: ['dreadnought', 'battleship', 'cruiser', 'destroyer', 'corvette'],
+  claim_exchange: ['armored_convoy', 'bulk_freighter', 'patrol_cutter', 'corvette', 'destroyer'],
+  dyson_race: ['builder_ship', 'miner', 'command_cruiser', 'cruiser', 'corvette'],
+  wormhole_push: ['sensor_ship', 'scout', 'command_cruiser', 'patrol_cutter', 'corvette'],
+});
+
+const DOCTRINE_LABELS = Object.freeze({
+  corridor_push: 'corridor offensive',
+  claim_exchange: 'trade claim drive',
+  dyson_race: 'Dyson construction race',
+  wormhole_push: 'core wormhole push',
+});
 
 const PERSONALITY_STRATEGIES = Object.freeze({
   expansionist: Object.freeze({
@@ -151,6 +193,228 @@ function factionStrategy(personality) {
   return PERSONALITY_STRATEGIES[personality] ?? PERSONALITY_STRATEGIES.expansionist;
 }
 
+export function doctrineLabel(type) {
+  return DOCTRINE_LABELS[type] ?? 'strategic campaign';
+}
+
+function hopDistancesFrom(state, startId) {
+  const graph = getGraph(state);
+  const dist = new Map();
+  if (!graph || !startId) return dist;
+  const queue = [startId];
+  dist.set(startId, 0);
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const next of neighborsOf(graph, cur)) {
+      if (dist.has(next)) continue;
+      dist.set(next, dist.get(cur) + 1);
+      queue.push(next);
+    }
+  }
+  return dist;
+}
+
+function hopDistance(state, fromId, toId) {
+  if (!fromId || !toId) return null;
+  if (fromId === toId) return 0;
+  return hopDistancesFrom(state, fromId).get(toId) ?? null;
+}
+
+function defaultDoctrineType(personality) {
+  return PERSONALITY_DOCTRINE[personality] ?? AI_DOCTRINE_TYPES.corridor_push;
+}
+
+function emptyDoctrine(personality) {
+  return {
+    type: defaultDoctrineType(personality),
+    targetSystemId: null,
+    frontSystemIds: [],
+    committedUntil: 0,
+    setAt: 0,
+    announcePending: false,
+  };
+}
+
+function playerOwnedSystemIds(state) {
+  return Object.values(getSystems(state))
+    .filter((system) => system.owner === 'player')
+    .map((system) => system.id);
+}
+
+function nearestHopToIds(state, fromId, targetIds) {
+  let best = null;
+  for (const id of targetIds) {
+    const hops = hopDistance(state, fromId, id);
+    if (hops == null) continue;
+    if (best == null || hops < best) best = hops;
+  }
+  return best;
+}
+
+function pickDoctrineTarget(state, faction, type) {
+  const graph = getGraph(state);
+  const home = faction.homeSystemId;
+  if (!graph || !home) return null;
+  if (type === AI_DOCTRINE_TYPES.corridor_push) {
+    const path = findPath(graph, home, state.stronghold);
+    if (path && path.length > 2) {
+      // Aim a few hops inward along the corridor, not the stronghold itself.
+      const idx = Math.min(path.length - 2, Math.max(2, Math.floor(path.length * 0.45)));
+      return path[idx];
+    }
+    return state.stronghold;
+  }
+  if (type === AI_DOCTRINE_TYPES.wormhole_push) {
+    const path = findPath(graph, home, BLACK_HOLE_ID);
+    if (path && path.length > 1) {
+      const idx = Math.min(path.length - 1, Math.max(1, Math.floor(path.length * 0.55)));
+      return path[idx];
+    }
+    return BLACK_HOLE_ID;
+  }
+  if (type === AI_DOCTRINE_TYPES.dyson_race) {
+    const owned = aiOwnedSystems(state, faction.id)
+      .filter((system) => system.id !== BLACK_HOLE_ID && system.star?.kind !== 'trade_nexus')
+      .sort((a, b) => {
+        const aScore = (a.dyson?.completedShells ?? 0) * 1000
+          + ((a.structures ?? []).filter((s) => ['sail_foundry', 'dyson_launcher'].includes(s.type)).length) * 50
+          + (a.bodies?.length ?? 0);
+        const bScore = (b.dyson?.completedShells ?? 0) * 1000
+          + ((b.structures ?? []).filter((s) => ['sail_foundry', 'dyson_launcher'].includes(s.type)).length) * 50
+          + (b.bodies?.length ?? 0);
+        return bScore - aScore || a.id.localeCompare(b.id);
+      });
+    if (owned[0]) return owned[0].id;
+    const neutrals = Object.values(getSystems(state))
+      .filter((system) => system.owner === 'neutral' && (system.bodies?.length ?? 0) > 0)
+      .map((system) => ({
+        id: system.id,
+        hops: hopDistance(state, home, system.id) ?? 999,
+        bodies: system.bodies?.length ?? 0,
+      }))
+      .sort((a, b) => a.hops - b.hops || b.bodies - a.bodies || a.id.localeCompare(b.id));
+    return neutrals[0]?.id ?? home;
+  }
+  // claim_exchange
+  const systems = Object.values(getSystems(state))
+    .filter((system) => system.id !== BLACK_HOLE_ID
+      && system.owner !== 'player'
+      && (system.factionId == null || system.factionId === faction.id || system.owner === 'neutral'))
+    .map((system) => {
+      const habitable = (system.bodies ?? []).filter((body) => body.type === 'habitable').length;
+      const nexus = system.star?.kind === 'trade_nexus' ? 40 : 0;
+      const hops = hopDistance(state, home, system.id) ?? 999;
+      return { id: system.id, score: nexus + habitable * 12 - hops * 2, hops };
+    })
+    .sort((a, b) => b.score - a.score || a.hops - b.hops || a.id.localeCompare(b.id));
+  return systems[0]?.id ?? home;
+}
+
+function computeDoctrineFront(state, faction, targetSystemId) {
+  if (!targetSystemId) return [];
+  const owned = aiOwnedSystems(state, faction.id);
+  if (!owned.length) return [];
+  return [...owned]
+    .map((system) => ({
+      id: system.id,
+      hops: hopDistance(state, system.id, targetSystemId) ?? 999,
+    }))
+    .sort((a, b) => a.hops - b.hops || a.id.localeCompare(b.id))
+    .slice(0, 4)
+    .map((entry) => entry.id);
+}
+
+function doctrineNeedsRefresh(state, faction) {
+  const doctrine = faction.doctrine;
+  if (!doctrine?.type) return true;
+  if ((state.time ?? 0) >= (doctrine.committedUntil ?? 0)) return true;
+  if (!doctrine.targetSystemId) return true;
+  const target = systemById(state, doctrine.targetSystemId);
+  if (!target) return true;
+  if (doctrine.type === AI_DOCTRINE_TYPES.corridor_push
+    || doctrine.type === AI_DOCTRINE_TYPES.claim_exchange
+    || doctrine.type === AI_DOCTRINE_TYPES.wormhole_push) {
+    if (target.owner === 'ai' && target.factionId === faction.id) {
+      // Keep pushing toward the player / core if the immediate target was claimed.
+      if (doctrine.type === AI_DOCTRINE_TYPES.corridor_push) {
+        const hops = hopDistance(state, doctrine.targetSystemId, state.stronghold);
+        if (hops != null && hops > 2) return true;
+      }
+      if (doctrine.type === AI_DOCTRINE_TYPES.wormhole_push && doctrine.targetSystemId !== BLACK_HOLE_ID) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function assignAiDoctrine(state, faction, { force = false } = {}) {
+  ensureFactions(state);
+  const type = defaultDoctrineType(faction.personality);
+  if (!force && faction.doctrine?.type === type && !doctrineNeedsRefresh(state, faction)) {
+    faction.doctrine.frontSystemIds = computeDoctrineFront(state, faction, faction.doctrine.targetSystemId);
+    return { ok: true, changed: false, doctrine: faction.doctrine };
+  }
+  const targetSystemId = pickDoctrineTarget(state, faction, type);
+  const prevType = faction.doctrine?.type;
+  const prevTarget = faction.doctrine?.targetSystemId;
+  const prevAnnounce = !!faction.doctrine?.announcePending;
+  const changed = force || prevType !== type || prevTarget !== targetSystemId || !prevTarget;
+  faction.doctrine = {
+    type,
+    targetSystemId,
+    frontSystemIds: computeDoctrineFront(state, faction, targetSystemId),
+    committedUntil: (state.time ?? 0) + AI_DOCTRINE_COMMIT_MS,
+    setAt: state.time ?? 0,
+    announcePending: changed || prevAnnounce,
+  };
+  return { ok: true, changed, doctrine: faction.doctrine };
+}
+
+function normalizeDoctrine(state, faction) {
+  if (!faction.doctrine || typeof faction.doctrine !== 'object') {
+    faction.doctrine = emptyDoctrine(faction.personality);
+  }
+  const type = Object.values(AI_DOCTRINE_TYPES).includes(faction.doctrine.type)
+    ? faction.doctrine.type
+    : defaultDoctrineType(faction.personality);
+  faction.doctrine.type = type;
+  faction.doctrine.targetSystemId = faction.doctrine.targetSystemId || null;
+  faction.doctrine.frontSystemIds = Array.isArray(faction.doctrine.frontSystemIds)
+    ? faction.doctrine.frontSystemIds.filter(Boolean)
+    : [];
+  faction.doctrine.committedUntil = Math.max(0, finite(faction.doctrine.committedUntil));
+  faction.doctrine.setAt = Math.max(0, finite(faction.doctrine.setAt));
+  faction.doctrine.announcePending = !!faction.doctrine.announcePending;
+  return faction.doctrine;
+}
+
+function midBandHomeCandidates(state, galaxyId) {
+  const graph = getGraph(state);
+  if (!graph) return [];
+  const dist = hopDistancesFrom(state, state.stronghold);
+  const eligible = graph.stars
+    .map((star) => star.id)
+    .filter((id) => {
+      if (id === state.stronghold || id === BLACK_HOLE_ID) return false;
+      const system = systemById(state, id, galaxyId);
+      if (!system || (system.bodies?.length ?? 0) === 0) return false;
+      if (system.owner === 'player' || system.owner === 'ai') return false;
+      const hops = dist.get(id);
+      return hops != null && hops >= AI_SEED_HOP_MIN && hops <= AI_SEED_HOP_MAX;
+    })
+    .sort((a, b) => (dist.get(a) ?? 0) - (dist.get(b) ?? 0) || a.localeCompare(b));
+  if (eligible.length) return eligible;
+  // Fallback: closest rim stars first so AI still approaches the player.
+  return rimStars(state)
+    .filter((id) => (systemById(state, id, galaxyId)?.bodies?.length ?? 0) > 0)
+    .filter((id) => {
+      const system = systemById(state, id, galaxyId);
+      return system && system.owner !== 'player' && system.owner !== 'ai';
+    })
+    .sort((a, b) => (dist.get(a) ?? 999) - (dist.get(b) ?? 999) || a.localeCompare(b));
+}
+
 function defaultFaction(index = 0, personality = PERSONALITIES[index % PERSONALITIES.length]) {
   return {
     id: `ai-${index}`,
@@ -212,6 +476,7 @@ function normalizeFaction(state, faction, index) {
   ensureAiResearchState(faction);
   normalizeProductionState(faction);
   normalizeLogisticsState(faction);
+  normalizeDoctrine(state, faction);
   return faction;
 }
 
@@ -351,6 +616,11 @@ function rimStars(state) {
     .map((star) => star.id);
 }
 
+function pickHomeFromCandidates(candidates, rng) {
+  if (!candidates.length) return null;
+  return candidates[Math.floor(rng() * Math.min(candidates.length, Math.max(3, Math.ceil(candidates.length * 0.35))))];
+}
+
 function addSeedStructure(state, system, faction, type, bodyId, extra = {}) {
   const def = structureDefinition(type);
   const structure = {
@@ -380,7 +650,7 @@ export function seedExtraAiFactions(state, galaxyId = state.homeGalaxyId) {
     return { ok: true, count: state.factions.list.length };
   }
   const rng = createRng(hashSeed(state.meta.seed, 'ai-multi-seed'));
-  const candidates = rimStars(state).filter((id) => {
+  const candidates = midBandHomeCandidates(state, galaxyId).filter((id) => {
     const system = systemById(state, id, galaxyId);
     return system && system.owner !== 'player' && system.owner !== 'ai'
       && (system.bodies?.length ?? 0) > 0
@@ -388,8 +658,9 @@ export function seedExtraAiFactions(state, galaxyId = state.homeGalaxyId) {
   });
 
   while (state.factions.list.length < AI_FACTION_COUNT && candidates.length > 0) {
-    const index = Math.floor(rng() * candidates.length);
-    const homeSystemId = candidates.splice(index, 1)[0];
+    const homeSystemId = pickHomeFromCandidates(candidates, rng) ?? candidates.shift();
+    const removeAt = candidates.indexOf(homeSystemId);
+    if (removeAt >= 0) candidates.splice(removeAt, 1);
     const factionIndex = state.factions.list.length;
     const faction = normalizeFaction(
       state,
@@ -417,30 +688,27 @@ export function seedAiFaction(state, galaxyId = state.homeGalaxyId) {
   if (state.activeGalaxyId !== galaxyId) {
     return { ok: false, reason: 'Home galaxy must be active to seed AI' };
   }
-  const graph = getGraph(state);
+  const primary = state.factions.list[0];
+  if (primary?.homeSystemId && state.factions.list.length >= AI_FACTION_COUNT) {
+    assignAiFactionOwnership(state);
+    return {
+      ok: true,
+      homeSystemId: primary.homeSystemId,
+      owned: aiOwnedSystemIds(state, primary.id),
+      doctrineEvents: [],
+      skipped: true,
+    };
+  }
   const rng = createRng(hashSeed(state.meta.seed, 'ai-seed'));
-  const candidates = rimStars(state).filter((id) => (systemById(state, id, galaxyId)?.bodies?.length ?? 0) > 0);
+  const candidates = midBandHomeCandidates(state, galaxyId)
+    .filter((id) => (systemById(state, id, galaxyId)?.bodies?.length ?? 0) > 0);
   if (candidates.length === 0) return { ok: false, reason: 'No rim candidates' };
 
-  const primary = state.factions.list[0];
-  const homeSystemId = candidates[Math.floor(rng() * candidates.length)];
-  const owned = new Set([homeSystemId]);
-  const queue = [homeSystemId];
-  while (owned.size < AI_STARTING_SYSTEMS && queue.length) {
-    const current = queue.shift();
-    for (const next of neighborsOf(graph, current)) {
-      if (next === state.stronghold || next === BLACK_HOLE_ID || owned.has(next)) continue;
-      const system = systemById(state, next, galaxyId);
-      if (!system || system.owner === 'player') continue;
-      owned.add(next);
-      queue.push(next);
-      if (owned.size >= AI_STARTING_SYSTEMS) break;
-    }
-  }
+  const homeSystemId = pickHomeFromCandidates(candidates, rng) ?? candidates[0];
+  const owned = [homeSystemId];
 
-  for (const systemId of owned) {
-    const system = systemById(state, systemId, galaxyId);
-    if (!system) continue;
+  const system = systemById(state, homeSystemId, galaxyId);
+  if (system) {
     system.owner = 'ai';
     system.factionId = primary.id;
   }
@@ -460,7 +728,20 @@ export function seedAiFaction(state, galaxyId = state.homeGalaxyId) {
 
   seedExtraAiFactions(state, galaxyId);
   assignAiFactionOwnership(state);
-  return { ok: true, homeSystemId, owned: [...owned] };
+  const doctrineEvents = [];
+  for (const faction of state.factions.list) {
+    const result = assignAiDoctrine(state, faction, { force: true });
+    if (result.changed) {
+      doctrineEvents.push({
+        type: 'ai_doctrine_set',
+        factionId: faction.id,
+        doctrineType: faction.doctrine.type,
+        targetSystemId: faction.doctrine.targetSystemId,
+        label: doctrineLabel(faction.doctrine.type),
+      });
+    }
+  }
+  return { ok: true, homeSystemId, owned, doctrineEvents };
 }
 
 function aiOwnedSystems(state, factionId = null) {
@@ -817,6 +1098,10 @@ function structurePriority(faction, type, def) {
   const strategy = factionStrategy(faction.personality);
   const focusIndex = strategy.buildingFocus.indexOf(type);
   let score = focusIndex >= 0 ? 320 - focusIndex * 20 : 100;
+  const doctrineType = faction.doctrine?.type ?? defaultDoctrineType(faction.personality);
+  const doctrineFocus = DOCTRINE_BUILD_BIAS[doctrineType] ?? [];
+  const doctrineIndex = doctrineFocus.indexOf(type);
+  if (doctrineIndex >= 0) score += 180 - doctrineIndex * 24;
   const text = `${type} ${def.label ?? ''} ${def.effect ?? ''}`.toLowerCase();
   const techPriority = AI_PERSONALITY_PRIORITIES[faction.personality]
     ?? AI_PERSONALITY_PRIORITIES.expansionist;
@@ -950,6 +1235,10 @@ function aiHullScore(faction, hull) {
   const focus = factionStrategy(faction.personality).fleetFocus;
   const focusIndex = focus.indexOf(hull);
   let score = focusIndex >= 0 ? 500 - focusIndex * 35 : 100;
+  const doctrineType = faction.doctrine?.type ?? defaultDoctrineType(faction.personality);
+  const doctrineFocus = DOCTRINE_FLEET_BIAS[doctrineType] ?? [];
+  const doctrineIndex = doctrineFocus.indexOf(hull);
+  if (doctrineIndex >= 0) score += 160 - doctrineIndex * 22;
   if (faction.personality === 'expansionist') score += stats.captureForce * 30 + stats.dps * 2;
   if (faction.personality === 'economic' && ['light_hauler', 'bulk_freighter', 'armored_convoy'].includes(hull)) score += 220;
   if (faction.personality === 'megastructure' && ['builder_ship', 'miner'].includes(hull)) score += 220;
@@ -1174,19 +1463,132 @@ export function forceAiCapture(state, systemId, factionId = null) {
 function aiDispatchToNeutral(state, faction, rng) {
   const owned = aiOwnedSystems(state, faction.id);
   if (!owned.length) return false;
-  const ordered = [...owned].sort((a, b) => a.id.localeCompare(b.id));
-  const start = Math.floor(rng() * ordered.length);
+  const targetId = faction.doctrine?.targetSystemId;
+  const targetHops = targetId ? hopDistancesFrom(state, targetId) : null;
+  const playerIds = playerOwnedSystemIds(state);
+  const ordered = [...owned].sort((a, b) => {
+    const aScore = targetHops ? (targetHops.get(a.id) ?? 999) : 0;
+    const bScore = targetHops ? (targetHops.get(b.id) ?? 999) : 0;
+    return aScore - bScore || a.id.localeCompare(b.id);
+  });
+  const start = Math.floor(rng() * Math.min(3, ordered.length));
   for (let offset = 0; offset < ordered.length; offset++) {
     const from = ordered[(start + offset) % ordered.length];
-    const targets = adjacentSystemsOwnedBy(state, from.id, 'neutral');
+    let targets = adjacentSystemsOwnedBy(state, from.id, 'neutral');
     if (!targets.length) continue;
-    const ships = aiShipsInSystem(state, from.id, faction.id);
+    if (targetHops) {
+      targets = [...targets].sort((a, b) =>
+        (targetHops.get(a) ?? 999) - (targetHops.get(b) ?? 999) || a.localeCompare(b));
+    }
+    // Prefer neutrals that close on the player when corridor pressure is active.
+    if (faction.doctrine?.type === AI_DOCTRINE_TYPES.corridor_push && playerIds.length) {
+      targets = [...targets].sort((a, b) =>
+        (nearestHopToIds(state, a, playerIds) ?? 999) - (nearestHopToIds(state, b, playerIds) ?? 999)
+        || a.localeCompare(b));
+    }
+    const ships = aiShipsInSystem(state, from.id, faction.id)
+      .filter((ship) => (hullStats(ship.hull)?.captureForce ?? 0) > 0 || (hullStats(ship.hull)?.dps ?? 0) > 0);
     if (!ships.length) continue;
-    const targetId = targets[Math.floor(rng() * targets.length)];
-    if (aiFleetPowerInSystem(state, from.id, faction.id) < captureRequirement(state, targetId) * 10) continue;
-    return orderAiShipTravel(state, ships[0], targetId).ok;
+    const pick = targets[0];
+    if (aiFleetPowerInSystem(state, from.id, faction.id) < captureRequirement(state, pick) * 8) continue;
+    return orderAiShipTravel(state, ships[0], pick).ok;
   }
   return false;
+}
+
+function fleetMassCap(state, faction) {
+  const id = aiDifficultyProfile(state, faction).id;
+  return AI_FLEET_MASS_CAPS[id] ?? AI_FLEET_MASS_CAPS.normal;
+}
+
+function maybeSignalApproachContact(state, faction) {
+  const contact = getContact(state, faction.id);
+  if (contact.stage !== CONTACT_UNKNOWN) return null;
+  const playerIds = playerOwnedSystemIds(state);
+  if (!playerIds.length) return null;
+  let best = null;
+  for (const system of aiOwnedSystems(state, faction.id)) {
+    const hops = nearestHopToIds(state, system.id, playerIds);
+    if (hops == null) continue;
+    if (best == null || hops < best) best = hops;
+  }
+  if (best == null || best > AI_CORRIDOR_CONTACT_HOPS) return null;
+  const result = detectContact(state, faction.id, {
+    trigger: 'approaching_border',
+    intelligence: 22,
+  });
+  if (!result.ok || result.previousStage === result.stage) return null;
+  return {
+    type: 'contact_detected',
+    factionId: faction.id,
+    stage: result.stage,
+    trigger: 'approaching_border',
+  };
+}
+
+function aiMassDispatchToDoctrine(state, faction, rng) {
+  const doctrine = faction.doctrine;
+  if (!doctrine?.targetSystemId) return 0;
+  const graph = getGraph(state);
+  if (!graph) return 0;
+  const cap = fleetMassCap(state, faction);
+  const fronts = (doctrine.frontSystemIds?.length
+    ? doctrine.frontSystemIds
+    : computeDoctrineFront(state, faction, doctrine.targetSystemId));
+  let dispatched = 0;
+
+  // Stage 1: move idle ships from rear systems onto the front.
+  const owned = aiOwnedSystems(state, faction.id).sort((a, b) => a.id.localeCompare(b.id));
+  const frontSet = new Set(fronts);
+  for (const from of owned) {
+    if (dispatched >= cap) break;
+    if (frontSet.has(from.id)) continue;
+    const ships = aiShipsInSystem(state, from.id, faction.id)
+      .filter((ship) => (hullStats(ship.hull)?.dps ?? 0) > 0 || (hullStats(ship.hull)?.captureForce ?? 0) > 0)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (!ships.length) continue;
+    const dest = fronts[0] ?? doctrine.targetSystemId;
+    if (!dest || dest === from.id) continue;
+    if (orderAiShipTravel(state, ships[0], dest).ok) dispatched += 1;
+  }
+
+  // Stage 2: from the front, claim the next neutral toward the doctrine target.
+  for (const frontId of fronts) {
+    if (dispatched >= cap) break;
+    const neutrals = adjacentSystemsOwnedBy(state, frontId, 'neutral');
+    if (!neutrals.length) continue;
+    const targetHops = hopDistancesFrom(state, doctrine.targetSystemId);
+    const orderedNeutrals = [...neutrals].sort((a, b) =>
+      (targetHops.get(a) ?? 999) - (targetHops.get(b) ?? 999) || a.localeCompare(b));
+    const ships = aiShipsInSystem(state, frontId, faction.id)
+      .filter((ship) => (hullStats(ship.hull)?.captureForce ?? 0) > 0 || (hullStats(ship.hull)?.dps ?? 0) > 0)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    for (const ship of ships) {
+      if (dispatched >= cap) break;
+      const pick = orderedNeutrals[Math.min(orderedNeutrals.length - 1, Math.floor(rng() * Math.min(2, orderedNeutrals.length)))];
+      if (aiFleetPowerInSystem(state, frontId, faction.id) < captureRequirement(state, pick) * 6) break;
+      if (orderAiShipTravel(state, ship, pick).ok) dispatched += 1;
+    }
+  }
+
+  // Stage 3: corridor / contact pressure onto player-adjacent neutrals (not player systems without war).
+  if (doctrine.type === AI_DOCTRINE_TYPES.corridor_push || getContact(state, faction.id).stage !== CONTACT_UNKNOWN) {
+    const playerIds = playerOwnedSystemIds(state);
+    for (const from of owned) {
+      if (dispatched >= cap) break;
+      const neutrals = adjacentSystemsOwnedBy(state, from.id, 'neutral')
+        .filter((id) => (nearestHopToIds(state, id, playerIds) ?? 999) <= 1)
+        .sort((a, b) => a.localeCompare(b));
+      if (!neutrals.length) continue;
+      const ships = aiShipsInSystem(state, from.id, faction.id)
+        .filter((ship) => (hullStats(ship.hull)?.dps ?? 0) > 0)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      if (!ships.length) continue;
+      if (orderAiShipTravel(state, ships[0], neutrals[0]).ok) dispatched += 1;
+    }
+  }
+
+  return dispatched;
 }
 
 function aiDispatchToPlayerBorder(state, faction, rng) {
@@ -1354,6 +1756,26 @@ export function tickAiFaction(state) {
     faction.lastActionTick = tickIndex;
     faction.production.lastDecisionTick = tickIndex;
 
+    const doctrineResult = assignAiDoctrine(state, faction);
+    if (doctrineResult.changed || faction.doctrine?.announcePending) {
+      faction.doctrine.announcePending = false;
+      events.push({
+        type: 'ai_doctrine_set',
+        factionId: faction.id,
+        doctrineType: faction.doctrine.type,
+        targetSystemId: faction.doctrine.targetSystemId,
+        label: doctrineLabel(faction.doctrine.type),
+      });
+    }
+    faction.doctrine.frontSystemIds = computeDoctrineFront(
+      state,
+      faction,
+      faction.doctrine.targetSystemId,
+    );
+
+    const contactEv = maybeSignalApproachContact(state, faction);
+    if (contactEv) events.push(contactEv);
+
     for (const result of fillAiResearchQueue(state, faction, tickIndex)) {
       events.push({
         type: result.queued ? 'ai_research_queued' : 'ai_research_started',
@@ -1376,10 +1798,21 @@ export function tickAiFaction(state) {
       });
     }
 
-    if (!aiDispatchDefensiveSupport(state, faction)
-      && !aiDispatchToNeutral(state, faction, rng)
-      && !aiDispatchToRivalBorder(state, faction, rng)) {
-      aiDispatchToPlayerBorder(state, faction, rng);
+    if (aiDispatchDefensiveSupport(state, faction)) {
+      // Ally defense always wins the tick.
+    } else {
+      const massed = aiMassDispatchToDoctrine(state, faction, rng);
+      if (massed > 0) {
+        events.push({
+          type: 'ai_fleet_massed',
+          factionId: faction.id,
+          count: massed,
+          targetSystemId: faction.doctrine?.targetSystemId ?? null,
+        });
+      } else if (!aiDispatchToNeutral(state, faction, rng)
+        && !aiDispatchToRivalBorder(state, faction, rng)) {
+        aiDispatchToPlayerBorder(state, faction, rng);
+      }
     }
   }
   return events;
@@ -1412,6 +1845,13 @@ export function aiFactionSummary(state) {
         constructionQueueCount: faction.production.construction.length,
       },
       strategy: faction.strategy,
+      doctrine: faction.doctrine ? {
+        type: faction.doctrine.type,
+        targetSystemId: faction.doctrine.targetSystemId,
+        frontSystemIds: [...(faction.doctrine.frontSystemIds ?? [])],
+        committedUntil: faction.doctrine.committedUntil,
+        label: doctrineLabel(faction.doctrine.type),
+      } : null,
     };
   });
   const primary = summaries[0];

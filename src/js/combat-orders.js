@@ -460,15 +460,32 @@ export function scoreTargetPriority(attacker, target, order = null, context = {}
     threatTier += finiteNumber(order.priority);
   }
 
-  // Threat tier dominates, then absolute current HP, then nearest distance.
-  const score = threatTier * 1e9 + hp * 1e4 - distance;
+  // Prefer softer targets within a threat tier so fleets don't all glue one tank.
+  const focusCrowd = (context.focusCounts instanceof Map
+    ? context.focusCounts.get(String(target.id))
+    : context.focusCounts?.[String(target.id)]) ?? 0;
+  const dispersionPenalty = Math.max(0, focusCrowd - 1) * 1.5e4;
+  const score = threatTier * 1e9 - Math.min(12000, hp) * 6 - distance - dispersionPenalty;
   return round6(score);
 }
 
 /** Stable score-first ranking, with unit id as the deterministic tie breaker. */
 export function rankCombatTargets(attacker, targets, order = null, context = {}) {
+  let focusCounts = context.focusCounts;
+  if (!(focusCounts instanceof Map)) {
+    focusCounts = new Map();
+    for (const ally of context.friendlyUnits ?? []) {
+      if (!ally?.focusTargetId || ally.hp <= 0) continue;
+      if (String(ally.id) === String(attacker?.id)) continue;
+      const key = String(ally.focusTargetId);
+      focusCounts.set(key, (focusCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const scoredContext = context.focusCounts instanceof Map
+    ? context
+    : { ...context, focusCounts };
   return (targets ?? [])
-    .map((target) => ({ target, score: scoreTargetPriority(attacker, target, order, context) }))
+    .map((target) => ({ target, score: scoreTargetPriority(attacker, target, order, scoredContext) }))
     .filter((entry) => Number.isFinite(entry.score))
     .sort((a, b) => b.score - a.score || compareIds(a.target.id, b.target.id));
 }

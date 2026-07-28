@@ -54,7 +54,14 @@ import {
   weaponProfile,
   ensureFlagshipWeapons,
 } from './hull.js';
-import { pirateFleetAtSystem, removePirateShip } from './pirates.js';
+import {
+  pirateFleetAtSystem,
+  pirateNestAtSystem,
+  pirateNestCombatUnits,
+  pirateNestSystemsWithPresence,
+  removePirateShip,
+  syncPirateNestsFromCombatUnits,
+} from './pirates.js';
 import { aiShipFactionId, aiShipsInSystem } from './ai-ships.js';
 import {
   anchoredCombatShipsAtSystem,
@@ -485,6 +492,7 @@ function aiSystemFactionId(state, system) {
 function shouldBattle(state, systemId) {
   const pirates = pirateFleetAtSystem(state, systemId)
     .filter((fleet) => fleet.ships?.some((ship) => ship.hp > 0));
+  const nest = pirateNestAtSystem(state, systemId);
   const aiShips = aiShipsInSystem(state, systemId)
     .filter((ship) => isAtWar(state, aiShipFactionId(state, ship)));
   const system = getSystems(state)[systemId];
@@ -493,7 +501,9 @@ function shouldBattle(state, systemId) {
     && combatStructureUnits(state, system, 'enemy').some((unit) => unit.hp > 0);
   const playerPresent = playerCombatPresenceInSystem(state, systemId);
   const friendlyCombatants = hasFriendlyCombatants(state, systemId);
-  const hostileToPlayer = pirates.length > 0 || aiShips.length > 0 || hostileStructures;
+  // Nest alone on an AI system must not start ghost auto-battles that melt the nest.
+  const nestThreat = !!nest && (playerPresent || pirates.length > 0);
+  const hostileToPlayer = pirates.length > 0 || nestThreat || aiShips.length > 0 || hostileStructures;
   // Require at least one friendly combatant — empty player systems must not
   // spawn ghost battles that instantly defeat when View Battle promotes them.
   if (playerPresent && hostileToPlayer) return true;
@@ -511,6 +521,7 @@ function collectEnemyShips(state, systemId) {
       if (ship.hp > 0) out.push({ ...ship, fleetId: fleet.id, side: 'enemy' });
     }
   }
+  out.push(...pirateNestCombatUnits(state, systemId));
   const system = getSystems(state)[systemId];
   const playerPresent = playerCombatPresenceInSystem(state, systemId);
   if (playerPresent || system?.owner === 'player') {
@@ -1028,8 +1039,21 @@ function initTacticalUnits(state, systemId, battle) {
   }
 
   const enemies = collectEnemyShips(state, systemId);
-  enemies.forEach((ship, i) => {
-    const spread = (i / Math.max(1, enemies.length)) * Math.PI * 0.7 - Math.PI * 0.35;
+  const nestOrStructures = enemies.filter((ship) => ship.isStructure || ship.isPirateNest);
+  const mobileEnemies = enemies.filter((ship) => !ship.isStructure && !ship.isPirateNest);
+  nestOrStructures.forEach((ship, i) => {
+    const angle = (i / Math.max(1, nestOrStructures.length)) * Math.PI * 2;
+    const radius = starR + FLEET_STATION_ORBIT_PAD * 0.9;
+    battle.units.push({
+      ...ship,
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
+      heading: angle + Math.PI / 2,
+      cooldownMs: 0,
+    });
+  });
+  mobileEnemies.forEach((ship, i) => {
+    const spread = (i / Math.max(1, mobileEnemies.length)) * Math.PI * 0.7 - Math.PI * 0.35;
     const heading = entryAngle + Math.PI + spread;
     const rawX = ex + Math.cos(spread) * 120;
     const rawY = ey + Math.sin(spread) * 120;
@@ -1136,20 +1160,55 @@ function initializeTacticalBattle(state, systemId, battle) {
   battle.objectives = battle.units
     .filter((unit) => unit.isStructure || unit.isConvoy)
     .map((unit) => ({ id: unit.id, type: unit.isConvoy ? 'convoy' : (unit.structureType ?? 'structure'), outcome: 'contested' }));
-  const enemyUnits = battle.units.filter((unit) => unit.side === 'enemy' && unit.hp > 0).map((unit) => unit.id);
+  const enemyUnits = battle.units.filter((unit) => unit.side === 'enemy' && unit.hp > 0 && !unit.isStructure && !unit.isConvoy);
   if (enemyUnits.length) {
-    const targetClass = battle.units.some((unit) => unit.isConvoy && unit.side === 'player') ? 'convoy' : 'capital';
+    const capitals = enemyUnits.filter((unit) => classifyCombatTarget(unit) === 'capital' || classifyCombatTarget(unit) === 'carrier');
+    const escorts = enemyUnits.filter((unit) => !capitals.includes(unit));
+    if (capitals.length) {
+      applyFleetOrder(battle, {
+        type: 'attack_class',
+        side: 'enemy',
+        subjectIds: capitals.map((unit) => unit.id),
+        targetClass: battle.units.some((unit) => unit.isConvoy && unit.side === 'player') ? 'convoy' : 'capital',
+        priority: 1,
+      }, { time: state.time, units: battle.units, ownedUnitIds: capitals.map((unit) => unit.id) });
+    }
+    if (escorts.length) {
+      applyFleetOrder(battle, {
+        type: 'attack_class',
+        side: 'enemy',
+        subjectIds: escorts.map((unit) => unit.id),
+        targetClass: 'escort',
+        priority: 1,
+      }, { time: state.time, units: battle.units, ownedUnitIds: escorts.map((unit) => unit.id) });
+    }
+    const enemyDoctrine = recommendEnemyDoctrine(enemyUnits);
+    battle.enemyDoctrine = enemyDoctrine;
     applyFleetOrder(battle, {
-      type: 'attack_class',
+      type: 'formation',
       side: 'enemy',
-      subjectIds: enemyUnits,
-      targetClass,
-      priority: 1,
-    }, { time: state.time, units: battle.units, ownedUnitIds: enemyUnits });
+      formation: recommendFormation({
+        doctrine: enemyDoctrine,
+        ownMix: analyzeFleetMix(enemyUnits),
+        enemyMix: analyzeFleetMix(battle.units.filter((unit) => unit.side === 'player' && unit.hp > 0)),
+      }).formation,
+      subjectIds: enemyUnits.map((unit) => unit.id),
+      autonomous: true,
+      source: 'enemy-doctrine',
+    }, { time: state.time, units: battle.units, ownedUnitIds: enemyUnits.map((unit) => unit.id) });
   }
   const seeded = applyDoctrineFormation(state, battle, { force: true });
   battle.openingFormationApplied = seeded.ok;
   return battle;
+}
+
+function recommendEnemyDoctrine(enemyUnits) {
+  const mix = analyzeFleetMix(enemyUnits);
+  const total = Math.max(1, (mix.fighter ?? 0) + (mix.escort ?? 0) + (mix.capital ?? 0) + (mix.carrier ?? 0));
+  if ((mix.carrier ?? 0) / total >= 0.2) return 'carrier_strike';
+  if ((mix.capital ?? 0) / total >= 0.35) return 'hold_the_line';
+  if ((mix.fighter ?? 0) / total >= 0.4) return 'screen';
+  return 'assault';
 }
 
 function startBattle(state, systemId) {
@@ -1229,6 +1288,11 @@ function applyCasualtiesToState(state, systemId, battle, options = {}) {
         continue;
       }
       if (unit.isStructure) {
+        if (unit.isPirateNest || unit.structureType === 'pirate_nest') {
+          const nestEvents = syncPirateNestsFromCombatUnits(state, [unit]);
+          battle.nestEvents = [...(battle.nestEvents ?? []), ...nestEvents];
+          continue;
+        }
         const structure = system?.structures.find((s) => s.id === unit.id);
         if (structure) {
           structure.hp = Math.max(0, unit.hp);
@@ -1559,6 +1623,13 @@ function resolveAutoBattle(state, systemId, battle) {
       return;
     }
     if (unit.isStructure) {
+      if (unit.isPirateNest || unit.structureType === 'pirate_nest') {
+        // Nest dies only when the player wins the fight — never as collateral of a loss.
+        if (!playerWins) return;
+        const nestEvents = syncPirateNestsFromCombatUnits(state, [{ ...unit, hp: 0 }]);
+        battle.nestEvents = [...(battle.nestEvents ?? []), ...nestEvents];
+        return;
+      }
       const structure = systemById(state, systemId)?.structures?.find((entry) => entry.id === unit.id);
       if (structure) {
         structure.hp = 0;
@@ -1596,8 +1667,20 @@ function resolveAutoBattle(state, systemId, battle) {
   let ec = enemyCas;
   for (const ship of enemies) {
     if (ec <= 0) break;
+    // On loss, never spend casualty slots on nests/structures — ships first.
+    if (!playerWins && (ship.isPirateNest || ship.structureType === 'pirate_nest' || ship.isStructure)) {
+      continue;
+    }
     destroyUnit(ship);
     ec--;
+  }
+
+  // On victory, destroy remaining live nests even if casualty count already spent on ships.
+  if (playerWins) {
+    for (const ship of enemies) {
+      if (!(ship.isPirateNest || ship.structureType === 'pirate_nest')) continue;
+      destroyUnit(ship);
+    }
   }
 
   if (allies.some((unit) => unit.hull === 'flagship')) {
@@ -2859,30 +2942,29 @@ function tickTacticalBattle(state, systemId, battle) {
 
         if (normalizeDoctrine(unit.side === 'player'
           ? (battle.doctrine ?? state.combatDoctrine)
-          : 'assault') === 'assault'
+          : (battle.enemyDoctrine ?? 'assault')) === 'assault'
           && target
-          && !isWingUnit(unit)) {
+          && !isWingUnit(unit)
+          && !['capital', 'carrier', 'line'].includes(motionProfile.tier)) {
           const hostileCenter = sideCentroid(hostiles);
           const assaultFacing = Math.atan2(hostileCenter.y - unit.y, hostileCenter.x - unit.x);
           const centerDistance = Math.hypot(hostileCenter.x - unit.x, hostileCenter.y - unit.y);
-          if (centerDistance > range * 0.78) {
+          // Soften centroid rush: only pull when outside weapon band so battle lines hold.
+          if (centerDistance > range * 1.05) {
             desiredFacing = assaultFacing;
             const alignment = Math.max(0, Math.cos(shortestAngleDelta(unit.heading, assaultFacing)));
-            thrust = Math.max(thrust * 0.2, 0.95 * alignment);
+            thrust = Math.max(thrust * 0.35, 0.7 * alignment);
             const courseX = Math.cos(assaultFacing);
             const courseY = Math.sin(assaultFacing);
             const forwardVelocity = (unit.vx ?? 0) * courseX + (unit.vy ?? 0) * courseY;
-            const lateralDamping = Math.min(1, dt * 2.4);
+            const lateralDamping = Math.min(1, dt * 1.6);
             unit.vx -= ((unit.vx ?? 0) - courseX * forwardVelocity) * lateralDamping;
             unit.vy -= ((unit.vy ?? 0) - courseY * forwardVelocity) * lateralDamping;
             if (alignment < 0.25) {
-              const brake = Math.exp(-2.2 * dt);
+              const brake = Math.exp(-1.6 * dt);
               unit.vx *= brake;
               unit.vy *= brake;
             }
-          } else {
-            desiredFacing = faceTarget;
-            thrust = 0;
           }
         }
 
@@ -3149,6 +3231,9 @@ function combatCandidateSystemIds(state) {
       ids.add(fleet.systemId);
     }
   }
+  for (const systemId of pirateNestSystemsWithPresence(state)) {
+    ids.add(systemId);
+  }
 
   for (const hero of state.heroFlagships ?? []) {
     if (hero.galaxyId === state.activeGalaxyId && hero.systemId && !hero.transit) {
@@ -3190,8 +3275,29 @@ export function tickCombat(state) {
     }
 
     const hadResolve = !!battle.lastResolve;
-    if (battle.mode === 'tactical') tickTacticalBattle(state, systemId, battle);
-    else tickAutoBattle(state, systemId, battle);
+    if (battle.mode === 'tactical') {
+      tickTacticalBattle(state, systemId, battle);
+      const nestUnits = (battle.units ?? [])
+        .filter((unit) => unit.isPirateNest || unit.structureType === 'pirate_nest');
+      // Sync only when HP changed or unit died — avoid redundant work every tick.
+      const needsSync = nestUnits.some((unit) => {
+        const nestId = unit.nestId ?? String(unit.id).replace(/^nest:/, '');
+        const nest = state.pirates?.nests?.find((entry) => entry.id === nestId);
+        if (!nest) return false;
+        return nest.destroyed !== (unit.hp <= 0)
+          || Math.round(nest.hp ?? 0) !== Math.round(unit.hp ?? 0);
+      });
+      if (needsSync) {
+        const nestEvents = syncPirateNestsFromCombatUnits(state, nestUnits);
+        for (const ev of nestEvents) events.push(ev);
+      }
+      for (const ev of battle.nestEvents ?? []) events.push(ev);
+      battle.nestEvents = [];
+    } else {
+      tickAutoBattle(state, systemId, battle);
+      for (const ev of battle.nestEvents ?? []) events.push(ev);
+      battle.nestEvents = [];
+    }
 
     if (battle.lastResolve && !hadResolve) {
       events.push({ type: 'battle_resolved', systemId, ...battle.lastResolve });

@@ -90,7 +90,9 @@ try {
   await page.locator('#title-missions-btn').click();
   await page.locator('#new-game-mission-field').waitFor({ state: 'visible' });
   assert(await page.locator('#new-game-mission option[value="wormhole_race"]').count() === 1, 'wormhole_race option');
+  assert(await page.locator('#new-game-mission option[value="dyson_defense"]').count() === 1, 'dyson_defense option');
   assert(await page.locator('#new-game-mission option[value="first_hero"]').count() === 1, 'first_hero option');
+  assert(await page.locator('#new-game-mission option[value="final_dominion"]').count() === 1, 'final_dominion option');
   await page.locator('#new-game-mission').selectOption('wormhole_race');
   await page.screenshot({ path: path.join(outputDir, '01-mission-picker.png') });
   await page.locator('#new-game-start-btn').click();

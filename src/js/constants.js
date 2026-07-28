@@ -294,8 +294,9 @@ export const POST_BATTLE_RETURN_MIN_MS = 1400;
 export const POST_BATTLE_RETURN_MAX_MS = 5200;
 export const TACTICAL_SHIP_DRAG = 1.15;          // exponential drag when not thrusting
 export const TACTICAL_TURN_RATE = 1.55;          // base turn rate rad/s
-export const TACTICAL_SEPARATION_RADIUS = 26;    // soft bubble for baseline escort
-export const TACTICAL_SEPARATION_STRENGTH = 90;  // repulsion accel at contact
+export const TACTICAL_SEPARATION_RADIUS = 32;    // soft bubble for baseline escort
+export const TACTICAL_SEPARATION_STRENGTH = 110;  // repulsion accel at contact
+export const TACTICAL_CROSS_SIDE_SEPARATION_MULT = 0.55; // weaker push between hostiles (readability)
 export const TACTICAL_TARGET_STICK_MS = 1200;    // sticky focus target duration
 export const TACTICAL_WING_TARGET_STICK_MS = 650; // freer retarget for dogfights / passes
 export const TACTICAL_TARGET_LEASH_MULT = 2.4;   // drop sticky if beyond range * leash
@@ -315,7 +316,7 @@ export const FLAGSHIP_BROADSIDE_ARC_RADIANS = Math.PI * (100 / 180);
 export const TACTICAL_FORMATION_PULL_MIN = 40;    // blend formation only beyond this distance (escorts)
 export const TACTICAL_APPROACH_BAND = 0.92;      // thrust toward target when dist > range * band
 export const TACTICAL_BATTLE_LINE_DISCIPLINE_MIN = 0.5; // auto soft battle-line if discipline >= this
-export const TACTICAL_FORMATION_BASE_SPACING = 34;
+export const TACTICAL_FORMATION_BASE_SPACING = 48;
 export const TACTICAL_CAPITAL_SLOT_HOLD_DIST = 18; // below → station-keeping thrust
 export const TACTICAL_CAPITAL_LINE_ADVANCE = 0.32; // base thrust when creeping into slot
 export const TACTICAL_BATTLE_RADIUS = 900;
@@ -349,7 +350,7 @@ export const TACTICAL_MOTION_TIERS = Object.freeze({
   }),
   escort: Object.freeze({
     maxSpeed: 1.38, accel: 1.35, turnRate: 1.28, separation: 1.00,
-    formationDiscipline: 0.14, chaseFreedom: 0.95, formationSpacingMult: 1.00,
+    formationDiscipline: 0.55, chaseFreedom: 0.55, formationSpacingMult: 1.00,
   }),
   line: Object.freeze({
     maxSpeed: 0.98, accel: 0.88, turnRate: 0.76, separation: 1.30,
@@ -400,6 +401,8 @@ export const HEALER_AUTO_COEF = 0.25;
 
 // --- Pirates (Phase 2 test faction) ---
 export const PIRATE_FLEET_COUNT = 2;
+export const PIRATE_NEST_COUNT = 3;
+export const PIRATE_NEST_HP = 900;
 export const PIRATE_WANDER_MS = 45000;
 export const PIRATE_RAID_CHANCE = 0.7;
 export const PIRATE_RAID_MAX_HOPS = 5;
@@ -730,7 +733,7 @@ export const SHIPYARD_LEVEL_EXTRA_SLOTS = Object.freeze([0, 0, 1, 1]);
 export const SHELL_TRADE_BONUS = 1.25;
 export const SHELL_RESEARCH_BONUS = 1.2;
 export const AI_STARTING_CREDITS = 1200;
-export const AI_STARTING_SYSTEMS = 4;
+export const AI_STARTING_SYSTEMS = 1;
 export const AI_TICK_INTERVAL_TICKS = 20;
 export const AI_BUILD_OUTPOST_COST = 300;
 export const AI_PERSONALITY_NAMES = {
@@ -742,6 +745,20 @@ export const AI_PERSONALITY_NAMES = {
 export const AI_FACTION_COUNT = 4;
 export const AI_LANE_SPEED = 90;
 export const AI_LANE_MIN_LEG_MS = 2500;
+/** Prefer AI homes this many hops from the stronghold (fallback widens if empty). */
+export const AI_SEED_HOP_MIN = 8;
+export const AI_SEED_HOP_MAX = 14;
+/** How long a doctrine commitment lasts before reassess (ms). */
+export const AI_DOCTRINE_COMMIT_MS = 6 * 60_000;
+/** Mass up to this many idle combat ships per strategic tick by difficulty. */
+export const AI_FLEET_MASS_CAPS = Object.freeze({
+  easy: 3,
+  normal: 4,
+  hard: 5,
+  sovereign: 6,
+});
+/** Corridor pressure / early contact when within this many hops of player territory. */
+export const AI_CORRIDOR_CONTACT_HOPS = 6;
 
 // --- Phase 6: Late game ---
 export const SHELL_SHIELD_BONUS = 1.25;

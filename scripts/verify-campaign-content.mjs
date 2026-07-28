@@ -31,7 +31,9 @@ import {
 } from '../src/js/galaxy-scope.js';
 import { setGalaxyStarCountForTests, BLACK_HOLE_ID } from '../src/js/galaxy.js';
 import { registerExportDepot } from '../src/js/logistics.js';
-import { startMission, advanceMissionObjective, MISSIONS } from '../src/js/missions.js';
+import { startMission, advanceMissionObjective, MISSIONS, DYSON_DEFENSE_MIN_SHELLS, evaluateActiveMission, homeGalaxyDominionProgress } from '../src/js/missions.js';
+import { ensureDyson } from '../src/js/state.js';
+import { step } from '../src/js/simulation.js';
 import {
   orderWormholeTravel,
   tickWormholeTransit,
@@ -104,9 +106,16 @@ assert.equal(fixture.thresholds.VICTORY_ECONOMIC_DEPOTS, VICTORY_ECONOMIC_DEPOTS
 assert.equal(fixture.thresholds.VICTORY_SCULPTOR_ACTIONS, VICTORY_SCULPTOR_ACTIONS);
 assert.deepEqual(fixture.missions.wormhole_race.objectives, ['enter_wormhole']);
 assert.deepEqual(fixture.missions.first_hero.objectives, ['build_hero']);
+assert.deepEqual(fixture.missions.dyson_defense.objectives, ['hold_dyson']);
+assert.deepEqual(fixture.missions.final_dominion.objectives, ['dominion']);
+assert.equal(fixture.thresholds.DYSON_DEFENSE_MIN_SHELLS, DYSON_DEFENSE_MIN_SHELLS);
 assert.ok(MISSIONS.wormhole_race);
 assert.ok(MISSIONS.first_hero);
+assert.ok(MISSIONS.dyson_defense);
+assert.ok(MISSIONS.final_dominion);
 assert.match(fixture.wormholeSettleHook, /tickShipWormholeTransit/);
+assert.match(fixture.missionEvalHook, /evaluateActiveMission/);
+assert.deepEqual(fixture.titleMissions, ['wormhole_race', 'dyson_defense', 'first_hero', 'final_dominion']);
 
 // --- Dominion ---
 {
@@ -319,6 +328,69 @@ assert.match(fixture.wormholeSettleHook, /tickShipWormholeTransit/);
   assert.equal(state.campaign.activeMissionId, null);
 }
 
+// --- Missions: dyson defense ---
+{
+  const state = freshState();
+  startMission(state, 'dyson_defense', { tutorialBypass: true });
+  assert.equal(state.campaign.activeMissionId, 'dyson_defense');
+  assert.equal(evaluateActiveMission(state), null, 'no 4-shell system yet');
+  const systems = getSystems(state);
+  const stronghold = systems[state.stronghold];
+  const dyson = ensureDyson(stronghold);
+  dyson.completedShells = DYSON_DEFENSE_MIN_SHELLS - 1;
+  assert.equal(evaluateActiveMission(state), null, '3 shells must not complete');
+  dyson.completedShells = DYSON_DEFENSE_MIN_SHELLS;
+  const done = evaluateActiveMission(state);
+  assert.equal(done?.complete, true);
+  assert.ok(state.campaign.completedMissions.includes('dyson_defense'));
+  assert.equal(state.campaign.activeMissionId, null);
+}
+
+{
+  const state = freshState();
+  const systems = getSystems(state);
+  ensureDyson(systems[state.stronghold]).completedShells = DYSON_DEFENSE_MIN_SHELLS;
+  // Already held when mission starts — should complete immediately.
+  startMission(state, 'dyson_defense', { tutorialBypass: true });
+  assert.ok(state.campaign.completedMissions.includes('dyson_defense'));
+  assert.equal(state.campaign.activeMissionId, null);
+}
+
+{
+  const state = freshState();
+  startMission(state, 'dyson_defense', { tutorialBypass: true });
+  ensureDyson(getSystems(state)[state.stronghold]).completedShells = DYSON_DEFENSE_MIN_SHELLS;
+  const events = step(state, 50);
+  assert.ok(
+    (events.campaignEvents ?? []).some((ev) => ev.type === 'mission_complete' && ev.missionId === 'dyson_defense'),
+    'simulation tick must surface mission_complete',
+  );
+}
+
+// --- Missions: final dominion (home galaxy) ---
+{
+  const state = freshState();
+  startMission(state, 'final_dominion', { tutorialBypass: true });
+  const progress = homeGalaxyDominionProgress(state);
+  assert.equal(progress.systemsMet, false);
+  assert.equal(evaluateActiveMission(state), null);
+  claimSystems(state, progress.systemThreshold);
+  const done = evaluateActiveMission(state);
+  assert.equal(done?.complete, true);
+  assert.equal(done?.objectiveId, 'dominion');
+  assert.ok(state.campaign.completedMissions.includes('final_dominion'));
+  assert.equal(state.campaign.activeMissionId, null);
+}
+
+{
+  const state = freshState();
+  // Owning only the stronghold must stay below the home-galaxy dominion threshold.
+  startMission(state, 'final_dominion', { tutorialBypass: true });
+  const homeProgress = homeGalaxyDominionProgress(state);
+  assert.ok(homeProgress.playerSystems < homeProgress.systemThreshold);
+  assert.equal(evaluateActiveMission(state), null);
+}
+
 // --- Co-op actions allow-list ---
 {
   const actionsSrc = fs.readFileSync(path.join(root, 'server/actions.mjs'), 'utf8');
@@ -336,7 +408,9 @@ assert.match(fixture.wormholeSettleHook, /tickShipWormholeTransit/);
   assert.match(html, /Economic \(50k cr \+ 50 Solarii \+ 3 Export Depots\)/);
   assert.match(html, /id="new-game-mission"/);
   assert.match(html, /value="wormhole_race"/);
+  assert.match(html, /value="dyson_defense"/);
   assert.match(html, /value="first_hero"/);
+  assert.match(html, /value="final_dominion"/);
 }
 
 // Reset overrides so other scripts in the same process are unaffected

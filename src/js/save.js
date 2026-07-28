@@ -24,7 +24,7 @@ import {
   canonicalizeStellarClass,
 } from './star-types.js';
 import { applyStateCatalogIdentities } from './catalog-names.js';
-import { spawnPirateFleets } from './pirates.js';
+import { spawnPirateFleets, ensurePiratesState } from './pirates.js';
 import { generateGalaxy } from './galaxy.js';
 import { createDefaultAbstract } from './abstract-galaxy.js';
 import {
@@ -33,7 +33,7 @@ import {
   getGalaxyCount,
 } from './galaxy-scope.js';
 import { generateGalaxySystems } from './hydration.js';
-import { seedAiFaction } from './ai-faction.js';
+import { seedAiFaction, ensureFactions } from './ai-faction.js';
 import { ensureStructureCombatFields } from './body-structures.js';
 import { defaultWeaponProfileForHull, normalizeCarrierWingState } from './hull.js';
 import { initBuilderDrones } from './builder-drones.js';
@@ -242,10 +242,14 @@ function migrateV3toV4(envelope) {
   state.systemBattles = state.systemBattles ?? {};
   state.battleStance = state.battleStance ?? 'balanced';
 
-  if (!state.pirates?.fleets?.length) {
+  if (!(state.pirates?.fleets?.length)
+    && !(state.pirates?.nests?.length)
+    && !(state.pirates?.pendingRespawn?.length)) {
     state.pirates = spawnPirateFleets(state);
   } else {
     state.pirates.pendingRespawn = state.pirates.pendingRespawn ?? [];
+    state.pirates.nests = state.pirates.nests ?? [];
+    ensurePiratesState(state);
   }
 
   const stateJson = JSON.stringify(state);
@@ -1506,6 +1510,8 @@ export function deserialize(envelopeJson, { verifyChecksum = true, trustCurrent 
   migrateShipyardsOnLoad(envelope.state);
   envelope.state.constructionJobs = envelope.state.constructionJobs ?? [];
   envelope.state.drones = envelope.state.drones ?? [];
+  ensureFactions(envelope.state);
+  ensurePiratesState(envelope.state);
 
   return { ok: true, state: envelope.state };
 }

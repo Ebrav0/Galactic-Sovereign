@@ -9,6 +9,7 @@ import {
   TACTICAL_TURN_RATE,
   TACTICAL_SEPARATION_RADIUS,
   TACTICAL_SEPARATION_STRENGTH,
+  TACTICAL_CROSS_SIDE_SEPARATION_MULT,
   TACTICAL_TARGET_STICK_MS,
   TACTICAL_MOTION_TIERS,
   TACTICAL_MOTION_HULL_TIER,
@@ -325,28 +326,37 @@ export function applyShipSeparation(liveUnits, { dt = 0.05, strength = TACTICAL_
   const mobile = (liveUnits ?? []).filter((unit) => (
     unit?.hp > 0 && !unit.isStructure && !unit.escaped && !unit.recovered
   ));
+  const crossMult = typeof TACTICAL_CROSS_SIDE_SEPARATION_MULT === 'number'
+    ? TACTICAL_CROSS_SIDE_SEPARATION_MULT
+    : 0.55;
   for (let i = 0; i < mobile.length; i++) {
     const a = mobile[i];
     ensureUnitMotion(a);
     for (let j = i + 1; j < mobile.length; j++) {
       const b = mobile[j];
-      if (a.side != null && b.side != null && a.side !== b.side) continue;
-      ensureUnitMotion(b);
-      let dx = b.x - a.x;
-      let dy = b.y - a.y;
-      let dist = Math.hypot(dx, dy);
+      const crossSide = a.side != null && b.side != null && a.side !== b.side;
+      const pairStrength = crossSide ? strength * crossMult : strength;
+      // Cheap AABB reject before hypotenuse — keeps large battles from paying full n² math.
       const desired = separationRadiusForUnit(a) + separationRadiusForUnit(b);
+      const dx = b.x - a.x;
+      if (Math.abs(dx) >= desired) continue;
+      const dy = b.y - a.y;
+      if (Math.abs(dy) >= desired) continue;
+      ensureUnitMotion(b);
+      let dist = Math.hypot(dx, dy);
+      let sepDx = dx;
+      let sepDy = dy;
       if (dist >= desired) continue;
       if (dist < 0.001) {
         const sign = String(a.id).localeCompare(String(b.id)) <= 0 ? 1 : -1;
-        dx = sign;
-        dy = 0;
+        sepDx = sign;
+        sepDy = 0;
         dist = 1;
       }
       const overlap = Math.max(0, (desired - dist) / Math.max(1, desired));
-      const impulse = strength * overlap * Math.max(0, dt);
-      const nx = dx / dist;
-      const ny = dy / dist;
+      const impulse = pairStrength * overlap * Math.max(0, dt);
+      const nx = sepDx / dist;
+      const ny = sepDy / dist;
       a.vx -= nx * impulse;
       a.vy -= ny * impulse;
       b.vx += nx * impulse;

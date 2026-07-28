@@ -115,6 +115,11 @@ export function attachInput(canvas, ctx) {
         canvas.classList.remove('combat-command-move', 'combat-command-attack');
         return;
       }
+      if (combatUiActive?.()) {
+        e.preventDefault();
+        onCombatClearSelection?.();
+        return;
+      }
       if (getHelioclastTargetingMode?.()) {
         e.preventDefault();
         onHelioclastCancelTargeting?.();
@@ -332,7 +337,7 @@ export function attachInput(canvas, ctx) {
           }
           return;
         }
-        onCombatClearSelection?.();
+        // Empty-space click keeps selection; Esc / explicit clear deselects.
         return;
       }
       const hit = hitTestPlanet(getState(), getViewedSystemId(), w.x, w.y)

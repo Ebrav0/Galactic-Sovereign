@@ -121,9 +121,15 @@ import {
   pirateFleetAtSystem,
   pirateSystemsWithPresence,
   pirateFleetMarkersForGalaxy,
+  pirateNestMarkersForGalaxy,
   pirateTransitLaneKeys,
   pirateFleetTransitMarkersForGalaxy,
 } from './pirates.js';
+import {
+  aiFleetMarkersForGalaxy,
+  aiFleetTransitMarkersForGalaxy,
+  aiTransitLaneKeys,
+} from './ai-ships.js';
 import {
   drawHullSprite,
   drawHullSpriteLite,
@@ -2280,15 +2286,22 @@ function laneKey(a, b) {
 }
 
 /** A compact, state-backed label for a scouted system on the strategic map. */
-function galaxySystemReadout(system, { owned, aiOwned, pirateAtStar, fleetAtStar }) {
+function galaxySystemReadout(system, { owned, aiOwned, pirateAtStar, nestAtStar, fleetAtStar, aiFleetAtStar }) {
   const worldCount = system?.bodies.length ?? 0;
   const worlds = worldCount === 1 ? '1 world' : `${worldCount} worlds`;
   const structures = system?.structures ?? [];
   const has = (type) => structures.some((s) => s.type === type);
 
+  if (nestAtStar?.length > 0) {
+    return { text: 'PIRATE NEST', color: THEME.dangerHot };
+  }
   if (pirateAtStar.length > 0) {
     const ships = pirateAtStar.reduce((n, fleet) => n + fleet.shipCount, 0);
     return { text: `PIRATE FLEET · ${ships} ships`, color: THEME.dangerHot };
+  }
+  if (aiFleetAtStar?.length > 0) {
+    const ships = aiFleetAtStar.reduce((n, fleet) => n + fleet.shipCount, 0);
+    return { text: `HOSTILE FLEET · ${ships}`, color: '#d194ff' };
   }
   if (aiOwned) {
     const asset = has('shipyard') ? 'shipyard' : has('orbital_defense') ? 'defenses' : worlds;
@@ -2460,15 +2473,18 @@ export function drawGalaxy(
   }
   const piratePresence = new Set(pirateSystemsWithPresence(state));
   const pirateRoutes = pirateTransitLaneKeys(state);
+  const aiRoutes = aiTransitLaneKeys(state);
   const scoutTransit = scoutTransitPositions(state);
   const playerShipTransit = playerShipTransitPositions(state);
   const pirateTransit = pirateFleetTransitMarkersForGalaxy(state);
+  const aiTransit = aiFleetTransitMarkersForGalaxy(state);
   const droneTransit = builderDroneTransitPositions(state);
   const liveTraffic = [
     ...(transit ? [{ ...transit, color: THEME.accentGold }] : []),
     ...scoutTransit.map((entry) => ({ ...entry, color: THEME.laneScout })),
     ...playerShipTransit.map((entry) => ({ ...entry, color: THEME.accentGreen })),
     ...pirateTransit.map((entry) => ({ ...entry, color: THEME.dangerHot })),
+    ...aiTransit.map((entry) => ({ ...entry, color: '#c44dff' })),
     ...droneTransit.map((entry) => ({ ...entry, color: '#ffb85c' })),
     ...convoyTransit
       .filter(({ status }) => status.phase === 'in_transit')
@@ -2480,6 +2496,20 @@ export function drawGalaxy(
     const list = pirateMarkersBySystem.get(marker.systemId) ?? [];
     list.push(marker);
     pirateMarkersBySystem.set(marker.systemId, list);
+  }
+  const nestMarkers = pirateNestMarkersForGalaxy(state);
+  const nestMarkersBySystem = new Map();
+  for (const marker of nestMarkers) {
+    const list = nestMarkersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    nestMarkersBySystem.set(marker.systemId, list);
+  }
+  const aiFleetMarkers = aiFleetMarkersForGalaxy(state);
+  const aiFleetMarkersBySystem = new Map();
+  for (const marker of aiFleetMarkers) {
+    const list = aiFleetMarkersBySystem.get(marker.systemId) ?? [];
+    list.push(marker);
+    aiFleetMarkersBySystem.set(marker.systemId, list);
   }
   const fleetMarkers = fleetMarkersForGalaxy(state, selectedBattleGroupId);
   const fleetMarkersBySystem = new Map();
@@ -2504,9 +2534,10 @@ export function drawGalaxy(
     const onFleetSelectedRoute = fleetRoutes.selected.has(key);
     const onStrategicRoute = strategicRoutes.has(key);
     const onPirateRoute = pirateRoutes.has(key);
+    const onAiRoute = aiRoutes.has(key);
     const onLogisticsRoute = logisticsRoutes.has(key);
     const onBlockade = overlayState.blockade && blockadeRoutes.has(key);
-    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onFleetRoute && !onStrategicRoute && !onPirateRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
+    if (tier === 'far' && !onFlagshipRoute && !onScoutRoute && !onFleetRoute && !onStrategicRoute && !onPirateRoute && !onAiRoute && !onLogisticsRoute && !onBlockade && (i % 3 !== 0)) {
       continue;
     }
     visibleLanes++;
@@ -2519,6 +2550,10 @@ export function drawGalaxy(
       ctx.setLineDash([5 * z, 4 * z]);
       ctx.strokeStyle = hexToRgba(THEME.dangerHot, 0.72);
       ctx.lineWidth = Math.max(1.2, 2.2 * z);
+    } else if (onAiRoute) {
+      ctx.setLineDash([5 * z, 4 * z]);
+      ctx.strokeStyle = hexToRgba('#c44dff', 0.7);
+      ctx.lineWidth = Math.max(1.2, 2.1 * z);
     } else if (onLogisticsRoute) {
       ctx.setLineDash([9 * z, 4 * z, 2 * z, 4 * z]);
       ctx.strokeStyle = hexToRgba('#76ddff', 0.86);
@@ -2650,8 +2685,10 @@ export function drawGalaxy(
     const aiOwned = isAiOwned(state, star.id);
     const fleetAtStar = fleetMarkersBySystem.get(star.id) ?? [];
     const pirateAtStar = pirateMarkersBySystem.get(star.id) ?? [];
+    const nestAtStar = nestMarkersBySystem.get(star.id) ?? [];
+    const aiFleetAtStar = aiFleetMarkersBySystem.get(star.id) ?? [];
     const strategicTarget = strategicTargets.get(star.id);
-    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0 || !!strategicTarget;
+    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0 || nestAtStar.length > 0 || aiFleetAtStar.length > 0 || !!strategicTarget;
     if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
 
     if (!system?.star) {
@@ -2747,6 +2784,20 @@ export function drawGalaxy(
       ctx.fill();
     }
 
+    if (aiFleetAtStar.length > 0) {
+      const ships = aiFleetAtStar.reduce((n, marker) => n + marker.shipCount, 0);
+      ctx.fillStyle = '#c44dff';
+      ctx.shadowColor = '#c44dff';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(s.x - nodeR - 8 * z, s.y - nodeR - 4 * z, Math.max(2.2, 3.4 * z), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      if (tier === 'close' || intel) {
+        labelText(ctx, `×${ships}`, s.x - nodeR - 8 * z, s.y - nodeR - 14 * z, Math.max(7, 8.5 * z), '#d194ff');
+      }
+    }
+
     if (piratePresence.has(star.id)) {
       ctx.fillStyle = '#ff4444';
       ctx.shadowColor = '#ff4444';
@@ -2795,13 +2846,15 @@ export function drawGalaxy(
 
     const labelImportant = owned || aiOwned || state.stronghold === star.id
       || system?.star?.kind === 'trade_nexus'
-      || fleetAtStar.length > 0 || piratePresence.has(star.id) || pirateAtStar.length > 0;
+      || fleetAtStar.length > 0 || piratePresence.has(star.id) || pirateAtStar.length > 0
+      || nestAtStar.length > 0
+      || aiFleetAtStar.length > 0;
     if (intel && tier !== 'far' && (tier === 'close' || labelImportant)) {
       labelText(ctx, star.name, s.x, s.y + nodeR + 16 * z, Math.max(10, 12 * z), THEME.textLabel);
       if (tier === 'close') {
         const readout = system?.star?.kind === 'trade_nexus'
           ? { text: 'TRADE NEXUS · INTERSTELLAR MARKET', color: '#ffce7a' }
-          : galaxySystemReadout(system, { owned, aiOwned, pirateAtStar, fleetAtStar });
+          : galaxySystemReadout(system, { owned, aiOwned, pirateAtStar, nestAtStar, fleetAtStar, aiFleetAtStar });
         labelText(
           ctx,
           readout.text,
@@ -2901,6 +2954,24 @@ export function drawGalaxy(
         marker,
       );
     });
+
+    if (nestAtStar.length && intel) {
+      const nestR = Math.max(3.5, 5.5 * z);
+      ctx.save();
+      ctx.translate(s.x, s.y - nodeR - 14 * z);
+      ctx.fillStyle = 'rgba(255, 72, 96, 0.88)';
+      ctx.strokeStyle = 'rgba(255, 210, 180, 0.95)';
+      ctx.lineWidth = Math.max(1, 1.2 * z);
+      ctx.beginPath();
+      ctx.moveTo(0, -nestR);
+      ctx.lineTo(nestR * 0.85, 0);
+      ctx.lineTo(0, nestR);
+      ctx.lineTo(-nestR * 0.85, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   if (transit) {
@@ -3011,6 +3082,16 @@ export function drawGalaxy(
         0.28 + 0.42 * pulse,
       );
     }
+  }
+
+  for (const marker of aiTransit) {
+    const s = worldToScreen(galaxyCamera, marker.x, marker.y, canvas);
+    if (!screenInView(s, canvas, 50)) continue;
+    drawTrafficChevron(ctx, s.x, s.y, marker.angle, '#c44dff', z);
+    ctx.fillStyle = 'rgba(196, 77, 255, 0.9)';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, Math.max(2.2, 3.2 * z), 0, Math.PI * 2);
+    ctx.fill();
   }
 
   for (const entry of droneTransit) {

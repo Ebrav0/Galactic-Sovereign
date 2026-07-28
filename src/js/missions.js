@@ -1,7 +1,12 @@
 // Scripted missions (Phase 6, GDD §14).
 
+import { VICTORY_DOMINION_THRESHOLD } from './constants.js';
 import { ensureCampaign } from './campaign.js';
+import { persistentSystemRecords } from './galaxy-scope.js';
 import { requireTutorialAccess } from './tutorial-access.js';
+
+/** Shells required to count as a defendable Dyson project for Dyson Defense. */
+export const DYSON_DEFENSE_MIN_SHELLS = 4;
 
 export const MISSIONS = {
   wormhole_race: {
@@ -65,6 +70,8 @@ export function startMission(state, missionId, opts = {}) {
   state.campaign.activeMissionId = missionId;
   state.campaign.missionProgress = state.campaign.missionProgress ?? {};
   state.campaign.missionProgress[missionId] = { startedAt: state.time, complete: false };
+  // Immediate completion if the world already satisfies the objective (e.g. mid-save mission pick).
+  evaluateActiveMission(state);
   return { ok: true, missionId };
 }
 
@@ -91,6 +98,60 @@ export function completeMissionForTest(state, missionId) {
     advanceMissionObjective(state, missionId, obj.id);
   }
   return { ok: true, missionId };
+}
+
+/** Player-owned systems with enough Dyson shells for Dyson Defense. */
+export function playerHeldDysonSystems(state, minShells = DYSON_DEFENSE_MIN_SHELLS) {
+  const held = [];
+  for (const { galaxyId, systemId, system } of persistentSystemRecords(state)) {
+    if (system.owner !== 'player') continue;
+    if ((system.dyson?.completedShells ?? 0) < minShells) continue;
+    held.push({ galaxyId, systemId, shells: system.dyson.completedShells });
+  }
+  return held;
+}
+
+/** Home-galaxy share for Final Dominion (mission copy is home-galaxy scoped). */
+export function homeGalaxyDominionProgress(state) {
+  const homeId = state.homeGalaxyId ?? state.activeGalaxyId;
+  const galaxy = state.galaxies?.[homeId];
+  const systems = Object.values(galaxy?.systems ?? {});
+  const totalStars = galaxy?.graph?.stars?.length ?? systems.length;
+  const playerSystems = systems.filter((system) => system.owner === 'player').length;
+  const systemThreshold = Math.ceil(Math.max(1, totalStars) * VICTORY_DOMINION_THRESHOLD);
+  return {
+    homeGalaxyId: homeId,
+    playerSystems,
+    systemThreshold,
+    totalStars,
+    systemsMet: playerSystems >= systemThreshold,
+  };
+}
+
+/**
+ * Advance tick-driven missions from authoritative sim state.
+ * Event-driven missions (wormhole / hero / diplomacy / sculptor) skip this path.
+ */
+export function evaluateActiveMission(state) {
+  ensureCampaign(state);
+  const missionId = state.campaign.activeMissionId;
+  if (!missionId) return null;
+  const prog = state.campaign.missionProgress?.[missionId];
+  if (prog?.complete) return null;
+
+  if (missionId === 'dyson_defense') {
+    const held = playerHeldDysonSystems(state);
+    if (held.length === 0) return null;
+    return advanceMissionObjective(state, 'dyson_defense', 'hold_dyson');
+  }
+
+  if (missionId === 'final_dominion') {
+    const progress = homeGalaxyDominionProgress(state);
+    if (!progress.systemsMet) return null;
+    return advanceMissionObjective(state, 'final_dominion', 'dominion');
+  }
+
+  return null;
 }
 
 export function missionsSummary(state) {

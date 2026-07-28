@@ -23,6 +23,7 @@ import { tickSuperweapon } from './superweapon.js';
 import { tickFlagshipWing } from './flagship-wing.js';
 import { tickHeroFlagships } from './hero-flagships.js';
 import { tickCampaign } from './campaign.js';
+import { evaluateActiveMission } from './missions.js';
 import { tryAdvanceTutorial } from './tutorial.js';
 import { tickBodyStructureEffects } from './body-structures.js';
 import { tickBuilderDrones } from './builder-drones.js';
@@ -81,7 +82,7 @@ function tickOnce(state) {
   const bulkDeliveryEvents = tickBulkDeliveries(state);
   const droneCompletions = tickDrones(state);
   const strategicOperationEvents = tickIntegratedStrategicOperations(state);
-  tickAiFaction(state);
+  const aiEvents = tickAiFaction(state);
   tickHeroFlagships(state);
   const scoutArrivals = tickScouts(state);
   const shipArrivals = tickPlayerShips(state, (destId) => handleArrival(state, destId, 'player'));
@@ -103,10 +104,19 @@ function tickOnce(state) {
   const capture = tickCapture(state);
   tryAdvanceTutorial(state);
   const campaignEvents = tickCampaign(state);
+  const mission = evaluateActiveMission(state);
+  if (mission?.complete) {
+    campaignEvents.push({
+      type: 'mission_complete',
+      missionId: mission.missionId,
+      objectiveId: mission.objectiveId,
+    });
+  }
   return {
     prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents, capture,
     wormholeArrival, campaignEvents, bodyStructureEvents, builderDroneEvents, droneCompletions, logisticsEvents,
     flagshipAnchorEvents, bulkProductionEvents, bulkDeliveryEvents, strategicOperationEvents, diplomacyEvents,
+    aiEvents,
   };
 }
 
@@ -118,6 +128,8 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
       bulkProductionEvents: [], bulkDeliveryEvents: [],
       strategicOperationEvents: [],
       diplomacyEvents: [],
+      aiEvents: [],
+      campaignEvents: [],
       remainingMs: 0,
       ticksAdvanced: 0,
     };
@@ -140,6 +152,8 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
   const bulkDeliveryEvents = [];
   const strategicOperationEvents = [];
   const diplomacyEvents = [];
+  const aiEvents = [];
+  const campaignEvents = [];
   let ticks = 0;
   while (remaining >= TICK_MS && ticks < maxTicks) {
     const events = tickOnce(state);
@@ -158,6 +172,8 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
     bulkDeliveryEvents.push(...events.bulkDeliveryEvents);
     if (events.strategicOperationEvents?.ticked) strategicOperationEvents.push(...events.strategicOperationEvents.events);
     diplomacyEvents.push(...(events.diplomacyEvents ?? []));
+    aiEvents.push(...(events.aiEvents ?? []));
+    campaignEvents.push(...(events.campaignEvents ?? []));
     if (events.capture) captures.push(events.capture);
     if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
     remaining -= TICK_MS;
@@ -174,6 +190,8 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
     bulkProductionEvents, bulkDeliveryEvents,
     strategicOperationEvents,
     diplomacyEvents,
+    aiEvents,
+    campaignEvents,
   };
 }
 
@@ -185,6 +203,8 @@ export function advance(state, ms) {
       bulkProductionEvents: [], bulkDeliveryEvents: [],
       strategicOperationEvents: [],
       diplomacyEvents: [],
+      aiEvents: [],
+      campaignEvents: [],
     };
   }
   const ticks = Math.floor(ms / TICK_MS);
@@ -205,6 +225,8 @@ export function advance(state, ms) {
   const bulkDeliveryEvents = [];
   const strategicOperationEvents = [];
   const diplomacyEvents = [];
+  const aiEvents = [];
+  const campaignEvents = [];
   for (let i = 0; i < ticks; i++) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
@@ -222,6 +244,8 @@ export function advance(state, ms) {
     bulkDeliveryEvents.push(...events.bulkDeliveryEvents);
     if (events.strategicOperationEvents?.ticked) strategicOperationEvents.push(...events.strategicOperationEvents.events);
     diplomacyEvents.push(...(events.diplomacyEvents ?? []));
+    aiEvents.push(...(events.aiEvents ?? []));
+    campaignEvents.push(...(events.campaignEvents ?? []));
     if (events.capture) captures.push(events.capture);
     if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
   }
@@ -232,6 +256,8 @@ export function advance(state, ms) {
     bulkProductionEvents, bulkDeliveryEvents,
     strategicOperationEvents,
     diplomacyEvents,
+    aiEvents,
+    campaignEvents,
   };
 }
 
