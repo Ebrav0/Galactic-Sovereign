@@ -417,6 +417,7 @@ export function drawStar(ctx, opts) {
     drawTradeNexus(ctx, opts.x, opts.y, opts.screenR, opts.time, {
       intel: opts.intel,
       compact: opts.mode === 'galaxy',
+      traffic: opts.nexusTraffic ?? [],
     });
     return;
   }

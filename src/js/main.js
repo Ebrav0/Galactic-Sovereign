@@ -351,6 +351,7 @@ import { setBattleGroupHeroAnchor } from './battle-groups.js';
 import { tickContextualTips, resetContextualTips } from './tips.js';
 import {
   activeConvoys,
+  commerceConvoyTraffic,
   convoyTransitStatus,
   dispatchDepot,
   discoverTradeNexuses,
@@ -3424,6 +3425,23 @@ window.render_game_to_text = () => {
   const physicalOutpostCreditsPerSecond = logisticsStateSummary.physicalProductionCreditsPerSecond;
   const passiveOutpostCreditsPerSecond = logisticsStateSummary.onsiteCreditsPerSecond;
   const cargoDeliveryCreditsPerSecond = logisticsStateSummary.throughputCreditsPerMinute / 60;
+  const viewedCommerceTraffic = commerceConvoyTraffic(state)
+    .filter(({ convoy, nexus, returning }) => (
+      nexus?.destinationSystemId === viewedSystemId
+      || (convoy.fromSystemId === viewedSystemId && returning?.phase === 'origin_arrival')
+    ))
+    .map(({ convoy, nexus, returning }) => {
+      const projection = nexus ?? returning;
+      return {
+        convoyId: convoy.id,
+        phase: projection.phase,
+        portIndex: projection.portIndex ?? null,
+        progress: Math.round((projection.progress ?? 0) * 1000) / 1000,
+        cargoRatio: projection.cargoRatio ?? 0,
+        fromSystemId: convoy.fromSystemId,
+        destinationSystemId: convoy.destinationSystemId,
+      };
+    });
   return JSON.stringify({
     bootPhase: getBootPhase(),
     intro: getBootPhase() === BOOT_PHASE.WARP_INTRO ? warpIntroState() : null,
@@ -3576,6 +3594,7 @@ window.render_game_to_text = () => {
     logistics: {
       ...logisticsStateSummary,
       nexuses: discoverTradeNexuses(state),
+      nexusTraffic: viewedCommerceTraffic,
       depots: Object.values(state.logistics?.depots ?? {}).map((depot) => ({
         id: depot.id,
         systemId: depot.systemId,

@@ -129,6 +129,15 @@ export const DEFAULT_LOGISTICS_CONFIG = Object.freeze({
   eventLimit: 120,
 });
 
+export const NEXUS_COMMERCE_TIMING = Object.freeze({
+  approachMs: 2600,
+  berthMs: 900,
+  unloadMs: 4200,
+  departureMs: 2300,
+  returnJumpMs: 1800,
+  originApproachMs: 3200,
+});
+
 const CARGO_PRECISION = 1e6;
 const EPSILON = 1e-7;
 
@@ -2158,6 +2167,178 @@ export function convoyTransitStatus(state, convoy, options = {}) {
     progress,
     etaMs: convoyEtaMs(state, convoy, options),
   };
+}
+
+function stableTrafficPort(value, count = 6) {
+  const text = String(value ?? 'convoy');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) % Math.max(1, count);
+}
+
+function commerceServiceDuration(timing = NEXUS_COMMERCE_TIMING) {
+  return timing.approachMs + timing.berthMs + timing.unloadMs + timing.departureMs;
+}
+
+/**
+ * Deterministic, render-only service projection for a convoy that has reached
+ * its Trade Nexus. The delivery timestamp is host-authored, so every co-op
+ * client sees the same port, approach, unloading, and departure sequence.
+ */
+export function convoyNexusServiceStatus(state, convoy, options = {}) {
+  if (!convoy || convoy.status !== 'delivered' || !Number.isFinite(convoy.deliveredAt)) return null;
+  const timing = { ...NEXUS_COMMERCE_TIMING, ...(options.timing ?? {}) };
+  const elapsedMs = Math.max(0, (state.time ?? 0) - convoy.deliveredAt);
+  const serviceMs = commerceServiceDuration(timing);
+  if (elapsedMs >= serviceMs) return null;
+
+  let cursor = 0;
+  const project = (phase, durationMs, cargoRatio) => ({
+    convoyId: convoy.id,
+    phase,
+    portIndex: stableTrafficPort(convoy.id, options.portCount ?? 6),
+    progress: Math.max(0, Math.min(1, (elapsedMs - cursor) / Math.max(1, durationMs))),
+    cargoRatio,
+    elapsedMs,
+    serviceMs,
+    fromSystemId: convoy.fromSystemId,
+    destinationSystemId: convoy.destinationSystemId,
+    ownerId: convoy.ownerId ?? 'player',
+  });
+
+  if (elapsedMs < (cursor += timing.approachMs)) {
+    cursor -= timing.approachMs;
+    return project('approach', timing.approachMs, 1);
+  }
+  if (elapsedMs < (cursor += timing.berthMs)) {
+    cursor -= timing.berthMs;
+    return project('berthing', timing.berthMs, 1);
+  }
+  if (elapsedMs < (cursor += timing.unloadMs)) {
+    cursor -= timing.unloadMs;
+    const status = project('unloading', timing.unloadMs, 1);
+    status.cargoRatio = Math.max(0, 1 - status.progress);
+    return status;
+  }
+  return project('departing', timing.departureMs, 0);
+}
+
+/**
+ * Projects the empty return leg after Nexus service. It reuses the outbound
+ * route in reverse, without mutating credits or convoy authority.
+ */
+export function convoyReturnTransitStatus(state, convoy, options = {}) {
+  if (!convoy || convoy.status !== 'delivered' || !Number.isFinite(convoy.deliveredAt)) return null;
+  const timing = { ...NEXUS_COMMERCE_TIMING, ...(options.timing ?? {}) };
+  const config = configFrom(options);
+  const elapsedSinceDelivery = Math.max(0, (state.time ?? 0) - convoy.deliveredAt);
+  const serviceMs = commerceServiceDuration(timing);
+  if (elapsedSinceDelivery < serviceMs) return null;
+
+  const graph = getGraph(state, convoy.galaxyId);
+  const nodes = nodeMap(graph);
+  const reversePath = [...(convoy.path ?? [])].reverse();
+  let elapsedMs = elapsedSinceDelivery - serviceMs;
+  if (elapsedMs < timing.returnJumpMs) {
+    const node = nodes.get(convoy.destinationSystemId);
+    return {
+      convoyId: convoy.id,
+      phase: 'return_jumping',
+      fromId: convoy.destinationSystemId,
+      toId: reversePath[1] ?? convoy.fromSystemId,
+      destinationSystemId: convoy.fromSystemId,
+      x: node?.x ?? 0,
+      y: node?.y ?? 0,
+      angle: 0,
+      progress: Math.max(0, Math.min(1, elapsedMs / Math.max(1, timing.returnJumpMs))),
+      cargoRatio: 0,
+      portIndex: stableTrafficPort(convoy.id, options.portCount ?? 6),
+    };
+  }
+  elapsedMs -= timing.returnJumpMs;
+
+  for (let legIndex = 0; legIndex < reversePath.length - 1; legIndex++) {
+    const fromId = reversePath[legIndex];
+    const toId = reversePath[legIndex + 1];
+    const durationMs = convoyLegDurationMs(graph, fromId, toId, {
+      ...config,
+      convoySpeed: convoy.convoySpeed ?? config.convoySpeed,
+    });
+    if (elapsedMs < durationMs) {
+      const from = nodes.get(fromId);
+      const to = nodes.get(toId);
+      if (!from || !to) return null;
+      const progress = Math.max(0, Math.min(1, elapsedMs / Math.max(1, durationMs)));
+      const control = laneControlPoint(from, to, laneBulge(graph, fromId, toId));
+      const position = laneBezierPoint(from, control, to, progress);
+      return {
+        convoyId: convoy.id,
+        phase: 'returning',
+        fromId,
+        toId,
+        destinationSystemId: convoy.fromSystemId,
+        x: position.x,
+        y: position.y,
+        angle: laneBezierAngle(from, control, to, progress),
+        progress,
+        cargoRatio: 0,
+        portIndex: stableTrafficPort(convoy.id, options.portCount ?? 6),
+      };
+    }
+    elapsedMs -= durationMs;
+  }
+
+  if (elapsedMs < timing.originApproachMs) {
+    const node = nodes.get(convoy.fromSystemId);
+    return {
+      convoyId: convoy.id,
+      phase: 'origin_arrival',
+      fromId: reversePath.at(-2) ?? convoy.destinationSystemId,
+      toId: convoy.fromSystemId,
+      destinationSystemId: convoy.fromSystemId,
+      x: node?.x ?? 0,
+      y: node?.y ?? 0,
+      angle: 0,
+      progress: Math.max(0, Math.min(1, elapsedMs / Math.max(1, timing.originApproachMs))),
+      cargoRatio: 0,
+      portIndex: stableTrafficPort(convoy.id, options.portCount ?? 6),
+    };
+  }
+  return null;
+}
+
+export function commerceConvoyTraffic(state, galaxyId = state.activeGalaxyId, options = {}) {
+  const portCount = Math.max(1, options.portCount ?? 6);
+  const entries = ensureLogisticsState(state).convoys
+    .filter((convoy) => convoy.galaxyId === galaxyId && convoy.status === 'delivered')
+    .map((convoy) => ({
+      convoy,
+      nexus: convoyNexusServiceStatus(state, convoy, options),
+      returning: convoyReturnTransitStatus(state, convoy, options),
+    }))
+    .filter((entry) => entry.nexus || entry.returning)
+    .sort((a, b) => (a.convoy.deliveredAt ?? 0) - (b.convoy.deliveredAt ?? 0)
+      || a.convoy.id.localeCompare(b.convoy.id));
+
+  // Simultaneous arrivals probe forward from their stable hashed berth so the
+  // six visible ships occupy different ports instead of drawing over each other.
+  const occupiedByNexus = new Map();
+  for (const entry of entries) {
+    if (!entry.nexus) continue;
+    const nexusId = entry.convoy.destinationSystemId;
+    const occupied = occupiedByNexus.get(nexusId) ?? new Set();
+    let portIndex = entry.nexus.portIndex;
+    for (let probe = 0; probe < portCount && occupied.has(portIndex); probe++) {
+      portIndex = (portIndex + 1) % portCount;
+    }
+    if (occupied.size < portCount) occupied.add(portIndex);
+    occupiedByNexus.set(nexusId, occupied);
+    entry.nexus.portIndex = portIndex;
+  }
+  return entries;
 }
 
 export function activeConvoys(state, galaxyId = state.activeGalaxyId) {

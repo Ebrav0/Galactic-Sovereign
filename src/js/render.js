@@ -150,12 +150,14 @@ import { activeFleetOrders, weaponArcRadians, weaponMountBearing } from './comba
 import { combatDisplayPose } from './combat-steering.js';
 import {
   activeConvoys,
+  commerceConvoyTraffic,
   convoyTransitStatus,
   localTransportSnapshots,
   logisticsLaneKey,
 } from './logistics.js';
 import {
   drawExportDepot,
+  drawNexusCargoShip,
   drawSpaceCompressionJump,
   exportDepotWorldPose,
 } from './trade-nexus-render.js';
@@ -655,6 +657,12 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
 
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
+  const commerceTraffic = commerceConvoyTraffic(state);
+  const nexusTraffic = system.star.kind === 'trade_nexus'
+    ? commerceTraffic
+      .filter((entry) => entry.nexus?.destinationSystemId === systemId)
+      .map((entry) => entry.nexus)
+    : [];
 
   for (const planet of system.bodies) {
     drawOrbitRing(ctx, starScreen.x, starScreen.y, planet.orbitRadius * z, 0.14);
@@ -669,10 +677,27 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     intel,
     state,
     systemId,
+    nexusTraffic,
     wormholeVisual: system.star.kind === 'blackhole' ? wormholeVisualState(state) : null,
   });
 
   flushStars(ctx, 'core');
+
+  if (intel && system.star.kind === 'trade_nexus' && z > 0.24) {
+    const unloading = nexusTraffic.filter((entry) => entry.phase === 'unloading').length;
+    const occupied = nexusTraffic.length;
+    const label = occupied > 0
+      ? `INTERSTELLAR TRADE NEXUS · ${occupied}/6 PORTS ACTIVE${unloading ? ` · ${unloading} UNLOADING` : ''}`
+      : 'INTERSTELLAR TRADE NEXUS · 6 PORTS READY';
+    labelText(
+      ctx,
+      label,
+      starScreen.x,
+      starScreen.y + system.star.radius * z * 2.15,
+      Math.max(8, 10 * z),
+      occupied > 0 ? '#ffce7a' : THEME.accentCyan,
+    );
+  }
 
   const dyson = ensureDyson(system);
   if (intel && (dyson.completedShells > 0 || dyson.shellSails > 0 || hasFoundry(state, systemId))) {
@@ -923,6 +948,52 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
         Math.max(12, 26 * z),
         status?.progress ?? 0,
       );
+    }
+
+    for (const entry of commerceTraffic
+      .filter(({ convoy, returning }) => convoy.fromSystemId === systemId
+        && returning?.phase === 'origin_arrival')) {
+      const { convoy, returning } = entry;
+      const progress = returning.progress * returning.progress * (3 - 2 * returning.progress);
+      const stagingX = depotPose.x + Math.cos(depotPose.heading) * 52;
+      const stagingY = depotPose.y + Math.sin(depotPose.heading) * 52;
+      const approachX = depotPose.x + Math.cos(depotPose.heading) * 270;
+      const approachY = depotPose.y + Math.sin(depotPose.heading) * 270;
+      const wx = approachX + (stagingX - approachX) * progress;
+      const wy = approachY + (stagingY - approachY) * progress;
+      const shipScreen = worldToScreen(camera, wx, wy, canvas);
+      drawNexusCargoShip(
+        ctx,
+        shipScreen.x,
+        shipScreen.y,
+        depotPose.heading + Math.PI,
+        Math.max(4, 8 * z),
+        {
+          cargoRatio: 0,
+          side: convoy.ownerId === 'player' ? 'player' : 'ai',
+          time: t,
+        },
+      );
+      if (returning.progress < 0.38) {
+        drawSpaceCompressionJump(
+          ctx,
+          shipScreen.x,
+          shipScreen.y,
+          depotPose.heading + Math.PI,
+          Math.max(12, 24 * z),
+          returning.progress / 0.38,
+        );
+      }
+      if (z > 0.5) {
+        labelText(
+          ctx,
+          `${convoy.id.toUpperCase()} · RETURNED EMPTY`,
+          shipScreen.x,
+          shipScreen.y + Math.max(15, 20 * z),
+          Math.max(7, 8 * z),
+          THEME.accentCyan,
+        );
+      }
     }
   }
 
@@ -2454,9 +2525,13 @@ export function drawGalaxy(
       logisticsRoutes.add(logisticsLaneKey(route.path[i], route.path[i + 1]));
     }
   }
-  const convoyTransit = activeConvoys(state)
+  const outboundConvoyTransit = activeConvoys(state)
     .map((convoy) => ({ convoy, status: convoyTransitStatus(state, convoy) }))
     .filter((entry) => entry.status);
+  const returnConvoyTransit = commerceConvoyTraffic(state)
+    .filter((entry) => ['return_jumping', 'returning'].includes(entry.returning?.phase))
+    .map(({ convoy, returning }) => ({ convoy, status: returning }));
+  const convoyTransit = [...outboundConvoyTransit, ...returnConvoyTransit];
   for (const { convoy } of convoyTransit) {
     for (let i = convoy.legIndex ?? 0; i < convoy.path.length - 1; i++) {
       logisticsRoutes.add(logisticsLaneKey(convoy.path[i], convoy.path[i + 1]));
@@ -3134,23 +3209,36 @@ export function drawGalaxy(
     const s = worldToScreen(galaxyCamera, status.x, status.y, canvas);
     if (!screenInView(s, canvas, 50)) continue;
     const heading = Number.isFinite(status.angle) ? status.angle : 0;
-    drawHullSpriteLite(ctx, s.x, s.y, 'freighter', Math.max(3.5, 7.5 * z), {
-      heading,
-      side: convoy.ownerId === 'player' && status.phase !== 'paused' ? 'player' : 'ai',
-    });
-    if (status.phase === 'jumping') {
+    const returning = status.phase === 'return_jumping' || status.phase === 'returning';
+    if (returning) {
+      drawNexusCargoShip(ctx, s.x, s.y, heading, Math.max(3.5, 7.5 * z), {
+        cargoRatio: 0,
+        side: convoy.ownerId === 'player' ? 'player' : 'ai',
+        time: state.time,
+      });
+    } else {
+      drawHullSpriteLite(ctx, s.x, s.y, 'freighter', Math.max(3.5, 7.5 * z), {
+        heading,
+        side: convoy.ownerId === 'player' && status.phase !== 'paused' ? 'player' : 'ai',
+      });
+    }
+    if (status.phase === 'jumping' || status.phase === 'return_jumping') {
       drawSpaceCompressionJump(ctx, s.x, s.y, heading, Math.max(10, 23 * z), status.progress);
     }
     if (tier === 'close') {
       labelText(
         ctx,
-        `${convoy.id.toUpperCase()} · ${Math.round(convoy.creditLoad ?? 0)} CR · ${(convoy.threatBand ?? 'safe').toUpperCase()}`,
+        returning
+          ? `${convoy.id.toUpperCase()} · EMPTY RETURN TO ${convoy.fromSystemId.toUpperCase()}`
+          : `${convoy.id.toUpperCase()} · ${Math.round(convoy.creditLoad ?? 0)} CR · ${(convoy.threatBand ?? 'safe').toUpperCase()}`,
         s.x,
         s.y + Math.max(15, 21 * z),
         Math.max(7, 8 * z),
-        (convoy.threatScore ?? 0) >= 70
-          ? THEME.dangerHot
-          : (convoy.threatScore ?? 0) >= 35 ? '#ffc760' : '#76ddff',
+        returning
+          ? THEME.accentCyan
+          : (convoy.threatScore ?? 0) >= 70
+            ? THEME.dangerHot
+            : (convoy.threatScore ?? 0) >= 35 ? '#ffc760' : '#76ddff',
       );
     }
   }
