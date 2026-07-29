@@ -5426,7 +5426,17 @@ export function initUi(ctx) {
         depots: state.logistics?.depots,
         convoys: activeConvoys(state),
       });
-      if (logisticsSnap !== uiSnapshots.logisticsPanel) {
+      const logisticsMounted = !!el('logistics-panel-body')?.children.length;
+      const logisticsInteracting = logisticsMounted && (
+        uiPointerActive
+        || logisticsPanel?.matches(':hover')
+        || logisticsPanel?.contains(document.activeElement)
+      );
+      // Physical-credit totals change every simulation tick. Keep the live
+      // command DOM mounted while a player is hovering, clicking, or using a
+      // select so controls are not detached between pointer/key events.
+      if (!logisticsMounted
+          || (logisticsSnap !== uiSnapshots.logisticsPanel && !logisticsInteracting)) {
         uiSnapshots.logisticsPanel = logisticsSnap;
         renderLogisticsPanel(el('logistics-panel-body'), state, { onFollowConvoy: followConvoy });
       }
