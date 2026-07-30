@@ -1,5 +1,5 @@
 [Unit]
-Description=Monthly Galactic Sovereign isolated restore test
+Description=Weekly Galactic Sovereign isolated restore test
 
 [Service]
 Type=oneshot
@@ -10,5 +10,5 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadOnlyPaths=/var/lib/galactic-sovereign
+ReadWritePaths=/var/lib/galactic-sovereign/backups/status /var/tmp
 UMask=0077
