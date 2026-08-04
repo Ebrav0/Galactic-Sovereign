@@ -2731,9 +2731,15 @@ export function drawGalaxy(
     ctx.beginPath();
     ctx.arc(bhScreen.x, bhScreen.y, r * 2.1, 0, Math.PI * 2);
     ctx.stroke();
+    // Soft halo without shadowBlur (same purple read, much cheaper on Canvas2D).
+    const halo = ctx.createRadialGradient(bhScreen.x, bhScreen.y, r * 0.4, bhScreen.x, bhScreen.y, r * 2.4);
+    halo.addColorStop(0, 'rgba(176, 122, 219, 0.45)');
+    halo.addColorStop(1, 'rgba(176, 122, 219, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(bhScreen.x, bhScreen.y, r * 2.4, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = 'rgba(5, 6, 12, 0.95)';
-    ctx.shadowColor = 'rgba(176, 122, 219, 0.7)';
-    ctx.shadowBlur = 10 * z;
     ctx.beginPath();
     ctx.arc(bhScreen.x, bhScreen.y, r, 0, Math.PI * 2);
     ctx.fill();
@@ -2742,13 +2748,17 @@ export function drawGalaxy(
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
     const star = galaxy.stars[starIdx];
-    const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
     if (!screenInView(s, canvas, 40)) continue;
-    const nodeR = starNodeRadius(state, star.id) * z;
+    if (tier === 'far' && starIdx % 2 !== 0
+      && state.stronghold !== star.id
+      && !piratePresence.has(star.id)
+      && !hasIntel(state, star.id)) {
+      continue;
+    }
     const intel = hasIntel(state, star.id);
-    const important = intel || state.stronghold === star.id || piratePresence.has(star.id);
-    if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
+    const system = systemById(state, star.id);
+    const nodeR = starNodeRadius(state, star.id) * z;
     visibleStars++;
 
     if (!intel) {
@@ -2800,19 +2810,30 @@ export function drawGalaxy(
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
     const star = galaxy.stars[starIdx];
-    const system = systemById(state, star.id);
     const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
     if (!screenInView(s, canvas, 40)) continue;
-    const nodeR = starNodeRadius(state, star.id) * z;
-    const intel = hasIntel(state, star.id);
-    const owned = isPlayerOwned(state, star.id);
-    const aiOwned = isAiOwned(state, star.id);
     const fleetAtStar = fleetMarkersBySystem.get(star.id) ?? [];
     const pirateAtStar = pirateMarkersBySystem.get(star.id) ?? [];
     const nestAtStar = nestMarkersBySystem.get(star.id) ?? [];
     const aiFleetAtStar = aiFleetMarkersBySystem.get(star.id) ?? [];
     const strategicTarget = strategicTargets.get(star.id);
-    const important = intel || owned || aiOwned || state.stronghold === star.id || piratePresence.has(star.id) || fleetAtStar.length > 0 || pirateAtStar.length > 0 || nestAtStar.length > 0 || aiFleetAtStar.length > 0 || !!strategicTarget;
+    const cheapImportant = state.stronghold === star.id
+      || piratePresence.has(star.id)
+      || fleetAtStar.length > 0
+      || pirateAtStar.length > 0
+      || nestAtStar.length > 0
+      || aiFleetAtStar.length > 0
+      || !!strategicTarget;
+    if (tier === 'far' && !cheapImportant && starIdx % 2 !== 0) {
+      // Odd far nodes without markers: skip unless owned/intel (checked cheaply next).
+      if (!isPlayerOwned(state, star.id) && !isAiOwned(state, star.id) && !hasIntel(state, star.id)) continue;
+    }
+    const system = systemById(state, star.id);
+    const nodeR = starNodeRadius(state, star.id) * z;
+    const intel = hasIntel(state, star.id);
+    const owned = isPlayerOwned(state, star.id);
+    const aiOwned = isAiOwned(state, star.id);
+    const important = intel || owned || aiOwned || cheapImportant;
     if (tier === 'far' && !important && starIdx % 2 !== 0) continue;
 
     if (!system?.star) {

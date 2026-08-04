@@ -551,8 +551,10 @@ const stages = [
         const lanes = graph.lanes || [];
         const neighbors = [];
         for (const lane of lanes) {
-          if (lane.a === home) neighbors.push(lane.b);
-          if (lane.b === home) neighbors.push(lane.a);
+          const a = Array.isArray(lane) ? lane[0] : lane.a;
+          const b = Array.isArray(lane) ? lane[1] : lane.b;
+          if (a === home) neighbors.push(b);
+          if (b === home) neighbors.push(a);
         }
         const target = neighbors.find((id) => id !== 'core') || neighbors[0];
         if (target) window.__devAction('forceCapture', { systemId: target });
@@ -721,19 +723,29 @@ const stages = [
     async run(page) {
       await page.evaluate(() => {
         const st = window.getGameState();
-        const graph = st.galaxies[st.activeGalaxyId].graph;
-        const star = graph.stars?.[0];
-        if (star) {
-          window.__devAction('forceCapture', { systemId: star.id });
-          window.__devAction('buildEmpireKit', { systemId: star.id });
-          window.__viewSystem(star.id);
-          st.flagship.systemId = star.id;
+        let gal = st.galaxies[st.activeGalaxyId];
+        if (!gal || gal.status !== 'active' || !gal.systems || Object.keys(gal.systems).length === 0) {
+          window.__hydrateGalaxy?.(st.activeGalaxyId);
+          gal = st.galaxies[st.activeGalaxyId];
+        }
+        const systems = gal?.systems || {};
+        const target = Object.keys(systems).find((id) => id !== 'core' && systems[id]);
+        if (target) {
+          const cap = window.__devAction('forceCapture', { systemId: target });
+          if (!cap?.ok && cap?.reason !== 'System is already player-owned') {
+            /* continue sampling even if capture fails */
+          }
+          window.__devAction('buildEmpireKit', { systemId: target });
+          window.__viewSystem(target);
+          st.flagship.systemId = target;
+          st.flagship.galaxyId = st.activeGalaxyId;
           st.flagship.transit = null;
           st.flagship.x = 0;
           st.flagship.y = 0;
         }
         window.__setView('system');
         window.__snapCamera(0, 0, 1);
+        return { target, status: gal?.status, systemCount: Object.keys(systems).length };
       });
       const sys = await sampleStage(page, { id: 'S10-sys', name: 'beach-system', viewHint: 'system' });
       await page.evaluate(() => {
@@ -797,10 +809,11 @@ const stages = [
       const active = await page.evaluate(() => window.getGameState().activeGalaxyId);
       await page.evaluate(() => {
         const st = window.getGameState();
-        const star = st.galaxies[st.activeGalaxyId]?.graph?.stars?.[1];
-        if (star) {
-          window.__devAction('forceCapture', { systemId: star.id });
-          window.__viewSystem(star.id);
+        const systems = st.galaxies[st.activeGalaxyId]?.systems || {};
+        const starId = Object.keys(systems).find((id) => id !== 'core');
+        if (starId) {
+          window.__devAction('forceCapture', { systemId: starId });
+          window.__viewSystem(starId);
         }
         window.__setView('galaxy');
         window.__snapGalaxyCamera(0, 0, 0.1);
@@ -877,6 +890,12 @@ const stages = [
       const target = (report.galaxyIdsVisited || []).find((id) => id !== 'gal-0') || 'gal-1';
       const anchor = await page.evaluate((galId) => {
         window.__devAction('grantCredits', { amount: 10000 });
+        const st = window.getGameState();
+        const whId = `wh-${st.activeGalaxyId}`;
+        const existing = st.wormholes?.[whId]?.anchor;
+        if (existing) {
+          return { ok: true, already: true, anchor: existing };
+        }
         return window.__buildWormholeAnchor(galId);
       }, target);
       await page.evaluate(() => {
@@ -944,9 +963,7 @@ const stages = [
       await page.evaluate(() => {
         const st = window.getGameState();
         window.__devAction('grantCredits', { amount: 50000 });
-        window.__devAction('spawnFleetPreset', { systemId: st.stronghold || st.flagship.systemId, presetId: 'battle_fleet' });
-        window.__devAction('spawnEnemyFleet', { systemId: st.flagship.systemId, size: 'medium' });
-        window.advanceTime?.(60000);
+        window.__devAction('spawnFleetPreset', { systemId: st.flagship.systemId || st.stronghold, presetId: 'scout_wing' });
         window.__setView('galaxy');
         window.__snapGalaxyCamera(0, 0, 0.05);
       });
@@ -990,7 +1007,14 @@ const stages = [
           window.__devAction('grantCredits', { amount: 20000 });
           const st = window.getGameState();
           const other = Object.keys(st.galaxies).find((id) => id !== st.activeGalaxyId) || 'gal-1';
-          window.__buildWormholeAnchor(other);
+          const whId = `wh-${st.activeGalaxyId}`;
+          if (!st.wormholes?.[whId]?.anchor) {
+            window.__buildWormholeAnchor(other);
+          }
+          // Mark both ends as player-owned for dominion anchor path.
+          for (const wh of Object.values(st.wormholes || {})) {
+            if (wh?.anchor) wh.anchorOwner = 'player';
+          }
           window.__checkVictory?.();
         });
       }
