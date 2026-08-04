@@ -276,11 +276,17 @@ function evaluateBudgets(sample, { viewHint = null } = {}) {
   let pass = failures.length === 0;
   if (!pass && envSoft) {
     const softable = failures.every((f) => (
-      f.id.startsWith('fps') || f.id === 'simMs' || f.id === 'glFlushMs' || f.id === 'totalFrameMs' || f.id === 'uiMs'
+      f.id.startsWith('fps')
+      || f.id === 'simMs'
+      || f.id === 'glFlushMs'
+      || f.id === 'totalFrameMs'
+      || f.id === 'uiMs'
+      || f.id === 'systemDrawMs'
+      || f.id === 'galaxyDrawMs'
     ));
     const drawMetric = view === 'galaxy' ? means.galaxyDrawMs : means.systemDrawMs;
     const drawBudget = view === 'galaxy' ? BUDGETS.galaxyDrawMs : BUDGETS.systemDrawMs;
-    // SwiftShader CPU canvas is slower; allow 2× draw budget when other hitch gates pass.
+    // SwiftShader CPU canvas is slower; allow 2× draw budget when hitch gates pass.
     const drawOk = drawMetric == null || drawMetric <= drawBudget * 2.0;
     if (softable && drawOk && hitchCount < BUDGETS.hitchHard) {
       warnings.push(...failures.map((f) => ({ ...f, softEnv: true })));

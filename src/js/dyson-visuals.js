@@ -72,12 +72,20 @@ function edgeKey(i, j) {
 }
 
 /** Build a pole-view geodesic mesh around the star (deterministic from seed). */
+/** Edge midpoints for construction weave (high shell progress). */
+const geodesicMeshCache = new Map();
+
 export function buildGeodesicMesh(starRadius, completedShells, systemSeed = 0) {
   const tier = shellVisualTier(completedShells);
   const freq = geodesicFrequency(completedShells);
   const radius = envelopeRadius(starRadius);
+  const cacheKey = `${Math.round(starRadius * 100)}:${completedShells}:${systemSeed}:${freq}:${tier}`;
+  if (geodesicMeshCache.has(cacheKey)) return geodesicMeshCache.get(cacheKey);
+
   if (freq <= 0 || tier <= 0) {
-    return { nodes: [], edges: [], frequency: 0, envelopeR: radius, tier };
+    const empty = { nodes: [], edges: [], frequency: 0, envelopeR: radius, tier };
+    geodesicMeshCache.set(cacheKey, empty);
+    return empty;
   }
 
   const phi = (1 + Math.sqrt(5)) * 0.5;
@@ -162,13 +170,16 @@ export function buildGeodesicMesh(starRadius, completedShells, systemSeed = 0) {
     visibleEdges = visibleEdges.filter((_, i) => i % stride === 0);
   }
 
-  return {
+  const result = {
     nodes,
     edges: visibleEdges,
     frequency: freq,
     envelopeR: radius,
     tier,
   };
+  if (geodesicMeshCache.size > 24) geodesicMeshCache.clear();
+  geodesicMeshCache.set(cacheKey, result);
+  return result;
 }
 
 /** Edge midpoints for construction weave (high shell progress). */

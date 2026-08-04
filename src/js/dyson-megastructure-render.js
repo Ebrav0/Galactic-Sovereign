@@ -559,7 +559,9 @@ export function drawDysonMegastructure(
     ? 1 + 0.15 * (1 - (time - lastShellCompletedAt) / 1000)
     : 1;
   const lodSimple = zoom < DYSON_MESH_LOD_ZOOM;
-  const mesh = buildGeodesicMesh(starRadius, completedShells, systemSeed);
+  // Skip geodesic mesh build on simple LOD — rings/arcs do not need it.
+  const needsMesh = !lodSimple && tier >= 5;
+  const mesh = needsMesh ? buildGeodesicMesh(starRadius, completedShells, systemSeed) : null;
 
   ctx.save();
   ctx.translate(starX, starY);
@@ -590,7 +592,7 @@ export function drawDysonMegastructure(
       ctx.beginPath();
       ctx.arc(0, 0, envR, 0, Math.PI * 2);
       ctx.stroke();
-    } else {
+    } else if (mesh) {
       drawGeodesicCage(ctx, mesh, zoom, tier, time, lodSimple);
     }
   }
