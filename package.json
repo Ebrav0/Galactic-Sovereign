@@ -26,6 +26,7 @@
     "verify:logistics": "node scripts/verify-logistics-v2.mjs",
     "verify:logistics:browser": "node scripts/verify-logistics-controls-browser.mjs",
     "verify:system-play": "node scripts/verify-system-play.mjs",
+    "solo:fps": "node scripts/solo-campaign-fps.mjs",
     "verify:campaign-content": "node scripts/verify-campaign-content.mjs",
     "verify:campaign-content:browser": "node scripts/verify-campaign-content-browser.mjs",
     "verify:security": "node scripts/verify-security-hardening.mjs",

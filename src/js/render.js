@@ -228,8 +228,20 @@ let lastGalaxyPerf = {
   lastDrawMs: 0,
 };
 
+let lastSystemPerf = {
+  systemId: null,
+  bodyCount: 0,
+  shipCount: 0,
+  combatUnits: 0,
+  lastDrawMs: 0,
+};
+
 export function galaxyPerfSummary() {
   return { ...lastGalaxyPerf };
+}
+
+export function systemPerfSummary() {
+  return { ...lastSystemPerf };
 }
 
 export function clampZoom(z) {
@@ -640,11 +652,21 @@ function labelText(ctx, text, x, y, size, color, align = 'center') {
 // ============================= SYSTEM VIEW =============================
 
 export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, combatOverlay = null) {
+  const drawStartedAt = performance.now();
   const canvas = ctx.canvas;
   const system = systemById(state, systemId);
   ctx.fillStyle = THEME.bgDeep;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (!system) return;
+  if (!system) {
+    lastSystemPerf = {
+      systemId: systemId ?? null,
+      bodyCount: 0,
+      shipCount: 0,
+      combatUnits: 0,
+      lastDrawMs: Math.round((performance.now() - drawStartedAt) * 100) / 100,
+    };
+    return;
+  }
 
   const intel = hasIntel(state, systemId);
   const t = displayTime(state, accumulatorMs);
@@ -1413,6 +1435,19 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     const ageFrac = Math.min(1, Math.max(0, 1 - (ping.expiresAt - nowMs) / 8000));
     drawMapPingMarker(ctx, s.x, s.y, ping.label || ping.fromCallsign, ageFrac);
   }
+
+  const combatUnits = Array.isArray(activeBattle?.units)
+    ? activeBattle.units.length
+    : (Array.isArray(combatOverlay?.units) ? combatOverlay.units.length : 0);
+  const shipCount = (state.playerShips ?? []).filter((s) => s.systemId === systemId && !s.transit).length
+    + (state.aiShips ?? []).filter((s) => s.systemId === systemId && !s.transit).length;
+  lastSystemPerf = {
+    systemId,
+    bodyCount: system.bodies?.length ?? 0,
+    shipCount,
+    combatUnits,
+    lastDrawMs: Math.round((performance.now() - drawStartedAt) * 100) / 100,
+  };
 }
 
 function drawRestingWormholeGateway(ctx, x, y, r, visual, time) {

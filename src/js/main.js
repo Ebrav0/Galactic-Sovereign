@@ -35,7 +35,7 @@ import {
   planetPosition,
   foundryHostPlanet,
 } from './state.js';
-import { step, advance, togglePaused } from './simulation.js';
+import { step, advance, togglePaused, simPerfSummary } from './simulation.js';
 import {
   buildOutpost,
   canBuildOutpost,
@@ -155,6 +155,7 @@ import {
   drawGalaxy,
   drawTitleBackground,
   galaxyPerfSummary,
+  systemPerfSummary,
   follow,
   updateFollowCamera,
   updateCombatCinemaCamera,
@@ -177,7 +178,7 @@ import {
   clearTutorialCheckpoint,
 } from './save.js';
 import { initUi, toast } from './ui.js';
-import { initStarRenderer, resizeStarRenderer } from './gl/star-renderer.js';
+import { initStarRenderer, resizeStarRenderer, glFlushSummary } from './gl/star-renderer.js';
 import { stellarCatalogInfo } from './star-types.js';
 import { getBootPhase, setBootPhase as setBootPhaseRaw, BOOT_PHASE } from './boot.js';
 import {
@@ -3034,6 +3035,30 @@ let frameCount = 0;
 let fpsWindowStart = performance.now();
 let lastFps = 0;
 
+/** Sliding window of recent rAF deltas for percentile FPS (harness / __framePerf). */
+const FRAME_DT_WINDOW = 180;
+const frameDts = [];
+const HITCH_MS = 100;
+const HITCH_RING = 64;
+const hitchRing = [];
+let hitchStageTag = null;
+let lastFramePerf = {
+  fpsAvg: 0,
+  fpsP5: 0,
+  fpsP1: 0,
+  simMs: 0,
+  systemDrawMs: 0,
+  galaxyDrawMs: 0,
+  glFlushMs: 0,
+  uiMs: 0,
+  totalFrameMs: 0,
+  view: 'system',
+  bootPhase: 'title',
+  activeGalaxyId: null,
+  combatUnits: 0,
+  hitchCount: 0,
+};
+
 function scheduleNextFrame() {
   // Background co-op tabs still ate CPU at 60fps; throttle them so the focused tab stays usable.
   if (coop.isActive() && typeof document !== 'undefined' && document.hidden) {
@@ -3045,9 +3070,11 @@ function scheduleNextFrame() {
 
 function maybeUpdateUi(now) {
   const interval = coop.isActive() ? COOP_UI_INTERVAL_MS : SOLO_UI_INTERVAL_MS;
-  if (now - lastUiAt < interval) return;
+  if (now - lastUiAt < interval) return 0;
   lastUiAt = now;
+  const t0 = performance.now();
   updateUi();
+  return performance.now() - t0;
 }
 
 function noteFrameFps(now) {
@@ -3060,23 +3087,85 @@ function noteFrameFps(now) {
   }
 }
 
+function percentileFpsFromDts(dts, pct) {
+  if (!dts.length) return 0;
+  const fps = dts.map((d) => 1000 / Math.max(0.001, d)).sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(fps.length - 1, Math.floor(fps.length * pct)));
+  return Math.round(fps[idx]);
+}
+
+function averageFpsFromDts(dts) {
+  if (!dts.length) return 0;
+  const avgDt = dts.reduce((s, d) => s + d, 0) / dts.length;
+  return Math.round(1000 / Math.max(0.001, avgDt));
+}
+
+function recordHitch(frameMs, now) {
+  if (frameMs < HITCH_MS) return;
+  hitchRing.push({
+    at: now,
+    frameMs: Math.round(frameMs * 100) / 100,
+    stage: hitchStageTag,
+    view,
+    activeGalaxyId: state?.activeGalaxyId ?? null,
+  });
+  if (hitchRing.length > HITCH_RING) hitchRing.shift();
+}
+
+function buildFramePerfSnapshot(extras = {}) {
+  const sys = systemPerfSummary();
+  const gal = galaxyPerfSummary();
+  const gl = glFlushSummary();
+  const sim = simPerfSummary();
+  return {
+    fpsAvg: averageFpsFromDts(frameDts),
+    fpsP5: percentileFpsFromDts(frameDts, 0.05),
+    fpsP1: percentileFpsFromDts(frameDts, 0.01),
+    lastFps,
+    simMs: extras.simMs ?? sim.totalMs ?? 0,
+    systemDrawMs: extras.systemDrawMs ?? (view === 'system' ? sys.lastDrawMs : 0),
+    galaxyDrawMs: extras.galaxyDrawMs ?? (view === 'galaxy' ? gal.lastDrawMs : 0),
+    glFlushMs: extras.glFlushMs ?? gl.lastFlushMs ?? 0,
+    uiMs: extras.uiMs ?? 0,
+    totalFrameMs: extras.totalFrameMs ?? 0,
+    view,
+    bootPhase: getBootPhase(),
+    activeGalaxyId: state?.activeGalaxyId ?? null,
+    combatUnits: sys.combatUnits ?? 0,
+    hitchCount: hitchRing.length,
+    hitches: hitchRing.slice(-16),
+    sim,
+    system: sys,
+    galaxy: gal,
+    stageTag: hitchStageTag,
+  };
+}
+
 function runFrame(now) {
+  const frameStartedAt = performance.now();
   noteFrameFps(now);
   const dt = Math.min(now - lastFrame, 250);
   lastFrame = now;
+  if (dt > 0 && dt < 250) {
+    frameDts.push(dt);
+    if (frameDts.length > FRAME_DT_WINDOW) frameDts.shift();
+  }
   const phase = getBootPhase();
 
   if (phase === BOOT_PHASE.TITLE) {
     drawTitleBackground(ctx2d, canvas, now);
-    maybeUpdateUi(now);
+    const uiMs = maybeUpdateUi(now);
     audioDirector.syncFrame({ state, view, viewedSystemId, phase, now, cameraX: camera.x });
+    const totalFrameMs = performance.now() - frameStartedAt;
+    recordHitch(totalFrameMs, now);
+    lastFramePerf = buildFramePerfSnapshot({ uiMs, totalFrameMs, simMs: 0, systemDrawMs: 0, galaxyDrawMs: 0, glFlushMs: 0 });
     scheduleNextFrame();
     return;
   }
 
   if (phase === BOOT_PHASE.WARP_INTRO) {
     drawWarpIntro(ctx2d, canvas, now);
-    maybeUpdateUi(now);
+    const uiMs = maybeUpdateUi(now);
     audioDirector.syncFrame({
       state,
       view,
@@ -3086,22 +3175,30 @@ function runFrame(now) {
       now,
       cameraX: camera.x,
     });
+    const totalFrameMs = performance.now() - frameStartedAt;
+    recordHitch(totalFrameMs, now);
+    lastFramePerf = buildFramePerfSnapshot({ uiMs, totalFrameMs, simMs: 0, systemDrawMs: 0, galaxyDrawMs: 0, glFlushMs: 0 });
     scheduleNextFrame();
     return;
   }
 
   if (phase === BOOT_PHASE.COOP_INTRO) {
     drawCoopIntro(ctx2d, canvas, now);
-    maybeUpdateUi(now);
+    const uiMs = maybeUpdateUi(now);
     audioDirector.syncFrame({ state, view, viewedSystemId, phase, intro: coopIntroState(now), now, cameraX: camera.x });
+    const totalFrameMs = performance.now() - frameStartedAt;
+    recordHitch(totalFrameMs, now);
+    lastFramePerf = buildFramePerfSnapshot({ uiMs, totalFrameMs, simMs: 0, systemDrawMs: 0, galaxyDrawMs: 0, glFlushMs: 0 });
     scheduleNextFrame();
     return;
   }
 
   if (!coop.isActive() && !state.paused) state.meta.playTimeMs += dt;
+  const simStartedAt = performance.now();
   const tickEvents = coop.isActive()
     ? takeCoopTickEvents()
     : step(state, accumulator + dt, { maxTicks: MAX_CATCHUP_TICKS });
+  const simMs = coop.isActive() ? 0 : (performance.now() - simStartedAt);
   accumulator = coop.isActive() ? 0 : (tickEvents.remainingMs ?? 0);
 
   if (coop.isActive()) {
@@ -3331,8 +3428,21 @@ function runFrame(now) {
     updateFollowCamera(state, viewedSystemId, dt, accumulator);
     drawSystem(ctx2d, state, viewedSystemId, selection, accumulator, combatOverlayForRender());
   }
-  maybeUpdateUi(now);
+  const uiMs = maybeUpdateUi(now);
   if (devPanel?.isOpen()) devPanel.updateDevPanel();
+  const totalFrameMs = performance.now() - frameStartedAt;
+  recordHitch(Math.max(totalFrameMs, dt), now);
+  const sys = systemPerfSummary();
+  const gal = galaxyPerfSummary();
+  const gl = glFlushSummary();
+  lastFramePerf = buildFramePerfSnapshot({
+    simMs: Math.round(simMs * 100) / 100,
+    systemDrawMs: view === 'system' ? sys.lastDrawMs : 0,
+    galaxyDrawMs: view === 'galaxy' ? gal.lastDrawMs : 0,
+    glFlushMs: gl.lastFlushMs ?? 0,
+    uiMs: Math.round(uiMs * 100) / 100,
+    totalFrameMs: Math.round(totalFrameMs * 100) / 100,
+  });
   scheduleNextFrame();
 }
 
@@ -4504,6 +4614,24 @@ window.__confirmBuilderConstructionPlan = (systemId, draft = []) =>
 window.__cancelBuilderConstructionOrder = (orderId) => cancelBuilderConstructionOrder(state, orderId);
 window.__cancelBuilderDrone = (droneId) => doCancelBuilderDrone(droneId);
 window.__galaxyPerfSummary = () => galaxyPerfSummary();
+window.__systemPerfSummary = () => systemPerfSummary();
+window.__framePerf = () => buildFramePerfSnapshot({
+  simMs: lastFramePerf.simMs,
+  systemDrawMs: lastFramePerf.systemDrawMs,
+  galaxyDrawMs: lastFramePerf.galaxyDrawMs,
+  glFlushMs: lastFramePerf.glFlushMs,
+  uiMs: lastFramePerf.uiMs,
+  totalFrameMs: lastFramePerf.totalFrameMs,
+});
+window.__setPerfStageTag = (tag) => {
+  hitchStageTag = tag == null ? null : String(tag);
+  return hitchStageTag;
+};
+window.__clearPerfHitches = () => {
+  hitchRing.length = 0;
+  return { ok: true };
+};
+window.__perfHitches = () => hitchRing.slice();
 window.__setBattleGroupHeroAnchor = (groupId, heroId) =>
   setBattleGroupHeroAnchor(state, groupId, heroId);
 window.__setHeroRally = (heroId, starId) => setHeroRally(state, heroId, starId);
