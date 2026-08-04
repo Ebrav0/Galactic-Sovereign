@@ -72,7 +72,6 @@ function edgeKey(i, j) {
 }
 
 /** Build a pole-view geodesic mesh around the star (deterministic from seed). */
-/** Edge midpoints for construction weave (high shell progress). */
 const geodesicMeshCache = new Map();
 
 export function buildGeodesicMesh(starRadius, completedShells, systemSeed = 0) {
