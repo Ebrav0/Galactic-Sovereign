@@ -241,7 +241,7 @@ export function drawTradeNexus(ctx, x, y, r, time, {
         }
         ctx.restore();
       }
-      drawNexusCargoShip(ctx, shipX, shipY, heading, Math.max(3.5, r * 0.075), {
+      drawConvoyFreighter(ctx, shipX, shipY, heading, Math.max(3.5, r * 0.075), {
         side: entry.ownerId === 'player' ? 'player' : 'ai',
         cargoRatio: entry.cargoRatio,
         time,
@@ -251,51 +251,141 @@ export function drawTradeNexus(ctx, x, y, r, time, {
   ctx.restore();
 }
 
+export function drawExportDepot(ctx, x, y, r, time, {
+  active = true,
+  level = 1,
+  storedRatio = 0,
+  assemblyBays = 1,
+} = {}) {
+  const tier = Math.max(1, Math.min(3, Math.round(level)));
+  const fill = Math.max(0, Math.min(1, storedRatio));
+  const spin = time / (18000 - tier * 1400);
+  const hull = active ? '#1a2b40' : '#171d27';
+  const cyan = active ? '#76ddff' : '#7e91a7';
+  const amber = active ? '#ffce7a' : '#7d786d';
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // A fixed command spine gives the installation a readable orientation while
+  // the cargo wheel rotates independently around it.
+  ctx.fillStyle = hull;
+  ctx.strokeStyle = hexToRgba(cyan, 0.72);
+  ctx.lineWidth = Math.max(0.8, r * 0.07);
+  ctx.beginPath();
+  ctx.moveTo(-r * 1.18, -r * 0.24);
+  ctx.lineTo(r * 0.78, -r * 0.24);
+  ctx.lineTo(r * 1.15, 0);
+  ctx.lineTo(r * 0.78, r * 0.24);
+  ctx.lineTo(-r * 1.18, r * 0.24);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.save();
+  ctx.rotate(spin);
+  ctx.strokeStyle = hexToRgba(cyan, 0.58);
+  ctx.lineWidth = Math.max(1, r * 0.11);
+  ctx.beginPath();
+  ctx.arc(0, 0, r * (0.78 + tier * 0.12), 0, Math.PI * 2);
+  ctx.stroke();
+  const podCount = 6 + tier * 2;
+  for (let i = 0; i < podCount; i++) {
+    const angle = (i / podCount) * Math.PI * 2;
+    const orbit = r * (0.78 + tier * 0.12);
+    const loaded = i / podCount < fill;
+    ctx.save();
+    ctx.translate(Math.cos(angle) * orbit, Math.sin(angle) * orbit);
+    ctx.rotate(angle);
+    ctx.fillStyle = loaded ? hexToRgba(amber, 0.9) : '#25364a';
+    ctx.strokeStyle = loaded ? hexToRgba(amber, 0.7) : hexToRgba(cyan, 0.36);
+    ctx.lineWidth = Math.max(0.6, r * 0.035);
+    ctx.fillRect(-r * 0.17, -r * 0.1, r * 0.34, r * 0.2);
+    ctx.strokeRect(-r * 0.17, -r * 0.1, r * 0.34, r * 0.2);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // Docking prongs communicate convoy throughput at a glance.
+  const bayCount = Math.max(1, Math.min(4, Math.round(assemblyBays)));
+  ctx.strokeStyle = hexToRgba(cyan, 0.56);
+  ctx.lineWidth = Math.max(0.9, r * 0.07);
+  for (let i = 0; i < bayCount; i++) {
+    const offset = (i - (bayCount - 1) / 2) * r * 0.34;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.58, offset);
+    ctx.lineTo(r * 1.42, offset);
+    ctx.lineTo(r * 1.6, offset + (i % 2 ? r * 0.1 : -r * 0.1));
+    ctx.stroke();
+  }
+
+  const pulse = active ? 0.65 + 0.35 * Math.sin(time / 420) : 0.25;
+  ctx.fillStyle = hexToRgba(amber, pulse);
+  ctx.shadowColor = amber;
+  ctx.shadowBlur = active ? r * 0.55 : 0;
+  ctx.beginPath();
+  ctx.arc(-r * 0.82, 0, Math.max(1.2, r * 0.1), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 /**
- * Compact station-traffic freighter used by Nexus service and empty returns.
+ * Purpose-built convoy silhouette: armored command prow, modular cargo train,
+ * paired compression drives, and threat-state running lights.
  */
-export function drawNexusCargoShip(ctx, x, y, heading, size, {
+export function drawConvoyFreighter(ctx, x, y, heading, size, {
   side = 'player',
+  threat = 0,
   cargoRatio = 1,
+  paused = false,
   time = 0,
+  compact = false,
 } = {}) {
   const r = Math.max(2, size);
+  const danger = Math.max(0, Math.min(100, Number(threat) || 0));
   const load = Math.max(0, Math.min(1, Number(cargoRatio) || 0));
-  const trim = side === 'player' ? '#76ddff' : '#c878ff';
+  const friendly = side === 'player';
+  const trim = paused ? '#8492a6' : danger >= 70 ? '#ff5c72' : danger >= 35 ? '#ffc760' : friendly ? '#76ddff' : '#c878ff';
+  const podCount = compact ? 2 : 4;
+
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
 
-  const engine = ctx.createLinearGradient(-r * 2.25, 0, -r * 0.6, 0);
-  engine.addColorStop(0, hexToRgba(trim, 0));
-  engine.addColorStop(1, hexToRgba(trim, 0.78));
-  ctx.fillStyle = engine;
-  for (const offset of [-0.26, 0.26]) {
-    ctx.beginPath();
-    ctx.moveTo(-r * 2.2, offset * r);
-    ctx.lineTo(-r * 0.58, offset * r - r * 0.1);
-    ctx.lineTo(-r * 0.58, offset * r + r * 0.1);
-    ctx.closePath();
-    ctx.fill();
+  if (!paused) {
+    const engine = ctx.createLinearGradient(-r * 2.4, 0, -r * 0.7, 0);
+    engine.addColorStop(0, hexToRgba(trim, 0));
+    engine.addColorStop(1, hexToRgba(trim, 0.78));
+    ctx.fillStyle = engine;
+    for (const offset of [-0.28, 0.28]) {
+      ctx.beginPath();
+      ctx.moveTo(-r * 2.35, offset * r);
+      ctx.lineTo(-r * 0.72, offset * r - r * 0.1);
+      ctx.lineTo(-r * 0.72, offset * r + r * 0.1);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
-  for (let i = 0; i < 4; i++) {
-    const px = -r * (0.12 + i * 0.5);
-    const loaded = (i + 0.5) / 4 <= load;
+  // Modular cargo pods remain legible even at galaxy zoom.
+  for (let i = 0; i < podCount; i++) {
+    const px = -r * (0.15 + i * 0.52);
+    const loaded = (i + 0.5) / podCount <= load;
     ctx.fillStyle = loaded ? '#33475d' : '#1a2635';
     ctx.strokeStyle = loaded ? hexToRgba('#ffce7a', 0.72) : hexToRgba(trim, 0.36);
     ctx.lineWidth = Math.max(0.65, r * 0.055);
     ctx.beginPath();
-    ctx.roundRect(px - r * 0.22, -r * 0.36, r * 0.38, r * 0.72, r * 0.08);
+    ctx.roundRect(px - r * 0.22, -r * 0.38, r * 0.38, r * 0.76, r * 0.08);
     ctx.fill();
     ctx.stroke();
   }
 
-  const hull = ctx.createLinearGradient(-r, -r, r * 1.4, r);
-  hull.addColorStop(0, '#101a27');
-  hull.addColorStop(0.55, side === 'player' ? '#24455b' : '#412b55');
-  hull.addColorStop(1, '#09101a');
-  ctx.fillStyle = hull;
+  // Armored prow.
+  const hullGradient = ctx.createLinearGradient(-r, -r, r * 1.4, r);
+  hullGradient.addColorStop(0, '#101a27');
+  hullGradient.addColorStop(0.55, friendly ? '#24455b' : '#412b55');
+  hullGradient.addColorStop(1, '#09101a');
+  ctx.fillStyle = hullGradient;
   ctx.strokeStyle = hexToRgba(trim, 0.82);
   ctx.lineWidth = Math.max(0.8, r * 0.07);
   ctx.beginPath();
@@ -309,39 +399,13 @@ export function drawNexusCargoShip(ctx, x, y, heading, size, {
   ctx.fill();
   ctx.stroke();
 
-  const pulse = 0.7 + 0.3 * Math.sin(time / 260);
-  ctx.fillStyle = hexToRgba(trim, pulse);
+  const pulse = 0.55 + 0.45 * Math.sin(time / 260);
+  ctx.fillStyle = hexToRgba(trim, danger >= 70 ? pulse : 0.82);
   ctx.shadowColor = trim;
   ctx.shadowBlur = Math.max(2, r * 0.45);
   ctx.beginPath();
   ctx.arc(r * 0.62, 0, Math.max(1, r * 0.09), 0, Math.PI * 2);
   ctx.fill();
-  ctx.restore();
-}
-
-export function drawExportDepot(ctx, x, y, r, time, { active = true } = {}) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(time / 14000);
-  ctx.fillStyle = '#172335';
-  ctx.strokeStyle = active ? 'rgba(118, 221, 255, 0.72)' : 'rgba(126, 145, 186, 0.4)';
-  ctx.lineWidth = Math.max(0.8, r * 0.08);
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const a = i * Math.PI / 4;
-    const rr = i % 2 ? r * 0.72 : r;
-    const px = Math.cos(a) * rr;
-    const py = Math.sin(a) * rr;
-    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-  }
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-  ctx.rotate(-time / 9000);
-  ctx.strokeStyle = 'rgba(255, 206, 122, 0.58)';
-  ctx.beginPath();
-  ctx.arc(0, 0, r * 1.25, 0, Math.PI * 2);
-  ctx.stroke();
   ctx.restore();
 }
 

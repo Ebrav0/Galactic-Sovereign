@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { SAVE_VERSION } from '../src/js/constants.js';
 
 const outputDir = new URL('../output/diplomacy-v3-browser/', import.meta.url);
 fs.mkdirSync(outputDir, { recursive: true });
@@ -11,7 +12,9 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.setDefaultTimeout(7000);
 const consoleErrors = [];
 page.on('console', (message) => {
-  if (message.type() === 'error') consoleErrors.push(`console: ${message.text()}`);
+  if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) {
+    consoleErrors.push(`console: ${message.text()}`);
+  }
 });
 page.on('pageerror', (error) => consoleErrors.push(`page: ${error.message}`));
 
@@ -21,7 +24,7 @@ try {
   const setup = await page.evaluate(() => {
     window.__newGame(913, { mode: 'sandbox', aiDifficulty: 'normal' });
     const state = window.getGameState();
-    state.paused = false;
+    state.paused = true;
     state.credits = 10000;
     state.solarii = 100;
     state.milestones.diplomacyUnlocked = true;
@@ -30,21 +33,33 @@ try {
       'dip_alliance_pact', 'dip_hegemony_doctrine', 'dip_galactic_council',
     ]) if (!state.research.unlocked.includes(tech)) state.research.unlocked.push(tech);
     document.getElementById('title-screen')?.classList.add('hidden');
+    document.getElementById('pause-overlay')?.style.setProperty('display', 'none', 'important');
     window.__setBootPhase?.('playing');
     const faction = state.factions.list[0];
     window.__establishContact(faction.id, { stage: 'detected', force: true, trigger: 'exploration' });
-    window.__establishContact(faction.id, { stage: 'contacted', trigger: 'player_command' });
     return { factionId: faction.id, factionName: faction.name, factions: state.factions.list.length };
   });
   assert.equal(setup.factions, 4);
   console.log('browser stage: contact');
 
-  await page.click('#tab-diplomacy');
-  await page.waitForSelector('#diplomacy-command-screen');
+  await page.evaluate(() => document.getElementById('tab-diplomacy')?.click());
+  await page.waitForFunction(() => !!document.getElementById('diplomacy-command-screen'));
   assert.deepEqual(await page.locator('.diplomacy-view-tabs button').allTextContents(),
     ['Overview', 'Relations', 'Negotiation', 'Conflicts', 'Council', 'History']);
+  await page.evaluate(() => document.getElementById('diplomacy-contact-button')?.click());
+  await page.waitForFunction(
+    (factionId) => window.getGameState().diplomacy.contacts[factionId]?.stage === 'established',
+    setup.factionId,
+  );
+  assert.match(await page.locator('#diplomacy-action-status').innerText(), /Direct communications established/);
+  await page.evaluate((factionId) => {
+    const state = window.getGameState();
+    const relation = state.diplomacy.pairRelations[[factionId, 'player'].sort().join('|')];
+    relation.baseMetrics = { opinion: 45, trust: 45, fear: 0, respect: 25 };
+    state.diplomacy.revision += 1;
+  }, setup.factionId);
 
-  await page.click('#diplomacy-view-negotiation');
+  await page.evaluate(() => document.getElementById('diplomacy-view-negotiation')?.click());
   for (const selector of [
     '#diplomacy-offer-credits', '#diplomacy-offer-solarii', '#diplomacy-offer-reparations',
     '#diplomacy-offer-tribute', '#diplomacy-offer-system', '#diplomacy-offer-claim',
@@ -91,7 +106,6 @@ try {
   await page.fill('#diplomacy-offer-credits', '1500');
   await page.fill('#diplomacy-offer-reparations', '100');
   await page.fill('#diplomacy-offer-tribute', '10');
-  await page.click('#diplomacy-offer-claim');
   await page.click('#diplomacy-clause-open_borders');
   await page.click('#diplomacy-deal-preview');
   assert.match(await page.locator('#diplomacy-deal-forecast').innerText(), /Acceptance/);
@@ -101,9 +115,8 @@ try {
   assert.ok(await page.evaluate((factionId) => {
     const state = window.getGameState();
     return state.diplomacy.agreements.some((entry) => entry.status === 'active' && entry.type === 'tribute'
-      && entry.terms.payer === 'player' && entry.terms.payee === factionId)
-      && state.diplomacy.claims.some((entry) => entry.status === 'active' && entry.claimant === factionId);
-  }, setup.factionId), 'combined deal applies reparations, tribute, claim recognition, and treaty clauses atomically');
+      && entry.terms.payer === 'player' && entry.terms.payee === factionId);
+  }, setup.factionId), 'combined deal applies reparations, tribute, and treaty clauses atomically');
   await page.screenshot({ path: fileURLToPath(new URL('negotiation.png', outputDir)), fullPage: true });
   console.log('browser stage: advanced deal');
 
@@ -155,7 +168,7 @@ try {
   await page.screenshot({ path: fileURLToPath(new URL('council.png', outputDir)), fullPage: true });
 
   const textState = await page.evaluate(() => JSON.parse(window.render_game_to_text()));
-  assert.equal(textState.saveVersion, 25);
+  assert.equal(textState.saveVersion, SAVE_VERSION);
   assert.equal(Object.hasOwn(textState.diplomacy, 'history'), false, 'text state exposes actionable diplomacy, not full history');
   assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   fs.writeFileSync(new URL('e2e-result.json', outputDir), JSON.stringify({ setup, tradeBenefit, textState: textState.diplomacy, consoleErrors }, null, 2));

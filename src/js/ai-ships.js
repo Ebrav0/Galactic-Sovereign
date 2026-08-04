@@ -19,6 +19,86 @@ import { canRouteThroughSystem } from './diplomacy.js';
 import { factionTechContext } from './ai-tech.js';
 
 let nextAiShipId = 1;
+const EMPTY_AI_FACTION_IDS = Object.freeze([]);
+const aiShipSystemIndexCache = new WeakMap();
+const aiShipSystemIndexRevisions = new WeakMap();
+
+export function invalidateAiShipSystemIndex(state) {
+  if (!state || typeof state !== 'object') return;
+  aiShipSystemIndexCache.delete(state);
+  aiShipSystemIndexRevisions.set(
+    state,
+    (aiShipSystemIndexRevisions.get(state) ?? 0) + 1,
+  );
+}
+
+export function aiShipSystemIndexRevision(state) {
+  return state && typeof state === 'object'
+    ? aiShipSystemIndexRevisions.get(state) ?? 0
+    : 0;
+}
+
+function aiShipSystemIndex(state) {
+  const ships = state.aiShips ?? [];
+  const cached = aiShipSystemIndexCache.get(state);
+  if (
+    cached?.ships === ships
+    && cached.shipCount === ships.length
+    && cached.activeGalaxyId === state.activeGalaxyId
+  ) {
+    return cached;
+  }
+
+  const bySystem = new Map();
+  const factionIdsBySystem = new Map();
+  const factionIdSetsBySystem = new Map();
+  const legacyFactionProbeBySystem = new Map();
+  const occupiedSystemIds = [];
+  const occupied = new Set();
+  for (const ship of ships) {
+    if (ship.galaxyId !== state.activeGalaxyId || ship.transit) continue;
+    const group = bySystem.get(ship.systemId);
+    if (group) group.push(ship);
+    else bySystem.set(ship.systemId, [ship]);
+    if (ship.hp > 0) {
+      if (ship.factionId) {
+        let factionIds = factionIdsBySystem.get(ship.systemId);
+        let factionIdSet = factionIdSetsBySystem.get(ship.systemId);
+        if (!factionIds) {
+          factionIds = [];
+          factionIdSet = new Set();
+          factionIdsBySystem.set(ship.systemId, factionIds);
+          factionIdSetsBySystem.set(ship.systemId, factionIdSet);
+        }
+        if (!factionIdSet.has(ship.factionId)) {
+          factionIdSet.add(ship.factionId);
+          factionIds.push(ship.factionId);
+        }
+      } else if (!legacyFactionProbeBySystem.has(ship.systemId)) {
+        // Old saves can briefly contain ships without an explicit faction id.
+        // Resolve their system-derived fallback at query time so ownership
+        // changes cannot make the cached presence summary stale.
+        legacyFactionProbeBySystem.set(ship.systemId, ship);
+      }
+      if (ship.systemId && !occupied.has(ship.systemId)) {
+        occupied.add(ship.systemId);
+        occupiedSystemIds.push(ship.systemId);
+      }
+    }
+  }
+  for (const factionIds of factionIdsBySystem.values()) Object.freeze(factionIds);
+  const index = {
+    ships,
+    shipCount: ships.length,
+    activeGalaxyId: state.activeGalaxyId,
+    bySystem,
+    factionIdsBySystem,
+    legacyFactionProbeBySystem,
+    occupiedSystemIds,
+  };
+  aiShipSystemIndexCache.set(state, index);
+  return index;
+}
 
 export function resetAiShipIds(state) {
   let max = 0;
@@ -44,6 +124,7 @@ export function assignAiShipFactionIds(state, fallback = 'ai-0') {
     ship.owner = 'ai';
     ship.factionId = aiShipFactionId(state, ship, fallback);
   }
+  invalidateAiShipSystemIndex(state);
   return state.aiShips ?? [];
 }
 
@@ -80,17 +161,30 @@ export function spawnAiShip(state, systemId, hull, anchorBodyId = null, factionI
   };
   if (Number.isFinite(opts.veterancy)) ship.veterancy = Math.max(0, Math.min(3, opts.veterancy));
   state.aiShips.push(ship);
+  invalidateAiShipSystemIndex(state);
   return ship;
 }
 
 export function aiShipsInSystem(state, systemId, factionId = null) {
-  return (state.aiShips ?? []).filter(
-    (s) => s.galaxyId === state.activeGalaxyId
-      && s.systemId === systemId
-      && !s.transit
-      && s.hp > 0
-      && (!factionId || aiShipFactionId(state, s) === factionId),
+  return (aiShipSystemIndex(state).bySystem.get(systemId) ?? []).filter(
+    (ship) => ship.hp > 0
+      && (!factionId || aiShipFactionId(state, ship) === factionId),
   );
+}
+
+export function aiFactionIdsInSystem(state, systemId) {
+  const index = aiShipSystemIndex(state);
+  const factionIds = index.factionIdsBySystem.get(systemId) ?? EMPTY_AI_FACTION_IDS;
+  const legacyShip = index.legacyFactionProbeBySystem.get(systemId);
+  if (!legacyShip) return factionIds;
+  const fallbackFactionId = aiShipFactionId(state, legacyShip);
+  return factionIds.includes(fallbackFactionId)
+    ? factionIds
+    : Object.freeze([...factionIds, fallbackFactionId]);
+}
+
+export function aiOccupiedSystemIds(state) {
+  return [...aiShipSystemIndex(state).occupiedSystemIds];
 }
 
 export function aiCombatPresence(state, systemId, factionId = null) {
@@ -139,6 +233,7 @@ export function orderAiShipTravel(state, ship, targetId) {
     destId: targetId,
   };
   ship.systemId = null;
+  invalidateAiShipSystemIndex(state);
   return { ok: true, path, etaMs: legMs };
 }
 
@@ -156,6 +251,7 @@ export function tickAiShips(state, onArrival) {
       (destId) => {
         ship.systemId = destId;
         ship.transit = null;
+        invalidateAiShipSystemIndex(state);
         arrivals.push(ship);
         onArrival?.(destId, ship);
       },
@@ -170,6 +266,7 @@ export function tickAiShips(state, onArrival) {
         onBlocked: (safeSystemId, blockedSystemId) => {
           ship.systemId = safeSystemId;
           ship.transit = null;
+          invalidateAiShipSystemIndex(state);
           ship.routeBlockedAt = blockedSystemId;
           arrivals.push(ship);
           onArrival?.(safeSystemId, ship);

@@ -62,7 +62,13 @@ import {
   removePirateShip,
   syncPirateNestsFromCombatUnits,
 } from './pirates.js';
-import { aiShipFactionId, aiShipsInSystem } from './ai-ships.js';
+import {
+  aiFactionIdsInSystem,
+  aiOccupiedSystemIds,
+  aiShipFactionId,
+  aiShipsInSystem,
+  invalidateAiShipSystemIndex,
+} from './ai-ships.js';
 import {
   anchoredCombatShipsAtSystem,
   beginPostBattleReturn,
@@ -121,7 +127,6 @@ import {
 } from './combat-orders.js';
 import {
   activeConvoys,
-  convoyTransitStatus,
   interceptConvoy,
 } from './logistics.js';
 import {
@@ -494,8 +499,8 @@ function shouldBattle(state, systemId) {
   const pirates = pirateFleetAtSystem(state, systemId)
     .filter((fleet) => fleet.ships?.some((ship) => ship.hp > 0));
   const nest = pirateNestAtSystem(state, systemId);
-  const aiShips = aiShipsInSystem(state, systemId)
-    .filter((ship) => isAtWar(state, aiShipFactionId(state, ship)));
+  const hostileAiPresent = aiFactionIdsInSystem(state, systemId)
+    .some((factionId) => isAtWar(state, factionId));
   const system = getSystems(state)[systemId];
   const hostileStructures = system?.owner === 'ai'
     && isAtWar(state, aiSystemFactionId(state, system))
@@ -504,7 +509,7 @@ function shouldBattle(state, systemId) {
   const friendlyCombatants = hasFriendlyCombatants(state, systemId);
   // Nest alone on an AI system must not start ghost auto-battles that melt the nest.
   const nestThreat = !!nest && (playerPresent || pirates.length > 0);
-  const hostileToPlayer = pirates.length > 0 || nestThreat || aiShips.length > 0 || hostileStructures;
+  const hostileToPlayer = pirates.length > 0 || nestThreat || hostileAiPresent || hostileStructures;
   const convoyPresent = activeConvoys(state)
     .some((convoy) => convoyAtSystem(state, convoy, systemId));
   // Require at least one friendly combatant — empty player systems must not
@@ -615,8 +620,9 @@ export function hostileStructureCombatPresence(state, systemId) {
 }
 
 function convoyAtSystem(state, convoy, systemId) {
-  const status = convoyTransitStatus(state, convoy);
-  return (status?.phase === 'jumping' && convoy.fromSystemId === systemId)
+  const jumping = convoy.status === 'jumping'
+    || (convoy.status === 'paused' && convoy.resumeStatus === 'jumping');
+  return (jumping && convoy.fromSystemId === systemId)
     || convoy.currentNodeId === systemId;
 }
 
@@ -1486,6 +1492,7 @@ function endBattle(state, systemId, winner, options = {}) {
       battle.lastResolve = { ...battle.lastResolve, recoveredHullCredits };
     }
     applyCasualtiesToState(state, systemId, battle, options);
+    invalidateAiShipSystemIndex(state);
     if (options.recordWar !== false && ['player', 'enemy'].includes(winner)) {
       for (const factionId of battle.enemyFactionIds ?? []) {
         const actor = winner === 'player' ? 'player' : factionId;
@@ -3237,11 +3244,7 @@ function combatCandidateSystemIds(state) {
     }
   }
 
-  for (const ship of state.aiShips ?? []) {
-    if (ship.galaxyId === state.activeGalaxyId && ship.systemId && !ship.transit && ship.hp > 0) {
-      ids.add(ship.systemId);
-    }
-  }
+  for (const systemId of aiOccupiedSystemIds(state)) ids.add(systemId);
 
   for (const fleet of state.pirates?.fleets ?? []) {
     if (fleet.galaxyId === state.activeGalaxyId && fleet.systemId && !fleet.transit) {
@@ -3269,11 +3272,13 @@ function combatCandidateSystemIds(state) {
 export function tickCombat(state) {
   const events = [];
   const systemIds = combatCandidateSystemIds(state);
+  let aiShipsMayHaveChanged = false;
 
   for (const systemId of systemIds) {
     if (!shouldBattle(state, systemId)) {
       if (state.systemBattles?.[systemId]?.active) {
         endBattle(state, systemId, 'ceasefire', { awardSalvage: false, recordWar: false });
+        aiShipsMayHaveChanged = true;
       }
       continue;
     }
@@ -3294,6 +3299,7 @@ export function tickCombat(state) {
     const hadResolve = !!battle.lastResolve;
     if (battle.mode === 'tactical') {
       tickTacticalBattle(state, systemId, battle);
+      aiShipsMayHaveChanged = true;
       const nestUnits = (battle.units ?? [])
         .filter((unit) => unit.isPirateNest || unit.structureType === 'pirate_nest');
       // Sync only when HP changed or unit died — avoid redundant work every tick.
@@ -3312,6 +3318,7 @@ export function tickCombat(state) {
       battle.nestEvents = [];
     } else {
       tickAutoBattle(state, systemId, battle);
+      aiShipsMayHaveChanged = true;
       for (const ev of battle.nestEvents ?? []) events.push(ev);
       battle.nestEvents = [];
     }
@@ -3320,6 +3327,7 @@ export function tickCombat(state) {
       events.push({ type: 'battle_resolved', systemId, ...battle.lastResolve });
     }
   }
+  if (aiShipsMayHaveChanged) invalidateAiShipSystemIndex(state);
   return events;
 }
 

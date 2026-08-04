@@ -102,6 +102,8 @@ const PERSONALITY_METRICS = Object.freeze({
   wormhole: Object.freeze({ opinion: 2, trust: -2, fear: 0, respect: 3 }),
 });
 const normalizedDiplomacyObjects = new WeakSet();
+const normalizedDiplomacyRosters = new WeakMap();
+const activeWarIndexes = new WeakMap();
 
 function stableHash(value) {
   let hash = 2166136261;
@@ -203,7 +205,7 @@ function normalizeParties(parties) {
 }
 
 function pairKey(a, b) {
-  return [a, b].sort().join('|');
+  return a <= b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 function relationFactionFromParties(parties) {
@@ -226,8 +228,40 @@ function actorIds(state) {
   return [PLAYER_ID, ...factionList(state).map((faction) => faction.id)];
 }
 
+function actorRosterSource(state) {
+  const list = state.factions?.list;
+  if (Array.isArray(list) && list.length) return list;
+  return state.factions?.ai ?? null;
+}
+
+function actorRosterSnapshot(state) {
+  const factions = factionList(state);
+  const factionIds = factions.map((faction) => faction.id);
+  return {
+    source: actorRosterSource(state),
+    factionCount: factions.length,
+    actorIdSet: new Set([PLAYER_ID, ...factionIds]),
+    factions,
+    actors: [PLAYER_ID, ...factionIds],
+  };
+}
+
+function actorRosterUnchanged(state, cached) {
+  if (!cached || cached.source !== actorRosterSource(state)) return false;
+  const list = state.factions?.list;
+  const factionCount = Array.isArray(list) && list.length
+    ? list.length
+    : state.factions?.ai
+      ? 1
+      : 0;
+  return cached.factionCount === factionCount;
+}
+
 function actorExists(state, actorId) {
-  return actorId === PLAYER_ID || factionList(state).some((faction) => faction.id === actorId);
+  if (actorId === PLAYER_ID) return true;
+  const cachedRoster = normalizedDiplomacyRosters.get(state.diplomacy);
+  if (actorRosterUnchanged(state, cachedRoster) && cachedRoster.actorIdSet.has(actorId)) return true;
+  return factionList(state).some((faction) => faction.id === actorId);
 }
 
 function factionById(state, factionId) {
@@ -381,7 +415,10 @@ export function ensureDiplomacy(state) {
   if (normalizedDiplomacyObjects.has(diplomacy)) {
     diplomacy.version = DIPLOMACY_SCHEMA_VERSION;
     diplomacy.schemaVersion = DIPLOMACY_SCHEMA_VERSION;
-    for (const faction of factionList(state)) {
+    const cachedRoster = normalizedDiplomacyRosters.get(diplomacy);
+    if (actorRosterUnchanged(state, cachedRoster)) return diplomacy;
+    const roster = actorRosterSnapshot(state);
+    for (const faction of roster.factions) {
       diplomacy.contacts[faction.id] ??= {
         factionId: faction.id,
         stage: CONTACT_UNKNOWN,
@@ -395,7 +432,7 @@ export function ensureDiplomacy(state) {
       diplomacy.pairModifiers[key] ??= diplomacy.modifiers[faction.id];
     }
     diplomacy.profiles[PLAYER_ID] ??= defaultProfile(state, PLAYER_ID);
-    const currentActors = actorIds(state);
+    const currentActors = roster.actors;
     for (let left = 0; left < currentActors.length; left++) {
       for (let right = left + 1; right < currentActors.length; right++) {
         const key = pairKey(currentActors[left], currentActors[right]);
@@ -403,6 +440,7 @@ export function ensureDiplomacy(state) {
         diplomacy.pairModifiers[key] ??= [];
       }
     }
+    normalizedDiplomacyRosters.set(diplomacy, roster);
     return diplomacy;
   }
   diplomacy.relations = diplomacy.relations && typeof diplomacy.relations === 'object'
@@ -618,6 +656,7 @@ export function ensureDiplomacy(state) {
   diplomacy.version = DIPLOMACY_SCHEMA_VERSION;
   diplomacy.schemaVersion = DIPLOMACY_SCHEMA_VERSION;
   normalizedDiplomacyObjects.add(diplomacy);
+  normalizedDiplomacyRosters.set(diplomacy, actorRosterSnapshot(state));
   return diplomacy;
 }
 
@@ -1437,21 +1476,78 @@ function normalizeWarGoals(goals, fallbackSystems = []) {
   }));
 }
 
-export function getActiveWar(state, factionIdOrParties = null) {
+function activeWarIndex(state) {
+  const diplomacy = ensureDiplomacy(state);
   const at = now(state);
-  const wars = ensureDiplomacy(state).wars.filter((war) => activeAt(war, at));
-  if (!factionIdOrParties) return wars[0] ?? null;
+  const revision = Math.max(0, Math.floor(finite(diplomacy.revision)));
+  const wars = diplomacy.wars;
+  const cached = activeWarIndexes.get(diplomacy);
+  if (cached
+    && cached.at <= at
+    && at < cached.validUntil
+    && cached.revision === revision
+    && cached.wars === wars
+    && cached.warCount === wars.length) {
+    return cached;
+  }
+
+  const active = [];
+  const byId = new Map();
+  const byOpposingPair = new Map();
+  const byPlayerFaction = new Map();
+  let validUntil = Infinity;
+  for (const war of wars) {
+    if (!activeAt(war, at)) continue;
+    if (war.expiresAt != null) validUntil = Math.min(validUntil, finite(war.expiresAt, Infinity));
+    active.push(war);
+    byId.set(war.id, war);
+    for (const attacker of war.attackers) {
+      for (const defender of war.defenders) {
+        const key = pairKey(attacker, defender);
+        if (!byOpposingPair.has(key)) byOpposingPair.set(key, war);
+      }
+    }
+    if (war.parties.includes(PLAYER_ID)) {
+      for (const actorId of war.parties) {
+        if (actorId !== PLAYER_ID && !byPlayerFaction.has(actorId)) {
+          byPlayerFaction.set(actorId, war);
+        }
+      }
+    }
+  }
+
+  const index = {
+    diplomacy,
+    at,
+    validUntil,
+    revision,
+    wars,
+    warCount: wars.length,
+    active,
+    byId,
+    byOpposingPair,
+    byPlayerFaction,
+  };
+  activeWarIndexes.set(diplomacy, index);
+  return index;
+}
+
+export function getActiveWar(state, factionIdOrParties = null) {
+  const index = activeWarIndex(state);
+  if (!factionIdOrParties) return index.active[0] ?? null;
   if (Array.isArray(factionIdOrParties)) {
     const parties = normalizeParties(factionIdOrParties);
-    return wars.find((war) => {
+    if (parties.length === 2) {
+      return index.byOpposingPair.get(pairKey(parties[0], parties[1])) ?? null;
+    }
+    return index.active.find((war) => {
       if (!parties.every((actorId) => war.parties.includes(actorId))) return false;
-      if (parties.length !== 2) return true;
-      return (war.attackers.includes(parties[0]) && war.defenders.includes(parties[1]))
-        || (war.attackers.includes(parties[1]) && war.defenders.includes(parties[0]));
+      return true;
     }) ?? null;
   }
-  return wars.find((war) => war.id === factionIdOrParties
-    || (war.parties.includes(PLAYER_ID) && war.parties.includes(factionIdOrParties))) ?? null;
+  return index.byId.get(factionIdOrParties)
+    ?? index.byPlayerFaction.get(factionIdOrParties)
+    ?? null;
 }
 
 export function declareWar(state, factionIdOrInput, options = {}) {
@@ -2064,7 +2160,12 @@ export function concludePeace(state, factionIdOrWar, terms = {}) {
 }
 
 export function isAtWar(state, factionId) {
-  return !!getActiveWar(state, factionId) || getRelation(state, factionId).status === RELATION_WAR;
+  const index = activeWarIndex(state);
+  if (index.byId.has(factionId) || index.byPlayerFaction.has(factionId)) return true;
+  const cachedRoster = normalizedDiplomacyRosters.get(index.diplomacy);
+  if (!cachedRoster?.actorIdSet.has(factionId)) return getRelation(state, factionId).status === RELATION_WAR;
+  return (index.diplomacy.relations[factionId]
+    ?? index.diplomacy.pairRelations[pairKey(PLAYER_ID, factionId)])?.status === RELATION_WAR;
 }
 
 export function isAllied(state, factionId) {
@@ -2495,9 +2596,13 @@ function previewProposalOnState(state, input, options = {}) {
 }
 
 export function previewProposal(state, input, options = {}) {
+  const liveDiplomacy = state?.diplomacy ?? {};
   const previewState = {
     ...state,
-    diplomacy: clone(state?.diplomacy ?? {}),
+    // Proposal evaluation never reads or mutates the stored proposal archive.
+    // Excluding it keeps previews pure without cloning hundreds of resolved
+    // late-game proposals on every strategic diplomacy tick.
+    diplomacy: clone({ ...liveDiplomacy, proposals: [] }),
     milestones: clone(state?.milestones ?? {}),
   };
   ensureDiplomacy(previewState);
@@ -2524,25 +2629,35 @@ export function buildSmallestCounterOffer(state, input, previewInput = null) {
   return { ok: true, terms, deficit, preview };
 }
 
-function snapshotAtomicState(state) {
+function snapshotAtomicState(state, options = {}) {
+  const includeWorld = options.includeWorld !== false;
+  const includeCampaign = options.includeCampaign !== false;
+  const diplomacy = ensureDiplomacy(state);
+  const preservedProposals = options.preserveProposals ? diplomacy.proposals : null;
   const systems = [];
-  if (state.galaxies) {
+  if (includeWorld && state.galaxies) {
     for (const [galaxyId, galaxy] of Object.entries(state.galaxies)) {
-      for (const [systemId, system] of Object.entries(galaxy.systems ?? {})) systems.push({ galaxyId, systemId, abstract: false, value: clone(system) });
-      for (const [systemId, system] of Object.entries(galaxy.abstract?.systemOverlays ?? {})) systems.push({ galaxyId, systemId, abstract: true, value: clone(system) });
+      for (const [systemId, system] of Object.entries(galaxy.systems ?? {})) systems.push({ galaxyId, systemId, abstract: false, value: system });
+      for (const [systemId, system] of Object.entries(galaxy.abstract?.systemOverlays ?? {})) systems.push({ galaxyId, systemId, abstract: true, value: system });
     }
-  } else {
-    for (const [systemId, system] of Object.entries(state.systems ?? {})) systems.push({ galaxyId: null, systemId, abstract: false, value: clone(system) });
+  } else if (includeWorld) {
+    for (const [systemId, system] of Object.entries(state.systems ?? {})) systems.push({ galaxyId: null, systemId, abstract: false, value: system });
   }
-  return {
-    diplomacy: clone(ensureDiplomacy(state)),
+  // Clone the complete rollback surface in one pass. Cloning every system
+  // separately issued hundreds of synchronous structuredClone calls for a
+  // late-game galaxy even when the proposal succeeded and no restore ran.
+  const snapshot = clone({
+    diplomacy: preservedProposals ? { ...diplomacy, proposals: null } : diplomacy,
     player: { credits: finite(state.credits), solarii: finite(state.solarii) },
     factions: factionList(state).map((faction) => ({ id: faction.id, credits: finite(faction.credits), solarii: finite(faction.solarii) })),
-    systems,
-    systemBattles: clone(state.systemBattles ?? {}),
-    battleReports: clone(state.battleReports ?? []),
-    campaign: clone(state.campaign ?? null),
-  };
+    strategicOrdersDiplomacyRevision: state.strategicOrders?.diplomacyRevision ?? null,
+    systems: includeWorld ? systems : null,
+    systemBattles: includeWorld ? state.systemBattles ?? {} : null,
+    battleReports: includeWorld ? state.battleReports ?? [] : null,
+    campaign: includeCampaign ? state.campaign ?? null : null,
+  });
+  snapshot.preservedProposals = preservedProposals;
+  return snapshot;
 }
 
 function restoreObject(target, source) {
@@ -2556,8 +2671,12 @@ function restoreAtomicState(state, snapshot) {
   } else {
     state.diplomacy = clone(snapshot.diplomacy);
   }
+  if (snapshot.preservedProposals) state.diplomacy.proposals = snapshot.preservedProposals;
   state.credits = snapshot.player.credits;
   state.solarii = snapshot.player.solarii;
+  if (state.strategicOrders && snapshot.strategicOrdersDiplomacyRevision != null) {
+    state.strategicOrders.diplomacyRevision = snapshot.strategicOrdersDiplomacyRevision;
+  }
   for (const wallet of snapshot.factions) {
     const faction = factionById(state, wallet.id);
     if (faction) {
@@ -2565,7 +2684,7 @@ function restoreAtomicState(state, snapshot) {
       faction.solarii = wallet.solarii;
     }
   }
-  for (const item of snapshot.systems) {
+  for (const item of snapshot.systems ?? []) {
     let target;
     if (state.galaxies) {
       target = item.abstract
@@ -2574,9 +2693,34 @@ function restoreAtomicState(state, snapshot) {
     } else target = state.systems?.[item.systemId];
     if (target) restoreObject(target, item.value);
   }
-  state.systemBattles = clone(snapshot.systemBattles);
-  state.battleReports = clone(snapshot.battleReports);
+  if (snapshot.systemBattles != null) state.systemBattles = clone(snapshot.systemBattles);
+  if (snapshot.battleReports != null) state.battleReports = clone(snapshot.battleReports);
   if (snapshot.campaign != null) state.campaign = clone(snapshot.campaign);
+}
+
+function proposalAtomicSnapshotOptions(state, proposal) {
+  let includeWorld = false;
+  let includeCampaign = false;
+  for (const term of proposal.terms) {
+    if (term.type === 'system_transfer' || term.type === 'end_war') {
+      includeWorld = true;
+      includeCampaign ||= term.type === 'end_war';
+      continue;
+    }
+    if (!['agreement', 'tribute', 'helioclast_commitment'].includes(term.type)) continue;
+    const parties = term.type === 'tribute'
+      ? [term.payer, term.payee]
+      : term.parties ?? [proposal.from, proposal.to];
+    if (parties.includes(PLAYER_ID)) includeCampaign = true;
+    if (term.type !== 'agreement'
+        || ![AGREEMENT_CEASEFIRE, AGREEMENT_TRUCE].includes(term.agreementType)) continue;
+    if (getActiveWar(state, parties)) includeWorld = true;
+  }
+  return {
+    includeWorld,
+    includeCampaign,
+    preserveProposals: true,
+  };
 }
 
 function applySanction(state, target, options = {}) {
@@ -2800,15 +2944,19 @@ export function applyProposalTermsAtomic(state, proposalOrTerms, options = {}) {
     : { ...normalizeProposalInput(proposalOrTerms), id: proposalOrTerms?.id ?? null };
   const errors = validateProposalTerms(state, proposal);
   if (errors.length) return { ok: false, reason: errors.join('; '), errors };
-  const snapshot = snapshotAtomicState(state);
+  const administrativeCost = options.skipAdministrativeCost
+    ? { credits: 0, solarii: 0 }
+    : proposalAdministrativeCost(state, proposal);
+  const proposerWallet = walletForActor(state, proposal.from);
+  if (!proposerWallet) return { ok: false, reason: 'Unknown proposal sponsor' };
+  if (finite(proposerWallet.credits) < administrativeCost.credits) {
+    return { ok: false, reason: `${proposal.from} lacks treaty Credits` };
+  }
+  if (finite(proposerWallet.solarii) < administrativeCost.solarii) {
+    return { ok: false, reason: `${proposal.from} lacks treaty Solarii` };
+  }
+  const snapshot = snapshotAtomicState(state, proposalAtomicSnapshotOptions(state, proposal));
   try {
-    const administrativeCost = options.skipAdministrativeCost
-      ? { credits: 0, solarii: 0 }
-      : proposalAdministrativeCost(state, proposal);
-    const proposerWallet = walletForActor(state, proposal.from);
-    if (!proposerWallet) throw new Error('Unknown proposal sponsor');
-    if (finite(proposerWallet.credits) < administrativeCost.credits) throw new Error(`${proposal.from} lacks treaty Credits`);
-    if (finite(proposerWallet.solarii) < administrativeCost.solarii) throw new Error(`${proposal.from} lacks treaty Solarii`);
     proposerWallet.credits = finite(proposerWallet.credits) - administrativeCost.credits;
     proposerWallet.solarii = finite(proposerWallet.solarii) - administrativeCost.solarii;
     // Peace terms settle occupations themselves; all other exchanges happen first.

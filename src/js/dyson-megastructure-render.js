@@ -14,6 +14,24 @@ import {
 } from './dyson-visuals.js';
 
 const TAU = Math.PI * 2;
+let cachedMesh = null;
+
+export function geodesicMeshForRender(starRadius, completedShells, systemSeed) {
+  if (cachedMesh
+    && cachedMesh.starRadius === starRadius
+    && cachedMesh.completedShells === completedShells
+    && cachedMesh.systemSeed === systemSeed) {
+    return cachedMesh.mesh;
+  }
+  const mesh = buildGeodesicMesh(starRadius, completedShells, systemSeed);
+  cachedMesh = {
+    starRadius,
+    completedShells,
+    systemSeed,
+    mesh,
+  };
+  return mesh;
+}
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, value));
@@ -559,7 +577,7 @@ export function drawDysonMegastructure(
     ? 1 + 0.15 * (1 - (time - lastShellCompletedAt) / 1000)
     : 1;
   const lodSimple = zoom < DYSON_MESH_LOD_ZOOM;
-  const mesh = buildGeodesicMesh(starRadius, completedShells, systemSeed);
+  const mesh = geodesicMeshForRender(starRadius, completedShells, systemSeed);
 
   ctx.save();
   ctx.translate(starX, starY);

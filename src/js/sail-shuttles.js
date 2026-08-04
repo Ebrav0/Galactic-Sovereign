@@ -77,8 +77,10 @@ export function foundryAnchor(state, systemId, time = state.time) {
   };
 }
 
-function launcherDock(state, systemId, launcherId, time = state.time) {
-  const site = launcherSiteById(state, systemId, launcherId, time);
+function launcherDock(state, systemId, launcherId, time = state.time, sitesById = null) {
+  const site = sitesById === null
+    ? launcherSiteById(state, systemId, launcherId, time)
+    : sitesById.get(launcherId);
   if (!site) return null;
   return { x: site.dockX, y: site.dockY };
 }
@@ -106,15 +108,27 @@ export function sailShuttleLauncherArrivals(prevTime, nowTime, launcherIndex, la
 }
 
 /** One shuttle sprite per active launcher route. */
-export function sailShuttlePositions(state, systemId, time = state.time) {
+export function sailShuttlePositions(
+  state,
+  systemId,
+  time = state.time,
+  siteSnapshot = null,
+) {
   const result = [];
   const system = systemById(state, systemId);
   if (!system || !hasFoundry(state, systemId)) return result;
 
   const from = foundryAnchor(state, systemId, time);
   const launchers = dysonLaunchers(state, systemId);
+  const sitesById = siteSnapshot
+    ? new Map(
+      siteSnapshot
+        .filter((site) => site.kind === 'launcher' && site.launcherId)
+        .map((site) => [site.launcherId, site]),
+    )
+    : null;
   launchers.forEach((launcher, idx) => {
-    const to = launcherDock(state, systemId, launcher.id, time);
+    const to = launcherDock(state, systemId, launcher.id, time, sitesById);
     if (!to || !from.foundryId) return;
     const ringFrom = foundryRingClosestPoint(from.planetX, from.planetY, from.ringR, to.x, to.y);
     const phase = sailShuttlePhase(idx, launchers.length, time);

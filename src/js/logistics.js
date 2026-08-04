@@ -66,6 +66,10 @@ import {
 } from './diplomacy.js';
 import { techEffects } from './tech-web.js';
 import { factionTechContext } from './ai-tech.js';
+import {
+  aiShipSystemIndexRevision,
+  invalidateAiShipSystemIndex,
+} from './ai-ships.js';
 
 export const CARGO_TYPES = Object.freeze([
   'rawMaterials',
@@ -140,6 +144,8 @@ export const NEXUS_COMMERCE_TIMING = Object.freeze({
 
 const CARGO_PRECISION = 1e6;
 const EPSILON = 1e-7;
+const ESCORT_ROUTE_REPLAN_MS = 1000;
+const resolvedLogisticsConfigs = new WeakSet();
 
 function roundCargo(value) {
   return Math.round(Math.max(0, Number(value) || 0) * CARGO_PRECISION) / CARGO_PRECISION;
@@ -149,7 +155,7 @@ const roundCredits = roundCargo;
 
 function resolveConfig(overrides = {}) {
   const productionOverrides = overrides.productionRates ?? {};
-  return {
+  const resolved = {
     ...DEFAULT_LOGISTICS_CONFIG,
     ...overrides,
     productionRates: {
@@ -162,10 +168,18 @@ function resolveConfig(overrides = {}) {
       ...(overrides.cargoValues ?? {}),
     },
   };
+  resolvedLogisticsConfigs.add(resolved);
+  return resolved;
 }
 
+const RESOLVED_DEFAULT_LOGISTICS_CONFIG = Object.freeze(resolveConfig());
+
 function configFrom(options) {
-  return resolveConfig(options?.config ?? options ?? {});
+  const overrides = options?.config ?? options ?? {};
+  if (resolvedLogisticsConfigs.has(overrides)) return overrides;
+  return Object.keys(overrides).length === 0
+    ? RESOLVED_DEFAULT_LOGISTICS_CONFIG
+    : resolveConfig(overrides);
 }
 
 export function emptyCargo() {
@@ -328,9 +342,15 @@ export function createDefaultLogisticsState() {
 }
 
 /** Backfills a partial/migrated logistics record in place and returns it. */
+const ensuredLogisticsStates = new WeakMap();
+
 export function ensureLogisticsState(state) {
+  if (state.logistics && ensuredLogisticsStates.get(state) === state.logistics) {
+    return state.logistics;
+  }
   if (!state.logistics || typeof state.logistics !== 'object') {
     state.logistics = createDefaultLogisticsState();
+    ensuredLogisticsStates.set(state, state.logistics);
     return state.logistics;
   }
   const base = createDefaultLogisticsState();
@@ -411,6 +431,7 @@ export function ensureLogisticsState(state) {
         : convoy.threatScore < 50 ? 'watched'
           : convoy.threatScore < 75 ? 'threatened' : 'critical');
   }
+  ensuredLogisticsStates.set(state, logistics);
   return logistics;
 }
 
@@ -635,11 +656,52 @@ function galaxyIdsForState(state, requested) {
   return [state.activeGalaxyId ?? 'gal-0'];
 }
 
-function nodeMap(graph) {
+const graphTopologyCache = new WeakMap();
+
+function graphTopology(graph) {
+  if (!graph || typeof graph !== 'object') return { nodes: new Map(), adjacency: new Map() };
+  const stars = graph.stars ?? [];
+  const lanes = graph.lanes ?? [];
+  const starCount = graph.stars?.length ?? 0;
+  const laneCount = graph.lanes?.length ?? 0;
+  const cached = graphTopologyCache.get(graph);
+  if (cached?.stars === stars
+    && cached?.lanes === lanes
+    && cached?.blackHole === graph.blackHole
+    && cached.starCount === starCount
+    && cached.laneCount === laneCount) {
+    return cached;
+  }
+
   const nodes = new Map();
-  for (const star of graph?.stars ?? []) nodes.set(star.id, star);
+  for (const star of stars) nodes.set(star.id, star);
   if (graph?.blackHole) nodes.set(graph.blackHole.id, graph.blackHole);
-  return nodes;
+  const adjacency = new Map([...nodes.keys()].map((id) => [id, []]));
+  for (const [a, b] of lanes) {
+    if (!nodes.has(a) || !nodes.has(b)) continue;
+    const pa = nodes.get(a);
+    const pb = nodes.get(b);
+    const distance = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+    const key = logisticsLaneKey(a, b);
+    adjacency.get(a).push({ id: b, distance, key });
+    adjacency.get(b).push({ id: a, distance, key });
+  }
+  for (const neighbors of adjacency.values()) neighbors.sort((a, b) => a.id.localeCompare(b.id));
+  const topology = {
+    stars,
+    lanes,
+    blackHole: graph.blackHole,
+    starCount,
+    laneCount,
+    nodes,
+    adjacency,
+  };
+  graphTopologyCache.set(graph, topology);
+  return topology;
+}
+
+function nodeMap(graph) {
+  return graphTopology(graph).nodes;
 }
 
 export function logisticsLaneKey(a, b) {
@@ -667,10 +729,87 @@ function routeBlockades(state, galaxyId) {
   };
 }
 
+function compareRouteQueueEntries(left, right) {
+  return left.distance - right.distance || left.pathKey.localeCompare(right.pathKey);
+}
+
+function pushRouteQueue(queue, entry) {
+  let index = queue.length;
+  queue.push(entry);
+  while (index > 0) {
+    const parentIndex = Math.floor((index - 1) / 2);
+    if (compareRouteQueueEntries(queue[parentIndex], entry) <= 0) break;
+    queue[index] = queue[parentIndex];
+    index = parentIndex;
+  }
+  queue[index] = entry;
+}
+
+function popRouteQueue(queue) {
+  const first = queue[0];
+  const last = queue.pop();
+  if (queue.length === 0) return first;
+
+  let index = 0;
+  while (true) {
+    const leftIndex = index * 2 + 1;
+    if (leftIndex >= queue.length) break;
+    const rightIndex = leftIndex + 1;
+    const childIndex = rightIndex < queue.length
+      && compareRouteQueueEntries(queue[rightIndex], queue[leftIndex]) < 0
+      ? rightIndex
+      : leftIndex;
+    if (compareRouteQueueEntries(queue[childIndex], last) >= 0) break;
+    queue[index] = queue[childIndex];
+    index = childIndex;
+  }
+  queue[index] = last;
+  return first;
+}
+
+const shortestRouteCaches = new WeakMap();
+const ROUTE_CACHE_LIMIT = 512;
+const ROUTE_CACHE_SIGNATURE = Symbol('routeCacheSignature');
+
+function routeSetSignature(values) {
+  let signature = '';
+  for (const value of values) {
+    const text = String(value);
+    signature += `${text.length}:${text}`;
+  }
+  return signature;
+}
+
+function routeOptionsSignature(options, blockedLanes, blockedSystems) {
+  return options[ROUTE_CACHE_SIGNATURE]
+    ?? `L${routeSetSignature(blockedLanes)}S${routeSetSignature(blockedSystems)}`;
+}
+
+function routeCacheKey(fromSystemId, toSystemId, optionsSignature) {
+  const from = String(fromSystemId);
+  const to = String(toSystemId);
+  return `${from.length}:${from}${to.length}:${to}${optionsSignature}`;
+}
+
+function shortestRouteCache(graph, topology) {
+  let cache = shortestRouteCaches.get(graph);
+  if (!cache || cache.topology !== topology) {
+    cache = { topology, routes: new Map() };
+    shortestRouteCaches.set(graph, cache);
+  }
+  return cache.routes;
+}
+
+function setShortestRouteCache(cache, key, path) {
+  cache.set(key, path);
+  if (cache.size > ROUTE_CACHE_LIMIT) cache.delete(cache.keys().next().value);
+}
+
 /** Weighted Dijkstra route with stable lexical tie-breaking. */
 export function shortestRoute(graph, fromSystemId, toSystemId, options = {}) {
   if (!graph || !fromSystemId || !toSystemId) return null;
-  const nodes = nodeMap(graph);
+  const topology = graphTopology(graph);
+  const { nodes, adjacency } = topology;
   if (!nodes.has(fromSystemId) || !nodes.has(toSystemId)) return null;
   if (fromSystemId === toSystemId) return [fromSystemId];
 
@@ -678,18 +817,20 @@ export function shortestRoute(graph, fromSystemId, toSystemId, options = {}) {
     ? options.blockedLanes : new Set(options.blockedLanes ?? []);
   const blockedSystems = options.blockedSystems instanceof Set
     ? options.blockedSystems : new Set(options.blockedSystems ?? []);
-  if (blockedSystems.has(toSystemId)) return null;
-
-  const adjacency = new Map([...nodes.keys()].map((id) => [id, []]));
-  for (const [a, b] of graph.lanes ?? []) {
-    if (!nodes.has(a) || !nodes.has(b) || blockedLanes.has(logisticsLaneKey(a, b))) continue;
-    const pa = nodes.get(a);
-    const pb = nodes.get(b);
-    const distance = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-    adjacency.get(a).push({ id: b, distance });
-    adjacency.get(b).push({ id: a, distance });
+  const cache = shortestRouteCache(graph, topology);
+  const cacheKey = routeCacheKey(
+    fromSystemId,
+    toSystemId,
+    routeOptionsSignature(options, blockedLanes, blockedSystems),
+  );
+  if (cache.has(cacheKey)) {
+    const cachedPath = cache.get(cacheKey);
+    return cachedPath ? [...cachedPath] : null;
   }
-  for (const neighbors of adjacency.values()) neighbors.sort((a, b) => a.id.localeCompare(b.id));
+  if (blockedSystems.has(toSystemId)) {
+    setShortestRouteCache(cache, cacheKey, null);
+    return null;
+  }
 
   const bestDistance = new Map([[fromSystemId, 0]]);
   const bestPathKey = new Map([[fromSystemId, fromSystemId]]);
@@ -697,11 +838,11 @@ export function shortestRoute(graph, fromSystemId, toSystemId, options = {}) {
   const queue = [{ id: fromSystemId, distance: 0, pathKey: fromSystemId }];
 
   while (queue.length) {
-    queue.sort((a, b) => a.distance - b.distance || a.pathKey.localeCompare(b.pathKey));
-    const current = queue.shift();
+    const current = popRouteQueue(queue);
     if (current.distance > (bestDistance.get(current.id) ?? Infinity) + EPSILON) continue;
     if (current.id === toSystemId) break;
     for (const edge of adjacency.get(current.id) ?? []) {
+      if (blockedLanes.has(edge.key)) continue;
       if (edge.id !== toSystemId && blockedSystems.has(edge.id)) continue;
       const distance = current.distance + edge.distance;
       const pathKey = `${current.pathKey}>${edge.id}`;
@@ -712,12 +853,15 @@ export function shortestRoute(graph, fromSystemId, toSystemId, options = {}) {
         bestDistance.set(edge.id, distance);
         bestPathKey.set(edge.id, pathKey);
         previous.set(edge.id, current.id);
-        queue.push({ id: edge.id, distance, pathKey });
+        pushRouteQueue(queue, { id: edge.id, distance, pathKey });
       }
     }
   }
 
-  if (!previous.has(toSystemId)) return null;
+  if (!previous.has(toSystemId)) {
+    setShortestRouteCache(cache, cacheKey, null);
+    return null;
+  }
   const path = [toSystemId];
   let cursor = toSystemId;
   while (cursor !== fromSystemId) {
@@ -725,7 +869,9 @@ export function shortestRoute(graph, fromSystemId, toSystemId, options = {}) {
     if (!cursor) return null;
     path.push(cursor);
   }
-  return path.reverse();
+  path.reverse();
+  setShortestRouteCache(cache, cacheKey, path);
+  return [...path];
 }
 
 export function routeDistance(graph, path) {
@@ -791,20 +937,88 @@ export function discoverTradeNexuses(state, galaxyId = state.activeGalaxyId, own
     .sort((a, b) => a.systemId.localeCompare(b.systemId));
 }
 
-function bestNexusRoute(state, galaxyId, fromSystemId, options = {}) {
+const routeAccessIndexes = new WeakMap();
+
+function routeAccessIndex(state, galaxyId, actorId) {
+  const at = state.time ?? 0;
+  let stateCache = routeAccessIndexes.get(state);
+  if (!stateCache || stateCache.at !== at) {
+    stateCache = { at, entries: new Map() };
+    routeAccessIndexes.set(state, stateCache);
+  }
+
   const graph = getGraph(state, galaxyId);
-  const blockades = routeBlockades(state, galaxyId);
-  const actorId = options.ownerId ?? 'player';
-  for (const system of Object.values(getSystems(state, galaxyId))) {
-    if (system.id === fromSystemId) continue;
+  const topology = graphTopology(graph);
+  const systems = getSystems(state, galaxyId);
+  const logistics = ensureLogisticsState(state);
+  const blockadeLanes = logistics.blockades.lanes;
+  const blockadeSystems = logistics.blockades.systems;
+  const diplomacy = state.diplomacy;
+  const diplomacyRevision = diplomacy?.revision ?? 0;
+  const key = `${galaxyId}\0${actorId}`;
+  const cached = stateCache.entries.get(key);
+  if (cached
+    && cached.topology === topology
+    && cached.systems === systems
+    && cached.blockadeLanes === blockadeLanes
+    && cached.blockadeSystems === blockadeSystems
+    && cached.diplomacy === diplomacy
+    && cached.diplomacyRevision === diplomacyRevision) {
+    return cached;
+  }
+
+  const explicitBlockades = routeBlockades(state, galaxyId);
+  const deniedSystems = new Set();
+  const nexuses = [];
+  for (const system of Object.values(systems)) {
     const legality = canRouteThroughSystem(state, system, actorId, {
       galaxyId,
       allowHostile: true,
     });
-    if (!legality.ok) blockades.blockedSystems.add(system.id);
+    if (!legality.ok) deniedSystems.add(system.id);
+    if (system?.star?.kind === 'trade_nexus') {
+      nexuses.push({
+        galaxyId,
+        systemId: system.id,
+        name: system.name,
+        owner: system.owner,
+        available: nexusAcceptsCargo(system, actorId, state),
+      });
+    }
   }
+  nexuses.sort((left, right) => left.systemId.localeCompare(right.systemId));
+  const entry = {
+    topology,
+    systems,
+    blockadeLanes,
+    blockadeSystems,
+    diplomacy: state.diplomacy,
+    diplomacyRevision: state.diplomacy?.revision ?? 0,
+    explicitBlockades,
+    deniedSystems,
+    nexuses,
+  };
+  stateCache.entries.set(key, entry);
+  return entry;
+}
+
+function bestNexusRoute(state, galaxyId, fromSystemId, options = {}) {
+  const graph = getGraph(state, galaxyId);
+  const actorId = options.ownerId ?? 'player';
+  const access = routeAccessIndex(state, galaxyId, actorId);
+  const blockades = {
+    blockedLanes: access.explicitBlockades.blockedLanes,
+    blockedSystems: new Set(access.explicitBlockades.blockedSystems),
+  };
+  for (const systemId of access.deniedSystems) {
+    if (systemId !== fromSystemId) blockades.blockedSystems.add(systemId);
+  }
+  blockades[ROUTE_CACHE_SIGNATURE] = (
+    `L${routeSetSignature(blockades.blockedLanes)}`
+    + `S${routeSetSignature(blockades.blockedSystems)}`
+  );
   const requested = options.destinationSystemId ?? null;
-  const candidates = discoverTradeNexuses(state, galaxyId, options.ownerId ?? 'player')
+  const candidates = access.nexuses
     .filter((nexus) => nexus.available && (!requested || nexus.systemId === requested));
   const routes = [];
   for (const nexus of candidates) {
@@ -1263,6 +1477,96 @@ function escortPowerForShip(ship) {
   return Math.max(0, Number(stats.dps) || 0) + Math.max(0, Number(ship?.hp ?? stats.hp) || 0) / 20;
 }
 
+const routePatrolPowerIndexes = new WeakMap();
+const logisticsShipLookupIndexes = new WeakMap();
+
+function logisticsShipById(state) {
+  const playerShips = state.playerShips ?? [];
+  const aiShips = state.aiShips ?? [];
+  const aiShipRevision = aiShipSystemIndexRevision(state);
+  const cached = logisticsShipLookupIndexes.get(state);
+  if (cached
+    && cached.playerShips === playerShips
+    && cached.playerShipCount === playerShips.length
+    && cached.aiShips === aiShips
+    && cached.aiShipCount === aiShips.length
+    && cached.aiShipRevision === aiShipRevision) {
+    return cached.byId;
+  }
+
+  const byId = new Map();
+  for (const ship of playerShips) {
+    if (!byId.has(ship.id)) byId.set(ship.id, ship);
+  }
+  for (const ship of aiShips) {
+    if (!byId.has(ship.id)) byId.set(ship.id, ship);
+  }
+  logisticsShipLookupIndexes.set(state, {
+    playerShips,
+    playerShipCount: playerShips.length,
+    aiShips,
+    aiShipCount: aiShips.length,
+    aiShipRevision,
+    byId,
+  });
+  return byId;
+}
+
+function routePatrolIndexEntry(ship) {
+  if (!ship?.systemId || ship.transit || ship.hp <= 0) return null;
+  return {
+    galaxyId: ship.galaxyId,
+    ownerId: ship.factionId ?? 'ai-0',
+    systemId: ship.systemId,
+    power: escortPowerForShip(ship),
+  };
+}
+
+function patrolSystemPowers(index, entry, create = false) {
+  let owners = index.get(entry.galaxyId);
+  if (!owners && create) {
+    owners = new Map();
+    index.set(entry.galaxyId, owners);
+  }
+  let systems = owners?.get(entry.ownerId);
+  if (!systems && create) {
+    systems = new Map();
+    owners.set(entry.ownerId, systems);
+  }
+  return systems;
+}
+
+function routePatrolPowerIndex(state) {
+  const aiShips = state.aiShips ?? [];
+  const aiShipRevision = aiShipSystemIndexRevision(state);
+  const cached = routePatrolPowerIndexes.get(state);
+  if (cached
+    && cached.aiShipRevision === aiShipRevision
+    && cached.aiShips === aiShips
+    && cached.aiShipCount === aiShips.length) {
+    return cached.powerByGalaxyOwnerSystem;
+  }
+
+  const powerByGalaxyOwnerSystem = new Map();
+  const add = (ship) => {
+    const entry = routePatrolIndexEntry(ship);
+    if (!entry) return;
+    const systems = patrolSystemPowers(powerByGalaxyOwnerSystem, entry, true);
+    systems.set(
+      entry.systemId,
+      (systems.get(entry.systemId) ?? 0) + entry.power,
+    );
+  };
+  for (const ship of aiShips) add(ship);
+  routePatrolPowerIndexes.set(state, {
+    aiShipRevision,
+    aiShips,
+    aiShipCount: aiShips.length,
+    powerByGalaxyOwnerSystem,
+  });
+  return powerByGalaxyOwnerSystem;
+}
+
 function convoyReserveShipIds(state) {
   const reservedGroups = new Set(
     (state.battleGroups ?? []).filter((group) => group.convoyReserve).map((group) => group.id),
@@ -1294,15 +1598,24 @@ function eligibleEscortShips(state, depot) {
 }
 
 function routePatrolPower(state, galaxyId, path, ownerId) {
-  const routeSystems = new Set(path ?? []);
-  const ships = ownerId === 'player' ? state.playerShips ?? [] : state.aiShips ?? [];
-  return roundCredits(ships
-    .filter((ship) => ship.galaxyId === galaxyId
-      && routeSystems.has(ship.systemId)
-      && !ship.transit
-      && ship.hp > 0
-      && (ownerId === 'player' || (ship.factionId ?? 'ai-0') === ownerId))
-    .reduce((sum, ship) => sum + escortPowerForShip(ship), 0));
+  if (ownerId === 'player') {
+    const routeSystems = new Set(path ?? []);
+    let power = 0;
+    for (const ship of state.playerShips ?? []) {
+      if (ship.galaxyId === galaxyId
+        && routeSystems.has(ship.systemId)
+        && !ship.transit
+        && ship.hp > 0) {
+        power += escortPowerForShip(ship);
+      }
+    }
+    return roundCredits(power);
+  }
+  const powerByGalaxyOwnerSystem = routePatrolPowerIndex(state);
+  const systemPowers = powerByGalaxyOwnerSystem.get(galaxyId)?.get(ownerId);
+  let power = 0;
+  for (const systemId of path ?? []) power += systemPowers?.get(systemId) ?? 0;
+  return roundCredits(power);
 }
 
 export function routeSecuritySummary(state, input, options = {}) {
@@ -1367,11 +1680,14 @@ export function routeSecuritySummary(state, input, options = {}) {
   if (patrolReduction > 0) factors.push({ id: 'patrols', amount: -roundCredits(patrolReduction) });
 
   const escortShipIds = options.escortShipIds ?? [];
-  const escortShips = [
-    ...(state.playerShips ?? []),
-    ...(state.aiShips ?? []),
-  ].filter((ship) => escortShipIds.includes(ship.id));
-  const escortPower = roundCredits(escortShips.reduce((sum, ship) => sum + escortPowerForShip(ship), 0));
+  let rawEscortPower = 0;
+  if (escortShipIds.length > 0) {
+    const requestedEscortIds = new Set(escortShipIds);
+    for (const ship of logisticsShipById(state).values()) {
+      if (requestedEscortIds.has(ship.id)) rawEscortPower += escortPowerForShip(ship);
+    }
+  }
+  const escortPower = roundCredits(rawEscortPower);
   const escortReduction = Math.min(35, escortPower / 4);
   threat -= escortReduction;
   if (escortReduction > 0) factors.push({ id: 'escorts', amount: -roundCredits(escortReduction) });
@@ -1395,10 +1711,20 @@ function beginEscortRally(state, depot, security, options = {}) {
   const now = state.time ?? 0;
   if (depot.waitingForEscortsSince == null) depot.waitingForEscortsSince = now;
   const selected = new Set(depot.pendingEscortShipIds ?? []);
+  const shipById = logisticsShipById(state);
   let selectedPower = [...selected].reduce((sum, shipId) => {
-    const ship = [...(state.playerShips ?? []), ...(state.aiShips ?? [])].find((entry) => entry.id === shipId);
+    const ship = shipById.get(shipId);
     return sum + escortPowerForShip(ship);
   }, 0);
+  if (selectedPower >= security.recommendedEscortPower) {
+    depot.pendingEscortShipIds = [...selected];
+    return depot.pendingEscortShipIds;
+  }
+  if (now - (depot.lastEscortPlanAt ?? -Infinity) < ESCORT_ROUTE_REPLAN_MS) {
+    depot.pendingEscortShipIds = [...selected];
+    return depot.pendingEscortShipIds;
+  }
+  depot.lastEscortPlanAt = now;
   const graph = getGraph(state, depot.galaxyId);
   const candidates = eligibleEscortShips(state, depot)
     .filter((ship) => !selected.has(ship.id))
@@ -1410,6 +1736,7 @@ function beginEscortRally(state, depot, security, options = {}) {
     })
     .filter((entry) => entry.path)
     .sort((a, b) => a.distance - b.distance || b.ship.hp - a.ship.hp || a.ship.id.localeCompare(b.ship.id));
+  let positionsChanged = false;
   for (const entry of candidates) {
     if (selectedPower >= security.recommendedEscortPower) break;
     const { ship, path } = entry;
@@ -1428,25 +1755,29 @@ function beginEscortRally(state, depot, security, options = {}) {
         }),
       };
       ship.systemId = null;
+      positionsChanged = true;
     }
+  }
+  if (positionsChanged) {
+    invalidateAiShipSystemIndex(state);
   }
   depot.pendingEscortShipIds = [...selected];
   return depot.pendingEscortShipIds;
 }
 
 function arrivedEscortIds(state, depot) {
-  const allShips = [...(state.playerShips ?? []), ...(state.aiShips ?? [])];
+  const shipById = logisticsShipById(state);
   return (depot.pendingEscortShipIds ?? []).filter((shipId) => {
-    const ship = allShips.find((entry) => entry.id === shipId);
+    const ship = shipById.get(shipId);
     return ship?.hp > 0 && !ship.transit && ship.systemId === depot.systemId;
   });
 }
 
 function claimConvoyEscorts(state, depot, convoyId) {
   const arrived = arrivedEscortIds(state, depot);
-  const allShips = [...(state.playerShips ?? []), ...(state.aiShips ?? [])];
+  const shipById = logisticsShipById(state);
   for (const shipId of arrived) {
-    const ship = allShips.find((entry) => entry.id === shipId);
+    const ship = shipById.get(shipId);
     ship.convoyLeaseId = convoyId;
     ship.convoyEscortId = convoyId;
     ship.convoyRallyDepotId = null;
@@ -1455,11 +1786,14 @@ function claimConvoyEscorts(state, depot, convoyId) {
   }
   for (const shipId of depot.pendingEscortShipIds ?? []) {
     if (arrived.includes(shipId)) continue;
-    const ship = allShips.find((entry) => entry.id === shipId);
+    const ship = shipById.get(shipId);
     if (ship && ship.convoyRallyDepotId === depot.id) ship.convoyRallyDepotId = null;
   }
   depot.pendingEscortShipIds = [];
   depot.waitingForEscortsSince = null;
+  if (arrived.length > 0) {
+    invalidateAiShipSystemIndex(state);
+  }
   return arrived;
 }
 
@@ -1543,8 +1877,7 @@ export function dispatchDepot(state, depotId, options = {}) {
       convoySpeed: Math.min(
         doctrine.speed,
         ...escortShipIds.map((shipId) => {
-          const ship = [...(state.playerShips ?? []), ...(state.aiShips ?? [])]
-            .find((entry) => entry.id === shipId);
+          const ship = logisticsShipById(state).get(shipId);
           return HULL_STATS[ship?.hull]?.laneSpeed ?? doctrine.speed;
         }),
       ),
@@ -1606,12 +1939,12 @@ export function tickDepotDispatch(state, options = {}) {
     } else if (depot.readySince == null) {
       depot.readySince = now;
     }
-    const security = routeSecuritySummary(state, depot, { ...config, doctrineId: doctrine.id });
+    const security = routeSecuritySummary(state, depot, { config, doctrineId: doctrine.id });
     beginEscortRally(state, depot, security, config);
     const arrivedIds = arrivedEscortIds(state, depot);
+    const shipById = logisticsShipById(state);
     const ralliedPower = arrivedIds.reduce((sum, shipId) => {
-      const ship = [...(state.playerShips ?? []), ...(state.aiShips ?? [])]
-        .find((entry) => entry.id === shipId);
+      const ship = shipById.get(shipId);
       return sum + escortPowerForShip(ship);
     }, 0);
     const rallyExpired = now - depot.waitingForEscortsSince >= config.escortRallyMs;
@@ -1788,13 +2121,17 @@ export function materializeConvoyEscorts(state, convoyId, systemId) {
   }
   convoy.systemId = systemId;
   convoy.currentNodeId = systemId;
+  if (convoy.escortShipIds?.length) {
+    invalidateAiShipSystemIndex(state);
+  }
   return { ok: true, convoy, shipIds: [...convoy.escortShipIds] };
 }
 
 function sendEscortsHome(state, convoy, fromSystemId) {
   const depot = findExportDepot(state, convoy.depotId);
   const graph = getGraph(state, convoy.galaxyId);
-  for (const ship of convoyEscortShips(state, convoy)) {
+  const escorts = convoyEscortShips(state, convoy);
+  for (const ship of escorts) {
     ship.convoyEscortId = null;
     ship.convoyReturnDepotId = depot?.id ?? null;
     ship.systemId = fromSystemId;
@@ -1819,6 +2156,9 @@ function sendEscortsHome(state, convoy, fromSystemId) {
       }),
     };
     ship.systemId = null;
+  }
+  if (escorts.length > 0) {
+    invalidateAiShipSystemIndex(state);
   }
 }
 
@@ -2312,8 +2652,17 @@ export function convoyReturnTransitStatus(state, convoy, options = {}) {
 
 export function commerceConvoyTraffic(state, galaxyId = state.activeGalaxyId, options = {}) {
   const portCount = Math.max(1, options.portCount ?? 6);
+  const originSystemId = options.originSystemId ?? null;
+  const nexusSystemId = options.nexusSystemId ?? null;
+  const scoped = originSystemId != null || nexusSystemId != null;
   const entries = ensureLogisticsState(state).convoys
-    .filter((convoy) => convoy.galaxyId === galaxyId && convoy.status === 'delivered')
+    .filter((convoy) => (
+      convoy.galaxyId === galaxyId
+      && convoy.status === 'delivered'
+      && (!scoped
+        || (originSystemId != null && convoy.fromSystemId === originSystemId)
+        || (nexusSystemId != null && convoy.destinationSystemId === nexusSystemId))
+    ))
     .map((convoy) => ({
       convoy,
       nexus: convoyNexusServiceStatus(state, convoy, options),

@@ -200,13 +200,13 @@ export function initDevPanel(ctx) {
   bindClick('dev-tutorial-override', () => {
     setTutorialSessionOverride(true);
     setStatus({ ok: true, details: { tutorialOverride: true } });
-    toast('Academy bypass on — title modes unlocked for this session', 'ok');
+    toast('Foundations bypass on — guidance is optional for this session', 'ok');
     updateDevPanel(true);
   });
   bindClick('dev-tutorial-relock', () => {
     setTutorialSessionOverride(false);
     setStatus({ ok: true, details: { tutorialOverride: false } });
-    toast('Academy bypass off', 'ok');
+    toast('Foundations bypass off', 'ok');
     updateDevPanel(true);
   });
   bindClick('dev-tutorial-reset', () => {
@@ -269,7 +269,7 @@ export function initDevPanel(ctx) {
           mode: game.details?.mode ?? 'sandbox',
         },
       });
-      toast('Tutorial ended — Academy complete, feature gates open', 'ok');
+      toast('Foundations complete — guidance ended', 'ok');
       updateDevPanel(true);
     } catch (error) {
       setStatus({
@@ -293,7 +293,7 @@ export function initDevPanel(ctx) {
         return;
       }
       setStatus({ ok: true, details: { profile: 'cleared' } });
-      toast('Academy profile cleared', 'ok');
+      toast('Foundations profile cleared', 'ok');
       updateDevPanel(true);
     } catch (error) {
       setStatus({

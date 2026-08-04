@@ -17,8 +17,8 @@ export const DECK_LAYOUT = Object.freeze({
   wide: Object.freeze({
     minWidth: 1440,
     minHeight: 1024,
-    activityRail: Object.freeze([150, 170]),
-    inspector: Object.freeze([280, 320]),
+    activityRail: Object.freeze([60, 72]),
+    inspector: Object.freeze([320, 380]),
     actionDeckExpanded: Object.freeze([250, 300]),
     canvasHeightCollapsedMinRatio: 0.64,
   }),
@@ -47,6 +47,7 @@ const ACTIVITY_PANELS = new Set([
   'fleet',
   'logistics',
   'dyson',
+  'queue',
 ]);
 
 /**

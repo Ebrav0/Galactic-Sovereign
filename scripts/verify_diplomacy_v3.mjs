@@ -55,8 +55,28 @@ const state = game();
 const factions = state.factions.list.slice().sort((a, b) => a.id.localeCompare(b.id));
 assert.equal(factions.length, 4, 'four major AI factions remain the default');
 assert.equal(DIPLOMACY_SCHEMA_VERSION, 3);
-assert.equal(SAVE_VERSION, 25);
+assert.ok(SAVE_VERSION >= 25, 'diplomacy v3 requires save schema v25 or newer');
 assert.equal(Object.keys(state.diplomacy.pairRelations).length, 10, 'five actors produce ten unordered relationship pairs');
+
+const rosterCacheState = game(20250720);
+const rosterCacheDiplomacy = rosterCacheState.diplomacy;
+const rosterCacheBefore = JSON.stringify(rosterCacheDiplomacy);
+assert.equal(ensureDiplomacy(rosterCacheState), rosterCacheDiplomacy, 'stable rosters reuse the normalized diplomacy object');
+assert.equal(JSON.stringify(rosterCacheDiplomacy), rosterCacheBefore, 'stable-roster normalization is a no-op');
+const addedFaction = {
+  ...structuredClone(rosterCacheState.factions.list.at(-1)),
+  id: 'ai-roster-cache-extra',
+  name: 'Roster Cache Extra',
+};
+rosterCacheState.factions.list.push(addedFaction);
+ensureDiplomacy(rosterCacheState);
+assert.equal(rosterCacheState.diplomacy.contacts[addedFaction.id]?.factionId, addedFaction.id, 'an appended faction invalidates the roster cache');
+assert.equal(Object.keys(rosterCacheState.diplomacy.pairRelations).length, 15, 'six actors produce fifteen unordered relationship pairs');
+assert.equal(
+  getActorRelation(rosterCacheState, 'player', addedFaction.id),
+  getActorRelation(rosterCacheState, addedFaction.id, 'player'),
+  'pair keys remain symmetric after the non-allocating fast path',
+);
 
 const rawPreviewState = createNewGame(55);
 seedAiFaction(rawPreviewState, rawPreviewState.homeGalaxyId);
@@ -282,7 +302,7 @@ assert.ok(rivalWarState.diplomacy.occupations.some((entry) => (
 const roundTrip = deserialize(serialize(state));
 assert.equal(roundTrip.ok, true);
 assert.equal(roundTrip.state.diplomacy.schemaVersion, 3);
-assert.equal(JSON.parse(serialize(roundTrip.state)).saveVersion, 25);
+assert.equal(JSON.parse(serialize(roundTrip.state)).saveVersion, SAVE_VERSION);
 
 const legacyState = structuredClone(state);
 legacyState.diplomacy.version = 2;

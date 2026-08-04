@@ -19,7 +19,9 @@ import { formatControlAction } from './control-registry.js';
 import { defineTutorialCourse } from './tutorial-course.js';
 import { updateTutorialCourseProgress } from './profile.js';
 
-export const TUTORIAL_STEPS = Object.freeze([
+// Retained as source material for the optional Controls & Tutorials library.
+// None of these control drills block Sovereign Foundations v4.
+export const FOUNDATIONS_CONTEXT_TIPS = Object.freeze([
   {
     id: 'command_overview',
     module: '1 · Screen orientation',
@@ -341,6 +343,100 @@ export const TUTORIAL_STEPS = Object.freeze([
   },
 ]);
 
+export const TUTORIAL_STEPS = Object.freeze([
+  {
+    id: 'establish_stronghold',
+    module: '1 · Establish',
+    title: 'Establish the Stronghold',
+    objective: 'Select the highlighted world and construct your first outpost.',
+    input: 'Select the highlighted world · Build Outpost',
+    why: 'Your first outpost anchors income, cargo, and construction in the home system.',
+    expected: 'The world gains an operational outpost and your empire begins producing resources.',
+    recovery: 'Choose “Show me” to return home and highlight a valid build site.',
+    actionLabel: 'Show build site',
+    uiTargetId: 'build-outpost-btn',
+    placement: 'left',
+  },
+  {
+    id: 'build_reach',
+    module: '2 · Reach',
+    title: 'Build the Reach',
+    objective: 'Commission a shipyard, then launch a scout.',
+    input: 'Build Shipyard · Queue Scout · resume time',
+    why: 'The shipyard turns resources into the scouts and warships that project your power.',
+    expected: 'A shipyard comes online and one scout appears in your fleet.',
+    recovery: 'Choose “Show me” to select the Stronghold world and expose its production actions.',
+    actionLabel: 'Show shipyard',
+    uiTargetId: 'build-shipyard-btn',
+    placement: 'left',
+  },
+  {
+    id: 'survey_frontier',
+    module: '3 · Survey',
+    title: 'Survey the Frontier',
+    objective: 'Send the scout to the marked neighboring system and receive its intel.',
+    input: 'Open Galaxy Map · select scout · Shift-click the cyan target',
+    why: 'Scouting reveals ownership, threats, and capture requirements before valuable ships commit.',
+    expected: 'The marked system becomes visible with ownership and threat information.',
+    recovery: 'Choose “Show me” to open the Galaxy map and restore the target marker.',
+    actionLabel: 'Show frontier',
+    uiTargetId: 'tab-galaxy',
+    placement: 'bottom',
+  },
+  {
+    id: 'muster_escort',
+    module: '4 · Muster',
+    title: 'Muster an Escort',
+    objective: 'Commission a corvette for your first battle force.',
+    input: 'Queue Corvette · resume time',
+    why: 'An escort protects the flagship and provides the force needed to claim territory.',
+    expected: 'A combat-ready corvette appears in Fleet Command.',
+    recovery: 'Choose “Show me” to return to the shipyard and expose combat production.',
+    actionLabel: 'Show production',
+    uiTargetId: 'queue-corvette-btn',
+    placement: 'left',
+  },
+  {
+    id: 'set_course',
+    module: '5 · Commit',
+    title: 'Set the Course',
+    objective: 'Send the flagship and escort to the surveyed system.',
+    input: 'Open Galaxy Map · select the marked system',
+    why: 'Strategic travel commits the force you assembled to a visible opportunity or threat.',
+    expected: 'The flagship and escort arrive together at the training contact.',
+    recovery: 'Choose “Show me” to reopen the Galaxy map and highlight the destination.',
+    actionLabel: 'Show destination',
+    uiTargetId: 'tab-galaxy',
+    placement: 'bottom',
+  },
+  {
+    id: 'win_and_claim',
+    module: '6 · Conquer',
+    title: 'Win and Claim',
+    objective: 'Destroy the training raider, then hold the system until capture completes.',
+    input: 'Select friendlies · Attack · select raider · resume time',
+    why: 'Conquest joins tactical command and strategic control into one complete expansion loop.',
+    expected: 'The raider is destroyed and the neighboring system changes to your control.',
+    recovery: 'Use “Show me” to return to the battle. If defeated, restore the training checkpoint.',
+    actionLabel: 'Show conquest',
+    uiTargetId: 'combat-hud-attack',
+    placement: 'right',
+  },
+  {
+    id: 'graduation',
+    module: 'Command granted',
+    title: 'Sovereign Command Granted',
+    objective: 'Your first expansion loop is complete.',
+    input: 'Choose Continue your reign',
+    why: 'You can now build, scout, muster, travel, fight, and claim without guided steps.',
+    expected: 'Guidance ends and this same empire continues as an unrestricted sandbox.',
+    recovery: 'Sovereign Foundations remains replayable from Controls & Tutorials.',
+    actionLabel: null,
+    uiTargetId: 'tab-campaign',
+    placement: 'top',
+  },
+]);
+
 export const FOUNDATIONS_COURSE = defineTutorialCourse({
   id: 'foundations',
   version: TUTORIAL_CURRICULUM_VERSION,
@@ -349,27 +445,15 @@ export const FOUNDATIONS_COURSE = defineTutorialCourse({
   steps: TUTORIAL_STEPS,
 });
 
-const STEP_EVENT_REQUIREMENTS = Object.freeze({
-  command_overview: 'notification_opened',
-  time_controls: 'pause_toggled',
-  movement: 'movement',
-  select_orbit_body: 'body_selected',
-  enter_orbit: 'orbit_entered',
-  exit_orbit: 'orbit_exited',
-  camera_pan: 'camera_panned',
-  camera_zoom: 'camera_zoomed',
-  camera_follow: 'camera_followed',
-  galaxy_view: 'galaxy_viewed',
-  inspect_star: 'star_inspected',
-  map_ping: 'map_pinged',
-  system_return: 'stronghold_returned',
-  resources_costs: 'resources_inspected',
-  open_fleet: 'fleet_opened',
-});
+const STEP_EVENT_REQUIREMENTS = Object.freeze({});
 
 function tutorialState(state) {
   ensureCampaign(state);
-  return state.campaign.tutorial;
+  const tutorial = state.campaign.tutorial;
+  if (tutorial.version !== TUTORIAL_CURRICULUM_VERSION) {
+    migrateFoundationsCurriculum(state, tutorial);
+  }
+  return tutorial;
 }
 
 function tutorialTargetSystemId(state) {
@@ -453,71 +537,95 @@ function eventCount(state, eventId) {
 
 function canAdvance(state, stepId, targetId) {
   const flags = tutorialState(state).flags;
-  if (stepId === 'command_overview') return eventCount(state, 'notification_opened') > 0;
-  if (stepId === 'time_controls') return eventCount(state, 'pause_toggled') >= 2 && !state.paused;
-  if (stepId === 'movement') return eventCount(state, 'movement') > 0;
-  if (stepId === 'select_orbit_body') return eventCount(state, 'body_selected') > 0;
-  if (stepId === 'enter_orbit') return eventCount(state, 'orbit_entered') > 0;
-  if (stepId === 'exit_orbit') return eventCount(state, 'orbit_exited') > 0;
-  if (stepId === 'camera_pan') return eventCount(state, 'camera_panned') > 0;
-  if (stepId === 'camera_zoom') return eventCount(state, 'camera_zoomed') > 0;
-  if (stepId === 'camera_follow') return eventCount(state, 'camera_followed') > 0;
-  if (stepId === 'galaxy_view') return eventCount(state, 'galaxy_viewed') > 0;
-  if (stepId === 'inspect_star') return eventCount(state, 'star_inspected') > 0;
-  if (stepId === 'map_ping') return eventCount(state, 'map_pinged') > 0;
-  if (stepId === 'system_return') return eventCount(state, 'stronghold_returned') > 0;
-  if (stepId === 'resources_costs') return eventCount(state, 'resources_inspected') > 0;
-  if (stepId === 'build_outpost') return hasHomeOutpost(state);
-  if (stepId === 'review_logistics') return flags.logisticsOpened;
-  if (stepId === 'build_shipyard') return hasHomeShipyard(state);
-  if (stepId === 'launch_scout') return hasScout(state);
-  if (stepId === 'scout_frontier') return hasIntel(state, targetId);
-  if (stepId === 'assemble_escort') return hasCombatShip(state);
-  if (stepId === 'open_fleet') return eventCount(state, 'fleet_opened') > 0;
-  if (stepId === 'travel_to_battle') return flags.battlePrepared;
-  if (stepId === 'win_first_battle') return flags.battleCommandIssued && flags.battleWon;
-  if (stepId === 'capture_first_system') return targetOwnedByPlayer(state, targetId);
+  if (stepId === 'establish_stronghold') return hasHomeOutpost(state);
+  if (stepId === 'build_reach') return hasHomeShipyard(state) && hasScout(state);
+  if (stepId === 'survey_frontier') return hasIntel(state, targetId);
+  if (stepId === 'muster_escort') return hasCombatShip(state);
+  if (stepId === 'set_course') return flags.battlePrepared;
+  if (stepId === 'win_and_claim') return flags.battleWon && targetOwnedByPlayer(state, targetId);
   return false;
 }
 
 function statusForStep(state, stepId, targetId) {
   const flags = tutorialState(state).flags;
   const target = targetName(state, targetId);
-  const eventStatus = {
-    command_overview: 'Use the Comms Log + / − control on the right.',
-    time_controls: state.paused
-      ? 'Paused — press Space or Resume to restart the simulation.'
-      : 'Pause once, then resume so play can continue.',
-    movement: 'Apply thrust with W/A/S/D or an arrow key.',
-    select_orbit_body: 'Select the highlighted habitable world.',
-    enter_orbit: 'Press O with the world selected.',
-    exit_orbit: 'Press O again to disengage.',
-    camera_pan: 'Drag empty map space or middle-drag.',
-    camera_zoom: 'Use the mouse wheel over the map.',
-    camera_follow: 'Press F to find the flagship.',
-    galaxy_view: 'Press M to open the Galaxy map.',
-    inspect_star: `Double-click ${target} to inspect it without travelling.`,
-    map_ping: 'Press P or right-click the map.',
-    system_return: 'Open the Stronghold system — “Return home”, or M then double-click home.',
-    resources_costs: 'Click the Credits and Income strip.',
-    open_fleet: 'Open Fleet Command and inspect the escort.',
-  };
-  if (eventStatus[stepId]) return canAdvance(state, stepId, targetId)
-    ? 'Confirmed — moving to the next lesson.'
-    : eventStatus[stepId];
-  if (stepId === 'build_outpost') return hasHomeOutpost(state) ? 'Outpost online.' : 'Select the highlighted habitable world.';
-  if (stepId === 'review_logistics') return flags.logisticsOpened ? 'Logistics reviewed.' : 'Open Logistics to inspect cargo flow.';
-  if (stepId === 'build_shipyard') return hasHomeShipyard(state) ? 'Shipyard commissioned.' : 'Build beside the Stronghold outpost.';
-  if (stepId === 'launch_scout') return hasScout(state) ? 'Scout ready.' : 'Queue a scout and keep time running.';
-  if (stepId === 'scout_frontier') return hasIntel(state, targetId) ? `${target} surveyed.` : `Dispatch the scout to ${target}.`;
-  if (stepId === 'assemble_escort') return hasCombatShip(state) ? 'Escort ready.' : 'Queue a corvette and wait for delivery.';
-  if (stepId === 'travel_to_battle') return flags.battlePrepared ? `Training contact at ${target}.` : `Send the flagship to ${target}.`;
-  if (stepId === 'win_first_battle') {
-    if (flags.battleWon) return 'Training raider destroyed.';
+  if (stepId === 'establish_stronghold') {
+    return hasHomeOutpost(state) ? 'Stronghold established.' : 'Select the highlighted world and build an outpost.';
+  }
+  if (stepId === 'build_reach') {
+    if (!hasHomeShipyard(state)) return 'Commission a shipyard beside the Stronghold outpost.';
+    return hasScout(state) ? 'Shipyard and scout ready.' : 'Shipyard online — queue one scout and resume time.';
+  }
+  if (stepId === 'survey_frontier') {
+    return hasIntel(state, targetId) ? `${target} surveyed.` : `Dispatch the scout to ${target}.`;
+  }
+  if (stepId === 'muster_escort') {
+    return hasCombatShip(state) ? 'Escort ready.' : 'Queue a corvette and wait for delivery.';
+  }
+  if (stepId === 'set_course') {
+    return flags.battlePrepared ? `Training contact reached at ${target}.` : `Send the flagship and escort to ${target}.`;
+  }
+  if (stepId === 'win_and_claim') {
+    if (targetOwnedByPlayer(state, targetId)) return `${target} secured.`;
+    if (flags.battleWon) return 'Raider destroyed — hold the system until capture completes.';
     return flags.battleCommandIssued ? 'Attack order accepted — resume time.' : 'Select friendlies and issue an Attack order.';
   }
-  if (stepId === 'capture_first_system') return targetOwnedByPlayer(state, targetId) ? `${target} secured.` : 'Hold uncontested for five seconds.';
-  return 'Training complete. Choose the shape of your campaign.';
+  return 'Foundations complete. Continue your reign.';
+}
+
+function progressForStep(state, stepId, targetId) {
+  const flags = tutorialState(state).flags;
+  const items = {
+    establish_stronghold: [
+      { label: 'Outpost operational', complete: hasHomeOutpost(state) },
+    ],
+    build_reach: [
+      { label: 'Shipyard commissioned', complete: hasHomeShipyard(state) },
+      { label: 'Scout launched', complete: hasScout(state) },
+    ],
+    survey_frontier: [
+      { label: `${targetName(state, targetId)} surveyed`, complete: hasIntel(state, targetId) },
+    ],
+    muster_escort: [
+      { label: 'Combat escort ready', complete: hasCombatShip(state) },
+    ],
+    set_course: [
+      { label: 'Battle force arrived', complete: flags.battlePrepared },
+    ],
+    win_and_claim: [
+      { label: 'Training raider defeated', complete: flags.battleWon },
+      { label: 'System captured', complete: targetOwnedByPlayer(state, targetId) },
+    ],
+    graduation: [
+      { label: 'First expansion loop complete', complete: true },
+    ],
+  };
+  return items[stepId] ?? [];
+}
+
+function firstUnmetFoundationStep(state) {
+  const tutorial = state.campaign.tutorial;
+  const targetId = tutorialTargetSystemId(state);
+  return TUTORIAL_STEP_IDS.find((id) => id !== 'graduation' && !canAdvance(state, id, targetId))
+    ?? 'graduation';
+}
+
+function migrateFoundationsCurriculum(state, tutorial) {
+  tutorial.version = TUTORIAL_CURRICULUM_VERSION;
+  if (tutorial.status === 'complete') {
+    tutorial.currentStepId = 'graduation';
+    tutorial.completedStepIds = [...TUTORIAL_STEP_IDS];
+    return;
+  }
+  if (state.campaign.mode !== 'tutorial' || tutorial.status !== 'active') {
+    tutorial.currentStepId = TUTORIAL_STEP_IDS[0];
+    tutorial.completedStepIds = [];
+    return;
+  }
+  const next = firstUnmetFoundationStep(state);
+  const nextIndex = TUTORIAL_STEP_IDS.indexOf(next);
+  tutorial.currentStepId = next;
+  tutorial.completedStepIds = TUTORIAL_STEP_IDS.slice(0, Math.max(0, nextIndex));
 }
 
 function currentStep(state) {
@@ -535,6 +643,7 @@ function currentStep(state) {
     targetSystemId,
     targetName: targetName(state, targetSystemId),
     status: statusForStep(state, base.id, targetSystemId),
+    progress: progressForStep(state, base.id, targetSystemId),
     canConfirm: false,
     readyToFinish: base.id === 'graduation',
   };
@@ -561,37 +670,22 @@ export function getTutorialFocus(state) {
   if (state.campaign.mode !== 'tutorial' || tutorial.status !== 'active') return null;
   const stepId = tutorial.currentStepId;
   const targetSystemId = tutorialTargetSystemId(state);
-  if ([
-    'command_overview',
-    'time_controls',
-    'movement',
-    'camera_pan',
-    'camera_zoom',
-    'camera_follow',
-    'system_return',
-    'resources_costs',
-    'build_outpost',
-  ].includes(stepId)) {
+  if (stepId === 'establish_stronghold') {
     const body = homeBuildBody(state, (candidate) => !hasOutpost(state, state.stronghold, candidate.id))
       ?? homeOutpostBody(state)
       ?? homeBuildBody(state, () => true);
     return body ? { view: 'system', systemId: state.stronghold, bodyId: body.id } : { view: 'system', systemId: state.stronghold };
   }
-  if (['select_orbit_body', 'enter_orbit', 'exit_orbit'].includes(stepId)) {
-    const body = homeOrbitBody(state);
-    return body ? { view: 'system', systemId: state.stronghold, bodyId: body.id } : { view: 'system', systemId: state.stronghold };
-  }
-  if (stepId === 'review_logistics') return { view: 'system', systemId: state.stronghold, panel: 'logistics' };
-  if (['build_shipyard', 'launch_scout', 'assemble_escort', 'open_fleet'].includes(stepId)) {
+  if (['build_reach', 'muster_escort'].includes(stepId)) {
     const body = homeShipyardBody(state) ?? homeOutpostBody(state);
     return body
-      ? { view: 'system', systemId: state.stronghold, bodyId: body.id, panel: stepId === 'open_fleet' ? 'fleet' : null }
-      : { view: 'system', systemId: state.stronghold, panel: stepId === 'open_fleet' ? 'fleet' : null };
+      ? { view: 'system', systemId: state.stronghold, bodyId: body.id }
+      : { view: 'system', systemId: state.stronghold };
   }
-  if (['galaxy_view', 'inspect_star', 'map_ping', 'scout_frontier', 'travel_to_battle'].includes(stepId)) {
+  if (['survey_frontier', 'set_course'].includes(stepId)) {
     return targetSystemId ? { view: 'galaxy', systemId: targetSystemId } : null;
   }
-  if (['win_first_battle', 'capture_first_system'].includes(stepId)) {
+  if (stepId === 'win_and_claim') {
     return targetSystemId ? { view: 'system', systemId: targetSystemId, showIntel: true } : null;
   }
   return { view: 'system', systemId: state.stronghold, panel: 'campaign' };
@@ -605,7 +699,6 @@ export function markTutorialSystemViewed(state) {
 export function recordTutorialEvent(state, eventId, detail = {}) {
   const tutorial = tutorialState(state);
   if (state.campaign.mode !== 'tutorial' || tutorial.status !== 'active' || !eventId) return null;
-  if (STEP_EVENT_REQUIREMENTS[tutorial.currentStepId] !== eventId) return null;
   tutorial.events ??= {};
   const prior = tutorial.events[eventId] ?? { count: 0 };
   tutorial.events[eventId] = {
@@ -629,7 +722,7 @@ export function markTutorialLogisticsOpened(state) {
 export function markTutorialBattlePrepared(state) {
   const tutorial = tutorialState(state);
   tutorial.flags.battlePrepared = true;
-  return setTutorialStep(state, 'win_first_battle');
+  return setTutorialStep(state, 'win_and_claim');
 }
 
 export function markTutorialBattleCommand(state) {
@@ -641,7 +734,7 @@ export function markTutorialBattleResolved(state, playerWon) {
   const tutorial = tutorialState(state);
   tutorial.flags.battleWon = playerWon === true;
   tutorial.flags.battleFailed = playerWon !== true;
-  if (playerWon) return setTutorialStep(state, 'capture_first_system');
+  if (playerWon) return setTutorialStep(state, 'win_and_claim');
   return { ok: true, failed: true };
 }
 
@@ -649,7 +742,7 @@ export function tutorialNeedsBattlePreparation(state, systemId) {
   const tutorial = tutorialState(state);
   return state.campaign.mode === 'tutorial'
     && tutorial.status === 'active'
-    && tutorial.currentStepId === 'travel_to_battle'
+    && tutorial.currentStepId === 'set_course'
     && tutorial.targetSystemId === systemId
     && !tutorial.flags.battlePrepared;
 }
@@ -716,7 +809,7 @@ export function completeTutorialGraduation(state, { victoryType = 'sandbox', aiD
   return { ok: true, victoryType, aiDifficulty };
 }
 
-/** Dev / skip path: end Academy immediately and leave a free sandbox run. */
+/** Dev / skip path: end Foundations immediately and leave a free sandbox run. */
 export function forceGraduateTutorial(state, { victoryType = 'sandbox', aiDifficulty = null } = {}) {
   const tutorial = tutorialState(state);
   tutorial.completedStepIds = [...TUTORIAL_STEP_IDS];

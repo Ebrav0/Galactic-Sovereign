@@ -11,18 +11,27 @@ website/qa/
 monitor-worker/worker-configuration.d.ts
 monitor-worker/wrangler.production.jsonc
 monitor-worker/.wrangler/
-deploy/private/
 .DS_Store
 Thumbs.db
 *.log
 
+# Home-server / Proxmox CT ops (kept on disk, not tracked)
+deploy/
+scripts/deploy-secure-home.sh
+scripts/deploy-home-ct.sh
+scripts/package-hosted-release.sh
+scripts/package-site-release.sh
+.deploy.local.env
+.deploy.local.env.example
+.dockerignore
+
+# Supabase CLI local cache
+supabase/.temp/
 # Local data / saves / databases
 server/data/
 .env
 .env.*
 !.env.example
-.deploy.local.env
-!.deploy.local.env.example
 *.sqlite
 *.sqlite-*
 *.db
@@ -62,9 +71,8 @@ id_ecdsa.*
 fullchain*.pem
 privkey*.pem
 
-# Tailscale local artifacts (keep example policy tracked)
+# Tailscale local artifacts
 *.hujson
-!deploy/tailscale-policy.hujson.example
 
 # Editor / OS / temp
 .vscode/

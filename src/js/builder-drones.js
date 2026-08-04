@@ -457,19 +457,41 @@ export function getDroneConstructionCatalog(state, systemId, draftOrders = []) {
 export function confirmBuilderConstructionPlan(state, systemId, draftOrders = [], options = {}) {
   initBuilderDrones(state);
   if (!isPlayerOwned(state, systemId)) return { ok: false, reason: 'System not under your control' };
-  const eligibleDrone = activeGalaxyDrones(state).find((drone) => (
+  let eligibleDrone = activeGalaxyDrones(state).find((drone) => (
     drone.status === 'idle'
       && drone.systemId === systemId
       && (!options.strategicCampaignId || drone.strategicCampaignId === options.strategicCampaignId)
       && (!options.strategicTargetId || drone.strategicTargetId === options.strategicTargetId)
   ));
-  if (!eligibleDrone) return { ok: false, reason: 'No eligible idle builder drone stationed in this system' };
+  let dispatch = null;
+  if (!eligibleDrone) {
+    eligibleDrone = activeGalaxyDrones(state).find((drone) => (
+      drone.status === 'outbound'
+        && drone.targetSystemId === systemId
+        && (!options.strategicCampaignId || drone.strategicCampaignId === options.strategicCampaignId)
+        && (!options.strategicTargetId || drone.strategicTargetId === options.strategicTargetId)
+    ));
+  }
+  if (!eligibleDrone) {
+    eligibleDrone = activeGalaxyDrones(state).find((drone) => (
+      drone.status === 'idle'
+        && drone.systemId
+        && drone.systemId !== systemId
+        && (!options.strategicCampaignId || drone.strategicCampaignId === options.strategicCampaignId)
+        && (!options.strategicTargetId || drone.strategicTargetId === options.strategicTargetId)
+    ));
+    if (!eligibleDrone) return { ok: false, reason: 'No eligible idle builder drone available' };
+    dispatch = canDeployBuilderDrone(state, systemId, eligibleDrone.id);
+    if (!dispatch.ok) return dispatch;
+  }
   const { results } = validateDraft(state, systemId, draftOrders);
   if (results.length === 0) return { ok: false, reason: 'Add at least one construction job' };
   const invalid = results.find((result) => !result.ok);
   if (invalid) return { ok: false, reason: `${buildLabel(invalid.structureType)}: ${invalid.reason}` };
   const totalCost = results.reduce((sum, result) => sum + result.cost, 0);
-  if (state.credits < totalCost) return { ok: false, reason: `Need ${totalCost} credits` };
+  const dispatchCost = dispatch?.totalCost ?? 0;
+  const grandTotal = totalCost + dispatchCost;
+  if (state.credits < grandTotal) return { ok: false, reason: `Need ${grandTotal} credits` };
   state.credits -= totalCost;
   const idMap = new Map();
   const orders = results.map((result) => {
@@ -499,8 +521,30 @@ export function confirmBuilderConstructionPlan(state, systemId, draftOrders = []
   for (const drone of activeGalaxyDrones(state)) {
     if (drone.systemId === systemId) drone.awaitingOrders = false;
   }
-  assignBuilderConstructionOrders(state, systemId);
-  return { ok: true, orders, totalCost };
+  let dispatched = null;
+  if (dispatch) {
+    dispatched = deployBuilderDrone(state, systemId, eligibleDrone.id);
+    if (!dispatched.ok) {
+      state.builderConstructionOrders.splice(
+        state.builderConstructionOrders.length - orders.length,
+        orders.length,
+      );
+      state.credits += totalCost;
+      return dispatched;
+    }
+  } else {
+    assignBuilderConstructionOrders(state, systemId);
+  }
+  return {
+    ok: true,
+    orders,
+    totalCost,
+    dispatchCost,
+    grandTotal,
+    dispatched: !!dispatched,
+    droneId: eligibleDrone.id,
+    etaMs: dispatched?.etaMs ?? 0,
+  };
 }
 
 export function cancelBuilderConstructionOrder(state, orderId) {

@@ -1,6 +1,6 @@
 import { TUTORIAL_CURRICULUM_VERSION } from './tutorial-access.js';
 
-export const PROFILE_VERSION = 2;
+export const PROFILE_VERSION = 3;
 const BROWSER_PROFILE_KEY = 'gs-profile-v1';
 
 function defaultProfile() {
@@ -9,6 +9,10 @@ function defaultProfile() {
     tutorialGraduatedAt: null,
     tutorialCurriculumVersion: TUTORIAL_CURRICULUM_VERSION,
     briefingsSeen: [],
+    uiPreferences: {
+      pinnedMonitor: null,
+      pinnedMonitorCollapsed: false,
+    },
     tutorialProgress: {
       foundations: {
         status: 'not_started',
@@ -59,6 +63,12 @@ function normalizeProfile(input) {
     ...(input && typeof input === 'object' ? input : {}),
     version: PROFILE_VERSION,
     briefingsSeen: [...new Set(Array.isArray(input?.briefingsSeen) ? input.briefingsSeen : [])],
+    uiPreferences: {
+      pinnedMonitor: ['queue', 'fleet', 'comms'].includes(input?.uiPreferences?.pinnedMonitor)
+        ? input.uiPreferences.pinnedMonitor
+        : null,
+      pinnedMonitorCollapsed: input?.uiPreferences?.pinnedMonitorCollapsed === true,
+    },
     tutorialProgress: {
       foundations: normalizeCourse(incomingProgress.foundations, defaults.tutorialProgress.foundations),
       coop: normalizeCourse(incomingProgress.coop, defaults.tutorialProgress.coop),
@@ -140,6 +150,35 @@ export function tutorialGraduated() {
 
 export function foundationsStatus() {
   return profile.tutorialProgress?.foundations?.status ?? 'not_started';
+}
+
+export function uiPreferences() {
+  return {
+    pinnedMonitor: profile.uiPreferences?.pinnedMonitor ?? null,
+    pinnedMonitorCollapsed: profile.uiPreferences?.pinnedMonitorCollapsed === true,
+  };
+}
+
+export async function updateUiPreferences(patch = {}) {
+  await loadProfile();
+  const prior = uiPreferences();
+  const requestedMonitor = Object.prototype.hasOwnProperty.call(patch, 'pinnedMonitor')
+    ? patch.pinnedMonitor
+    : prior.pinnedMonitor;
+  if (requestedMonitor != null && !['queue', 'fleet', 'comms'].includes(requestedMonitor)) {
+    return { ok: false, reason: 'Invalid pinned monitor', profile };
+  }
+  mutationEpoch += 1;
+  profile.uiPreferences = {
+    pinnedMonitor: requestedMonitor ?? null,
+    pinnedMonitorCollapsed: Object.prototype.hasOwnProperty.call(patch, 'pinnedMonitorCollapsed')
+      ? patch.pinnedMonitorCollapsed === true
+      : prior.pinnedMonitorCollapsed,
+  };
+  loaded = true;
+  const result = await persistProfile();
+  notifyProfileChanged();
+  return result?.ok === false ? { ok: false, reason: result.error, profile } : { ok: true, profile };
 }
 
 export async function markTutorialGraduated(at = Date.now()) {

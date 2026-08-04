@@ -71,6 +71,30 @@ export function hydratedGalaxyCount(state) {
   return Object.values(state.galaxies).filter((g) => g.status === 'active').length;
 }
 
+const persistentRecordCache = new WeakMap();
+
+function persistentRecordSources(state) {
+  return Object.entries(state.galaxies).map(([galaxyId, galaxy]) => ({
+    galaxyId,
+    systems: galaxy.systems,
+    systemCount: Object.keys(galaxy.systems ?? {}).length,
+    overlays: galaxy.abstract?.systemOverlays,
+    overlayCount: Object.keys(galaxy.abstract?.systemOverlays ?? {}).length,
+  }));
+}
+
+function samePersistentRecordSources(cached, galaxies, sources) {
+  if (!cached || cached.galaxies !== galaxies || cached.sources.length !== sources.length) return false;
+  return sources.every((source, index) => {
+    const previous = cached.sources[index];
+    return previous.galaxyId === source.galaxyId
+      && previous.systems === source.systems
+      && previous.systemCount === source.systemCount
+      && previous.overlays === source.overlays
+      && previous.overlayCount === source.overlayCount;
+  });
+}
+
 /** Active systems plus durable overlays for every dehydrated galaxy. */
 export function persistentSystemRecords(state) {
   if (!state.galaxies) {
@@ -78,6 +102,10 @@ export function persistentSystemRecords(state) {
       galaxyId: state.activeGalaxyId ?? 'gal-0', systemId, system, abstract: false,
     }));
   }
+  const sources = persistentRecordSources(state);
+  const cached = persistentRecordCache.get(state);
+  if (samePersistentRecordSources(cached, state.galaxies, sources)) return cached.records;
+
   const records = [];
   for (const [galaxyId, galaxy] of Object.entries(state.galaxies)) {
     const systems = Object.entries(galaxy.systems ?? {});
@@ -102,6 +130,7 @@ export function persistentSystemRecords(state) {
       });
     }
   }
+  persistentRecordCache.set(state, { galaxies: state.galaxies, sources, records });
   return records;
 }
 

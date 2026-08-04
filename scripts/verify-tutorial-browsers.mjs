@@ -59,81 +59,45 @@ for (const engine of engines) {
     await page.evaluate(() => window.__clearTutorialProfile());
     await page.reload({ waitUntil: 'domcontentloaded' });
 
-    console.log(`[tutorial-browser] ${engine} starting Academy`);
+    console.log(`[tutorial-browser] ${engine} starting Foundations`);
     await page.getByRole('button', { name: /Single Player/ }).click();
-    await page.getByRole('button', { name: 'Begin Academy' }).click();
+    await page.getByRole('button', { name: 'Campaign' }).waitFor({ state: 'visible' });
+    assert(await page.getByRole('button', { name: 'Campaign' }).isEnabled(),
+      `${engine}: Campaign should remain available before Foundations`);
+    assert(await page.getByRole('button', { name: 'Missions' }).isEnabled(),
+      `${engine}: Missions should remain available before Foundations`);
+    assert(await page.getByRole('button', { name: 'Sandbox' }).isEnabled(),
+      `${engine}: Sandbox should remain available before Foundations`);
+    await page.getByRole('button', { name: 'Begin Sovereign Foundations' }).click();
     await page.waitForFunction(() => typeof window.__setWarpIntroElapsed === 'function');
     await page.evaluate(() => window.__setWarpIntroElapsed(1_000_000));
     await page.waitForFunction(() => window.__getBootPhase?.() === 'playing', null, { timeout: 10_000 });
     await page.locator('#tutorial-coach').waitFor({ state: 'visible' });
-    console.log(`[tutorial-browser] ${engine} orientation visible`);
-    await page.screenshot({ path: path.join(outputDir, `${engine}-01-orientation.png`) });
+    console.log(`[tutorial-browser] ${engine} first milestone visible`);
+    await page.screenshot({ path: path.join(outputDir, `${engine}-01-foundations.png`) });
 
     const step = async () => page.evaluate(() => window.__getTutorialState().step);
-    assert(await step() === 'command_overview', `${engine}: expected command_overview`);
-    await page.getByRole('button', { name: 'Toggle notifications' }).click();
-    assert(await step() === 'time_controls', `${engine}: notification event did not advance`);
-
-    await page.locator('#pause-btn').click();
-    assert(await step() === 'time_controls', `${engine}: pause must not advance until resumed`);
-    assert(await page.evaluate(() => window.getGameState().paused) === true, `${engine}: did not pause`);
-    await page.keyboard.press('Space');
-    assert(await step() === 'movement', `${engine}: resume did not advance`);
-    assert(await page.evaluate(() => window.getGameState().paused) === false, `${engine}: did not resume`);
-
-    await page.keyboard.press('ArrowRight');
-    assert(await step() === 'select_orbit_body', `${engine}: movement did not advance`);
-    await page.getByRole('button', { name: 'Show orbit world' }).click();
-    console.log(`[tutorial-browser] ${engine} orbit target framed`);
-    const canvas = page.locator('#game-canvas');
-    const box = await canvas.boundingBox();
-    assert(box, `${engine}: canvas unavailable`);
-    await page.mouse.click(box.x + box.width * 0.62, box.y + box.height * 0.25);
-    assert(await step() === 'enter_orbit', `${engine}: framed planet was not selectable`);
-    await page.screenshot({ path: path.join(outputDir, `${engine}-02-orbit-target.png`) });
-
-    await page.keyboard.press('o');
-    assert(await step() === 'exit_orbit', `${engine}: orbit entry did not advance`);
-    assert(await page.evaluate(() => !!window.getGameState().flagship.orbit), `${engine}: orbit state missing`);
-    await page.keyboard.press('o');
-    assert(await step() === 'camera_pan', `${engine}: orbit exit did not advance`);
-
-    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.4);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.45, { steps: 3 });
-    await page.mouse.up();
-    assert(await step() === 'camera_zoom', `${engine}: camera pan did not advance`);
-    await page.mouse.wheel(0, -180);
-    assert(await step() === 'camera_follow', `${engine}: zoom did not advance`);
-    await page.keyboard.press('f');
-    assert(await step() === 'galaxy_view', `${engine}: follow did not advance`);
-    await page.keyboard.press('m');
-    assert(await step() === 'inspect_star', `${engine}: Galaxy view did not advance`);
-
-    await page.getByRole('button', { name: 'Show neighboring star' }).click();
-    const galaxyBox = await canvas.boundingBox();
-    await page.mouse.dblclick(
-      galaxyBox.x + galaxyBox.width * 0.62,
-      galaxyBox.y + galaxyBox.height * 0.35,
-      { delay: 70 },
-    );
-    assert(await step() === 'map_ping', `${engine}: double-click inspect did not advance`);
-    await page.keyboard.press('p');
-    assert(await step() === 'system_return', `${engine}: training ping did not advance`);
-    // Show me alone must complete step 13 — players get stuck if told to press M first,
-    // because M only toggles the map layer and can leave them on the inspected neighbor.
-    await page.getByRole('button', { name: 'Return home' }).click();
-    assert(await step() === 'resources_costs', `${engine}: Stronghold recovery did not advance`);
-    await page.getByRole('button', { name: 'Explain credits and income' }).click();
-    const afterResources = await step();
-    assert(afterResources === 'build_outpost', `${engine}: resource explanation did not advance (at ${afterResources})`);
+    assert(await step() === 'establish_stronghold', `${engine}: expected establish_stronghold`);
+    assert(await page.locator('#tutorial-coach .tutorial-coach__checklist').isVisible(),
+      `${engine}: milestone checklist missing`);
+    assert(await page.locator('#tutorial-coach details').isVisible(),
+      `${engine}: optional explanation disclosure missing`);
+    const access = await page.evaluate(() => ({
+      technology: window.__tutorialAccess('research'),
+      diplomacy: window.__tutorialAccess('diplomacy'),
+      operations: window.__tutorialAccess('operations'),
+    }));
+    assert(Object.values(access).every((entry) => entry.allowed),
+      `${engine}: Foundations must guide rather than gate ${JSON.stringify(access)}`);
 
     const coachBox = await page.locator('#tutorial-coach').boundingBox();
     assert(coachBox.x >= 0 && coachBox.y >= 0, `${engine}: coach escaped viewport`);
     assert(coachBox.x + coachBox.width <= 1280 && coachBox.y + coachBox.height <= 720,
       `${engine}: coach clipped at 1280x720`);
 
-    await page.locator('#tutorial-library-btn').click();
+    await page.locator('#command-launcher-btn').evaluate((button) => button.click());
+    await page.locator('#command-launcher').waitFor({ state: 'visible' });
+    await page.locator('#command-tutorials-btn').evaluate((button) => button.click());
     console.log(`[tutorial-browser] ${engine} library opened`);
     await page.getByRole('dialog', { name: 'Controls & Tutorials' }).waitFor({ state: 'visible' });
     assert(await page.getByText('Enter or leave orbit', { exact: true }).isVisible(), `${engine}: orbit reference missing`);
@@ -142,11 +106,21 @@ for (const engine of engines) {
     await page.screenshot({ path: path.join(outputDir, `${engine}-03-library.png`) });
     await page.getByRole('button', { name: 'Close controls and tutorials' }).click();
 
-    const guardedSkip = page.locator('.tutorial-coach__hold');
-    await guardedSkip.dispatchEvent('pointerdown', { pointerId: 1 });
+    const beforeSkip = await page.evaluate(() => ({
+      seed: window.getGameState().seed,
+      stronghold: window.getGameState().stronghold,
+    }));
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: 'End guidance' }).click();
     await page.waitForFunction(() => window.__getProfile?.().tutorialProgress?.foundations?.status === 'waived');
     assert(await page.evaluate(() => window.getGameState().campaign.mode) === 'sandbox',
-      `${engine}: guarded skip did not release the Academy campaign`);
+      `${engine}: ending guidance did not release the Foundations campaign`);
+    const afterSkip = await page.evaluate(() => ({
+      seed: window.getGameState().seed,
+      stronghold: window.getGameState().stronghold,
+    }));
+    assert(JSON.stringify(beforeSkip) === JSON.stringify(afterSkip),
+      `${engine}: ending guidance replaced the player's empire`);
     assert(await page.locator('#tutorial-coach').isHidden(), `${engine}: coach remained after guarded skip`);
 
     assert(errors.length === 0, `${engine}: browser errors\n${errors.join('\n')}`);

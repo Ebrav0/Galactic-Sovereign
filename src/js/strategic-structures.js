@@ -62,7 +62,7 @@ export const STRUCTURE_DEFS = {
   },
   supply_cache: {
     cost: SUPPLY_CACHE_COST,
-    tech: 'mil_field_hospital',
+    tech: 'mil_healer_hospital',
     perBody: true,
     cap: 2,
     requiresOutpost: false,

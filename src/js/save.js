@@ -1571,6 +1571,96 @@ const isElectron = () => typeof window !== 'undefined' && !!window.gameSave;
 const lsKey = (slot) => `gs-save-${slot}`;
 const TUTORIAL_CHECKPOINT_KEY = 'tutorial-checkpoint';
 const hostedRevisions = new Map();
+const LOCAL_STORAGE_FORMAT = 'gzip-base64-v1';
+const MAX_LOCAL_ENVELOPE_BYTES = 64 * 1024 * 1024;
+
+function utf8ByteLength(value) {
+  if (typeof TextEncoder === 'function') {
+    return new TextEncoder().encode(value).byteLength;
+  }
+  return new Blob([value]).size;
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function localStorageEnvelopeMetadata(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.storageFormat === LOCAL_STORAGE_FORMAT
+        && typeof parsed.payload === 'string') {
+      return {
+        compressed: true,
+        saveVersion: parsed.saveVersion ?? null,
+        savedAt: parsed.savedAt ?? null,
+        uncompressedBytes: parsed.uncompressedBytes ?? null,
+      };
+    }
+    return {
+      compressed: false,
+      saveVersion: parsed?.saveVersion ?? null,
+      savedAt: parsed?.savedAt ?? null,
+      uncompressedBytes: utf8ByteLength(raw),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function encodeLocalStorageEnvelope(envelopeJson) {
+  if (typeof CompressionStream !== 'function'
+      || typeof TextEncoder !== 'function'
+      || typeof btoa !== 'function') {
+    return envelopeJson;
+  }
+  const parsed = JSON.parse(envelopeJson);
+  const compressed = new Blob([envelopeJson])
+    .stream()
+    .pipeThrough(new CompressionStream('gzip'));
+  const bytes = new Uint8Array(await new Response(compressed).arrayBuffer());
+  return JSON.stringify({
+    storageFormat: LOCAL_STORAGE_FORMAT,
+    saveVersion: parsed.saveVersion,
+    savedAt: parsed.savedAt,
+    uncompressedBytes: new TextEncoder().encode(envelopeJson).byteLength,
+    payload: bytesToBase64(bytes),
+  });
+}
+
+async function decodeLocalStorageEnvelope(raw) {
+  const metadata = localStorageEnvelopeMetadata(raw);
+  if (!metadata?.compressed) return raw;
+  if (typeof DecompressionStream !== 'function' || typeof atob !== 'function') {
+    throw new Error('This browser cannot decompress the local save');
+  }
+  if (metadata.uncompressedBytes > MAX_LOCAL_ENVELOPE_BYTES) {
+    throw new Error('Compressed local save exceeds the safety limit');
+  }
+  const parsed = JSON.parse(raw);
+  const decompressed = new Blob([base64ToBytes(parsed.payload)])
+    .stream()
+    .pipeThrough(new DecompressionStream('gzip'));
+  const envelopeJson = await new Response(decompressed).text();
+  if (utf8ByteLength(envelopeJson) > MAX_LOCAL_ENVELOPE_BYTES) {
+    throw new Error('Decompressed local save exceeds the safety limit');
+  }
+  return envelopeJson;
+}
 
 async function useHostedSaves() {
   if (isElectron()) return false;
@@ -1635,10 +1725,37 @@ export async function writeSlot(slot, state, { keepalive = false } = {}) {
   }
   if (await useHostedSaves()) return writeHostedSlot(slot, envelopeJson, { keepalive });
   try {
-    localStorage.setItem(lsKey(slot), envelopeJson);
-    return { ok: true };
+    const storedEnvelope = await encodeLocalStorageEnvelope(envelopeJson);
+    localStorage.setItem(lsKey(slot), storedEnvelope);
+    return {
+      ok: true,
+      storageFormat: storedEnvelope === envelopeJson ? 'json' : LOCAL_STORAGE_FORMAT,
+      storedBytes: utf8ByteLength(storedEnvelope),
+      uncompressedBytes: utf8ByteLength(envelopeJson),
+    };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
+  }
+}
+
+export function writeLocalSlotSync(slot, state) {
+  if (!SLOTS.includes(slot)) return { ok: false, error: `Invalid slot: ${slot}` };
+  if (isElectron() || isHostedMode()) {
+    return { ok: false, skipped: true, error: 'Synchronous local save is unavailable' };
+  }
+  try {
+    const envelopeJson = serialize(state);
+    localStorage.setItem(lsKey(slot), envelopeJson);
+    return {
+      ok: true,
+      storageFormat: 'json',
+      storedBytes: utf8ByteLength(envelopeJson),
+      uncompressedBytes: utf8ByteLength(envelopeJson),
+    };
+  } catch (error) {
+    // setItem is atomic. A quota failure leaves the last periodic compressed
+    // autosave intact while the async unload flush below gets a chance to run.
+    return { ok: false, error: String(error?.message ?? error) };
   }
 }
 
@@ -1654,6 +1771,11 @@ export async function readSlot(slot) {
   } else {
     raw = localStorage.getItem(lsKey(slot));
     if (raw === null) return { ok: false, error: 'No save in this slot' };
+    try {
+      raw = await decodeLocalStorageEnvelope(raw);
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
   }
   return deserialize(raw);
 }
@@ -1677,14 +1799,15 @@ export async function listSlots() {
   for (const slot of SLOTS) {
     const raw = localStorage.getItem(lsKey(slot));
     if (raw === null) continue;
-    let savedAt = null;
-    let saveVersion = null;
-    try {
-      const parsed = JSON.parse(raw);
-      savedAt = parsed.savedAt ?? null;
-      saveVersion = parsed.saveVersion ?? null;
-    } catch { /* still listed */ }
-    saves.push({ slot, savedAt, saveVersion, sizeBytes: raw.length });
+    const metadata = localStorageEnvelopeMetadata(raw);
+    saves.push({
+      slot,
+      savedAt: metadata?.savedAt ?? null,
+      saveVersion: metadata?.saveVersion ?? null,
+      sizeBytes: raw.length,
+      uncompressedBytes: metadata?.uncompressedBytes ?? null,
+      storageFormat: metadata?.compressed ? LOCAL_STORAGE_FORMAT : 'json',
+    });
   }
   return { ok: true, saves };
 }
@@ -1696,8 +1819,12 @@ export async function writeTutorialCheckpoint(state) {
   }
   if (await useHostedSaves()) return writeHostedSlot(TUTORIAL_CHECKPOINT_KEY, envelopeJson);
   try {
-    localStorage.setItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`, envelopeJson);
-    return { ok: true };
+    const storedEnvelope = await encodeLocalStorageEnvelope(envelopeJson);
+    localStorage.setItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`, storedEnvelope);
+    return {
+      ok: true,
+      storageFormat: storedEnvelope === envelopeJson ? 'json' : LOCAL_STORAGE_FORMAT,
+    };
   } catch (error) {
     return { ok: false, error: String(error?.message ?? error) };
   }
@@ -1713,6 +1840,13 @@ export async function readTutorialCheckpoint() {
     return readHostedSlot(TUTORIAL_CHECKPOINT_KEY);
   } else {
     raw = localStorage.getItem(`gs-internal-${TUTORIAL_CHECKPOINT_KEY}`);
+    if (raw) {
+      try {
+        raw = await decodeLocalStorageEnvelope(raw);
+      } catch (error) {
+        return { ok: false, error: String(error?.message ?? error) };
+      }
+    }
   }
   if (!raw) return { ok: false, error: 'No tutorial checkpoint' };
   return deserialize(raw);
@@ -1744,8 +1878,11 @@ export function browserLocalSaveCandidates() {
   ];
   return keys.flatMap(({ slot, key }) => {
     const envelope = localStorage.getItem(key);
-    if (!envelope || !deserialize(envelope).ok) return [];
-    return [{ slot, key, envelope }];
+    if (!envelope) return [];
+    const metadata = localStorageEnvelopeMetadata(envelope);
+    if (!metadata) return [];
+    if (!metadata.compressed && !deserialize(envelope).ok) return [];
+    return [{ slot, key, envelope, ...metadata }];
   });
 }
 
@@ -1764,7 +1901,21 @@ export async function importBrowserLocalSaves() {
       continue;
     }
     hostedRevisions.set(candidate.slot, 0);
-    const written = await writeHostedSlot(candidate.slot, candidate.envelope);
+    let envelopeJson;
+    try {
+      envelopeJson = await decodeLocalStorageEnvelope(candidate.envelope);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not decompress ${candidate.slot}: ${String(error?.message ?? error)}`,
+        imported,
+        skipped,
+      };
+    }
+    if (!deserialize(envelopeJson).ok) {
+      return { ok: false, error: `Local save ${candidate.slot} is corrupt`, imported, skipped };
+    }
+    const written = await writeHostedSlot(candidate.slot, envelopeJson);
     if (!written.ok) return { ...written, imported, skipped };
     const verified = await readHostedSlot(candidate.slot);
     if (!verified.ok) return { ok: false, error: `Read-back failed for ${candidate.slot}`, imported, skipped };

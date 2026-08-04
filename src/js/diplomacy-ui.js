@@ -12,7 +12,6 @@ import {
   AGREEMENT_OPEN_BORDERS,
   AGREEMENT_TRADE,
   AGREEMENT_TRUCE,
-  CONTACT_CONTACTED,
   CONTACT_DETECTED,
   CONTACT_ESTABLISHED,
   CONTACT_UNKNOWN,
@@ -311,7 +310,10 @@ function resultReason(result) {
 }
 
 function safeAction(instance, action, successMessage, coopSpec = null) {
-  if (coopSpec?.command && typeof instance.options?.coopRun === 'function') {
+  const coopActive = typeof instance.options?.coopActive === 'function'
+    ? instance.options.coopActive()
+    : !!instance.options?.coopActive;
+  if (coopActive && coopSpec?.command && typeof instance.options?.coopRun === 'function') {
     instance.options.coopRun(coopSpec.command, coopSpec.payload ?? {}).then((result) => {
       if (!result?.ok) {
         notify(instance, resultReason(result), 'error');
@@ -464,14 +466,14 @@ function renderRelationshipCard(instance, faction, leverage) {
     contactButton.addEventListener('click', () => safeAction(
       instance,
       () => establishContact(instance.state, faction.id, {
-        stage: contact.stage === CONTACT_DETECTED ? CONTACT_CONTACTED : CONTACT_ESTABLISHED,
+        stage: CONTACT_ESTABLISHED,
         trigger: 'player_command',
       }),
-      () => `Communications advanced with ${faction.name}`,
+      () => `Direct communications established with ${faction.name}`,
       diplomacyCoop('establishContact', {
         factionId: faction.id,
         options: {
-          stage: contact.stage === CONTACT_DETECTED ? CONTACT_CONTACTED : CONTACT_ESTABLISHED,
+          stage: CONTACT_ESTABLISHED,
           trigger: 'player_command',
         },
       }),

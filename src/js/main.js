@@ -171,6 +171,7 @@ import {
 import { attachInput } from './input.js';
 import {
   writeSlot,
+  writeLocalSlotSync,
   readSlot,
   writeTutorialCheckpoint,
   readTutorialCheckpoint,
@@ -2400,6 +2401,7 @@ async function doLoadSlot(slot) {
 function doImportState(newState) {
   state = newState;
   ensureLogisticsState(state);
+  galaxyTargetStarId = null;
   followedConvoyId = null;
   selection = null;
   selectedScoutId = null;
@@ -2505,15 +2507,23 @@ async function doBeginTutorialGraduation() {
   if (!result.ok) return result;
   await markTutorialGraduated(Date.now());
   await clearTutorialCheckpoint();
-  state.paused = true;
-  return result;
+  const completed = completeTutorialGraduation(state, {
+    victoryType: 'sandbox',
+    aiDifficulty: state.aiDifficulty ?? 'normal',
+  });
+  if (!completed.ok) return completed;
+  state.paused = false;
+  await writeSlot('autosave', state);
+  window.dispatchEvent(new CustomEvent('gs-foundations-complete'));
+  toast('Sovereign Foundations complete — command granted', 'ok');
+  return { ok: true, complete: true, mode: state.campaign.mode };
 }
 
 function doCompleteTutorialGraduation(opts = {}) {
   const result = completeTutorialGraduation(state, opts);
   if (result.ok) {
     state.paused = false;
-    toast('Academy complete — sovereign command granted', 'ok');
+    toast('Sovereign Foundations complete — command granted', 'ok');
   }
   return result;
 }
@@ -2758,7 +2768,7 @@ function executeSolRecommendation(recommendation, { confirmed = false } = {}) {
 
 // --- UI + input wiring ---
 
-const { updateUi, closeSidePanel } = initUi({
+const { updateUi, closeSidePanel, getUiState } = initUi({
   getState: () => state,
   getSelection: () => selection,
   setSelection: (id) => { selection = id; },
@@ -2950,23 +2960,24 @@ function runDevAction(action, params = {}) {
   return result;
 }
 
-/** Keep the backtick Dev Panel on shipped CT builds until we lock it down. */
+/** Dev Panel: on in Vite DEV; production requires ?dev=1 (or stored opt-in). */
 function shouldEnableDevPanel() {
   if (import.meta.env.DEV) return true;
   try {
     const params = new URLSearchParams(window.location.search);
     const q = params.get('dev');
-    if (q === '0' || q === 'false') return false;
+    if (q === '0' || q === 'false') {
+      try { localStorage.setItem('gs-dev-panel', '0'); } catch { /* ignore */ }
+      return false;
+    }
     if (q === '1' || q === 'true') {
       try { localStorage.setItem('gs-dev-panel', '1'); } catch { /* ignore */ }
       return true;
     }
-    const stored = localStorage.getItem('gs-dev-panel');
-    if (stored === '0') return false;
-    if (stored === '1') return true;
-  } catch { /* ignore */ }
-  // Default ON for home testing builds; set localStorage gs-dev-panel=0 to disable.
-  return true;
+    return localStorage.getItem('gs-dev-panel') === '1';
+  } catch {
+    return false;
+  }
 }
 
 if (shouldEnableDevPanel()) {
@@ -3007,12 +3018,14 @@ if (window.gameSave?.onExitSaveRequest) {
     return writeSlot('autosave', state, { keepalive });
   };
   window.addEventListener('pagehide', () => {
+    writeLocalSlotSync('autosave', state);
     flushSoloAutosave({ keepalive: true });
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushSoloAutosave({ keepalive: true });
   });
   window.addEventListener('beforeunload', () => {
+    writeLocalSlotSync('autosave', state);
     flushSoloAutosave({ keepalive: true });
   });
   setHostedSaveFlushHandler(async () => {
@@ -3899,6 +3912,7 @@ window.render_game_to_text = () => {
     campaign: campaignSummary(state),
     missions: missionsSummary(state),
     tutorial: getTutorialState(state),
+    ui: getUiState?.() ?? null,
     strategicStructures: strategicStructuresSummary(state),
     bodyStructures: {
       empire: allBodyStructuresSummary(state),
@@ -4089,7 +4103,7 @@ window.__newGame = (seed = DEFAULT_SEED, opts = {}) => {
   seedAiFaction(state, state.homeGalaxyId);
   state.pirates = spawnPirateFleets(state);
   resetContextualTips();
-  galaxyTargetStarId = state.stronghold;
+  galaxyTargetStarId = null;
   helioclastTargetingMode = null;
   if (opts.victoryType) setVictoryType(state, opts.victoryType, opts.mode ?? 'sandbox');
   else if (opts.mode) setVictoryType(state, 'sandbox', opts.mode);
@@ -4255,7 +4269,7 @@ function doStartNewGame(opts = {}) {
       camera.zoom = CAMERA_DEFAULT_ZOOM;
       follow.enabled = true;
       const startToasts = {
-        tutorial: 'Tutorial started',
+        tutorial: 'Sovereign Foundations started',
         mission: 'Mission started',
         campaign: 'Campaign started',
         sandbox: 'Sandbox started',

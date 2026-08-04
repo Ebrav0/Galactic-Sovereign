@@ -1,99 +1,34 @@
-# Secure hosted runtime
+# Hosted runtime (gateway + co-op)
 
-The production runtime has two loopback-only Node processes:
+Two local Node processes:
 
 | Process | Bind | Purpose |
 |---|---|---|
-| Authenticated gateway | `127.0.0.1:8080` | Static build, accounts, solo saves, admin API, WebSocket relay |
+| Authenticated gateway | `127.0.0.1:8080` | Static build, accounts, solo saves API, admin API, WebSocket relay |
 | Persistent co-op host | `127.0.0.1:9090` | Continuously ticking server-authoritative universe |
 
-Only the gateway is published, through an outbound Cloudflare Tunnel at the canonical HTTPS hostname. The co-op port, databases, SSH, and hypervisor are never Cloudflare or router ingress targets.
+Solo save **envelopes** are stored in Supabase (Postgres metadata + private Storage) when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set. CT/SQLite keeps only users and sessions. Players never create Supabase accounts; the gateway proxies `/api/v1/saves` with the service role.
+
+Proxmox CT bootstrap, systemd units, and deploy scripts live in the **local-only** `deploy/` tree (gitignored). Do not commit them.
 
 ## Local development
 
 ```bash
 GS_COOP_RESET=1 npm run coop
-npm run dev
+npm run app
+# or: npm run dev  (Vite client against a running gateway/coop as needed)
 ```
 
-Direct co-op mode without a gateway is deliberately a local-development compatibility path. Production sets a shared systemd credential in both services; once present, the co-op host rejects every connection that did not come through the authenticated gateway.
+Copy `.env.example` to `.env` and set Supabase vars to exercise the save bridge. Without them, the gateway keeps using local SQLite `save_slots` (dev fallback).
 
-## Production deployment
+Direct co-op without a gateway is a local-development compatibility path. Production sets a shared gateway secret; once present, the co-op host rejects connections that did not come through the authenticated gateway.
 
-1. Copy `.deploy.local.env.example` to the ignored `.deploy.local.env` and fill in the private Proxmox route.
-2. Copy `deploy/gateway.env.example` to `/etc/galactic-sovereign/gateway.env`,
-   fill in the production origins and Cloudflare Access values, then set owner
-   `root`, group `galactic-sovereign`, and mode `0640`.
-3. Run `scripts/deploy-secure-home.sh <release-id>`.
-4. Create the first owner locally through the recovery console. Read the
-   temporary password without echoing it, pass it on standard input, and clear
-   the shell variable immediately:
+## Environment
 
-   ```bash
-   read -rsp 'Temporary owner password: ' gs_owner_password
-   printf '%s' "$gs_owner_password" | runuser -u galactic-sovereign -- env \
-     GS_DATA_DIR=/var/lib/galactic-sovereign/accounts \
-     node /opt/galactic-sovereign/current/server/admin-cli.mjs \
-     create-owner <username> '<display name>' --password-stdin
-   unset gs_owner_password
-   ```
+See [`.env.example`](../.env.example). Server-only secrets:
 
-   The owner must replace that temporary password on first login.
-
-5. Verify loopback health, direct Tailscale SSH as `gs-admin`, and rollback before disabling traditional SSH.
-6. Add the root-owned Cloudflare Tunnel credential, then run `sudo gsctl ensure-units` so gateway, coop, tunnel, health watch, and backup timers are enabled for boot.
-
-Routine administrators can run only the root-owned `sudo gsctl` wrapper. Valid commands are `deploy`, `rollback`, `ensure-units`, `status`, `logs`, `backup`, `restore-test`, `restore`, and `restart`.
-
-## Zero-touch recovery
-
-After a power loss or CT reboot, the full game stack is expected to return without SSH:
-
-1. Proxmox starts the CT (`onboot=1`).
-2. `tailscaled` returns Tailscale SSH for `gs-admin`.
-3. systemd starts `galactic-sovereign-coop`, `galactic-sovereign-gateway`, and `cloudflared-galactic-sovereign` (`Restart=always`).
-4. Backup / restic / restore-test / health timers resume (`Persistent=true`).
-5. `gs-health-watch` probes loopback health every minute and rate-limits automatic restarts.
-
-Verify:
-
-```bash
-sudo gsctl status
-curl -sf http://127.0.0.1:8080/healthz
-curl -sf http://127.0.0.1:9090/health
-curl -sf https://play.galacticsovereign.xyz/healthz
-```
-
-### Outage runbook
-
-| Symptom | Expected automatic behavior | Manual only if stuck |
-|---|---|---|
-| Host power blip | CT onboot → units + tunnel restart → public healthz green | `sudo gsctl ensure-units` |
-| Gateway/coop crash | `Restart=always` + health watch restart | `sudo gsctl restart` / `sudo gsctl logs …` |
-| Public site down, CT up | Health watch may bounce cloudflared; Cloudflare emails fire | Check tunnel token + `sudo gsctl logs tunnel` |
-| Disk / world corruption | Local hourly+daily snapshots; restic offsite | `sudo gsctl restore latest` (or a named snapshot) |
-| Total disk loss | Restore restic snapshot to a temp path, then `gsctl restore /path/to/snapshot-….tar.gz` | Also re-run bootstrap if the CT is rebuilt |
-
-While the CT or tunnel cannot answer, Cloudflare Custom Errors should serve [`deploy/cloudflare/offline.html`](../deploy/cloudflare/offline.html). Configure alerts and the downtime page using [`deploy/cloudflare/README.md`](../deploy/cloudflare/README.md).
-
-Disaster restore (rare; not needed for normal power blips):
-
-```bash
-sudo gsctl backup
-sudo gsctl restore latest
-sudo gsctl status
-```
-
-## Data and credentials
-
-- Releases: `/opt/galactic-sovereign/releases/<release-id>`
-- Atomic current link: `/opt/galactic-sovereign/current`
-- Accounts and saves: `/var/lib/galactic-sovereign/accounts`
-- Multiplayer world: `/var/lib/galactic-sovereign/multiplayer`
-- Local backups: `/var/lib/galactic-sovereign/backups`
-- Root-only credentials: `/etc/galactic-sovereign/credentials`
-
-Never add real deployment targets, tailnet addresses, CT identifiers, tunnel tokens, R2 credentials, Restic passwords, databases, worlds, or backups to this repository.
+- `SUPABASE_URL` — e.g. `https://xvtjlgjprvdznvhpbatk.supabase.co`
+- `SUPABASE_SERVICE_ROLE_KEY` — never expose to the client or commit
 
 ## Verification
 
@@ -104,4 +39,24 @@ npm run verify:hosted-ui
 npm run verify:world-migration
 ```
 
-The hosted authentication verifier covers save isolation, revision conflicts, account-derived multiplayer identity, and immediate disabled-session revocation. The browser verifier covers login, password replacement, local-save copying, owner administration, multiplayer, and reload recovery.
+The hosted authentication verifier covers save isolation, revision conflicts, account-derived multiplayer identity, and immediate disabled-session revocation.
+
+## Clean start / wipe solo saves
+
+```bash
+# Wipe local SQLite envelopes only (users kept):
+node scripts/wipe-ct-solo-saves.mjs
+
+# Or point at a data dir:
+GS_DATA_DIR=/var/lib/galactic-sovereign/accounts node scripts/wipe-ct-solo-saves.mjs
+```
+
+After enabling the Supabase bridge in production, wipe CT `save_slots` so large JSON no longer lives on disk. Recreate the owner with `npm run admin:create` if you also reset users.
+
+## CT disk prune (ops checklist)
+
+On the CT (via your local ignored `gsctl` / SSH), periodically:
+
+1. Keep only `current` + one prior release under `/opt/galactic-sovereign/releases/`.
+2. Cap `/var/lib/galactic-sovereign/backups` retention (restic/R2 remains offsite).
+3. After save cutover: `DELETE FROM save_slots;` then `VACUUM;` on `accounts.sqlite`, or run `wipe-ct-solo-saves.mjs`.

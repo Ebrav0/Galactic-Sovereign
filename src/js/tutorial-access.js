@@ -2,33 +2,15 @@
 // This module intentionally has no imports so gameplay modules can consult it
 // without creating dependency cycles.
 
-export const TUTORIAL_CURRICULUM_VERSION = 3;
+export const TUTORIAL_CURRICULUM_VERSION = 4;
 
 export const TUTORIAL_STEP_IDS = Object.freeze([
-  'command_overview',
-  'time_controls',
-  'movement',
-  'select_orbit_body',
-  'enter_orbit',
-  'exit_orbit',
-  'camera_pan',
-  'camera_zoom',
-  'camera_follow',
-  'galaxy_view',
-  'inspect_star',
-  'map_ping',
-  'system_return',
-  'resources_costs',
-  'build_outpost',
-  'review_logistics',
-  'build_shipyard',
-  'launch_scout',
-  'scout_frontier',
-  'assemble_escort',
-  'open_fleet',
-  'travel_to_battle',
-  'win_first_battle',
-  'capture_first_system',
+  'establish_stronghold',
+  'build_reach',
+  'survey_frontier',
+  'muster_escort',
+  'set_course',
+  'win_and_claim',
   'graduation',
 ]);
 
@@ -58,30 +40,30 @@ export function createTutorialCampaignState() {
 const STEP_INDEX = new Map(TUTORIAL_STEP_IDS.map((id, index) => [id, index]));
 
 export const TUTORIAL_FEATURE_UNLOCK_STEP = Object.freeze({
-  system_view: 'command_overview',
-  time_controls: 'time_controls',
-  save_load: 'command_overview',
-  campaign_help: 'command_overview',
-  outpost: 'build_outpost',
-  logistics: 'review_logistics',
-  shipyard: 'build_shipyard',
-  scout_queue: 'launch_scout',
-  galaxy_view: 'galaxy_view',
-  scout_travel: 'scout_frontier',
-  fleet: 'open_fleet',
-  combat_ship_queue: 'assemble_escort',
-  flagship_travel: 'travel_to_battle',
-  tactical_combat: 'win_first_battle',
-  capture: 'capture_first_system',
-  research: 'graduation',
-  dyson: 'graduation',
-  diplomacy: 'graduation',
-  operations: 'graduation',
-  wormholes: 'graduation',
-  hero_flagships: 'graduation',
-  superweapon: 'graduation',
-  missions: 'graduation',
-  custom_campaign: 'graduation',
+  system_view: 'establish_stronghold',
+  time_controls: 'establish_stronghold',
+  save_load: 'establish_stronghold',
+  campaign_help: 'establish_stronghold',
+  outpost: 'establish_stronghold',
+  logistics: 'establish_stronghold',
+  shipyard: 'establish_stronghold',
+  scout_queue: 'establish_stronghold',
+  galaxy_view: 'establish_stronghold',
+  scout_travel: 'establish_stronghold',
+  fleet: 'establish_stronghold',
+  combat_ship_queue: 'establish_stronghold',
+  flagship_travel: 'establish_stronghold',
+  tactical_combat: 'establish_stronghold',
+  capture: 'establish_stronghold',
+  research: 'establish_stronghold',
+  dyson: 'establish_stronghold',
+  diplomacy: 'establish_stronghold',
+  operations: 'establish_stronghold',
+  wormholes: 'establish_stronghold',
+  hero_flagships: 'establish_stronghold',
+  superweapon: 'establish_stronghold',
+  missions: 'establish_stronghold',
+  custom_campaign: 'establish_stronghold',
 });
 
 let sessionOverrideAll = false;
@@ -102,7 +84,8 @@ export function tutorialSessionOverrideEnabled() {
 
 /** Title-menu and campaign-mode unlock: graduated profile or active session bypass. */
 export function academyUnlocked(graduated = false) {
-  return sessionOverrideAll || graduated === true;
+  void graduated;
+  return true;
 }
 
 export function tutorialStepIndex(stepId) {
@@ -115,18 +98,10 @@ export function isTutorialActive(state) {
 }
 
 export function tutorialAccess(state, featureId, { bypass = false } = {}) {
-  if (bypass || sessionOverrideAll || !isTutorialActive(state)) {
-    return { allowed: true, reason: null, unlockStepId: null };
-  }
-  const unlockStepId = TUTORIAL_FEATURE_UNLOCK_STEP[featureId];
-  if (!unlockStepId) return { allowed: true, reason: null, unlockStepId: null };
-  const currentStepId = state.campaign.tutorial.currentStepId ?? TUTORIAL_STEP_IDS[0];
-  const allowed = tutorialStepIndex(currentStepId) >= tutorialStepIndex(unlockStepId);
-  return {
-    allowed,
-    unlockStepId,
-    reason: allowed ? null : `Locked during training — unlocks at ${unlockStepId.replaceAll('_', ' ')}`,
-  };
+  void state;
+  void featureId;
+  void bypass;
+  return { allowed: true, reason: null, unlockStepId: null };
 }
 
 export function requireTutorialAccess(state, featureId, opts = {}) {

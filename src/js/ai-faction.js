@@ -44,6 +44,8 @@ import {
   orderAiShipTravel,
   aiFleetPowerInSystem,
   assignAiShipFactionIds,
+  aiOccupiedSystemIds,
+  invalidateAiShipSystemIndex,
 } from './ai-ships.js';
 import { normalizeShipyardBuilds } from './empire-queue.js';
 import {
@@ -195,10 +197,23 @@ export function doctrineLabel(type) {
   return DOCTRINE_LABELS[type] ?? 'strategic campaign';
 }
 
+const hopDistanceCache = new WeakMap();
+
 function hopDistancesFrom(state, startId) {
   const graph = getGraph(state);
   const dist = new Map();
   if (!graph || !startId) return dist;
+  let graphCache = hopDistanceCache.get(graph);
+  if (!graphCache) {
+    graphCache = new Map();
+    hopDistanceCache.set(graph, graphCache);
+  }
+  const starCount = graph.stars?.length ?? 0;
+  const laneCount = graph.lanes?.length ?? 0;
+  const cached = graphCache.get(startId);
+  if (cached?.starCount === starCount && cached?.laneCount === laneCount) {
+    return cached.dist;
+  }
   const queue = [startId];
   dist.set(startId, 0);
   while (queue.length) {
@@ -209,6 +224,7 @@ function hopDistancesFrom(state, startId) {
       queue.push(next);
     }
   }
+  graphCache.set(startId, { starCount, laneCount, dist });
   return dist;
 }
 
@@ -478,6 +494,20 @@ function normalizeFaction(state, faction, index) {
   return faction;
 }
 
+// `ensureFactions` sits under many hot-path query helpers. A stable runtime
+// roster only needs the full ownership/technology reconciliation once; new
+// games, loaded states, and replaced/expanded rosters get a new cache entry.
+const ensuredFactionRosters = new WeakMap();
+
+function factionRosterIsEnsured(state) {
+  const cached = ensuredFactionRosters.get(state);
+  const factions = state.factions;
+  const list = factions?.list;
+  if (!cached || cached.factions !== factions || cached.list !== list) return false;
+  if (cached.members.length !== list.length) return false;
+  return cached.members.every((faction, index) => faction === list[index]);
+}
+
 export function listAiFactions(state) {
   ensureFactions(state);
   return state.factions.list;
@@ -560,6 +590,8 @@ export function assignAiFactionOwnership(state) {
 }
 
 export function ensureFactions(state) {
+  if (factionRosterIsEnsured(state)) return state.factions;
+
   if (!state.factions || typeof state.factions !== 'object') state.factions = {};
   let list = Array.isArray(state.factions.list) ? state.factions.list.filter(Boolean) : [];
   if (!list.length && state.factions.ai) list = [state.factions.ai];
@@ -577,6 +609,11 @@ export function ensureFactions(state) {
       backfillAiResearch(state, state.factions.list[i], elapsed);
     }
   }
+  ensuredFactionRosters.set(state, {
+    factions: state.factions,
+    list: state.factions.list,
+    members: [...state.factions.list],
+  });
   return state.factions;
 }
 
@@ -1421,11 +1458,7 @@ export function aiCaptureSystem(state, systemId, factionId = null) {
 }
 
 function aiCaptureCandidateSystemIds(state) {
-  const ids = new Set();
-  for (const ship of state.aiShips ?? []) {
-    if (ship.galaxyId === state.activeGalaxyId && ship.systemId && !ship.transit && ship.hp > 0) ids.add(ship.systemId);
-  }
-  return ids;
+  return aiOccupiedSystemIds(state);
 }
 
 export function forceAiCapture(state, systemId, factionId = null) {
@@ -1649,6 +1682,7 @@ function resolveAiRivalBattle(state, systemId) {
   const defenderPower = defenderShips.reduce((total, ship) => total + Math.max(0, ship.hp), 0);
   const attackerLosses = applyAbstractFleetDamage(attackerShips, Math.max(1, defenderPower * 0.06));
   const defenderLosses = applyAbstractFleetDamage(defenderShips, Math.max(1, attacker.power * 0.06));
+  invalidateAiShipSystemIndex(state);
   const attackerSurvives = attackerShips.some((ship) => ship.hp > 0);
   const defenderSurvives = defenderShips.some((ship) => ship.hp > 0);
   if (war && attackerSurvives !== defenderSurvives) {

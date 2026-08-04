@@ -5,6 +5,8 @@
 // diffed so a new solo feature cannot silently become "local only" simply
 // because somebody forgot to add it to a hand-written summary.
 
+import { invalidateAiShipSystemIndex } from './ai-ships.js';
+
 const OMIT_ROOT_KEYS = new Set([
   'time',
   'flagship',
@@ -140,6 +142,7 @@ export function applySharedStateDelta(state, operations) {
   if (!state || !Array.isArray(operations)) return 0;
   const FORBIDDEN = new Set(['__proto__', 'prototype', 'constructor']);
   let applied = 0;
+  let aiShipsChanged = false;
   for (const operation of operations) {
     const path = Array.isArray(operation?.path) ? operation.path : null;
     if (!path || path.length === 0) continue;
@@ -152,11 +155,14 @@ export function applySharedStateDelta(state, operations) {
       if (Array.isArray(parent) && typeof key === 'number') parent.splice(key, 1);
       else delete parent[key];
       applied += 1;
+      if (path[0] === 'aiShips') aiShipsChanged = true;
     } else if (operation.op === 'set') {
       parent[key] = jsonClone(operation.value);
       applied += 1;
+      if (path[0] === 'aiShips') aiShipsChanged = true;
     }
   }
+  if (aiShipsChanged) invalidateAiShipSystemIndex(state);
   return applied;
 }
 

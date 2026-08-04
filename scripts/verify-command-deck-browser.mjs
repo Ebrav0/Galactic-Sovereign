@@ -18,13 +18,16 @@ function assert(condition, message) {
 }
 
 async function enterSandbox(page) {
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     const profile = {
-      version: 2,
+      version: 3,
       tutorialGraduatedAt: Date.now(),
-      tutorialCurriculumVersion: 3,
+      tutorialCurriculumVersion: 4,
       briefingsSeen: [],
+      uiPreferences: {
+        pinnedMonitor: null,
+        pinnedMonitorCollapsed: false,
+      },
       tutorialProgress: {
         foundations: {
           status: 'waived',
@@ -43,12 +46,12 @@ async function enterSandbox(page) {
     };
     localStorage.setItem('gs-profile-v1', JSON.stringify(profile));
   });
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: /Single Player/ }).click();
-  await page.locator('#title-sandbox-btn').click();
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: /Single Player/ }).click({ force: true });
+  await page.locator('#title-sandbox-btn').click({ force: true });
   const start = page.locator('#new-game-start-btn');
   await start.waitFor({ state: 'visible', timeout: 10_000 });
-  await start.click();
+  await start.click({ force: true });
   await page.evaluate(() => window.__setWarpIntroElapsed?.(1_000_000));
   await page.waitForFunction(() => window.__getBootPhase?.() === 'playing', null, { timeout: 30_000 });
 }
@@ -86,6 +89,11 @@ async function runAtViewport(browser, size, label) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
+  page.on('console', (message) => {
+    if (message.type() === 'error' && message.text().includes('[render]')) {
+      errors.push(`console: ${message.text()}`);
+    }
+  });
   page.setDefaultTimeout(25_000);
 
   await enterSandbox(page);
@@ -107,6 +115,8 @@ async function runAtViewport(browser, size, label) {
 
   assert(shell.activity, `${label}: activity-rail missing`);
   assert(shell.canvas, `${label}: canvas missing`);
+  assert(!shell.inspector || shell.inspector.width <= 1,
+    `${label}: quiet map should have a closed inspector (${shell.inspector?.width ?? 'none'})`);
   assert(shell.deckContext === 'systemMap' || shell.deckContext === 'activity',
     `${label}: expected systemMap context, got ${shell.deckContext}`);
 
@@ -114,11 +124,6 @@ async function runAtViewport(browser, size, label) {
     assert(shell.activity.width >= DECK_LAYOUT.wide.activityRail[0] - 8
       && shell.activity.width <= DECK_LAYOUT.wide.activityRail[1] + 20,
       `${label}: activity rail width ${shell.activity.width}`);
-    if (shell.inspector) {
-      assert(shell.inspector.width >= DECK_LAYOUT.wide.inspector[0] - 20
-        && shell.inspector.width <= DECK_LAYOUT.wide.inspector[1] + 40,
-        `${label}: inspector width ${shell.inspector.width}`);
-    }
   } else {
     assert(shell.activity.width <= DECK_LAYOUT.compact.activityRailMax + 40,
       `${label}: compact activity rail should be icon-first (${shell.activity.width})`);
@@ -136,13 +141,17 @@ async function runAtViewport(browser, size, label) {
     const planet = sys?.bodies?.find((b) => b.type === 'habitable') || sys?.bodies?.[0];
     if (planet) window.__selectPlanet?.(planet.id);
   });
-  await page.waitForTimeout(300);
+  await page.waitForFunction(() => {
+    const inspector = document.getElementById('context-inspector');
+    return inspector && inspector.getBoundingClientRect().width >= 280;
+  }, null, { timeout: 3_000 });
   shell = await measureShell(page);
+  assert(shell.inspector && shell.inspector.width >= Math.min(300, DECK_LAYOUT.wide.inspector[0] - 20),
+    `${label}: selection should open contextual inspector (${shell.inspector?.width ?? 'none'})`);
   await page.screenshot({ path: path.join(outputDir, `${label}-02-body-or-system.png`) });
 
-  await page.locator('#tab-galaxy').click({ force: true });
-  await page.evaluate(() => window.__setView?.('galaxy'));
-  await page.waitForTimeout(300);
+  await page.locator('#command-map-btn').evaluate((button) => button.click());
+  await page.waitForFunction(() => window.__getView?.() === 'galaxy', null, { timeout: 3_000 });
   const overlaysOk = await page.evaluate(() => {
     const o = document.getElementById('overlay-threat');
     const wrap = document.getElementById('overlay-controls');
@@ -157,14 +166,45 @@ async function runAtViewport(browser, size, label) {
   `${label}: galaxy view not active`);
   await page.screenshot({ path: path.join(outputDir, `${label}-03-galaxy.png`) });
 
-  await page.locator('#tab-fleet').click({ force: true });
-  await page.waitForTimeout(300);
+  await page.locator('#tab-fleet').evaluate((button) => button.click());
+  try {
+    await page.waitForFunction(
+      () => document.getElementById('hud')?.dataset?.deckContext === 'activity',
+      null,
+      { timeout: 3_000 },
+    );
+  } catch {
+    throw new Error(`${label}: activity context did not render; errors=${errors.join('; ') || 'none'}`);
+  }
   shell = await measureShell(page);
-  assert(shell.deckContext === 'activity', `${label}: fleet should set activity context`);
+  const fleetUi = await page.evaluate(() => JSON.parse(window.render_game_to_text()).ui);
+  assert(shell.deckContext === 'activity',
+    `${label}: fleet should set activity context; shell=${JSON.stringify(shell)} ui=${JSON.stringify(fleetUi)}`);
   await page.screenshot({ path: path.join(outputDir, `${label}-04-fleet.png`) });
 
-  await page.locator('#tab-tech').click({ force: true });
-  await page.waitForTimeout(400);
+  await page.locator('[data-pin-monitor="fleet"]').evaluate((button) => button.click());
+  await page.locator('#command-queue-btn').evaluate((button) => button.click());
+  await page.waitForFunction(
+    () => {
+      const ui = JSON.parse(window.render_game_to_text()).ui;
+      const queue = document.getElementById('empire-queue-panel');
+      return ui.activeDeck === 'queue'
+        && queue
+        && !queue.classList.contains('hidden')
+        && document.getElementById('context-inspector')?.getBoundingClientRect().width >= 280;
+    },
+    null,
+    { timeout: 3_000 },
+  );
+  const pinnedState = await page.evaluate(() => JSON.parse(window.render_game_to_text()).ui);
+  assert(pinnedState.pinnedMonitor === 'fleet', `${label}: fleet pin did not persist in UI state`);
+  assert(pinnedState.activeDeck === 'queue', `${label}: queue should be the active deck`);
+  await page.screenshot({ path: path.join(outputDir, `${label}-04b-pinned-fleet-queue.png`) });
+
+  await page.locator('#command-launcher-btn').evaluate((button) => button.click());
+  await page.locator('#command-launcher').waitFor({ state: 'visible' });
+  await page.locator('#tab-tech').evaluate((button) => button.click());
+  await page.locator('#tech-screen').waitFor({ state: 'visible', timeout: 3_000 });
   const strip = await page.evaluate(({ minPx, minRatio }) => {
     const screen = document.getElementById('tech-screen');
     if (!screen || screen.classList.contains('hidden')) return { ok: false, reason: 'hidden' };
@@ -180,11 +220,16 @@ async function runAtViewport(browser, size, label) {
   assert(strip.ok, `${label}: tech slide-over map strip failed ${JSON.stringify(strip)}`);
   await page.screenshot({ path: path.join(outputDir, `${label}-05-tech.png`) });
 
-  await page.locator('#tab-diplomacy').click({ force: true });
-  await page.waitForTimeout(400);
+  await page.locator('#command-launcher-btn').evaluate((button) => button.click());
+  await page.locator('#command-launcher').waitFor({ state: 'visible', timeout: 3_000 });
+  await page.locator('#tab-diplomacy').evaluate((button) => button.click());
+  await page.locator('#diplomacy-screen').waitFor({ state: 'visible', timeout: 5_000 })
+    .catch(() => {
+      throw new Error(`${label}: diplomacy workspace did not render`);
+    });
   await page.screenshot({ path: path.join(outputDir, `${label}-06-diplomacy.png`) });
 
-  await page.locator('#tab-system').click({ force: true });
+  await page.locator('#tab-system').evaluate((button) => button.click());
   await page.waitForTimeout(200);
 
   assert(errors.length === 0, `${label}: page errors: ${errors.join('; ')}`);

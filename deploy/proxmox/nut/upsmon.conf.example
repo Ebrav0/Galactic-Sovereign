@@ -1,8 +1,0 @@
-MONITOR galactic-ups@localhost 1 monuser REPLACE_WITH_PASSWORD primary
-MINSUPPLIES 1
-SHUTDOWNCMD "/sbin/shutdown -h +0"
-NOTIFYCMD /root/galactic-sovereign-proxmox/ups-final-backup.sh
-NOTIFYFLAG LOWBATT SYSLOG+EXEC
-NOTIFYFLAG FSD SYSLOG+EXEC
-POWERDOWNFLAG /etc/killpower
-FINALDELAY 5

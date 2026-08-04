@@ -53,6 +53,7 @@ import {
   activeShellBonuses,
 } from './dyson.js';
 import { transitStatus, isFlagshipOrbiting, orbitTargetLabel } from './flagship.js';
+import { flagshipInSystem } from './flagship-presence.js';
 import { scoutEtaMs, findScout } from './scout.js';
 import { SLOTS, listSlots, readSlot, exportSaveFile, importSaveFile } from './save.js';
 import { getActiveGalaxy } from './galaxy-scope.js';
@@ -85,12 +86,11 @@ import {
   tutorialChapterStatus,
   tutorialGraduated,
   foundationsStatus,
+  uiPreferences,
+  updateUiPreferences,
   waiveFoundations,
 } from './profile.js';
-import {
-  academyUnlocked,
-  tutorialSessionOverrideEnabled,
-} from './tutorial-access.js';
+import { tutorialSessionOverrideEnabled } from './tutorial-access.js';
 import {
   advanceCoopTutorial,
   dismissCoopTutorial,
@@ -149,8 +149,13 @@ import {
   canUpgradeBodyStructure,
   upgradeBodyStructure,
 } from './body-structures.js';
-import { allTechNodes, derivedTier, techNode } from './tech-web.js';
-import { empireQueueHulls } from './tech-web.js';
+import {
+  allTechNodes,
+  derivedTier,
+  empireHullUnlockTech,
+  empireQueueHulls,
+  techNode,
+} from './tech-web.js';
 import { hullDisplayName, flagshipHullStage } from './hull.js';
 import { mountTechWebGraph, researchSnapshotKey, TECH_CLUSTERS, tierRoman } from './tech-web-ui.js';
 import {
@@ -1457,7 +1462,7 @@ function renderCampaignPanel(container, state, ctx = {}) {
   if (camp.mode === 'tutorial' || tutorial.status === 'complete') {
     const tracker = document.createElement('div');
     tracker.className = 'tutorial-curriculum';
-    tracker.innerHTML = `<strong>Academy</strong><span>${tutorial.status === 'complete'
+    tracker.innerHTML = `<strong>Sovereign Foundations</strong><span>${tutorial.status === 'complete'
       ? 'Graduated'
       : `Step ${Math.max(1, tutorial.stepIndex + 1)} of ${tutorial.totalSteps}`}</span>`;
     container.appendChild(tracker);
@@ -1487,9 +1492,9 @@ function renderCampaignPanel(container, state, ctx = {}) {
     const replay = document.createElement('button');
     replay.type = 'button';
     replay.className = 'btn btn--ghost btn--sm';
-    replay.textContent = 'Replay Tutorial (new academy save)';
+    replay.textContent = 'Replay Foundations (new guided save)';
     replay.onclick = () => {
-      if (window.confirm('Start a new Academy save? Unsaved progress in the current session will be replaced.')) {
+      if (window.confirm('Start a new Foundations save? Unsaved progress in the current session will be replaced.')) {
         ctx.doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', replay: true });
       }
     };
@@ -1613,6 +1618,7 @@ function renderDysonPanel(container, state, systemId) {
 }
 
 const LOG_LIMIT = 40;
+let unreadCommandAlerts = 0;
 
 function hullLabel(hull, state = null) {
   if (state) return hullDisplayName(state, hull);
@@ -1804,8 +1810,7 @@ function renderGroupedHullButtons(container, state) {
   let anyVisible = false;
 
   for (const [catId, cat] of Object.entries(SHIP_HULL_CATEGORIES)) {
-    const visibleHulls = cat.hulls.filter((h) => unlocked.has(h));
-    if (visibleHulls.length === 0) continue;
+    const visibleHulls = cat.hulls;
     anyVisible = true;
 
     const section = document.createElement('div');
@@ -1828,7 +1833,18 @@ function renderGroupedHullButtons(container, state) {
       btn.dataset.queueHull = hull;
       if (hull === 'corvette') btn.id = 'queue-corvette-btn';
       const cost = HULL_STATS[hull]?.cost ?? 0;
-      btn.textContent = `Queue ${hullLabel(hull, state)} (${cost} cr)`;
+      const isUnlocked = unlocked.has(hull);
+      const requiredTechId = empireHullUnlockTech(hull);
+      const requiredTech = requiredTechId ? techNode(requiredTechId) : null;
+      btn.disabled = !isUnlocked;
+      btn.setAttribute('aria-disabled', String(!isUnlocked));
+      if (requiredTechId) btn.dataset.requiredTech = requiredTechId;
+      btn.textContent = isUnlocked
+        ? `Queue ${hullLabel(hull, state)} (${cost} cr)`
+        : `🔒 ${hullLabel(hull, state)}`;
+      btn.title = isUnlocked
+        ? `Queue ${hullLabel(hull, state)} for ${cost} credits`
+        : `Locked — research ${requiredTech?.name ?? requiredTechId ?? 'the required technology'}`;
       btns.appendChild(btn);
     }
     section.appendChild(btns);
@@ -3375,6 +3391,18 @@ export function toast(message, kind = '') {
   el('toast-container').appendChild(t);
   setTimeout(() => t.remove(), 3600);
   appendLogEntry(message, kind);
+  unreadCommandAlerts += 1;
+  const badge = el('command-alert-count');
+  if (badge) {
+    badge.textContent = unreadCommandAlerts > 99 ? '99+' : String(unreadCommandAlerts);
+    badge.classList.remove('hidden');
+  }
+  if (kind === 'error') {
+    const critical = el('command-critical-alert');
+    const copy = el('command-critical-alert-message');
+    if (copy) copy.textContent = message;
+    critical?.classList.remove('hidden');
+  }
 }
 
 export function initUi(ctx) {
@@ -3716,14 +3744,14 @@ export function initUi(ctx) {
     const foundationAction = document.createElement('button');
     foundationAction.type = 'button';
     foundationAction.className = 'btn btn--ghost btn--sm';
-    foundationAction.textContent = getState().campaign?.mode === 'tutorial' ? 'Return to current lesson' : 'Replay in new Academy save';
+    foundationAction.textContent = getState().campaign?.mode === 'tutorial' ? 'Return to current milestone' : 'Replay in new Foundations save';
     foundationAction.onclick = () => {
       closeTutorialLibrary();
       if (getState().campaign?.mode === 'tutorial') {
         ctx.doFocusTutorial?.();
         return;
       }
-      if (window.confirm('Start a new Academy save? Unsaved progress in this session will be replaced.')) {
+      if (window.confirm('Start a new Foundations save? Unsaved progress in this session will be replaced.')) {
         ctx.doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox', replay: true });
       }
     };
@@ -3805,6 +3833,13 @@ export function initUi(ctx) {
       closeTutorialLibrary();
     }
   });
+  const closeFoundationsComplete = () => el('foundations-complete')?.classList.add('hidden');
+  el('foundations-complete-close')?.addEventListener('click', closeFoundationsComplete);
+  window.addEventListener('gs-foundations-complete', () => {
+    el('tutorial-coach')?.classList.add('hidden');
+    el('foundations-complete')?.classList.remove('hidden');
+    el('foundations-complete-close')?.focus({ preventScroll: true });
+  });
 
   function setTutorialLock(elementId, featureId, state) {
     const node = el(elementId);
@@ -3850,6 +3885,55 @@ export function initUi(ctx) {
   }
 
   let sidePanel = null;
+  let pinnedMonitor = uiPreferences().pinnedMonitor;
+  let pinnedMonitorCollapsed = uiPreferences().pinnedMonitorCollapsed;
+  let commsOpen = false;
+  let lastInspectorSelection = null;
+
+  function syncMonitorChrome() {
+    const monitorById = {
+      queue: el('empire-queue-panel'),
+      fleet: el('fleet-panel'),
+      comms: el('notification-log'),
+    };
+    for (const [id, node] of Object.entries(monitorById)) {
+      const pinned = pinnedMonitor === id;
+      node?.classList.toggle('pinned-monitor', pinned);
+      node?.classList.toggle('pinned-monitor--collapsed', pinned && pinnedMonitorCollapsed);
+      node?.querySelector('[data-pin-monitor]')?.setAttribute('aria-pressed', String(pinned));
+      const pin = node?.querySelector('[data-pin-monitor]');
+      if (pin) {
+        pin.textContent = pinned ? '◆' : '◇';
+        pin.title = pinned ? 'Unpin monitor' : `Pin ${id} monitor`;
+      }
+      const collapse = node?.querySelector('[data-collapse-monitor]');
+      if (collapse) {
+        collapse.classList.toggle('hidden', !pinned);
+        collapse.textContent = pinnedMonitorCollapsed ? '▴' : '▾';
+        collapse.setAttribute('aria-label', `${pinnedMonitorCollapsed ? 'Expand' : 'Collapse'} pinned ${id} monitor`);
+      }
+    }
+    el('hud')?.classList.toggle('hud--has-pinned-monitor', !!pinnedMonitor);
+  }
+
+  async function setPinnedMonitor(next) {
+    const requested = pinnedMonitor === next ? null : next;
+    pinnedMonitor = requested;
+    if (!requested) pinnedMonitorCollapsed = false;
+    syncMonitorChrome();
+    const result = await updateUiPreferences({
+      pinnedMonitor,
+      pinnedMonitorCollapsed,
+    });
+    if (!result.ok) toast(result.reason ?? 'Could not save UI preference', 'error');
+  }
+
+  loadProfile().then(() => {
+    const saved = uiPreferences();
+    pinnedMonitor = saved.pinnedMonitor;
+    pinnedMonitorCollapsed = saved.pinnedMonitorCollapsed;
+    syncMonitorChrome();
+  });
   const techUiState = {
     mounted: false,
     lastSnapshot: '',
@@ -3877,6 +3961,7 @@ export function initUi(ctx) {
   function closeSidePanel() {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = null;
+    lastInspectorSelection = getSelection?.() ?? null;
   }
 
   let hullBtnContainer = el('combat-hull-buttons');
@@ -3948,8 +4033,18 @@ export function initUi(ctx) {
     const stationed = (state.builderDrones ?? []).filter(
       (drone) => drone.systemId === dronePlannerSystemId && drone.status === 'idle',
     ).length;
+    const inbound = (state.builderDrones ?? []).filter(
+      (drone) => drone.targetSystemId === dronePlannerSystemId && drone.status === 'outbound',
+    ).length;
+    const dispatch = stationed > 0 || inbound > 0
+      ? null
+      : (canDeployBuilderDrone?.(dronePlannerSystemId) ?? null);
+    const dispatchCost = dispatch?.ok ? (dispatch.totalCost ?? 0) : 0;
     el('drone-planner-summary').innerHTML =
-      `<p class="panel-note">${stationed} idle construction drone${stationed === 1 ? '' : 's'} stationed here. Jobs run in parallel by available drone count.</p>`;
+      `<p class="panel-note">${stationed} idle construction drone${stationed === 1 ? '' : 's'} stationed here.`
+      + `${inbound ? ` ${inbound} inbound.` : ''}`
+      + `${dispatch?.ok ? ` An available drone will dispatch automatically for ${dispatchCost} credits.` : ''}`
+      + ` Jobs run in parallel by available drone count.</p>`;
 
     const catalogEl = el('drone-planner-catalog');
     clearChildren(catalogEl);
@@ -4073,21 +4168,64 @@ export function initUi(ctx) {
     }
 
     const invalid = (catalog.draftResults ?? []).some((result) => !result.ok);
-    el('drone-planner-total').textContent = `Reserved on confirmation: ${total} credits · ${dronePlannerDraft.length} job${dronePlannerDraft.length === 1 ? '' : 's'}`;
+    const grandTotal = total + dispatchCost;
+    el('drone-planner-total').textContent = `Reserved on confirmation: ${grandTotal} credits`
+      + `${dispatchCost ? ` (${total} construction + ${dispatchCost} dispatch)` : ''}`
+      + ` · ${dronePlannerDraft.length} job${dronePlannerDraft.length === 1 ? '' : 's'}`;
     const confirm = el('drone-planner-confirm');
-    confirm.disabled = dronePlannerDraft.length === 0 || invalid || state.credits < total;
-    confirm.title = invalid ? 'Resolve invalid jobs before confirming' : state.credits < total ? `Need ${total} credits` : '';
+    const noDrone = stationed === 0 && inbound === 0 && !dispatch?.ok;
+    confirm.disabled = dronePlannerDraft.length === 0 || invalid || noDrone || state.credits < grandTotal;
+    confirm.title = invalid
+      ? 'Resolve invalid jobs before confirming'
+      : noDrone
+        ? (dispatch?.reason ?? 'No idle construction drone available')
+        : state.credits < grandTotal ? `Need ${grandTotal} credits` : '';
   }
 
   function openDronePlanner(systemId, { auto = false } = {}) {
     if (!systemId || !systemById(getState(), systemId)) return;
     dronePlannerSystemId = systemId;
     dronePlannerDraft = [];
-    dronePlannerResumeOnClose = auto && !coopHooks.active();
+    dronePlannerResumeOnClose = !coopHooks.active() && !getState().paused;
     setLocalPresentationPause(true);
     el('drone-planner')?.classList.remove('hidden');
     el('drone-planner-backdrop')?.classList.remove('hidden');
     renderDronePlanner();
+  }
+
+  function appendRemoteConstructionPlannerButton(container, systemId) {
+    if (!container) return;
+    const state = getState();
+    if (flagshipInSystem(state, systemId)
+        || !isPlayerOwned(state, systemId)
+        || !state.research?.unlocked?.includes('eco_construction_drones')) return;
+    if (container.querySelector('[data-remote-construction-planner]')) return;
+
+    const stationed = (state.builderDrones ?? []).some(
+      (drone) => drone.status === 'idle' && drone.systemId === systemId,
+    );
+    const inbound = (state.builderDrones ?? []).some(
+      (drone) => drone.status === 'outbound' && drone.targetSystemId === systemId,
+    );
+    const deployCheck = canDeployBuilderDrone?.(systemId) ?? {
+      ok: false,
+      reason: 'No idle construction drone available',
+    };
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.remoteConstructionPlanner = 'true';
+    button.className = 'btn btn--primary btn--block btn--sm';
+    button.disabled = !stationed && !inbound && !deployCheck.ok;
+    button.textContent = stationed
+      ? 'Queue Remote Construction'
+      : inbound
+        ? 'Queue Jobs for Inbound Drone'
+        : `Queue & Dispatch Construction Drone (${deployCheck.totalCost ?? 40} cr)`;
+    button.title = button.disabled
+      ? deployCheck.reason
+      : 'Choose construction jobs; confirming automatically dispatches an available drone';
+    button.onclick = () => openDronePlanner(systemId, { auto: false });
+    container.prepend(button);
   }
 
   el('drone-planner-close')?.addEventListener('click', () => closeDronePlanner());
@@ -4104,14 +4242,22 @@ export function initUi(ctx) {
           renderDronePlanner();
           return result;
         }
-        toast(`${result.orders.length} construction job${result.orders.length === 1 ? '' : 's'} confirmed`, 'ok');
+        toast(
+          `${result.orders.length} construction job${result.orders.length === 1 ? '' : 's'} confirmed`
+            + (result.dispatched ? ' · drone dispatched' : ''),
+          'ok',
+        );
         closeDronePlanner();
         return result;
       },
       {
         onOk: (result) => {
           const n = result?.orders?.length ?? dronePlannerDraft.length;
-          toast(`${n} construction job${n === 1 ? '' : 's'} confirmed`, 'ok');
+          toast(
+            `${n} construction job${n === 1 ? '' : 's'} confirmed`
+              + (result?.dispatched ? ' · drone dispatched' : ''),
+            'ok',
+          );
           closeDronePlanner();
         },
       },
@@ -4244,7 +4390,7 @@ export function initUi(ctx) {
       meta.className = 'tutorial-coach__meta';
       const track = document.createElement('span');
       track.className = 'tutorial-coach__track';
-      track.textContent = current.module ?? (isCoopGuide ? 'Crew orientation' : 'Sovereign Academy');
+      track.textContent = current.module ?? (isCoopGuide ? 'Crew orientation' : 'Sovereign Foundations');
       const step = document.createElement('span');
       step.className = 'tutorial-coach__step';
       step.textContent = `${current.index + 1}/${tutorial.totalSteps}`;
@@ -4268,6 +4414,15 @@ export function initUi(ctx) {
       instruction.className = 'tutorial-coach__input';
       instruction.innerHTML = `<span>Input</span><kbd>${current.instruction || 'No action required'}</kbd>`;
 
+      const checklist = document.createElement('div');
+      checklist.className = 'tutorial-coach__checklist';
+      for (const item of current.progress ?? []) {
+        const row = document.createElement('div');
+        row.className = `tutorial-coach__check${item.complete ? ' is-complete' : ''}`;
+        row.innerHTML = `<span aria-hidden="true">${item.complete ? '✓' : '○'}</span><span>${item.label}</span>`;
+        checklist.appendChild(row);
+      }
+
       const why = document.createElement('p');
       why.className = 'tutorial-coach__detail';
       why.innerHTML = `<strong>Why:</strong> ${current.why ?? ''}`;
@@ -4279,6 +4434,12 @@ export function initUi(ctx) {
       const recovery = document.createElement('p');
       recovery.className = 'tutorial-coach__recovery';
       recovery.innerHTML = `<strong>Stuck?</strong> ${current.recovery ?? 'Use Show me to restore the lesson.'}`;
+
+      const details = document.createElement('details');
+      details.className = 'tutorial-coach__details';
+      const detailsSummary = document.createElement('summary');
+      detailsSummary.textContent = 'Why this matters · help';
+      details.append(detailsSummary, why, expected, recovery);
 
       const status = document.createElement('p');
       const objectiveConfirmed = isCoopGuide && tutorial.canContinue && current.requiredEvent;
@@ -4334,11 +4495,10 @@ export function initUi(ctx) {
         const finish = document.createElement('button');
         finish.type = 'button';
         finish.className = 'btn btn--primary btn--xs';
-        finish.textContent = 'Finish Foundations';
+        finish.textContent = 'Continue your reign';
         finish.onclick = async () => {
           const result = await doBeginTutorialGraduation?.();
-          if (result?.ok) openGraduationModal();
-          else toast(result?.reason ?? 'Could not graduate', 'error');
+          if (!result?.ok) toast(result?.reason ?? 'Could not complete Foundations', 'error');
         };
         actions.appendChild(finish);
       } else if (current.canConfirm) {
@@ -4388,18 +4548,9 @@ export function initUi(ctx) {
       } else if (!current.readyToFinish) {
         const skip = document.createElement('button');
         skip.type = 'button';
-        skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip tutorial-coach__hold';
-        skip.textContent = 'Hold to skip Foundations';
-        skip.setAttribute('aria-label', 'Hold for one and a half seconds to skip Foundations');
-        let holdFrame = null;
-        let holdStart = 0;
-        const cancelHold = () => {
-          if (holdFrame) cancelAnimationFrame(holdFrame);
-          holdFrame = null;
-          skip.style.setProperty('--hold-progress', '0%');
-        };
+        skip.className = 'btn btn--ghost btn--xs tutorial-coach__skip';
+        skip.textContent = 'End guidance';
         const completeSkip = async () => {
-          cancelHold();
           const saved = await waiveFoundations();
           if (!saved.ok) {
             toast(saved.reason ?? 'Could not save tutorial choice', 'error');
@@ -4418,33 +4569,16 @@ export function initUi(ctx) {
             result.ok ? 'info' : 'error',
           );
         };
-        const tickHold = () => {
-          const amount = Math.min(1, (performance.now() - holdStart) / 1500);
-          skip.style.setProperty('--hold-progress', `${Math.round(amount * 100)}%`);
-          if (amount >= 1) {
-            completeSkip();
-            return;
-          }
-          holdFrame = requestAnimationFrame(tickHold);
+        skip.onclick = () => {
+          if (!window.confirm('End Foundations guidance and continue with this same empire?')) return;
+          completeSkip();
         };
-        const beginHold = (event) => {
-          if (event.type === 'keydown' && !['Space', 'Enter'].includes(event.code)) return;
-          event.preventDefault();
-          if (holdFrame) return;
-          holdStart = performance.now();
-          holdFrame = requestAnimationFrame(tickHold);
-        };
-        skip.addEventListener('pointerdown', beginHold);
-        skip.addEventListener('pointerup', cancelHold);
-        skip.addEventListener('pointerleave', cancelHold);
-        skip.addEventListener('pointercancel', cancelHold);
-        skip.addEventListener('keydown', beginHold);
-        skip.addEventListener('keyup', cancelHold);
-        skip.addEventListener('blur', cancelHold);
         actions.appendChild(skip);
       }
 
-      coach.append(meta, progress, title, copy, instruction, why, expected, recovery, status, actions);
+      coach.append(meta, progress, title, copy);
+      if (checklist.children.length) coach.appendChild(checklist);
+      coach.append(instruction, details, status, actions);
     }
 
     if (anchor) {
@@ -4483,7 +4617,7 @@ export function initUi(ctx) {
       if (e.button !== 0) return;
       if (wireQueueCategoryToggle(e.currentTarget, e)) return;
       const btn = e.target.closest('[data-queue-hull]');
-      if (!btn) return;
+      if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
       e.preventDefault();
       queueHullFromUi(btn.dataset.queueHull);
     };
@@ -4620,6 +4754,85 @@ export function initUi(ctx) {
 
   el('pause-btn').addEventListener('click', doTogglePause);
   el('view-toggle-btn').addEventListener('click', doToggleView);
+  el('command-map-btn')?.addEventListener('click', () => {
+    closeSidePanel();
+    commsOpen = false;
+    el('notification-log')?.classList.remove('is-open');
+    doToggleView();
+  });
+  el('command-queue-btn')?.addEventListener('click', () => {
+    if (sidePanel === 'tech') resetTechUiState();
+    sidePanel = sidePanel === 'queue' ? null : 'queue';
+    commsOpen = false;
+    el('notification-log')?.classList.remove('is-open');
+  });
+  el('command-alerts-btn')?.addEventListener('click', () => {
+    closeSidePanel();
+    commsOpen = !commsOpen;
+    el('notification-log')?.classList.toggle('is-open', commsOpen || pinnedMonitor === 'comms');
+    if (commsOpen) {
+      unreadCommandAlerts = 0;
+      el('command-alert-count')?.classList.add('hidden');
+    }
+  });
+  el('command-critical-alert-open')?.addEventListener('click', () => {
+    closeSidePanel();
+    commsOpen = true;
+    unreadCommandAlerts = 0;
+    el('command-alert-count')?.classList.add('hidden');
+    el('notification-log')?.classList.add('is-open');
+    el('command-critical-alert')?.classList.add('hidden');
+  });
+  el('command-critical-alert-dismiss')?.addEventListener('click', () => {
+    el('command-critical-alert')?.classList.add('hidden');
+  });
+  el('command-launcher-btn')?.addEventListener('click', () => {
+    const launcher = el('command-launcher');
+    const open = launcher?.classList.contains('hidden');
+    launcher?.classList.toggle('hidden', !open);
+    el('command-launcher-btn')?.setAttribute('aria-expanded', String(open));
+  });
+  el('command-tutorials-btn')?.addEventListener('click', () => {
+    el('command-launcher')?.classList.add('hidden');
+    el('tutorial-library-btn')?.click();
+  });
+  el('command-audio-btn')?.addEventListener('click', () => {
+    el('command-launcher')?.classList.add('hidden');
+    el('audio-settings-btn')?.click();
+  });
+  document.querySelectorAll('[data-pin-monitor]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      setPinnedMonitor(button.dataset.pinMonitor);
+    });
+  });
+  document.querySelectorAll('[data-collapse-monitor]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      if (pinnedMonitor !== button.dataset.collapseMonitor) return;
+      pinnedMonitorCollapsed = !pinnedMonitorCollapsed;
+      syncMonitorChrome();
+      const result = await updateUiPreferences({ pinnedMonitorCollapsed });
+      if (!result.ok) toast(result.reason ?? 'Could not save UI preference', 'error');
+    });
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'Escape') return;
+    const launcher = el('command-launcher');
+    if (launcher && !launcher.classList.contains('hidden')) {
+      launcher.classList.add('hidden');
+      el('command-launcher-btn')?.setAttribute('aria-expanded', 'false');
+      el('command-launcher-btn')?.focus({ preventScroll: true });
+      return;
+    }
+    if (commsOpen && pinnedMonitor !== 'comms') {
+      commsOpen = false;
+      el('notification-log')?.classList.remove('is-open');
+      el('command-alerts-btn')?.focus({ preventScroll: true });
+      return;
+    }
+    if (sidePanel) closeSidePanel();
+  });
   el('flight-quick-controls')?.querySelectorAll('[data-flight-x]')?.forEach((button) => {
     const stop = () => doFlagshipInput?.(0, 0);
     button.addEventListener('pointerdown', (event) => {
@@ -4656,6 +4869,7 @@ export function initUi(ctx) {
   el('tab-dyson').addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = 'dyson';
+    el('command-launcher')?.classList.add('hidden');
     if (getView() !== 'system') doToggleView();
   });
   el('tab-tech').addEventListener('click', () => {
@@ -4664,6 +4878,7 @@ export function initUi(ctx) {
     } else {
       sidePanel = 'tech';
     }
+    el('command-launcher')?.classList.add('hidden');
   });
   el('tab-fleet')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
@@ -4672,23 +4887,28 @@ export function initUi(ctx) {
       if (coopHooks.active()) markCoopTutorialEvent('fleet_opened');
       else emitTutorialEvent?.('fleet_opened');
     }
+    el('command-launcher')?.classList.add('hidden');
   });
   el('tab-logistics')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'logistics' ? null : 'logistics';
     if (sidePanel === 'logistics') markTutorialLogisticsOpened(getState());
+    el('command-launcher')?.classList.add('hidden');
   });
   el('tab-diplomacy')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'diplomacy' ? null : 'diplomacy';
+    el('command-launcher')?.classList.add('hidden');
   });
   el('tab-operations')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'operations' ? null : 'operations';
+    el('command-launcher')?.classList.add('hidden');
   });
   el('tab-campaign')?.addEventListener('click', () => {
     if (sidePanel === 'tech') resetTechUiState();
     sidePanel = sidePanel === 'campaign' ? null : 'campaign';
+    el('command-launcher')?.classList.add('hidden');
   });
   for (const [id, key] of [['overlay-threat', 'threat'], ['overlay-sensor', 'sensor'], ['overlay-blockade', 'blockade']]) {
     el(id)?.addEventListener('click', () => {
@@ -4795,7 +5015,7 @@ export function initUi(ctx) {
     if (flow === 'graduation') start.textContent = 'Continue Campaign';
     else if (flow === 'missions' || mode === 'mission') start.textContent = 'Begin Mission';
     else if (flow === 'sandbox' || mode === 'sandbox') start.textContent = 'Begin Sandbox';
-    else if (mode === 'tutorial') start.textContent = 'Begin Tutorial';
+    else if (mode === 'tutorial') start.textContent = 'Begin Foundations';
     else start.textContent = 'Begin Campaign';
   }
 
@@ -4826,7 +5046,7 @@ export function initUi(ctx) {
         mode: 'sandbox',
       },
       graduation: {
-        title: 'Academy Graduation',
+        title: 'Sovereign Foundations Complete',
         note: 'Choose the victory condition and rival difficulty for this continuing empire.',
         mode: 'campaign',
       },
@@ -4869,30 +5089,22 @@ export function initUi(ctx) {
   }
 
   function refreshTitleTutorialAccess() {
-    const unlocked = academyUnlocked(tutorialGraduated());
     const modes = el('title-screen')?.querySelector('.title-screen__modes');
-    // Keep the mode grid visible so Solo Ops never looks empty; lock until Academy.
     modes?.classList.remove('hidden');
-    const titleLocks = [
-      ['title-custom-campaign-btn', 'Campaign'],
-      ['title-missions-btn', 'Missions'],
-      ['title-sandbox-btn', 'Sandbox'],
-    ];
-    for (const [id, label] of titleLocks) {
+    for (const id of ['title-custom-campaign-btn', 'title-missions-btn', 'title-sandbox-btn']) {
       const button = el(id);
       if (!button) continue;
-      button.disabled = !unlocked;
-      button.setAttribute('aria-disabled', String(!unlocked));
-      button.classList.toggle('tutorial-locked', !unlocked);
-      button.title = unlocked
-        ? `Open ${label}`
-        : `Complete the Academy tutorial to unlock ${label}`;
+      button.disabled = false;
+      button.setAttribute('aria-disabled', 'false');
+      button.classList.remove('tutorial-locked');
+      button.removeAttribute('title');
     }
     const newBtn = el('title-new-campaign-btn');
     if (newBtn) {
-      newBtn.textContent = unlocked ? 'New Game' : 'Begin Academy';
+      const guided = foundationsStatus() === 'not_started' || foundationsStatus() === 'in_progress';
+      newBtn.textContent = guided ? 'Begin Sovereign Foundations' : 'New Game';
       if (tutorialSessionOverrideEnabled() && !tutorialGraduated()) {
-        newBtn.title = 'Academy bypass active (Dev Panel)';
+        newBtn.title = 'Foundations bypass active (Dev Panel)';
       } else {
         newBtn.removeAttribute('title');
       }
@@ -4906,11 +5118,8 @@ export function initUi(ctx) {
   }
 
   async function openLockedMode(flow, label) {
+    void label;
     await loadProfile();
-    if (!academyUnlocked(tutorialGraduated())) {
-      toast(`Complete the Academy tutorial to unlock ${label}`, 'error');
-      return;
-    }
     openNewGameModal(flow);
   }
 
@@ -4966,8 +5175,9 @@ export function initUi(ctx) {
   el('title-new-campaign-btn')?.addEventListener('click', async () => {
     if (coopHooks.active?.()) leaveCoop?.({ returnToTitle: false, silent: true });
     await loadProfile();
-    if (academyUnlocked(tutorialGraduated())) openNewGameModal('custom');
-    else doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+    const guided = foundationsStatus() === 'not_started' || foundationsStatus() === 'in_progress';
+    if (guided) doStartNewGame?.({ mode: 'tutorial', victoryType: 'sandbox' });
+    else openNewGameModal('custom');
   });
   el('title-custom-campaign-btn')?.addEventListener('click', () => openLockedMode('campaign', 'Campaign'));
   el('title-missions-btn')?.addEventListener('click', () => openLockedMode('missions', 'Missions'));
@@ -5043,10 +5253,6 @@ export function initUi(ctx) {
       return;
     }
     if (mode === 'mission' || flow === 'missions') {
-      if (!academyUnlocked(tutorialGraduated())) {
-        toast('Complete the Academy tutorial to unlock Missions', 'error');
-        return;
-      }
       const missionId = el('new-game-mission')?.value || 'wormhole_race';
       doStartNewGame?.({ mode: 'mission', victoryType: 'sandbox', aiDifficulty, missionId });
       closeNewGameModal();
@@ -5312,6 +5518,7 @@ export function initUi(ctx) {
         renderDiplomacyCommandScreen(el('diplomacy-screen-body'), state, {
           getGalaxyTargetStar,
           toast,
+          coopActive: coopHooks.active,
           coopRun: coopHooks.run,
         });
       } else uiSnapshots.diplomacyPanel = diploSnap;
@@ -5371,7 +5578,7 @@ export function initUi(ctx) {
     }
 
     const fleetPanel = el('fleet-panel');
-    if (sidePanel === 'fleet') {
+    if (sidePanel === 'fleet' || pinnedMonitor === 'fleet') {
       fleetPanel?.classList.remove('hidden');
       const fleetSnap = fleetPanelStructureSnapshot(
         state,
@@ -5496,6 +5703,11 @@ export function initUi(ctx) {
     const viewHint = el('view-hint');
     if (viewHint) viewHint.textContent = contextualViewHint;
     updateTabBar(view, sidePanel);
+    el('command-map-btn')?.classList.toggle('tab--active', !sidePanel && !commsOpen);
+    el('command-queue-btn')?.classList.toggle('tab--active', sidePanel === 'queue');
+    el('command-alerts-btn')?.classList.toggle('tab--active', commsOpen);
+    const commandMapIcon = el('command-map-btn')?.querySelector('.tab__icon');
+    if (commandMapIcon) commandMapIcon.textContent = view === 'galaxy' ? '◎' : '◈';
     const overlays = { threat: true, sensor: false, blockade: true, ...(state.mapOverlays ?? {}) };
     el('overlay-controls')?.classList.toggle('hidden', view !== 'galaxy');
     el('overlay-threat')?.classList.toggle('overlay-toggle--active', overlays.threat);
@@ -5611,7 +5823,7 @@ export function initUi(ctx) {
         el('builder-drone-galaxy-body').innerHTML =
           `<p class="panel-note">Target: <strong>${droneTarget.name ?? droneTargetId}</strong></p>`
           + `<p class="panel-note">${isPlayerOwned(state, droneTargetId) ? 'Claimed system' : 'Unclaimed — drones cannot deploy here.'}</p>`
-          + `<p class="panel-note panel-note--muted">Idle drones: ${summary?.idle ?? 0}/${summary?.capacity ?? 0}. Deploy one, then open the system and choose its construction job.</p>`;
+          + `<p class="panel-note panel-note--muted">Idle drones: ${summary?.idle ?? 0}/${summary?.capacity ?? 0}. Open the claimed system and queue a construction plan; an available drone dispatches automatically.</p>`;
         const deployBtn = el('builder-drone-deploy-btn');
         deployBtn.disabled = !check.ok;
         deployBtn.textContent = `Deploy Builder Drone (${check.totalCost ?? 40} cr)`;
@@ -5626,14 +5838,11 @@ export function initUi(ctx) {
     const dysonPanel = el('dyson-panel');
     // Activity tabs own the inspector — park empire queue / intel / scouts so they
     // don't stack on top of (or shove behind) the focused panel.
-    const inspectorFocusPanel = (sidePanel === 'dyson' && view === 'system')
-      || sidePanel === 'fleet'
-      || sidePanel === 'logistics'
-      || sidePanel === 'tech'
-      || sidePanel === 'diplomacy'
-      || sidePanel === 'operations'
-      || sidePanel === 'campaign';
-    el('empire-queue-panel')?.classList.toggle('hidden', inspectorFocusPanel);
+    const inspectorFocusPanel = !!sidePanel;
+    const showEmpireQueue = sidePanel === 'queue' || pinnedMonitor === 'queue';
+    el('empire-queue-panel')?.classList.toggle('hidden', !showEmpireQueue);
+    el('notification-log')?.classList.toggle('is-open', commsOpen || pinnedMonitor === 'comms');
+    syncMonitorChrome();
 
     if (sidePanel === 'dyson' && view === 'system') {
       dysonPanel.classList.remove('hidden');
@@ -5688,26 +5897,14 @@ export function initUi(ctx) {
         : `${readyScouts}${transitScouts ? `+${transitScouts}` : ''}`;
 
     const scoutPanel = el('scout-panel');
-    if (state.scouts.length > 0 && sidePanel !== 'fleet' && !inspectorFocusPanel) {
-      scoutPanel.classList.remove('hidden');
-      const rosterSnap = scoutRosterStructureSnapshot(state, selectedScoutId);
-      if (rosterSnap !== uiSnapshots.scoutRoster) {
-        uiSnapshots.scoutRoster = rosterSnap;
-        renderScoutRoster(state, selectedScoutId);
-        updateSelectedScoutLine(state, selectedScoutId);
-      } else {
-        updateScoutRosterLabels(state, selectedScoutId);
-      }
-    } else {
-      scoutPanel.classList.add('hidden');
-      uiSnapshots.scoutRoster = '';
-    }
+    scoutPanel.classList.add('hidden');
+    uiSnapshots.scoutRoster = '';
 
     const intelPanel = el('intel-panel');
     const intelBody = el('intel-panel-body');
     const captureBody = el('capture-panel-body');
 
-    if (!inspectorFocusPanel && view === 'system' && hasIntel(state, viewedSystemId)) {
+    if (!inspectorFocusPanel && selection && view === 'system' && hasIntel(state, viewedSystemId)) {
       intelPanel.classList.remove('hidden');
       const sys = viewedSystem;
       const req = captureRequirement(state, viewedSystemId);
@@ -5735,7 +5932,7 @@ export function initUi(ctx) {
           captureBody.appendChild(warn);
         }
       }
-    } else if (!inspectorFocusPanel && view === 'system' && viewedSystem) {
+    } else if (!inspectorFocusPanel && selection && view === 'system' && viewedSystem) {
       intelPanel.classList.remove('hidden');
       const noIntelSnap = `no-intel:${viewedSystemId}`;
       if (noIntelSnap !== uiSnapshots.intelBody) {
@@ -5757,11 +5954,6 @@ export function initUi(ctx) {
     renderTutorialGuide(state, phase);
     applyTutorialLocks(state);
     renderFieldManualUnlocks(state, phase);
-    if (state.campaign?.tutorial?.graduationPending
-        && el('new-game-modal')?.dataset.flow !== 'graduation') {
-      openGraduationModal();
-    }
-
     const panel = el('build-panel');
     const wormholePanel = el('wormhole-panel');
 
@@ -5776,6 +5968,7 @@ export function initUi(ctx) {
         renderStarNodeBuildButtons(wormholeStructures, state, viewedSystemId, {
           filter: (row) => row.type === 'wormhole_observatory',
         });
+        appendRemoteConstructionPlannerButton(wormholeStructures, viewedSystemId);
       }
       const enterBtn = el('enter-wormhole-btn');
       const anchorBtn = el('build-anchor-btn');
@@ -5808,12 +6001,15 @@ export function initUi(ctx) {
     wormholePanel?.classList.add('hidden');
     uiSnapshots.wormholeBuildPanel = '';
 
-    if (view !== 'system' || sidePanel === 'dyson' || sidePanel === 'tech' || sidePanel === 'fleet'
-        || sidePanel === 'logistics') {
+    if (view !== 'system' || sidePanel) {
       panel.classList.add('hidden');
       return;
     }
-    if (!selection || selection === 'star') {
+    if (!selection) {
+      panel.classList.add('hidden');
+      return;
+    }
+    if (selection === 'star') {
       const showStarConstruction = isPlayerOwned(state, viewedSystemId);
       if (!showStarConstruction) {
         panel.classList.add('hidden');
@@ -5846,6 +6042,7 @@ export function initUi(ctx) {
         renderStarNodeBuildButtons(buildButtons, state, viewedSystemId, {
           filter: (row) => row.type !== 'wormhole_observatory',
         });
+        appendRemoteConstructionPlannerButton(buildButtons, viewedSystemId);
         el('build-panel-note').textContent = '';
       }
       return;
@@ -5865,6 +6062,7 @@ export function initUi(ctx) {
       uiSnapshots.buildPanel = buildPanelSnap;
       renderBuildBody(el('build-panel-body'), planet, state, viewedSystemId);
       renderStrategicBuildButtons(el('strategic-build-btns'), state, viewedSystemId, planet.id);
+      appendRemoteConstructionPlannerButton(el('strategic-build-btns'), viewedSystemId);
     }
 
     const outpostCheck = canBuildOutpost(state, viewedSystemId, planet.id);
@@ -5973,5 +6171,14 @@ export function initUi(ctx) {
     applyTutorialLocks(state);
   };
 
-  return { updateUi, closeSidePanel };
+  const getUiState = () => ({
+    activeDeck: sidePanel,
+    activeInspector: sidePanel ?? (getSelection?.() ? 'selection' : null),
+    selection: getSelection?.() ?? null,
+    pinnedMonitor,
+    pinnedMonitorCollapsed,
+    commsOpen,
+  });
+
+  return { updateUi, closeSidePanel, getUiState };
 }

@@ -156,8 +156,8 @@ import {
   logisticsLaneKey,
 } from './logistics.js';
 import {
+  drawConvoyFreighter,
   drawExportDepot,
-  drawNexusCargoShip,
   drawSpaceCompressionJump,
   exportDepotWorldPose,
 } from './trade-nexus-render.js';
@@ -648,6 +648,10 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
 
   const intel = hasIntel(state, systemId);
   const t = displayTime(state, accumulatorMs);
+  // Compute deterministic orbital anchors once per frame. Dyson supply ties
+  // and in-flight sails reuse this snapshot instead of rebuilding every
+  // launcher site for every launcher (quadratic in mature Dyson systems).
+  const orbitalStructures = intel ? structureSites(state, systemId, t) : [];
 
   beginStarPass('system');
 
@@ -657,7 +661,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
 
   const z = camera.zoom;
   const starScreen = worldToScreen(camera, 0, 0, canvas);
-  const commerceTraffic = commerceConvoyTraffic(state);
+  // System view can only paint arrivals at this origin and service traffic at
+  // this Nexus. Filter retained deliveries before projecting every reverse
+  // route across the galaxy.
+  const commerceTraffic = commerceConvoyTraffic(state, state.activeGalaxyId, {
+    originSystemId: systemId,
+    nexusSystemId: system.star.kind === 'trade_nexus' ? systemId : null,
+  });
   const nexusTraffic = system.star.kind === 'trade_nexus'
     ? commerceTraffic
       .filter((entry) => entry.nexus?.destinationSystemId === systemId)
@@ -713,7 +723,13 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       state.seed ?? 0,
     );
     const settled = settledInProgressDots(state, systemId, system.star.radius);
-    const inFlight = inFlightSailDots(state, systemId, system.star.radius, t);
+    const inFlight = inFlightSailDots(
+      state,
+      systemId,
+      system.star.radius,
+      t,
+      orbitalStructures,
+    );
     if (settled.length > 0 || inFlight.length > 0) {
       drawInProgressSailDots(ctx, starScreen.x, starScreen.y, z, settled, inFlight, t);
     }
@@ -888,6 +904,9 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
     : null;
   const depotPose = depotStructure ? exportDepotWorldPose(system, t) : null;
   if (depotPose) {
+    const depot = Object.values(state.logistics?.depots ?? {})
+      .find((entry) => entry.systemId === systemId && entry.structureId === depotStructure.id);
+    const depotCapacity = Math.max(1, depot?.capacity ?? 1);
     const depotScreen = worldToScreen(camera, depotPose.x, depotPose.y, canvas);
     drawOrbitRing(ctx, starScreen.x, starScreen.y, depotPose.orbitRadius * z, 0.08);
     drawExportDepot(
@@ -896,11 +915,14 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       depotScreen.y,
       Math.max(7, 16 * z),
       t,
-      { active: depotStructure.operational !== false },
+      {
+        active: depotStructure.operational !== false,
+        level: depot?.level ?? depotStructure.level ?? 1,
+        storedRatio: (depot?.storedCredits ?? 0) / depotCapacity,
+        assemblyBays: depot?.assemblyBays ?? 1,
+      },
     );
     if (z > 0.28) {
-      const depot = Object.values(state.logistics?.depots ?? {})
-        .find((entry) => entry.systemId === systemId && entry.structureId === depotStructure.id);
       labelText(
         ctx,
         `EXPORT CENTER L${depot?.level ?? depotStructure.level ?? 1} · ${Math.round(depot?.storedCredits ?? 0)} CR`,
@@ -936,9 +958,12 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       const stagingX = depotPose.x + Math.cos(depotPose.heading) * 46;
       const stagingY = depotPose.y + Math.sin(depotPose.heading) * 46;
       const shipScreen = worldToScreen(camera, stagingX, stagingY, canvas);
-      drawHullSpriteLite(ctx, shipScreen.x, shipScreen.y, 'freighter', Math.max(4, 8 * z), {
+      drawConvoyFreighter(ctx, shipScreen.x, shipScreen.y, depotPose.heading, Math.max(4, 8 * z), {
+        cargoRatio: convoy.creditLoad > 0 ? 1 : 0,
         heading: depotPose.heading,
         side: convoy.ownerId === 'player' ? 'player' : 'ai',
+        threat: convoy.threatScore ?? 0,
+        time: t,
       });
       drawSpaceCompressionJump(
         ctx,
@@ -962,7 +987,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       const wx = approachX + (stagingX - approachX) * progress;
       const wy = approachY + (stagingY - approachY) * progress;
       const shipScreen = worldToScreen(camera, wx, wy, canvas);
-      drawNexusCargoShip(
+      drawConvoyFreighter(
         ctx,
         shipScreen.x,
         shipScreen.y,
@@ -999,7 +1024,6 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
 
   const sortedPlanets = [...system.bodies].sort((a, b) => b.orbitRadius - a.orbitRadius);
   const surfaceSites = intel ? outpostSurfaceSites(state, systemId, t) : [];
-  const orbitalStructures = intel ? structureSites(state, systemId, t) : [];
 
   if (intel) {
     for (const st of orbitalStructures) {
@@ -1200,7 +1224,12 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
       }
     }
 
-    for (const line of foundryLauncherSupplyLines(state, systemId, t)) {
+    for (const line of foundryLauncherSupplyLines(
+      state,
+      systemId,
+      t,
+      orbitalStructures,
+    )) {
       const from = worldToScreen(camera, line.fromX, line.fromY, canvas);
       const to = worldToScreen(camera, line.toX, line.toY, canvas);
       drawFoundrySupplyTie(ctx, {
@@ -1222,7 +1251,7 @@ export function drawSystem(ctx, state, systemId, selection, accumulatorMs = 0, c
   }
 
   ctx.fillStyle = THEME.accentGold;
-  for (const sh of sailShuttlePositions(state, systemId, t)) {
+  for (const sh of sailShuttlePositions(state, systemId, t, orbitalStructures)) {
     const ss = worldToScreen(camera, sh.x, sh.y, canvas);
     ctx.shadowColor = THEME.accentGold;
     ctx.shadowBlur = 5;
@@ -2461,6 +2490,65 @@ function drawGalaxyReadout(ctx, state, galaxy, trafficCount, pirateFleetCount, c
   ctx.restore();
 }
 
+function drawGalaxySovereigntyField(ctx, state, galaxy, tier, piratePresence) {
+  const canvas = ctx.canvas;
+  const z = galaxyCamera.zoom;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const star of galaxy.stars) {
+    if (!hasIntel(state, star.id)) continue;
+    const system = systemById(state, star.id);
+    const player = isPlayerOwned(state, star.id);
+    const ai = isAiOwned(state, star.id);
+    const pirate = piratePresence.has(star.id);
+    const nexus = system?.star?.kind === 'trade_nexus';
+    if (!player && !ai && !pirate && !nexus) continue;
+    const s = worldToScreen(galaxyCamera, star.x, star.y, canvas);
+    const radius = Math.max(
+      tier === 'close' ? 34 : tier === 'mid' ? 22 : 12,
+      starNodeRadius(state, star.id) * z * (tier === 'close' ? 4.8 : 3.6),
+    );
+    if (!screenInView(s, canvas, radius)) continue;
+    const factionColor = ai
+      ? state.factions?.list?.find((entry) => entry.id === system?.factionId)?.color
+      : null;
+    const color = pirate
+      ? THEME.dangerHot
+      : nexus ? '#ffce7a'
+        : player ? THEME.accentGreen
+          : factionColor ?? '#c44dff';
+    const field = ctx.createRadialGradient(s.x, s.y, radius * 0.08, s.x, s.y, radius);
+    field.addColorStop(0, hexToRgba(color, tier === 'close' ? 0.16 : 0.12));
+    field.addColorStop(0.48, hexToRgba(color, 0.055));
+    field.addColorStop(1, hexToRgba(color, 0));
+    ctx.fillStyle = field;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Compact strategic glyph: sovereign systems read as hexagonal holdings,
+    // while markets remain circular and pirate space remains broken.
+    ctx.strokeStyle = hexToRgba(color, tier === 'far' ? 0.38 : 0.25);
+    ctx.lineWidth = Math.max(0.8, 1.15 * z);
+    ctx.setLineDash(pirate ? [3 * z, 3 * z] : []);
+    ctx.beginPath();
+    if (nexus) {
+      ctx.arc(s.x, s.y, radius * 0.5, 0, Math.PI * 2);
+    } else {
+      const sides = 6;
+      for (let i = 0; i <= sides; i++) {
+        const angle = -Math.PI / 2 + (i / sides) * Math.PI * 2;
+        const px = s.x + Math.cos(angle) * radius * 0.48;
+        const py = s.y + Math.sin(angle) * radius * 0.48;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
 export function drawGalaxy(
   ctx,
   state,
@@ -2607,6 +2695,8 @@ export function drawGalaxy(
     list.push(marker);
     fleetMarkersBySystem.set(marker.systemId, list);
   }
+
+  drawGalaxySovereigntyField(ctx, state, galaxy, tier, piratePresence);
 
   for (let i = 0; i < galaxy.lanes.length; i++) {
     const [aId, bId] = galaxy.lanes[i];
@@ -2761,7 +2851,16 @@ export function drawGalaxy(
   labelText(ctx, getActiveGalaxy(state)?.name ?? 'Galaxy', bhScreen.x, bhScreen.y - wormholeMonumentR - Math.max(15, 23 * z), Math.max(9, 11 * z), THEME.accentCyan);
   labelText(ctx, galaxy.blackHole.name, bhScreen.x, bhScreen.y + wormholeMonumentR + Math.max(11, 16 * z), Math.max(10, 12 * z), THEME.textSecondary);
   labelText(ctx, whLabel, bhScreen.x, bhScreen.y + wormholeMonumentR + Math.max(24, 31 * z), Math.max(8, 9.5 * z), wormholeLabelColor);
-  drawGalaxyReadout(ctx, state, galaxy, liveTraffic.length, pirateMarkers.length + pirateTransit.length, convoyTransit.length);
+  if (overlayState.sensor) {
+    drawGalaxyReadout(
+      ctx,
+      state,
+      galaxy,
+      liveTraffic.length,
+      pirateMarkers.length + pirateTransit.length,
+      convoyTransit.length,
+    );
+  }
 
   for (let starIdx = 0; starIdx < galaxy.stars.length; starIdx++) {
     const star = galaxy.stars[starIdx];
@@ -3210,18 +3309,15 @@ export function drawGalaxy(
     if (!screenInView(s, canvas, 50)) continue;
     const heading = Number.isFinite(status.angle) ? status.angle : 0;
     const returning = status.phase === 'return_jumping' || status.phase === 'returning';
-    if (returning) {
-      drawNexusCargoShip(ctx, s.x, s.y, heading, Math.max(3.5, 7.5 * z), {
-        cargoRatio: 0,
-        side: convoy.ownerId === 'player' ? 'player' : 'ai',
-        time: state.time,
-      });
-    } else {
-      drawHullSpriteLite(ctx, s.x, s.y, 'freighter', Math.max(3.5, 7.5 * z), {
-        heading,
-        side: convoy.ownerId === 'player' && status.phase !== 'paused' ? 'player' : 'ai',
-      });
-    }
+    drawConvoyFreighter(ctx, s.x, s.y, heading, Math.max(3.5, 7.5 * z), {
+      cargoRatio: returning ? 0 : (convoy.creditLoad > 0 ? 1 : 0),
+      heading,
+      side: convoy.ownerId === 'player' && status.phase !== 'paused' ? 'player' : 'ai',
+      threat: returning ? 0 : (convoy.threatScore ?? 0),
+      paused: status.phase === 'paused',
+      time: state.time,
+      compact: tier !== 'close',
+    });
     if (status.phase === 'jumping' || status.phase === 'return_jumping') {
       drawSpaceCompressionJump(ctx, s.x, s.y, heading, Math.max(10, 23 * z), status.progress);
     }
@@ -3237,8 +3333,8 @@ export function drawGalaxy(
         returning
           ? THEME.accentCyan
           : (convoy.threatScore ?? 0) >= 70
-            ? THEME.dangerHot
-            : (convoy.threatScore ?? 0) >= 35 ? '#ffc760' : '#76ddff',
+          ? THEME.dangerHot
+          : (convoy.threatScore ?? 0) >= 35 ? '#ffc760' : '#76ddff',
       );
     }
   }

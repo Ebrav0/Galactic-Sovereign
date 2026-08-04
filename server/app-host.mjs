@@ -10,6 +10,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { AuthStore, generateTemporaryPassword } from './auth-store.mjs';
 import { createAccessAuth } from './access-auth.mjs';
 import { createLoginNotifier } from './login-notifier.mjs';
+import { createSupabaseSaveStoreFromEnv } from './supabase-saves.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.GS_APP_PORT || 8080);
@@ -61,6 +62,75 @@ if ((process.env.NODE_ENV === 'production' || GATEWAY_SECRET) && !SESSION_PEPPER
   throw new Error('Missing session-pepper credential (required in production and whenever gateway secret is configured)');
 }
 const store = new AuthStore({ dataDir: DATA_DIR, sessionPepper: SESSION_PEPPER });
+const remoteSaves = createSupabaseSaveStoreFromEnv();
+if (remoteSaves) {
+  console.log('[gateway] Solo saves: Supabase bridge enabled');
+} else {
+  console.log('[gateway] Solo saves: local SQLite save_slots (set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to offload)');
+}
+
+async function listSavesFor(userId) {
+  if (remoteSaves) return remoteSaves.listSaves(userId);
+  return store.listSaves(userId);
+}
+
+async function getSaveFor(userId, slot) {
+  if (remoteSaves) return remoteSaves.getSave(userId, slot);
+  return store.getSave(userId, slot);
+}
+
+async function putSaveFor(userId, slot, envelope, expectedRevision) {
+  if (remoteSaves) {
+    const record = await remoteSaves.putSave(userId, slot, envelope, expectedRevision);
+    store.audit('save.written', {
+      actorUserId: String(userId),
+      targetUserId: String(userId),
+      detail: { slot, revision: record.revision, backend: 'supabase' },
+    });
+    return record;
+  }
+  return store.putSave(userId, slot, envelope, expectedRevision);
+}
+
+async function deleteSaveFor(userId, slot) {
+  if (remoteSaves) {
+    const deleted = await remoteSaves.deleteSave(userId, slot);
+    if (deleted) {
+      store.audit('save.deleted', {
+        actorUserId: String(userId),
+        targetUserId: String(userId),
+        detail: { slot, backend: 'supabase' },
+      });
+    }
+    return deleted;
+  }
+  return store.deleteSave(userId, slot);
+}
+
+async function listAllSaveSummariesFor(limit = 200) {
+  if (!remoteSaves) return store.listAllSaveSummaries({ limit });
+  const rows = await remoteSaves.listAllSaveSummaries({ limit });
+  return rows.map((row) => {
+    const user = store.getUserById(row.userId);
+    return {
+      ...row,
+      username: user?.username ?? row.userId,
+      displayName: user?.displayName ?? row.userId,
+    };
+  });
+}
+
+async function adminOverviewCountsFor() {
+  const counts = store.adminOverviewCounts();
+  if (remoteSaves) {
+    counts.soloSaves = await remoteSaves.countSaves();
+    counts.saveBackend = 'supabase';
+  } else {
+    counts.saveBackend = 'sqlite';
+  }
+  return counts;
+}
+
 const loginNotifier = createLoginNotifier({
   endpoint: process.env.GS_LOGIN_NOTIFICATION_URL,
   secret: LOGIN_NOTIFICATION_SECRET,
@@ -517,14 +587,14 @@ async function handleApi(req, res, url) {
   if (url.pathname === '/api/v1/saves' && req.method === 'GET') {
     const session = requireSession(req, res, { ready: true });
     if (!session) return;
-    return json(res, 200, { ok: true, saves: store.listSaves(session.user.id) });
+    return json(res, 200, { ok: true, saves: await listSavesFor(session.user.id) });
   }
 
   const saveMatch = /^\/api\/v1\/saves\/([^/]+)$/.exec(url.pathname);
   if (saveMatch && req.method === 'GET') {
     const session = requireSession(req, res, { ready: true });
     if (!session) return;
-    const record = store.getSave(session.user.id, decodeURIComponent(saveMatch[1]));
+    const record = await getSaveFor(session.user.id, decodeURIComponent(saveMatch[1]));
     if (!record) return json(res, 404, { ok: false, error: 'No save in this slot' });
     return json(res, 200, { ok: true, save: record }, { etag: `"rev-${record.revision}"` });
   }
@@ -534,7 +604,7 @@ async function handleApi(req, res, url) {
     const body = await readJson(req);
     const expectedRevision = parseExpectedRevision(req, body);
     try {
-      const record = store.putSave(session.user.id, decodeURIComponent(saveMatch[1]), body.envelope, expectedRevision);
+      const record = await putSaveFor(session.user.id, decodeURIComponent(saveMatch[1]), body.envelope, expectedRevision);
       return json(res, 200, { ok: true, save: { ...record, envelope: undefined } }, { etag: `"rev-${record.revision}"` });
     } catch (error) {
       if (error.code === 'REVISION_CONFLICT') {
@@ -546,7 +616,7 @@ async function handleApi(req, res, url) {
   if (saveMatch && req.method === 'DELETE') {
     const session = requireSession(req, res, { ready: true, csrf: true });
     if (!session) return;
-    const deleted = store.deleteSave(session.user.id, decodeURIComponent(saveMatch[1]));
+    const deleted = await deleteSaveFor(session.user.id, decodeURIComponent(saveMatch[1]));
     return json(res, 200, { ok: true, deleted });
   }
 
@@ -665,7 +735,7 @@ async function handleAdminApi(req, res, url, identity) {
       livePresenceCount: presenceSockets.size,
       livePlayerCount: livePlaySockets().length,
       releaseId: process.env.GS_RELEASE_ID || null,
-      ...store.adminOverviewCounts(),
+      ...(await adminOverviewCountsFor()),
     });
   }
   if (req.method === 'GET' && url.pathname === '/api/v1/admin/operations') {
@@ -728,7 +798,7 @@ async function handleAdminApi(req, res, url, identity) {
     const sessionId = sessionMatch[1];
     return adminMutation(req, res, identity, { action: 'session.revoke', resource: `session:${sessionId}` }, async (actor) => ({ payload: store.revokeSessionPrefix(sessionId, actor) }));
   }
-  if (req.method === 'GET' && url.pathname === '/api/v1/admin/saves') return json(res, 200, { ok: true, saves: store.listAllSaveSummaries({ limit: 200 }) });
+  if (req.method === 'GET' && url.pathname === '/api/v1/admin/saves') return json(res, 200, { ok: true, saves: await listAllSaveSummariesFor(200) });
   if (req.method === 'GET' && url.pathname === '/api/v1/admin/backups') return json(res, 200, { ok: true, backups: listBackupMetadata() });
   if (req.method === 'GET' && url.pathname === '/api/v1/admin/audit') return json(res, 200, { ok: true, events: store.listAuditEvents(Number(url.searchParams.get('limit') || 100)) });
   if (req.method === 'GET' && url.pathname === '/api/v1/admin/releases') {

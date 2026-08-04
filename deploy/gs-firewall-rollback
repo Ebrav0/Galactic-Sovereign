@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-state=/var/lib/galactic-sovereign/firewall
-[[ -f "$state/rollback.nft" ]] || exit 0
-nft flush ruleset
-nft -f "$state/rollback.nft"
-if [[ -f "$state/ufw-was-active" ]] && command -v ufw >/dev/null; then ufw --force enable; fi
-rm -f "$state/pending"
-echo 'Galactic Sovereign firewall automatically rolled back' >&2

@@ -10,6 +10,127 @@ Never delete prior entries.
 
 ---
 
+## Session 2026-08-04 — CT soft-hide + Supabase solo-save bridge
+
+**Task claimed:** Soft-hide home-server deploy ops from git, gate production Dev Panel, and offload solo save envelopes to Supabase while keeping CT username/password login.
+
+### Done
+- Stopped tracking `deploy/`, home deploy/package scripts, `.deploy.local.env.example`, and `.dockerignore`; extended `.gitignore` so they stay local-only.
+- Slimmed `server/README.md` to local/runtime + Supabase bridge docs; dropped dead Cloudflare Sites step from `npm run build`.
+- Production Dev Panel now defaults off (Vite DEV or explicit `?dev=1` / stored opt-in only).
+- Applied Supabase migration `gs_save_slots` + private Storage bucket `gs-save-envelopes` (service-role only; no player Supabase Auth).
+- Added `server/supabase-saves.mjs` and gateway proxy so `/api/v1/saves` stores gzipped envelopes remotely when `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` are set; SQLite remains the local fallback.
+- Clean-start wiped CT `save_slots` (0 rows); accounts dir ~128 KiB. Configured production `gateway.env` and hot-patched the live release so the gateway logs `Solo saves: Supabase bridge enabled`.
+- Pruned CT releases to current + one prior (`/opt/galactic-sovereign` ~1.8 GiB → ~151 MiB). Added `wipe:solo-saves`, `ops:ct-disk-prune`, and `verify:supabase-saves` scripts.
+
+### Verification
+- Local `npm run verify:hosted-auth` PASS (SQLite fallback path).
+- Supabase bridge smoke put/get/conflict/delete PASS.
+- `npm run verify:hosted-supabase-autosave` PASS: New Game `autosave` slot writes to Supabase, Continue reloads it, CT SQLite `save_slots` stays empty.
+- Public `https://play.galacticsovereign.xyz/healthz` healthy after gateway restart.
+
+---
+
+## Session 2026-07-28 — Strategic graphics and AI communications production release
+
+**Task claimed:** Deploy the validated graphics, diplomacy, command UI, technology locks, and remote-construction release.
+
+### Deployment
+- Built and deployed immutable public release `strategic-graphics-comms-20260729-r1` through the guarded Proxmox workflow.
+- Completed a 2.54 GB recovery snapshot, file-level backup, checksum verification, dependency audit with zero vulnerabilities, atomic release switch, service restart, and daily backup.
+- A concurrent release briefly displaced the validated release; after it finished cleanly, production was atomically returned to `strategic-graphics-comms-20260729-r1`.
+- The persisted Sites project remains unavailable (`project_not_found`), so no replacement Sites project was created.
+
+### Live verification
+- Active release resolves to `/opt/galactic-sovereign/releases/strategic-graphics-comms-20260729-r1`.
+- Gateway, co-op protocol v2, and Cloudflare tunnel services are active.
+- Public `https://play.galacticsovereign.xyz/healthz` returns healthy.
+- CDN-served JS and CSS match the validated local production artifacts byte-for-byte by SHA-256.
+
+---
+
+## Session 2026-07-28 — Automatic remote construction-drone dispatch
+
+**Task claimed:** Let players queue construction while viewing another owned system after Construction Drones is unlocked, automatically dispatching a drone.
+
+### Implemented
+- Remote construction plans now atomically validate the route and combined construction/dispatch cost, reserve the jobs, and dispatch an eligible idle drone.
+- The same authoritative planner action covers solo and co-op/server command paths.
+- Selected remote systems expose a direct Queue Remote Construction action, and the planner explains the automatic dispatch cost.
+
+### Verification
+- Focused core verification passes automatic dispatch, combined-cost reservation, insufficient-funds atomicity, inbound-drone queuing, transit, activation, and build completion.
+- Targeted Chromium acceptance passes the selected-remote-system action, planner dispatch copy and combined cost, confirmed queued order, outbound drone, pause restoration, and browser-console checks.
+- The required web-game client completed with valid title-state output; its capture and the targeted planner/dispatched-order captures were visually inspected.
+- Production build, syntax checks, and `git diff --check` pass. The existing large-chunk advisory remains non-blocking.
+
+---
+
+## Session 2026-07-28 — Technology lock audit
+
+**Task claimed:** Ensure anything not yet unlocked in the technology tree cannot be clicked or activated.
+
+### Implemented
+- Added a canonical hull-to-technology gate catalog for every non-baseline shipyard product.
+- Changed the ship-production catalog to show locked hulls as native disabled controls with a lock marker, required-tech tooltip, `aria-disabled`, and machine-readable `data-required-tech`.
+- Preserved command-layer unlock checks so direct and co-op-routed queue attempts remain rejected even if the UI is bypassed.
+- Expanded the focused unlock verifier across the complete production roster and every body/strategic building definition.
+- Corrected Supply Cache's stale `mil_field_hospital` alias to the live `mil_healer_hospital` node so researching Field Hospital actually unlocks the building.
+
+### Verification
+- `node scripts/verify-tech-locks.mjs` passes the focused gate contract across the full production roster and every body/strategic building definition.
+- `node scripts/verify-tech-lock-ui.mjs http://127.0.0.1:5174/` passes with all 16 advanced production hulls disabled before research, blocked at the delegated UI handler, and rejected at the command boundary; the same control enables and queues after its named tech is added.
+- Browser capture inspected at `output/tech-lock-audit/browser/production-tech-locks.png`; baseline hulls are actionable, locked hulls are visibly dimmed with lock markers, and the newly unlocked test hull is actionable.
+- The required standalone web-game client completed with valid title-state output; its capture was inspected and its only console item was the pre-existing missing-resource 404.
+- `npm run build`, syntax checks, and `git diff --check` pass. The existing large-chunk advisory remains non-blocking.
+
+---
+
+## Session 2026-07-28 — AI communications routing and strategic graphics
+
+**Task claimed:** Update convoy, export-center, and Galaxy-view graphics; decouple AI diplomacy from co-op.
+
+### Implemented
+- Diplomacy mutations now use the co-op command gateway only while a co-op session is actually active; solo AI communications mutate the local campaign.
+- “Open Communications” establishes a formal AI channel in one action and reports the named faction clearly.
+- Added a dedicated modular convoy-freighter silhouette with cargo pods, paired compression drives, and threat/paused-state lighting.
+- Rebuilt export centers as level-, storage-, and bay-aware orbital installations.
+- Added intel-safe sovereignty fields and distinct holding/market/pirate glyphs behind Galaxy-view systems.
+
+### Verification
+- `node scripts/verify_diplomacy_v3.mjs` passes with four AI factions, ten relationship pairs, revision 93, and save v26.
+- The full diplomacy browser journey passes local AI contact, trade, counteroffer, advanced deal, breach, war/peace, and council flows with zero application console errors.
+- `node scripts/verify-strategic-graphics-browser.mjs` passes with an authoritative export center and dispatched convoy fixture.
+- Visually inspected the close system capture and Galaxy capture: the L3 cargo wheel, docking prongs, pod-train convoy, compression wake, market marker, green player holdings, and purple hostile holdings are all visible and distinct.
+- The required web-game client completed and its title capture/text/error artifacts were inspected.
+- Full production build and syntax/diff checks pass; only the existing large-chunk advisory remains.
+
+---
+
+## Session 2026-07-28 — Optional command UI and Sovereign Foundations
+
+**Task claimed:** Implement the approved optional command UI and shortened Sovereign Foundations plan.
+
+### Done
+- Replaced the 25 mandatory control drills with six state-driven Foundations milestones ending in first conquest; control practice remains optional help.
+- Made all solo modes and advanced systems available before Foundations completion.
+- Changed completion and waiver to preserve the same empire and end guidance without a second campaign-setup gate.
+- Added a slim Map/Fleet/Queue/Alerts/Commands dock, an advanced command launcher, one active command surface, one persisted Queue/Fleet/Comms pin, and unread/critical alert routing.
+- Made the default context inspector close when there is no deliberate selection or command surface.
+- Made Galactic Intel opt-in through the Sensors overlay, limited transient notices to the newest message, and kept full notice history in Comms.
+- Extended deterministic text state with active deck/inspector and pinned-monitor state.
+
+### Verification
+- `npm run verify:command-deck` passes with the compact-shell contract.
+- `npm run verify:tutorial` passes all six milestones, unrestricted feature access, profile preferences, waiver, and Crew Foundations regression coverage.
+- Command-deck browser acceptance passes at 1440×960 and 1280×720, including quiet defaults, contextual selection, Fleet, Queue plus one pinned monitor, launcher, Technology, and Diplomacy.
+- The updated Foundations browser journey passes in Chromium, including optional Campaign/Missions/Sandbox access, milestone presentation, unrestricted advanced systems, help library, and same-empire End Guidance.
+- The standalone web-game client completed with valid title-state output; title and gameplay captures were inspected for density and placement.
+- `npx vite build` passes. The existing large-chunk advisory remains non-blocking.
+- Firefox cross-browser launch remains environment-blocked by the Playwright macOS plugin-container sandbox/SWGL failure before the page opens; no product failure was observed.
+
+---
+
 ## Session 2026-07-26 — Solo and multiplayer tutorial playtest readiness
 
 **Task claimed:** Make the single-player and multiplayer tutorials strong enough for a first-time friend playtest tonight.
@@ -2406,3 +2527,116 @@ Never delete prior entries.
 - Deployed immutable release `nests-ai-skirmish-703b962e2009-20260728-r1` through the guarded Proxmox/CT workflow.
 - Confirmed active release symlink `/opt/galactic-sovereign/releases/nests-ai-skirmish-703b962e2009-20260728-r1`, public `https://play.galacticsovereign.xyz/healthz` healthy, and live bundle `assets/main-BS6pZ90Y.js` containing `pirate_nest` / `PIRATE NEST` / `nestId`.
 
+---
+
+## Session 2026-07-28 — Physical credit logistics v2
+
+**Task claimed:** Replace passive/complex cargo economics with capped physical credits, local freighters, export centers, protected credit convoys, pirate interception, technology upgrades, and multiplayer parity.
+
+### Implemented
+- Removed idle outpost wallet income. Outposts now accumulate capped physical credits; researched onsite processing sends exactly 10% directly and leaves 90% in logistics.
+- Added automatic level-1 Export Centers, four center levels/capacities/bay counts, upgrade costs and tech gates, four unlockable convoy doctrines, and two multiplicative convoy-capacity technologies.
+- Added per-empire freighter pools with 50 free hulls, 120-credit local loads, automatic 50-credit/10-second overflow construction, and fill-ratio dispatch priority.
+- Added 90% automatic convoy dispatch, 25%-after-180-seconds partial dispatch, 30-second escort rally, real opt-in fleet/ship reserves, convoy-linked warships, route threat bands, and visible map/panel credit values.
+- Added physical pirate convoy pursuit/interdiction, stolen-credit carrier fleets, full recovery before banking, half recovery from destroyed nest vaults, and vault-strengthened pirate respawns.
+- Added AI-owned outpost/export/convoy operation with personality-based doctrines and normal AI ship escorts.
+- Added save v26 migration and host-authoritative co-op commands for center doctrine, center upgrade, and escort-reserve changes. Compact fleet sync now carries escort leases and pirate loot/intent.
+- Reworked Logistics Command and `render_game_to_text` around stored, in-transit, delivered, threatened, and recovered credits; player UI no longer lists AI centers/convoys.
+
+### Verification
+- `node scripts/verify-logistics-v2.mjs`: 17/17 checks pass.
+- `node output/verify_save_v12.mjs`: 11/11 migration/corruption checks pass, serialized as save v26.
+- Fresh isolated co-op host: `scripts/coop-gate.mjs` and `scripts/coop-smoke.mjs` pass with two clients, reconnect persistence, ACLs, shared state, and the 78-command registry.
+- JavaScript syntax checks pass for logistics, save, tech, main, UI, pirates, combat, protocol, rendering, and host actions.
+- `npx vite build` passes. The only warning is the pre-existing large main bundle.
+- Required web-game Playwright client completed and its screenshots/text state were inspected. A live sandbox visual pass confirmed one player center only, center L1→L2, standard→bulk doctrine, 500 credits in transit, convoy details, reserve-fleet controls, stored/throughput/freighter metrics, and the system-view Export Center label. The local Vite page still logs its existing hosted-session `/api/v1/session` 404; no logistics page or runtime errors appeared.
+
+### Production deployment
+- Isolated logistics-only commit `c336b5e` from the unrelated dirty command-deck/tutorial/admin worktree and pushed it to `origin/main`.
+- Deployed immutable release `logistics-v2-c336b5e9272b-20260728-r1` through the guarded Proxmox/CT workflow after a successful 2.49 GB snapshot, file-level world backup, checksum verification, and production dependency audit.
+- Confirmed the active release, matching local/remote bundle SHA-256, public and loopback health, active gateway/co-op/tunnel services, save v26 with logistics schema v2, logistics bundle markers, and host command markers.
+- The pre-existing admin-operations broker remained in its unrelated auto-restart state and was not changed as part of the logistics-only deployment.
+
+---
+
+## Session 2026-07-28 — Logistics controls interaction hotfix
+
+**Task claimed:** Fix Logistics tab buttons and drop-downs that could not be operated, then deploy only that hotfix.
+
+### Cause and fix
+- Reproduced the failure on the previously deployed commit: continuously changing physical-credit totals caused `updateUi` to replace the Logistics panel DOM between pointer-down and pointer-up, and while native selects were open.
+- Kept the mounted Logistics command DOM stable while the panel is hovered, focused, or receiving a pointer interaction; normal snapshot-driven refresh resumes when the interaction ends.
+- Added `scripts/verify-logistics-controls-browser.mjs`, covering stable live DOM identity plus reserve, doctrine, destination, pause, resume, upgrade, dispatch, reroute, and follow controls with real delayed pointer/select interactions.
+
+### Verification and production
+- Logistics unit checks pass 17/17; the new browser control regression passes; syntax, `git diff --check`, and isolated Vite production build pass.
+- Fresh isolated multiplayer verification passes `coop:gate` and two-client `coop:smoke`, preserving the 78-command host-authoritative registry.
+- Committed and pushed only `package.json`, `scripts/verify-logistics-controls-browser.mjs`, and `src/js/ui.js` as `43050ae`.
+- Deployed immutable release `logistics-controls-43050ae11daf-20260728-r1` after the guarded Proxmox snapshot, file backup, archive checksum, and zero-vulnerability production dependency audit.
+- Confirmed the live release symlink; active gateway, co-op, and Cloudflare tunnel; loopback/public health; persistent save v26/logistics v2; and exact local/production bundle SHA-256 `a971090523577daf39cfceb7fec6696a891b8d4ad0536d217258e254f4a217bd`.
+- All unrelated dirty-worktree edits remained outside the hotfix commit and deployment.
+
+---
+
+## Session 2026-07-28 — Trade Nexus system-view redesign
+
+**Task claimed:** Completely redesign the Trade Nexus in System view and show real cargo convoys docking at separate ports, unloading, departing empty, and returning to their origin systems.
+
+### Implemented so far
+- Rebuilt the Nexus as a six-port commerce citadel with independent customs berths, occupied-port lighting, approach corridors, cargo rings, a central exchange core, and live traffic readouts.
+- Completed convoys now derive a deterministic visual lifecycle from the host-authored delivery timestamp: approach, berth, unload visible cargo packets, depart empty, reverse their original route, and rematerialize at their originating Export Center.
+- Added the same empty return traffic to Galaxy view and exposed viewed-system traffic phase, port, progress, cargo ratio, origin, and destination through `render_game_to_text`.
+- Added focused deterministic lifecycle and browser acceptance verifiers, including two simultaneous ships assigned to different ports.
+
+### Verification
+- `scripts/verify-trade-nexus-traffic.mjs` passes every service/return phase, stable collision-free port assignment, cargo depletion, reverse-route motion, and origin arrival.
+- `scripts/verify-trade-nexus-browser.mjs` passes approach, two-port unloading, departure, empty Galaxy return, origin rematerialization, text-state parity, and browser-console checks.
+- Visually inspected all five 1440×960 captures in `output/trade-nexus-redesign/`; docking alignment, occupied-port lighting, transfer packets, empty return labeling, route direction, and Export Center arrival are clear.
+- Logistics v2 remains 17/17; save migration remains 11/11; the existing strategic-graphics browser regression passes against the current source.
+- Fresh multiplayer `coop:gate` and two-client `coop:smoke` pass with the 78-command registry, shared state, ACLs, movement, and reconnect persistence.
+- Required web-game client completed and its screenshot, text state, and sole expected local hosted-session 404 were inspected.
+- Full production and standalone builds, focused syntax checks, and `git diff --check` pass; only the existing large-chunk advisory remains.
+
+### Production deployment
+- Committed and pushed the focused eight-file redesign as `9f9fda6`, then detected that production had advanced to the newer `tech-locks-20260729-r1` release during preparation.
+- Rebased the Nexus integration onto that exact live source/bundle baseline in isolation, preserving identical SHA-256 hashes for `tech-web.js`, `ui.js`, and `ai-tech.js`.
+- Deployed immutable release `trade-nexus-9f9fda6-20260729-r1` after Proxmox snapshots, file-level world backups, archive checksum validation, and a zero-vulnerability production dependency audit.
+- Verified the active release, exact local/production source and player-bundle hashes, the public bundle marker, gateway/co-op/tunnel/health services, public and loopback health, and the persisted save v26 world with logistics v2 and 80 convoys.
+
+---
+
+## Session 2026-07-28 — Solo long-session FPS stabilization
+
+**Task claimed:** Diagnose and fix the global solo FPS collapse after roughly 15–20 minutes without rebuilding or moving the backend.
+
+### Cause and fix
+- Reproduced the reported boundary with a deterministic 20-minute solo stress run: average simulation cost rose from 2.45 ms/tick at minute 5 to 9.35 ms/tick at minute 20 as factions expanded, AI ships reached 112, and convoy traffic accumulated.
+- Confirmed this is client-side main-thread work, not CT/backend saturation. Solo simulation, AI, logistics, UI projection, and Canvas rendering run in the browser.
+- Made stable faction, AI-tech-root, persistent-system, logistics-normalization, hop-distance, and galaxy-route topology lookups idempotent/cached.
+- Removed full convoy ETA projection from combat presence checks and restricted pirate interdiction projections to convoys actually targeted by a transiting pirate fleet.
+- Stopped escort rally planning from recomputing routes for every eligible AI ship every 50 ms once enough escorts are selected; incomplete plans re-evaluate at a bounded 1 Hz.
+- Added `scripts/verify-solo-long-session-performance.mjs` to evolve a meaningful 20-minute state and enforce absolute and growth-rate budgets.
+
+### Verification
+- The 20-minute regression passes with 110 AI ships, 27 AI systems, 21 depots, and 85 retained convoys: minute-20 cost is 4.015 ms/tick versus the 9.35 ms/tick reproduced before the fix, with 1.68× first-to-late growth.
+- Browser acceptance reached an independent evolved 20-minute state with 119 AI ships, 22 AI systems, 15 depots, and 85 retained convoys with zero application console/page errors. System and Galaxy views remained live; Galaxy draw reported 56 visible stars, 126 lanes, 12 convoy markers, and 5.3 ms draw time.
+- Logistics v2 passes 17/17; diplomacy v3, world migration, system play, syntax checks, and `git diff --check` pass.
+- Tactical combat remains healthy at 0.84 ms/tick with 111 units, confirming the global slowdown was not a combat-only defect.
+- Full standalone, web, and admin production builds pass. The existing large-chunk advisory remains non-blocking.
+
+---
+
+## Session 2026-07-30 — Solo full-progression ETE performance
+
+**Task claimed:** Run a deterministic solo game from the beginning through all technology, three Dyson milestones, four full fleets, and the completed Helioclast; compare FPS across progression and repair every measured regression.
+
+### In progress
+- Created the explicit performance-repair goal and preserved the existing dirty worktree.
+- Confirmed the current technology web contains 136 nodes, the diplomacy milestone requires one completed Dyson, the superweapon milestone requires three, and the normal fleet auto-assignment size is eight ships.
+- Started a local Vite browser target for the deterministic Playwright/CDP progression run.
+
+### TODO
+- Add and run the source-controlled ETE performance harness.
+- Capture before-state checkpoint metrics and CPU/heap evidence.
+- Fix confirmed hot paths without reducing simulation fidelity or entity counts.
+- Re-run the complete journey plus focused regressions and visually inspect final captures.

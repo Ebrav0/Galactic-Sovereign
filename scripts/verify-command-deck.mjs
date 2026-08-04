@@ -96,10 +96,10 @@ const hud = {
 applyDeckChrome(hud, DECK_CONTEXTS.body, { view: 'system', systemName: 'Sol' });
 assert.equal(hud.dataset.deckContext, DECK_CONTEXTS.body);
 
-assert.ok(DECK_LAYOUT.wide.activityRail[0] >= 150);
-assert.ok(DECK_LAYOUT.wide.activityRail[1] <= 170);
-assert.ok(DECK_LAYOUT.wide.inspector[0] >= 280);
-assert.ok(DECK_LAYOUT.wide.inspector[1] <= 320);
+assert.ok(DECK_LAYOUT.wide.activityRail[0] >= 60);
+assert.ok(DECK_LAYOUT.wide.activityRail[1] <= 72);
+assert.ok(DECK_LAYOUT.wide.inspector[0] >= 320);
+assert.ok(DECK_LAYOUT.wide.inspector[1] <= 380);
 assert.equal(DECK_LAYOUT.compact.canvasHeightCollapsedMinRatio, 0.64);
 
 // Shell markers expected after migration
@@ -109,6 +109,13 @@ assert.doesNotMatch(html, /id="hud-footer"/, 'legacy hud-footer must stay remove
 assert.doesNotMatch(html, /id="action-deck"/, 'legacy action-deck must stay removed');
 assert.match(html, /id="deck-breadcrumb"/, 'deck-breadcrumb required');
 assert.match(html, /hud--command-deck|command-deck/, 'command deck shell class/marker required');
+assert.match(html, /id="command-map-btn"/, 'compact map command required');
+assert.match(html, /id="command-queue-btn"/, 'queue command required');
+assert.match(html, /id="command-alerts-btn"/, 'alerts command required');
+assert.match(html, /id="command-launcher-btn"/, 'all-commands launcher required');
+assert.match(html, /data-pin-monitor="queue"/, 'queue monitor must be pinnable');
+assert.match(html, /data-pin-monitor="fleet"/, 'fleet monitor must be pinnable');
+assert.match(html, /data-pin-monitor="comms"/, 'comms monitor must be pinnable');
 
 console.log('verify:command-deck passed', {
   staticCriticalIds: (fixture.staticCriticalIds || fixture.criticalIds).length,

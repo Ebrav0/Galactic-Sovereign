@@ -3,6 +3,7 @@ import { applyIncomeTick, incomePerSecond } from '../src/js/economy.js';
 import {
   activeConvoys,
   availableConvoyDoctrines,
+  commerceConvoyTraffic,
   convoyDoctrine,
   createDefaultLogisticsState,
   dispatchDepot,
@@ -11,8 +12,11 @@ import {
   interceptConvoy,
   logisticsSummary,
   registerExportDepot,
+  routeSecuritySummary,
   setConvoyReserve,
   setExportCenterDoctrine,
+  setLaneBlockade,
+  setSystemBlockade,
   tickDepotDispatch,
   tickLogistics,
   upgradeExportCenter,
@@ -126,6 +130,58 @@ const FAST = {
   minLegMs: 50,
   escortRallyMs: 30000,
 };
+
+// System rendering may scope retained commerce traffic before doing route
+// projection. The scoped result must equal the corresponding visible subset
+// of the unscoped Galaxy result.
+{
+  const state = fixture();
+  state.time = 10_000;
+  state.logistics.convoys.push(
+    {
+      id: 'delivered-a',
+      galaxyId: 'gal-0',
+      status: 'delivered',
+      fromSystemId: 'A',
+      destinationSystemId: 'N',
+      path: ['A', 'B', 'N'],
+      creditLoad: 400,
+      deliveredAt: 9_000,
+    },
+    {
+      id: 'delivered-b',
+      galaxyId: 'gal-0',
+      status: 'delivered',
+      fromSystemId: 'B',
+      destinationSystemId: 'N',
+      path: ['B', 'N'],
+      creditLoad: 300,
+      deliveredAt: 9_100,
+    },
+  );
+  const all = commerceConvoyTraffic(state);
+  const origin = commerceConvoyTraffic(state, 'gal-0', { originSystemId: 'A' });
+  const nexus = commerceConvoyTraffic(state, 'gal-0', { nexusSystemId: 'N' });
+  check('scoped commerce projection preserves the exact visible subsets',
+    JSON.stringify(origin) === JSON.stringify(all.filter(({ convoy }) => convoy.fromSystemId === 'A'))
+      && JSON.stringify(nexus) === JSON.stringify(all.filter(
+        ({ convoy }) => convoy.destinationSystemId === 'N',
+      )),
+    `all=${all.length} origin=${origin.length} nexus=${nexus.length}`);
+}
+
+// The dispatch loop passes its already-resolved config through a nested
+// options envelope. That reuse path must remain byte-for-byte equivalent to
+// the legacy direct-options shape accepted by the public security projection.
+{
+  const state = fixture();
+  const depot = registerExportDepot(state, 'gal-0', 'A', { storedCredits: 400 }).depot;
+  const direct = routeSecuritySummary(state, depot, { ...FAST, doctrineId: 'standard' });
+  const reused = routeSecuritySummary(state, depot, { config: FAST, doctrineId: 'standard' });
+  check('resolved dispatch config reuse preserves route-security output',
+    JSON.stringify(reused) === JSON.stringify(direct),
+    JSON.stringify({ direct, reused }));
+}
 
 // No research means no credits appear in the spendable wallet.
 {
@@ -287,6 +343,35 @@ const FAST = {
   check('new logistics mutations are registered as multiplayer world commands',
     ['setExportCenterDoctrine', 'upgradeExportCenter', 'setConvoyReserve']
       .every((command) => WORLD_MUTATING_COMMANDS.has(command)));
+}
+
+// Dispatch always observes the current route blockades.
+{
+  const state = fixture();
+  const depot = registerExportDepot(state, 'gal-0', 'A', { storedCredits: 400 }).depot;
+  tickDepotDispatch(state, { config: { ...FAST, escortRallyMs: 30000 } });
+  setLaneBlockade(state, 'gal-0', 'A', 'B', true);
+  tickDepotDispatch(state, { config: { ...FAST, escortRallyMs: 0 } });
+  const blockedCount = activeConvoys(state).length;
+  setLaneBlockade(state, 'gal-0', 'A', 'B', false);
+  tickDepotDispatch(state, { config: { ...FAST, escortRallyMs: 0 } });
+  check('lane blockade changes preserve fresh dispatch validation',
+    blockedCount === 0 && activeConvoys(state).length === 1,
+    `blocked=${blockedCount} reopened=${activeConvoys(state).length}`);
+}
+
+{
+  const state = fixture();
+  const depot = registerExportDepot(state, 'gal-0', 'A', { storedCredits: 400 }).depot;
+  tickDepotDispatch(state, { config: { ...FAST, escortRallyMs: 30000 } });
+  setSystemBlockade(state, 'gal-0', 'B', true);
+  tickDepotDispatch(state, { config: { ...FAST, escortRallyMs: 0 } });
+  const blockedCount = activeConvoys(state).length;
+  setSystemBlockade(state, 'gal-0', 'B', false);
+  tickDepotDispatch(state, { config: { ...FAST, escortRallyMs: 0 } });
+  check('system blockade changes preserve fresh dispatch validation',
+    blockedCount === 0 && activeConvoys(state).length === 1,
+    `blocked=${blockedCount} reopened=${activeConvoys(state).length}`);
 }
 
 // Stolen credits remain physical on pirate fleets; killing the carrier recovers them.

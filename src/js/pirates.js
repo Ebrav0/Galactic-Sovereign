@@ -597,6 +597,9 @@ export function tickPirateInterdictions(state, onInterdict) {
     if (status) pirateStatuses.push({ fleet, status });
   }
   if (!pirateStatuses.length) return events;
+  const targetedConvoyIds = new Set(
+    pirateStatuses.map(({ fleet }) => fleet.intent?.convoyId).filter(Boolean),
+  );
 
   for (const ship of state.playerShips ?? []) {
     if (ship.galaxyId !== state.activeGalaxyId || !ship.transit || ship.hp <= 0) continue;
@@ -625,6 +628,7 @@ export function tickPirateInterdictions(state, onInterdict) {
   }
 
   for (const convoy of activeConvoys(state)) {
+    if (!targetedConvoyIds.has(convoy.id)) continue;
     if (!['jumping', 'in_transit'].includes(convoy.status)) continue;
     const convoyStatus = convoyTransitStatus(state, convoy);
     if (!convoyStatus?.fromId || !convoyStatus?.toId) continue;

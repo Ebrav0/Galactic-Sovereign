@@ -23,7 +23,16 @@ import {
   hashSeed,
 } from './state.js';
 import { foundryAnchor } from './sail-shuttles.js';
-import { launcherSiteById } from './structure-sites.js';
+import { structureSites } from './structure-sites.js';
+
+function launcherSitesById(state, systemId, time, siteSnapshot = null) {
+  const sites = siteSnapshot ?? structureSites(state, systemId, time);
+  return new Map(
+    sites
+      .filter((site) => site.kind === 'launcher' && site.launcherId)
+      .map((site) => [site.launcherId, site]),
+  );
+}
 
 /** Closest point on foundry equatorial ring toward a target. */
 export function foundryRingClosestPoint(planetX, planetY, ringR, targetX, targetY) {
@@ -234,13 +243,19 @@ export function sailDotDrawStride(settledCount, zoom) {
   return Math.max(1, Math.ceil(settledCount / SAIL_DOT_DRAW_MAX));
 }
 
-export function foundryLauncherSupplyLines(state, systemId, time = state.time) {
+export function foundryLauncherSupplyLines(
+  state,
+  systemId,
+  time = state.time,
+  siteSnapshot = null,
+) {
   const fa = foundryAnchor(state, systemId, time);
   if (!fa.foundryId || !fa.planetId) return [];
 
   const launchers = dysonLaunchers(state, systemId);
+  const sitesById = launcherSitesById(state, systemId, time, siteSnapshot);
   return launchers.map((launcher) => {
-    const site = launcherSiteById(state, systemId, launcher.id, time);
+    const site = sitesById.get(launcher.id);
     if (!site) return null;
     const from = foundryRingClosestPoint(fa.planetX, fa.planetY, fa.ringR, site.dockX, site.dockY);
     return {
@@ -276,7 +291,13 @@ export function settledInProgressDots(state, systemId, starRadius) {
   return dots;
 }
 
-export function inFlightSailDots(state, systemId, starRadius, time = state.time) {
+export function inFlightSailDots(
+  state,
+  systemId,
+  starRadius,
+  time = state.time,
+  siteSnapshot = null,
+) {
   const system = systemById(state, systemId);
   if (!system || !hasFoundry(state, systemId)) return [];
 
@@ -284,11 +305,12 @@ export function inFlightSailDots(state, systemId, starRadius, time = state.time)
   if (dyson.completedShells >= SHELL_COUNT) return [];
 
   const launchers = dysonLaunchers(state, systemId);
+  const sitesById = launcherSitesById(state, systemId, time, siteSnapshot);
   const dots = [];
   const sailsNow = Math.floor(dyson.shellSails);
 
   for (const launcher of launchers) {
-    const site = launcherSiteById(state, systemId, launcher.id, time);
+    const site = sitesById.get(launcher.id);
     if (!site) continue;
 
     const age = time - (dyson.launcherLastFireAt?.[launcher.id] ?? -1e9);
@@ -339,17 +361,22 @@ export function dysonVisualSummary(state, systemId, starRadius, zoom) {
   const dyson = system ? ensureDyson(system) : null;
   const tier = dyson ? shellVisualTier(dyson.completedShells) : 0;
   const mesh = dyson ? buildGeodesicMesh(starRadius, dyson.completedShells, state.seed ?? 0) : null;
+  const siteSnapshot = dyson ? structureSites(state, systemId, state.time) : [];
   const settled = dyson ? settledInProgressDots(state, systemId, starRadius) : [];
-  const inFlight = dyson ? inFlightSailDots(state, systemId, starRadius) : [];
+  const inFlight = dyson
+    ? inFlightSailDots(state, systemId, starRadius, state.time, siteSnapshot)
+    : [];
   const supplyLines = hasFoundry(state, systemId)
-    ? foundryLauncherSupplyLines(state, systemId)
+    ? foundryLauncherSupplyLines(state, systemId, state.time, siteSnapshot)
     : [];
   const inProgressSettledDots = settled.length;
   const dotStride = sailDotDrawStride(inProgressSettledDots, zoom ?? 1);
 
   const firstLine = supplyLines[0] ?? null;
   const firstLauncher = firstLine
-    ? launcherSiteById(state, systemId, firstLine.launcherId)
+    ? siteSnapshot.find((site) => (
+      site.kind === 'launcher' && site.launcherId === firstLine.launcherId
+    ))
     : null;
 
   return {

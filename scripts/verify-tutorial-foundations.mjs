@@ -13,9 +13,11 @@ import {
   TUTORIAL_STEPS,
   getTutorialState,
   initTutorial,
-  recordTutorialEvent,
+  tryAdvanceTutorial,
 } from '../src/js/tutorial.js';
-import { TUTORIAL_STEP_IDS } from '../src/js/tutorial-access.js';
+import { TUTORIAL_STEP_IDS, tutorialAccess } from '../src/js/tutorial-access.js';
+import { gatherIntel } from '../src/js/intel.js';
+import { systemById } from '../src/js/state.js';
 import {
   beginCoopTutorial,
   COOP_FOUNDATIONS_COURSE,
@@ -27,12 +29,14 @@ import {
   foundationsStatus,
   setProfileForTest,
   tutorialGraduated,
+  uiPreferences,
+  updateUiPreferences,
   waiveFoundations,
 } from '../src/js/profile.js';
 
 const requiredCopy = ['module', 'title', 'objective', 'why', 'expected', 'recovery'];
 
-assert.equal(TUTORIAL_STEPS.length, 25, 'Foundations must remain a 25-step novice course');
+assert.equal(TUTORIAL_STEPS.length, 7, 'Foundations must contain six milestones plus completion');
 assert.deepEqual(TUTORIAL_STEPS.map((step) => step.id), [...TUTORIAL_STEP_IDS]);
 assert.equal(FOUNDATIONS_COURSE.mode, 'solo');
 for (const step of TUTORIAL_STEPS) {
@@ -61,41 +65,52 @@ assert.equal(isEditableControlTarget({ isContentEditable: true }), true);
 
 const state = createNewGame(80726);
 initTutorial(state);
-assert.equal(getTutorialState(state).step, 'command_overview');
-
-recordTutorialEvent(state, 'movement');
-assert.equal(getTutorialState(state).step, 'command_overview', 'out-of-order events must not skip lessons');
-
-const fundamentals = [
-  ['notification_opened', 'time_controls'],
-  ['pause_toggled', 'time_controls'],
-  ['pause_toggled', 'movement'],
-  ['movement', 'select_orbit_body'],
-  ['body_selected', 'enter_orbit'],
-  ['orbit_entered', 'exit_orbit'],
-  ['orbit_exited', 'camera_pan'],
-  ['camera_panned', 'camera_zoom'],
-  ['camera_zoomed', 'camera_follow'],
-  ['camera_followed', 'galaxy_view'],
-  ['galaxy_viewed', 'inspect_star'],
-  ['star_inspected', 'map_ping'],
-  ['map_pinged', 'system_return'],
-  ['stronghold_returned', 'resources_costs'],
-  ['resources_inspected', 'build_outpost'],
-];
-for (const [eventId, expectedStep] of fundamentals) {
-  recordTutorialEvent(state, eventId);
-  assert.equal(getTutorialState(state).step, expectedStep, `${eventId} should advance to ${expectedStep}`);
+assert.equal(getTutorialState(state).step, 'establish_stronghold');
+for (const featureId of ['research', 'diplomacy', 'operations', 'wormholes', 'superweapon', 'missions']) {
+  assert.equal(tutorialAccess(state, featureId).allowed, true, `${featureId} must stay available`);
 }
 
-{
-  const returnStep = TUTORIAL_STEPS.find((step) => step.id === 'system_return');
-  assert.ok(returnStep, 'system_return step missing');
-  assert.equal(returnStep.controlActionId, undefined, 'system_return must not imply M alone completes the lesson');
-  assert.match(returnStep.objective, /Stronghold/i);
-  assert.match(returnStep.input, /Return home|double-click/i);
-  assert.match(returnStep.why, /M alone/i);
-}
+const home = systemById(state, state.stronghold);
+const body = home.bodies.find((candidate) => candidate.type !== 'gas' && candidate.type !== 'barren');
+home.structures.push({ id: 'verify-outpost', type: 'outpost', bodyId: body.id });
+tryAdvanceTutorial(state);
+assert.equal(getTutorialState(state).step, 'build_reach');
+
+home.structures.push({ id: 'verify-shipyard', type: 'shipyard', bodyId: body.id, builds: [] });
+state.scouts.push({
+  id: 'verify-scout',
+  galaxyId: state.activeGalaxyId,
+  systemId: state.stronghold,
+  hp: 1,
+  maxHp: 1,
+});
+tryAdvanceTutorial(state);
+assert.equal(getTutorialState(state).step, 'survey_frontier');
+
+const targetId = getTutorialState(state).targetSystemId;
+gatherIntel(state, targetId);
+tryAdvanceTutorial(state);
+assert.equal(getTutorialState(state).step, 'muster_escort');
+
+state.playerShips.push({
+  id: 'verify-corvette',
+  hull: 'corvette',
+  hp: 100,
+  maxHp: 100,
+  galaxyId: state.activeGalaxyId,
+  systemId: state.stronghold,
+});
+tryAdvanceTutorial(state);
+assert.equal(getTutorialState(state).step, 'set_course');
+
+state.campaign.tutorial.flags.battlePrepared = true;
+tryAdvanceTutorial(state);
+assert.equal(getTutorialState(state).step, 'win_and_claim');
+
+state.campaign.tutorial.flags.battleWon = true;
+systemById(state, targetId).owner = 'player';
+tryAdvanceTutorial(state);
+assert.equal(getTutorialState(state).step, 'graduation');
 await new Promise((resolve) => setTimeout(resolve, 0));
 
 setProfileForTest({ tutorialGraduatedAt: 1234 });
@@ -107,6 +122,13 @@ assert.equal(tutorialGraduated(), false);
 await waiveFoundations(5678);
 assert.equal(tutorialGraduated(), true);
 assert.equal(foundationsStatus(), 'waived');
+
+setProfileForTest({});
+assert.deepEqual(uiPreferences(), { pinnedMonitor: null, pinnedMonitorCollapsed: false });
+await updateUiPreferences({ pinnedMonitor: 'queue', pinnedMonitorCollapsed: true });
+assert.deepEqual(uiPreferences(), { pinnedMonitor: 'queue', pinnedMonitorCollapsed: true });
+const invalidMonitor = await updateUiPreferences({ pinnedMonitor: 'unknown' });
+assert.equal(invalidMonitor.ok, false);
 
 assert.equal(COOP_FOUNDATIONS_COURSE.mode, 'coop');
 assert(COOP_FOUNDATIONS_COURSE.steps.length >= 12);

@@ -739,6 +739,29 @@ export function shipyardSlots(state) {
   return techEffects(state).shipyardSlots;
 }
 
+const EMPIRE_HULL_UNLOCK_TECH = Object.freeze({
+  patrol_cutter: 'mil_patrol_cutter',
+  destroyer: 'mil_destroyer_unlock',
+  frigate: 'mil_frigate_unlock',
+  sensor_ship: 'mil_sensor_ship',
+  light_carrier: 'mil_light_carrier',
+  fleet_carrier: 'mil_fleet_carrier',
+  cruiser: 'mil_cruiser_unlock',
+  command_cruiser: 'mil_command_cruiser',
+  battleship: 'mil_battleship_unlock',
+  dreadnought: 'mil_dreadnought_unlock',
+  super_carrier: 'mil_super_carrier',
+  builder_ship: 'mil_builder_ship',
+  miner: 'eco_miner_hull',
+  light_hauler: 'trade_light_hauler',
+  bulk_freighter: 'trade_bulk_freighter',
+  armored_convoy: 'trade_armored_convoy',
+});
+
+export function empireHullUnlockTech(hull) {
+  return EMPIRE_HULL_UNLOCK_TECH[hull] ?? null;
+}
+
 export function empireQueueHulls(state) {
   const effects = techEffects(state);
   const hulls = ['scout', 'corvette', 'healer'];

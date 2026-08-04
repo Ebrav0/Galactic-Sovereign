@@ -73,10 +73,12 @@ function nodeResearchMs(node) {
 }
 
 function nodeSearchText(node) {
+  const cached = nodeSearchTextCache.get(node);
+  if (cached != null) return cached;
   const effects = Array.isArray(node?.effects) ? node.effects : [];
   const tags = Array.isArray(node?.tags) ? node.tags : [];
   const unlocks = Array.isArray(node?.unlocks) ? node.unlocks : [];
-  return [
+  const text = [
     node?.id,
     node?.name,
     node?.description,
@@ -87,6 +89,8 @@ function nodeSearchText(node) {
       try { return JSON.stringify(effect); } catch { return String(effect); }
     }),
   ].filter(Boolean).join(' ').toLowerCase();
+  if (node && typeof node === 'object') nodeSearchTextCache.set(node, text);
+  return text;
 }
 
 function stableHash(text) {
@@ -98,14 +102,112 @@ function stableHash(text) {
   return hash >>> 0;
 }
 
+let initialUnlockedTechIdCache = null;
+const nodeSearchTextCache = new WeakMap();
+const factionTechContextCache = new WeakMap();
+const normalizedAiResearchCache = new WeakMap();
+const EMPTY_AI_MILESTONES = Object.freeze({});
+
 function initialUnlockedTechIds() {
+  if (initialUnlockedTechIdCache) return initialUnlockedTechIdCache;
   const roots = Object.values(TECH_NODES)
     .filter((node) => nodePrereqs(node).length === 0)
     .filter((node) => nodeCost(node).credits === 0 && nodeCost(node).solarii === 0)
     .map((node) => node.id)
     .sort();
   if (TECH_NODES.eco_baseline && !roots.includes('eco_baseline')) roots.unshift('eco_baseline');
-  return roots.length ? roots : ['eco_baseline'];
+  initialUnlockedTechIdCache = Object.freeze(roots.length ? roots : ['eco_baseline']);
+  return initialUnlockedTechIdCache;
+}
+
+function arrayMatchesSnapshot(values, snapshot) {
+  if (!Array.isArray(values) || values.length !== snapshot.length) return false;
+  for (let index = 0; index < values.length; index += 1) {
+    if (values[index] !== snapshot[index]) return false;
+  }
+  return true;
+}
+
+function cachedTechIdView(ids, signature) {
+  const view = [...ids];
+  Object.defineProperty(view, 'join', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value(separator) {
+      // techEffects() asks for exactly this signature on every lookup. The
+      // source collection is fully normalized before this immutable-by-
+      // convention view is published, so compute it only when research changes.
+      if (separator === '\u0000') return signature;
+      return Array.prototype.join.call(this, separator);
+    },
+  });
+  return Object.freeze(view);
+}
+
+function normalizeAiResearchCollections(research, roots) {
+  const cached = normalizedAiResearchCache.get(research);
+  if (cached
+    && cached.unlocked === research.unlocked
+    && cached.queue === research.queue
+    && cached.activeNodeId === research.activeNodeId
+    && arrayMatchesSnapshot(research.unlocked, cached.unlockedSnapshot)
+    && arrayMatchesSnapshot(research.queue, cached.queueSnapshot)) {
+    return cached;
+  }
+
+  if (!Array.isArray(research.unlocked)) research.unlocked = [];
+  if (!Array.isArray(research.queue)) research.queue = [];
+
+  // Normalize in place so callers and the technology-effect cache retain stable
+  // array identities once a faction has been migrated. Content snapshots make
+  // legacy or externally replaced values re-run filtering and deduplication.
+  const unlocked = research.unlocked;
+  const unlockedIds = new Set();
+  let unlockedWriteIndex = 0;
+  for (let readIndex = 0; readIndex < unlocked.length; readIndex += 1) {
+    const id = unlocked[readIndex];
+    if (!TECH_NODES[id] || unlockedIds.has(id)) continue;
+    unlockedIds.add(id);
+    if (unlocked[unlockedWriteIndex] !== id) unlocked[unlockedWriteIndex] = id;
+    unlockedWriteIndex += 1;
+  }
+  for (const root of roots) {
+    if (unlockedIds.has(root)) continue;
+    unlockedIds.add(root);
+    unlocked[unlockedWriteIndex] = root;
+    unlockedWriteIndex += 1;
+  }
+  if (unlocked.length !== unlockedWriteIndex) unlocked.length = unlockedWriteIndex;
+
+  const queue = research.queue;
+  const queuedIds = new Set();
+  let queueWriteIndex = 0;
+  for (let readIndex = 0; readIndex < queue.length; readIndex += 1) {
+    const item = queue[readIndex];
+    const id = typeof item === 'string' ? item : item?.nodeId;
+    if (!TECH_NODES[id]
+      || id === research.activeNodeId
+      || unlockedIds.has(id)
+      || queuedIds.has(id)) {
+      continue;
+    }
+    queuedIds.add(id);
+    if (queue[queueWriteIndex] !== id) queue[queueWriteIndex] = id;
+    queueWriteIndex += 1;
+  }
+  if (queue.length !== queueWriteIndex) queue.length = queueWriteIndex;
+  const record = {
+    unlocked,
+    queue,
+    activeNodeId: research.activeNodeId,
+    unlockedSnapshot: [...unlocked],
+    queueSnapshot: [...queue],
+    unlockedIds,
+    unlockedSignature: unlocked.join('\u0000'),
+  };
+  normalizedAiResearchCache.set(research, record);
+  return record;
 }
 
 export function normalizeAiDifficulty(valueOrState) {
@@ -142,31 +244,52 @@ export function ensureAiResearchState(faction) {
   research.durationMs = Number.isFinite(research.durationMs) && research.durationMs > 0
     ? research.durationMs
     : null;
-  research.unlocked = Array.isArray(research.unlocked) ? research.unlocked : [];
-  for (const root of roots) if (!research.unlocked.includes(root)) research.unlocked.push(root);
-  research.unlocked = [...new Set(research.unlocked.filter((id) => TECH_NODES[id]))];
-  research.queue = Array.isArray(research.queue)
-    ? research.queue.map((item) => typeof item === 'string' ? item : item?.nodeId)
-      .filter((id) => TECH_NODES[id])
-    : [];
-  research.queue = [...new Set(research.queue)]
-    .filter((id) => id !== research.activeNodeId && !research.unlocked.includes(id));
+  normalizeAiResearchCollections(research, roots);
   research.infrastructureSpeedMult = Math.max(0.1, finiteNonNegative(research.infrastructureSpeedMult, 1));
   research.queueSlotBonus = Math.max(0, Math.floor(finiteNonNegative(research.queueSlotBonus)));
   return research;
 }
 
 export function factionTechContext(faction) {
-  ensureAiResearchState(faction);
-  return {
-    research: faction.research,
-    milestones: faction.milestones ?? {},
-    solariiUnlocked: !!faction.solariiUnlocked,
-  };
+  const research = ensureAiResearchState(faction);
+  const normalized = normalizedAiResearchCache.get(research);
+  const milestones = faction.milestones && typeof faction.milestones === 'object'
+    ? faction.milestones
+    : EMPTY_AI_MILESTONES;
+  let cached = factionTechContextCache.get(faction);
+  if (!cached) {
+    const context = {
+      research: {
+        unlocked: cachedTechIdView(research.unlocked, normalized.unlockedSignature),
+      },
+      milestones,
+      solariiUnlocked: !!faction.solariiUnlocked,
+    };
+    cached = {
+      context,
+      sourceResearch: research,
+      unlockedSignature: normalized.unlockedSignature,
+    };
+    factionTechContextCache.set(faction, cached);
+    return context;
+  }
+  const { context } = cached;
+  if (cached.sourceResearch !== research
+    || cached.unlockedSignature !== normalized.unlockedSignature) {
+    context.research = {
+      unlocked: cachedTechIdView(research.unlocked, normalized.unlockedSignature),
+    };
+    cached.sourceResearch = research;
+    cached.unlockedSignature = normalized.unlockedSignature;
+  }
+  if (context.milestones !== milestones) context.milestones = milestones;
+  context.solariiUnlocked = !!faction.solariiUnlocked;
+  return context;
 }
 
 export function factionHasTech(faction, nodeId) {
-  return ensureAiResearchState(faction).unlocked.includes(nodeId);
+  const research = ensureAiResearchState(faction);
+  return normalizedAiResearchCache.get(research).unlockedIds.has(nodeId);
 }
 
 export function aiNodeMilestonesMet(faction, node) {
@@ -186,12 +309,14 @@ export function aiNodeMilestonesMet(faction, node) {
 export function aiNodePrerequisitesMet(faction, nodeOrId) {
   const node = typeof nodeOrId === 'string' ? TECH_NODES[nodeOrId] : nodeOrId;
   if (!node || !aiNodeMilestonesMet(faction, node)) return false;
-  const unlocked = new Set(ensureAiResearchState(faction).unlocked);
+  const research = ensureAiResearchState(faction);
+  const unlocked = normalizedAiResearchCache.get(research).unlockedIds;
   return nodePrereqs(node).every((id) => unlocked.has(id));
 }
 
 export function legalAiTechNodes(state, faction, opts = {}) {
   const research = ensureAiResearchState(faction);
+  const unlocked = normalizedAiResearchCache.get(research).unlockedIds;
   const excluded = new Set([
     ...research.unlocked,
     research.activeNodeId,
@@ -200,7 +325,8 @@ export function legalAiTechNodes(state, faction, opts = {}) {
   const affordable = opts.affordable !== false;
   return Object.values(TECH_NODES)
     .filter((node) => !excluded.has(node.id))
-    .filter((node) => aiNodePrerequisitesMet(faction, node))
+    .filter((node) => aiNodeMilestonesMet(faction, node)
+      && nodePrereqs(node).every((id) => unlocked.has(id)))
     .filter((node) => {
       if (!affordable) return true;
       const cost = nodeCost(node);
@@ -210,7 +336,7 @@ export function legalAiTechNodes(state, faction, opts = {}) {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function scoreAiTechNode(faction, node, tickIndex = 0) {
+function scoreAiTechNodeWithUnlockedCount(faction, node, tickIndex, unlockedCount) {
   const personality = AI_PERSONALITY_PRIORITIES[faction.personality]
     ?? AI_PERSONALITY_PRIORITIES.expansionist;
   const clusterScore = personality.clusters[node.cluster] ?? 1;
@@ -221,7 +347,6 @@ export function scoreAiTechNode(faction, node, tickIndex = 0) {
   );
   // Personality is a preference, never an exclusion. The small completion
   // pressure means every reachable cross-link is eventually selected.
-  const unlockedCount = ensureAiResearchState(faction).unlocked.length;
   const completionPressure = Math.min(8, Math.floor(unlockedCount / 12));
   const cost = nodeCost(node);
   const affordabilityBias = cost.solarii === 0 ? 1 : 0;
@@ -230,24 +355,33 @@ export function scoreAiTechNode(faction, node, tickIndex = 0) {
   return clusterScore * 100 + keywordHits * 24 + completionPressure + affordabilityBias + spineBias + tie;
 }
 
+export function scoreAiTechNode(faction, node, tickIndex = 0) {
+  const unlockedCount = ensureAiResearchState(faction).unlocked.length;
+  return scoreAiTechNodeWithUnlockedCount(faction, node, tickIndex, unlockedCount);
+}
+
 export function selectAiTechNode(state, faction, tickIndex = 0, opts = {}) {
   const candidates = legalAiTechNodes(state, faction, opts);
+  const unlockedCount = faction.research.unlocked.length;
   candidates.sort((a, b) => {
-    const score = scoreAiTechNode(faction, b, tickIndex) - scoreAiTechNode(faction, a, tickIndex);
+    const score = scoreAiTechNodeWithUnlockedCount(faction, b, tickIndex, unlockedCount)
+      - scoreAiTechNodeWithUnlockedCount(faction, a, tickIndex, unlockedCount);
     return score || a.id.localeCompare(b.id);
   });
   return candidates[0] ?? null;
 }
 
 function researchSpeedMultiplier(faction) {
-  const research = ensureAiResearchState(faction);
-  const technologyMultiplier = techEffects(factionTechContext(faction)).researchSpeedMult ?? 1;
+  const context = factionTechContext(faction);
+  const research = faction.research;
+  const technologyMultiplier = techEffects(context).researchSpeedMult ?? 1;
   return Math.max(0.1, (research.infrastructureSpeedMult ?? 1) * technologyMultiplier);
 }
 
 export function aiResearchQueueDepth(faction) {
-  const research = ensureAiResearchState(faction);
-  const depth = techEffects(factionTechContext(faction)).researchQueueDepth ?? 1;
+  const context = factionTechContext(faction);
+  const research = faction.research;
+  const depth = techEffects(context).researchQueueDepth ?? 1;
   return Math.max(1, Math.floor(depth + (research.queueSlotBonus ?? 0)));
 }
 
@@ -372,8 +506,10 @@ export function backfillAiResearch(state, faction, elapsedMs = state.meta?.playT
   while (budget > 0) {
     const candidates = legalAiTechNodes(state, faction, { affordable: false })
       .filter((node) => nodeCost(node).solarii <= finiteNonNegative(faction.solarii));
+    const unlockedCount = research.unlocked.length;
     candidates.sort((a, b) => {
-      const score = scoreAiTechNode(faction, b, unlocked.length) - scoreAiTechNode(faction, a, unlocked.length);
+      const score = scoreAiTechNodeWithUnlockedCount(faction, b, unlocked.length, unlockedCount)
+        - scoreAiTechNodeWithUnlockedCount(faction, a, unlocked.length, unlockedCount);
       return score || a.id.localeCompare(b.id);
     });
     const next = candidates[0];

@@ -106,7 +106,7 @@
             <span class="chip__value chip__value--truncate" id="flagship-loc">—</span>
           </span>
         </div>
-        <div class="chip chip--violet">
+        <div class="chip chip--violet hud-secondary-chip">
           <span class="chip__icon" aria-hidden="true">
             <svg viewBox="0 0 16 16"><path fill="currentColor" d="M8 0a8 8 0 018 8h-2.2A5.8 5.8 0 008 2.2V0zm0 3.6A4.4 4.4 0 0112.4 8H10a2 2 0 00-2-2V3.6zM8 7a1 1 0 110 2 1 1 0 010-2zM0 8a8 8 0 008 8v-2.2A5.8 5.8 0 012.2 8H0z"/></svg>
           </span>
@@ -132,11 +132,11 @@
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M4 3h3v10H4V3zm5 0h3v10H9V3z"/></svg>
           <span class="btn-label">Pause</span>
         </button>
-        <button id="audio-settings-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Open audio settings">
+        <button id="audio-settings-btn" type="button" class="btn btn--ghost btn--sm hud-secondary-action" aria-label="Open audio settings">
           <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 6h3l4-3v10l-4-3H2V6zm9.2-.8a4 4 0 010 5.6l-1-1a2.6 2.6 0 000-3.6l1-1zm2-2a6.8 6.8 0 010 9.6l-1-1a5.4 5.4 0 000-7.6l1-1z"/></svg>
           <span class="btn-label">Audio</span>
         </button>
-        <button id="tutorial-library-btn" type="button" class="btn btn--ghost btn--sm" aria-label="Open controls and tutorials">
+        <button id="tutorial-library-btn" type="button" class="btn btn--ghost btn--sm hud-secondary-action" aria-label="Open controls and tutorials">
           <span class="btn-label">Controls &amp; Tutorials</span>
         </button>
         <button id="save-menu-btn" type="button" class="btn btn--primary btn--sm" aria-label="Open save menu">
@@ -150,20 +150,30 @@
     <aside id="activity-rail" class="activity-rail" aria-label="Command activity">
       <div id="deck-breadcrumb" class="deck-breadcrumb" aria-live="polite">System · Map</div>
       <nav id="tab-bar" class="tab-bar activity-rail__tabs" aria-label="View navigation">
-        <button type="button" class="tab tab--active" data-view="galaxy" id="tab-galaxy" title="Galaxy"><span class="tab__icon" aria-hidden="true">◈</span><span class="tab__label">Galaxy</span></button>
-        <button type="button" class="tab tab--active" data-view="system" id="tab-system" title="System"><span class="tab__icon" aria-hidden="true">◎</span><span class="tab__label">System</span></button>
-        <button type="button" class="tab" data-panel="fleet" id="tab-fleet" title="Fleet"><span class="tab__icon" aria-hidden="true">⊳</span><span class="tab__label">Fleet</span></button>
-        <button type="button" class="tab" data-panel="logistics" id="tab-logistics" title="Logistics"><span class="tab__icon" aria-hidden="true">⇄</span><span class="tab__label">Logistics</span></button>
-        <button type="button" class="tab" data-panel="tech" id="tab-tech" title="Tech"><span class="tab__icon" aria-hidden="true">✦</span><span class="tab__label">Tech</span></button>
-        <button type="button" class="tab" data-panel="dyson" id="tab-dyson" title="Dyson"><span class="tab__icon" aria-hidden="true">◉</span><span class="tab__label">Dyson</span></button>
-        <button type="button" class="tab" data-panel="diplomacy" id="tab-diplomacy" title="Diplomacy"><span class="tab__icon" aria-hidden="true">☍</span><span class="tab__label">Diplomacy</span></button>
-        <button type="button" class="tab" data-panel="operations" id="tab-operations" title="Operations"><span class="tab__icon" aria-hidden="true">☰</span><span class="tab__label">Operations</span></button>
-        <button type="button" class="tab" data-panel="campaign" id="tab-campaign" title="Campaign"><span class="tab__icon" aria-hidden="true">⚑</span><span class="tab__label">Campaign</span></button>
+        <button type="button" class="tab tab--active" id="command-map-btn" title="Toggle Galaxy / System map" aria-label="Toggle Galaxy or System map"><span class="tab__icon" aria-hidden="true">◈</span><span class="tab__label">Map</span></button>
+        <button type="button" class="tab" data-panel="fleet" id="tab-fleet" title="Fleet Command"><span class="tab__icon" aria-hidden="true">⊳</span><span class="tab__label">Fleet</span></button>
+        <button type="button" class="tab" id="command-queue-btn" title="Empire Build Queue"><span class="tab__icon" aria-hidden="true">≡</span><span class="tab__label">Queue</span></button>
+        <button type="button" class="tab" id="command-alerts-btn" title="Comms and alerts"><span class="tab__icon" aria-hidden="true">!</span><span class="tab__label">Alerts</span><span id="command-alert-count" class="command-badge hidden">0</span></button>
+        <button type="button" class="tab" id="command-launcher-btn" title="All Commands" aria-expanded="false"><span class="tab__icon" aria-hidden="true">⌘</span><span class="tab__label">Commands</span></button>
       </nav>
+      <div id="command-launcher" class="command-launcher hidden" role="menu" aria-label="All Commands">
+        <button type="button" class="command-launcher__item" data-panel="logistics" id="tab-logistics"><span>⇄</span><strong>Logistics</strong></button>
+        <button type="button" class="command-launcher__item" data-panel="tech" id="tab-tech"><span>✦</span><strong>Technology</strong></button>
+        <button type="button" class="command-launcher__item" data-panel="dyson" id="tab-dyson"><span>◉</span><strong>Dyson</strong></button>
+        <button type="button" class="command-launcher__item" data-panel="diplomacy" id="tab-diplomacy"><span>☍</span><strong>Diplomacy</strong></button>
+        <button type="button" class="command-launcher__item" data-panel="operations" id="tab-operations"><span>☰</span><strong>Operations</strong></button>
+        <button type="button" class="command-launcher__item" data-panel="campaign" id="tab-campaign"><span>⚑</span><strong>Campaign</strong></button>
+        <button type="button" class="command-launcher__item" id="command-tutorials-btn"><span>?</span><strong>Controls &amp; Tutorials</strong></button>
+        <button type="button" class="command-launcher__item" id="command-audio-btn"><span>♫</span><strong>Audio</strong></button>
+      </div>
+      <button type="button" class="visually-hidden" data-view="galaxy" id="tab-galaxy">Galaxy</button>
+      <button type="button" class="visually-hidden" data-view="system" id="tab-system">System</button>
       <div id="notification-log" class="panel panel--compact activity-rail__comms">
         <div class="panel__header panel__header--toggle">
           <span class="panel__marker" aria-hidden="true"></span>
           <span class="panel__title">Comms Log</span>
+          <button type="button" class="btn btn--ghost btn--xs monitor-pin" data-pin-monitor="comms" aria-label="Pin Comms monitor" aria-pressed="false">◇</button>
+          <button type="button" class="btn btn--ghost btn--xs monitor-collapse hidden" data-collapse-monitor="comms" aria-label="Collapse pinned Comms monitor">▾</button>
           <button type="button" id="notification-toggle" class="btn btn--ghost btn--xs" aria-label="Toggle notifications">−</button>
         </div>
         <div id="notification-log-body" class="panel__body notification-log__body">
@@ -178,6 +188,8 @@
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
           <span class="panel__title">Fleet Command</span>
+          <button type="button" class="btn btn--ghost btn--xs monitor-pin" data-pin-monitor="fleet" aria-label="Pin Fleet monitor" aria-pressed="false">◇</button>
+          <button type="button" class="btn btn--ghost btn--xs monitor-collapse hidden" data-collapse-monitor="fleet" aria-label="Collapse pinned Fleet monitor">▾</button>
           <span class="panel__trace" aria-hidden="true"></span>
         </div>
         <div class="panel__body" id="fleet-panel-body">
@@ -197,10 +209,12 @@
         <div id="selected-scout-line" class="panel__footer panel-note"></div>
       </div>
 
-      <div id="empire-queue-panel" class="panel">
+      <div id="empire-queue-panel" class="panel hidden">
         <div class="panel__header">
           <span class="panel__marker" aria-hidden="true"></span>
           <span class="panel__title">Empire Build Queue</span>
+          <button type="button" class="btn btn--ghost btn--xs monitor-pin" data-pin-monitor="queue" aria-label="Pin Queue monitor" aria-pressed="false">◇</button>
+          <button type="button" class="btn btn--ghost btn--xs monitor-collapse hidden" data-collapse-monitor="queue" aria-label="Collapse pinned Queue monitor">▾</button>
           <span class="panel__trace" aria-hidden="true"></span>
         </div>
         <div class="panel__body">
@@ -381,6 +395,16 @@
       </div>
       <button id="battle-alert-view" type="button" class="btn btn--primary btn--sm">View Battle</button>
     </div>
+    <div id="command-critical-alert" class="command-critical-alert hidden" role="alert" aria-live="assertive">
+      <div>
+        <span class="command-critical-alert__eyebrow">Command attention required</span>
+        <strong id="command-critical-alert-message">An order requires review.</strong>
+      </div>
+      <div class="command-critical-alert__actions">
+        <button id="command-critical-alert-open" type="button" class="btn btn--primary btn--sm">Open Comms</button>
+        <button id="command-critical-alert-dismiss" type="button" class="btn btn--ghost btn--sm" aria-label="Dismiss alert">×</button>
+      </div>
+    </div>
 
     <div id="combat-hud" class="combat-hud hidden" aria-label="Combat interface">
       <div class="combat-hud__top">
@@ -439,6 +463,12 @@
 
     <div id="hud-overlays">
       <div id="tutorial-coach" class="tutorial-coach hidden" aria-live="polite" aria-label="Tutorial tip"></div>
+      <div id="foundations-complete" class="foundations-complete hidden" role="status" aria-live="polite">
+        <span class="foundations-complete__eyebrow">Sovereign Foundations complete</span>
+        <strong>Sovereign Command Granted</strong>
+        <p>Your first expansion is secured. This same empire now continues without guidance.</p>
+        <button id="foundations-complete-close" type="button" class="btn btn--primary btn--sm">Continue your reign</button>
+      </div>
       <div id="title-screen" class="title-screen">
         <div class="title-screen__vignette" aria-hidden="true"></div>
         <div class="title-screen__bar title-screen__bar--top" aria-hidden="true"></div>
@@ -465,7 +495,7 @@
                   </span>
                   <span class="title-door__eyebrow">Solo Ops</span>
                   <span class="title-door__label">Single Player</span>
-                  <span class="title-door__desc">Academy, campaigns &amp; free play</span>
+                  <span class="title-door__desc">Foundations, campaigns &amp; free play</span>
                 </button>
                 <button id="title-multiplayer-door" type="button" class="title-door title-door--multi">
                   <span class="title-door__seam" aria-hidden="true"></span>
@@ -488,7 +518,7 @@
               <p class="title-screen__section-label">Solo Operations</p>
               <div class="title-screen__primary">
                 <button id="title-continue-btn" type="button" class="btn btn--primary btn--block hidden">Continue</button>
-                <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">Begin Academy</button>
+                <button id="title-new-campaign-btn" type="button" class="btn btn--primary btn--block">Begin Sovereign Foundations</button>
               </div>
               <div class="title-screen__modes" aria-label="Game modes">
                 <p class="title-screen__section-label">Game Modes</p>
@@ -645,8 +675,8 @@
               <span class="mode-picker__desc">Scenario challenges</span>
             </button>
             <button type="button" class="mode-picker__option" data-mode="tutorial" id="new-game-pick-tutorial" aria-pressed="false">
-              <span class="mode-picker__name">Tutorial</span>
-              <span class="mode-picker__desc">Academy training</span>
+              <span class="mode-picker__name">Sovereign Foundations</span>
+              <span class="mode-picker__desc">Guided first conquest</span>
             </button>
           </div>
           <div class="menu-form">
@@ -760,7 +790,7 @@
             <summary class="dev-section__title">Tutorial Controls</summary>
             <div class="dev-section__body">
               <div class="dev-row">
-                <button id="dev-tutorial-override" type="button" class="btn btn--ghost btn--sm">Bypass Academy</button>
+                <button id="dev-tutorial-override" type="button" class="btn btn--ghost btn--sm">Bypass Foundations</button>
                 <button id="dev-tutorial-relock" type="button" class="btn btn--ghost btn--sm">Clear Bypass</button>
                 <button id="dev-tutorial-reset" type="button" class="btn btn--ghost btn--sm">Reset Tutorial</button>
               </div>

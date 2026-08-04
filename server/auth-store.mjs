@@ -406,6 +406,17 @@ export class AuthStore {
     return Number(result.changes) > 0;
   }
 
+  /** Wipe all local SQLite envelopes (clean start after Supabase cutover). Users kept. */
+  wipeAllSaveSlots({ vacuum = true } = {}) {
+    const before = Number(this.db.prepare('SELECT COUNT(*) AS count FROM save_slots').get().count || 0);
+    this.db.exec('DELETE FROM save_slots');
+    if (vacuum && this.dbPath !== ':memory:') {
+      this.db.exec('VACUUM');
+    }
+    this.audit('saves.wiped', { detail: { deleted: before } });
+    return { deleted: before };
+  }
+
   importLegacyPilots(pilots) {
     const statement = this.db.prepare(`
       INSERT INTO legacy_pilots(pilot_id, display_name, claimed_user_id, imported_at, claimed_at)
