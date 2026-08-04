@@ -562,7 +562,7 @@ const stages = [
         const sysId = st.stronghold;
         window.__viewSystem(sysId);
         window.__setView('system');
-        window.__devAction('spawnFleetPreset', { systemId: sysId, presetId: 'escort' });
+        window.__devAction('spawnFleetPreset', { systemId: sysId, presetId: 'battle_fleet' });
         window.__devAction('spawnEnemyFleet', { systemId: sysId, size: 'large' });
         // Ensure battle engages
         window.__devAction('spawnEnemyFleet', { systemId: sysId, size: 'medium' });
@@ -587,7 +587,7 @@ const stages = [
         window.__devAction('grantCredits', { amount: 100000 });
         window.__devAction('grantSolarii', { amount: 50 });
         window.__devAction('buildDysonKit', { systemId: st.stronghold });
-        window.__devAction('forceShellProgress', { systemId: st.stronghold, shells: 3 });
+        window.__devAction('forceShellProgress', { systemId: st.stronghold, sails: 24 });
         window.__setView('system');
         window.__viewSystem(st.stronghold);
         window.__snapCamera(0, 0, 0.55);
@@ -920,7 +920,7 @@ const stages = [
       await page.evaluate(() => {
         const st = window.getGameState();
         window.__devAction('grantCredits', { amount: 50000 });
-        window.__devAction('spawnFleetPreset', { systemId: st.stronghold || st.flagship.systemId, presetId: 'escort' });
+        window.__devAction('spawnFleetPreset', { systemId: st.stronghold || st.flagship.systemId, presetId: 'battle_fleet' });
         window.__devAction('spawnEnemyFleet', { systemId: st.flagship.systemId, size: 'medium' });
         window.advanceTime?.(60000);
         window.__setView('galaxy');
