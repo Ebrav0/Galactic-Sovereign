@@ -443,7 +443,7 @@ export function devForceCapture(state, systemId) {
   }
   devRevealIntel(state, systemId);
   systemById(state, systemId).owner = 'player';
-  if (state.capture[systemId]) delete state.capture[systemId];
+  if (state.capture?.[systemId]) delete state.capture[systemId];
   return ok({ systemId, owner: 'player' });
 }
 
