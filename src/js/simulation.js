@@ -34,6 +34,20 @@ import { tickBulkDeliveries } from './production-delivery.js';
 import { tickIntegratedStrategicOperations } from './strategic-integration.js';
 import { systemById } from './state.js';
 
+let lastSimPerf = {
+  ticksAdvanced: 0,
+  totalMs: 0,
+  abstractMs: 0,
+  wormholeMs: 0,
+  logisticsMs: 0,
+  aiMs: 0,
+  combatMs: 0,
+};
+
+export function simPerfSummary() {
+  return { ...lastSimPerf };
+}
+
 function handleArrival(state, systemId, actorId = null) {
   const system = systemById(state, systemId);
   const controller = system?.owner === 'player' ? 'player'
@@ -59,11 +73,21 @@ function tickOnce(state) {
   // Phase 6 order: abstract → wormhole → income → trade → research → diplomacy
   // → superweapon cooldowns → dispatch → production → AI → hero flagships
   // → fleet transits → pirates → combat → dyson → capture → campaign
+  let t0 = performance.now();
   tickAbstractGalaxies(state);
+  const abstractMs = performance.now() - t0;
+
+  t0 = performance.now();
   const wormholeArrival = tickWormholeTransit(state);
+  const wormholeMs = performance.now() - t0;
+
   applyIncomeTick(state);
   tickTrade(state);
+
+  t0 = performance.now();
   const logisticsEvents = tickLogistics(state);
+  const logisticsMs = performance.now() - t0;
+
   tickResearch(state);
   const diplomacyEvents = tickDiplomacy(state);
   tickSuperweapon(state);
@@ -82,6 +106,8 @@ function tickOnce(state) {
   const bulkDeliveryEvents = tickBulkDeliveries(state);
   const droneCompletions = tickDrones(state);
   const strategicOperationEvents = tickIntegratedStrategicOperations(state);
+
+  t0 = performance.now();
   const aiEvents = tickAiFaction(state);
   tickHeroFlagships(state);
   const scoutArrivals = tickScouts(state);
@@ -91,7 +117,12 @@ function tickOnce(state) {
   const pirateInterdictions = tickPirateInterdictions(state, (destId) => handleArrival(state, destId));
   tickFlagship(state); // per-pilot roster; wormhole-transiting ships skip inside
   const flagshipAnchorEvents = syncFlagshipAnchoredFleets(state);
+  const aiMs = performance.now() - t0;
+
+  t0 = performance.now();
   const battleEvents = tickCombat(state);
+  const combatMs = performance.now() - t0;
+
   const bodyStructureEvents = tickBodyStructureEffects(state);
   const builderDroneEvents = tickBuilderDrones(state);
   const dysonEvents = tickDyson(state);
@@ -117,11 +148,21 @@ function tickOnce(state) {
     wormholeArrival, campaignEvents, bodyStructureEvents, builderDroneEvents, droneCompletions, logisticsEvents,
     flagshipAnchorEvents, bulkProductionEvents, bulkDeliveryEvents, strategicOperationEvents, diplomacyEvents,
     aiEvents,
+    _perf: { abstractMs, wormholeMs, logisticsMs, aiMs, combatMs },
   };
 }
 
 export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
   if (state.paused) {
+    lastSimPerf = {
+      ticksAdvanced: 0,
+      totalMs: 0,
+      abstractMs: 0,
+      wormholeMs: 0,
+      logisticsMs: 0,
+      aiMs: 0,
+      combatMs: 0,
+    };
     return {
       captures: [], prodReady: [], scoutArrivals: [], shipArrivals: [], aiArrivals: [], pirateArrivals: [], pirateInterdictions: [],
       battleEvents: [], dysonEvents: [], wormholeArrivals: [], builderDroneEvents: [], droneCompletions: [], logisticsEvents: [],
@@ -134,6 +175,7 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
       ticksAdvanced: 0,
     };
   }
+  const stepStartedAt = performance.now();
   let remaining = accumulatedMs;
   const captures = [];
   const prodReady = [];
@@ -155,6 +197,11 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
   const aiEvents = [];
   const campaignEvents = [];
   let ticks = 0;
+  let abstractMs = 0;
+  let wormholeMs = 0;
+  let logisticsMs = 0;
+  let aiMs = 0;
+  let combatMs = 0;
   while (remaining >= TICK_MS && ticks < maxTicks) {
     const events = tickOnce(state);
     prodReady.push(...events.prodReady);
@@ -176,6 +223,11 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
     campaignEvents.push(...(events.campaignEvents ?? []));
     if (events.capture) captures.push(events.capture);
     if (events.wormholeArrival) wormholeArrivals.push(events.wormholeArrival);
+    abstractMs += events._perf?.abstractMs ?? 0;
+    wormholeMs += events._perf?.wormholeMs ?? 0;
+    logisticsMs += events._perf?.logisticsMs ?? 0;
+    aiMs += events._perf?.aiMs ?? 0;
+    combatMs += events._perf?.combatMs ?? 0;
     remaining -= TICK_MS;
     ticks += 1;
   }
@@ -183,6 +235,16 @@ export function step(state, accumulatedMs, { maxTicks = Infinity } = {}) {
   if (Number.isFinite(maxTicks) && ticks >= maxTicks && remaining >= TICK_MS) {
     remaining %= TICK_MS;
   }
+  const totalMs = performance.now() - stepStartedAt;
+  lastSimPerf = {
+    ticksAdvanced: ticks,
+    totalMs: Math.round(totalMs * 100) / 100,
+    abstractMs: Math.round(abstractMs * 100) / 100,
+    wormholeMs: Math.round(wormholeMs * 100) / 100,
+    logisticsMs: Math.round(logisticsMs * 100) / 100,
+    aiMs: Math.round(aiMs * 100) / 100,
+    combatMs: Math.round(combatMs * 100) / 100,
+  };
   return {
     captures, prodReady, scoutArrivals, shipArrivals, aiArrivals, pirateArrivals, pirateInterdictions, battleEvents, dysonEvents,
     wormholeArrivals, remainingMs: remaining, ticksAdvanced: ticks,

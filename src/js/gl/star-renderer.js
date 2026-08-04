@@ -57,6 +57,14 @@ let queuedStars = [];
 /** @type {Array<object>} */
 let queuedBlackHoles = [];
 let sceneRendered = false;
+/** Accumulated GL flush cost for the current star pass (reset in beginStarPass). */
+let passFlushMs = 0;
+/** Last completed pass flush total (ms). */
+let lastGlFlushMs = 0;
+
+export function glFlushSummary() {
+  return { lastFlushMs: lastGlFlushMs };
+}
 
 const QUALITY_PASSES = { high: 7, medium: 4, low: 2 };
 const QUALITY_UNIFORM = { high: 1, medium: 0.55, low: 0.25 };
@@ -155,6 +163,8 @@ export function beginStarPass(mode = 'system') {
   queuedBlackHoles = [];
   sceneRendered = false;
   passMode = mode;
+  passFlushMs = 0;
+  lastGlFlushMs = 0;
 }
 
 export function queueStar(opts) {
@@ -401,23 +411,36 @@ function blitToScreen(texture, alpha = 1.0, additive = false) {
 export function flushStars(ctx2d, stage) {
   if (!enabled || !gl || (queuedStars.length === 0 && queuedBlackHoles.length === 0)) return;
 
+  const flushStartedAt = performance.now();
   const hasIntel = queuedStars.some((s) => s.intel) || queuedBlackHoles.length > 0;
   const isSystem = passMode === 'system';
 
   if (stage === 'core') {
-    if (!renderSceneToFBO(isSystem ? 1 : 0)) return;
+    if (!renderSceneToFBO(isSystem ? 1 : 0)) {
+      passFlushMs += performance.now() - flushStartedAt;
+      lastGlFlushMs = Math.round(passFlushMs * 100) / 100;
+      return;
+    }
     blitToScreen(fbos.scene.tex, 1.0, false);
     ctx2d.drawImage(canvas, 0, 0);
   } else if (stage === 'outer') {
     if (!isSystem) return;
-    if (!renderSceneToFBO(2)) return;
+    if (!renderSceneToFBO(2)) {
+      passFlushMs += performance.now() - flushStartedAt;
+      lastGlFlushMs = Math.round(passFlushMs * 100) / 100;
+      return;
+    }
     blitToScreen(fbos.scene.tex, 1.0, true);
     ctx2d.save();
     ctx2d.globalCompositeOperation = 'lighter';
     ctx2d.drawImage(canvas, 0, 0);
     ctx2d.restore();
   } else if (stage === 'bloom') {
-    if (!renderSceneToFBO(0)) return;
+    if (!renderSceneToFBO(0)) {
+      passFlushMs += performance.now() - flushStartedAt;
+      lastGlFlushMs = Math.round(passFlushMs * 100) / 100;
+      return;
+    }
     const bloomTex = runBloomPipeline(hasIntel);
     if (bloomTex) {
       blitToScreen(bloomTex, 1.0, true);
@@ -427,4 +450,7 @@ export function flushStars(ctx2d, stage) {
       ctx2d.restore();
     }
   }
+
+  passFlushMs += performance.now() - flushStartedAt;
+  lastGlFlushMs = Math.round(passFlushMs * 100) / 100;
 }
