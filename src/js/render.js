@@ -2777,6 +2777,15 @@ export function drawGalaxy(
       ctx.fill();
       ctx.globalAlpha = 1;
       if (nexus && intel) drawGlowRing(ctx, s.x, s.y, Math.max(4, nodeR * 1.45), '#ffce7a', Math.max(1, 1.5 * z), 0.8);
+    } else if (system?.star && tier === 'mid' && !intel) {
+      // Mid fog nodes stay as flat dots (same language as far fog) so we do not
+      // enqueue hundreds of full GL star draws for unexplored systems.
+      ctx.fillStyle = THEME.fog.star;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, Math.max(2, nodeR * 0.8), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
     } else if (system?.star) {
       drawStar(ctx, {
         star: system.star,
