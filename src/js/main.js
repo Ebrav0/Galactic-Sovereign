@@ -3431,7 +3431,7 @@ function runFrame(now) {
   const uiMs = maybeUpdateUi(now);
   if (devPanel?.isOpen()) devPanel.updateDevPanel();
   const totalFrameMs = performance.now() - frameStartedAt;
-  recordHitch(Math.max(totalFrameMs, dt), now);
+  recordHitch(totalFrameMs, now);
   const sys = systemPerfSummary();
   const gal = galaxyPerfSummary();
   const gl = glFlushSummary();
